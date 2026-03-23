@@ -135,8 +135,10 @@ impl TreeKem {
             }
         }
 
-        let commit_secret = path_secrets.last()
-            .ok_or_else(|| ProtocolError::invalid_state("Empty path secrets"))?.clone();
+        let commit_secret = path_secrets
+            .last()
+            .ok_or_else(|| ProtocolError::invalid_state("Empty path secrets"))?
+            .clone();
 
         for ps in &mut path_secrets {
             CryptoInterop::secure_wipe(ps);

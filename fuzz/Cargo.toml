@@ -184,3 +184,43 @@ doc = false
 name = "fuzz_identity"
 path = "fuzz_targets/fuzz_identity.rs"
 doc = false
+
+[[bin]]
+name = "fuzz_voip_frame_decrypt"
+path = "fuzz_targets/fuzz_voip_frame_decrypt.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_voip_frame_roundtrip"
+path = "fuzz_targets/fuzz_voip_frame_roundtrip.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_voip_header_decrypt"
+path = "fuzz_targets/fuzz_voip_header_decrypt.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_voip_replay_window"
+path = "fuzz_targets/fuzz_voip_replay_window.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_voip_key_ratchet"
+path = "fuzz_targets/fuzz_voip_key_ratchet.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_voip_frame_header"
+path = "fuzz_targets/fuzz_voip_frame_header.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_voip_protobuf"
+path = "fuzz_targets/fuzz_voip_protobuf.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_voip_relay"
+path = "fuzz_targets/fuzz_voip_relay.rs"
+doc = false

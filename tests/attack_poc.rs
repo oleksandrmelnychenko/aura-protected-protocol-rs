@@ -1436,7 +1436,9 @@ fn nonce_resets_on_dh_ratchet() {
     let (alice, bob) = create_session_pair();
 
     for i in 0..500u32 {
-        let env = alice.encrypt(format!("msg {i}").as_bytes(), 0, i, None).unwrap();
+        let env = alice
+            .encrypt(format!("msg {i}").as_bytes(), 0, i, None)
+            .unwrap();
         let _ = bob.decrypt(&env).unwrap();
     }
 
@@ -1479,7 +1481,9 @@ fn messages_decrypt_after_nonce_reset() {
     assert_eq!(dec.plaintext, b"after ratchet");
 
     for i in 2..100u32 {
-        let env = alice.encrypt(format!("post-reset {i}").as_bytes(), 0, i, None).unwrap();
+        let env = alice
+            .encrypt(format!("post-reset {i}").as_bytes(), 0, i, None)
+            .unwrap();
         let dec = bob.decrypt(&env).unwrap();
         assert_eq!(dec.plaintext, format!("post-reset {i}").as_bytes());
     }
@@ -1703,7 +1707,9 @@ fn attack_payload_bitflip_every_position() {
     init();
     let (alice, bob) = create_session_pair();
 
-    let env = alice.encrypt(b"sensitive payload data here", 0, 0, None).unwrap();
+    let env = alice
+        .encrypt(b"sensitive payload data here", 0, 0, None)
+        .unwrap();
 
     let mut any_succeeded = false;
     for pos in 0..env.encrypted_payload.len() {
@@ -1732,7 +1738,9 @@ fn attack_chain_exhaustion_forces_ratchet() {
     let (alice, bob) = create_session_pair_with_chain_limit(50);
 
     for i in 0..50u32 {
-        let env = alice.encrypt(format!("msg {i}").as_bytes(), 0, i, None).unwrap();
+        let env = alice
+            .encrypt(format!("msg {i}").as_bytes(), 0, i, None)
+            .unwrap();
         let _ = bob.decrypt(&env).unwrap();
     }
 
@@ -1762,22 +1770,26 @@ fn attack_rapid_bidirectional_ratcheting() {
 
     for round in 0..50u32 {
         let env_a = alice
-            .encrypt(format!("alice round {round}").as_bytes(), 0, round * 2, None)
+            .encrypt(
+                format!("alice round {round}").as_bytes(),
+                0,
+                round * 2,
+                None,
+            )
             .unwrap();
         let dec_b = bob.decrypt(&env_a).unwrap();
-        assert_eq!(
-            dec_b.plaintext,
-            format!("alice round {round}").as_bytes()
-        );
+        assert_eq!(dec_b.plaintext, format!("alice round {round}").as_bytes());
 
         let env_b = bob
-            .encrypt(format!("bob round {round}").as_bytes(), 0, round * 2 + 1, None)
+            .encrypt(
+                format!("bob round {round}").as_bytes(),
+                0,
+                round * 2 + 1,
+                None,
+            )
             .unwrap();
         let dec_a = alice.decrypt(&env_b).unwrap();
-        assert_eq!(
-            dec_a.plaintext,
-            format!("bob round {round}").as_bytes()
-        );
+        assert_eq!(dec_a.plaintext, format!("bob round {round}").as_bytes());
     }
 
     let final_epoch_env = alice.encrypt(b"final check", 0, 100, None).unwrap();
@@ -1836,10 +1848,7 @@ fn attack_envelope_version_mismatch() {
         let mut tampered = env.clone();
         tampered.version = bad_version;
         let result = bob.decrypt(&tampered);
-        assert!(
-            result.is_err(),
-            "Version {bad_version} must be rejected"
-        );
+        assert!(result.is_err(), "Version {bad_version} must be rejected");
     }
 
     let legit = bob.decrypt(&env).unwrap();

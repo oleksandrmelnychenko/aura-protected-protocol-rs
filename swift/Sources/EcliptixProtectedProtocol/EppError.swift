@@ -33,6 +33,9 @@ public enum EppError: Error, LocalizedError {
     case welcome(String)
     case messageExpired
     case franking(String)
+    case voipCall(String)
+    case voipMedia(String)
+    case voipRekey(String)
     case unknown(UInt32)
 
     /// Creates an `EppError` from a native error code and error struct.
@@ -76,6 +79,9 @@ public enum EppError: Error, LocalizedError {
         case EPP_ERROR_WELCOME: return .welcome(message)
         case EPP_ERROR_MESSAGE_EXPIRED: return .messageExpired
         case EPP_ERROR_FRANKING: return .franking(message)
+        case EPP_ERROR_VOIP_CALL: return .voipCall(message)
+        case EPP_ERROR_VOIP_MEDIA: return .voipMedia(message)
+        case EPP_ERROR_VOIP_REKEY: return .voipRekey(message)
         default: return .unknown(code)
         }
     }
@@ -107,6 +113,9 @@ public enum EppError: Error, LocalizedError {
         case .welcome(let msg): return "Welcome: \(msg)"
         case .messageExpired: return "Message expired"
         case .franking(let msg): return "Franking: \(msg)"
+        case .voipCall(let msg): return "VoIP call: \(msg)"
+        case .voipMedia(let msg): return "VoIP media: \(msg)"
+        case .voipRekey(let msg): return "VoIP rekey: \(msg)"
         case .unknown(let code): return "Unknown EPP error (code: \(code))"
         }
     }

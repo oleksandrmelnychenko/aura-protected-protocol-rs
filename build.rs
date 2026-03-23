@@ -13,6 +13,7 @@ fn main() -> Result<()> {
         "proto/protocol/sealed_state.proto",
         "proto/protocol/error.proto",
         "proto/protocol/group.proto",
+        "proto/protocol/voip.proto",
         "proto/e2e/crypto_envelope.proto",
     ];
 

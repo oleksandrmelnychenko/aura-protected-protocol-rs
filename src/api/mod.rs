@@ -237,8 +237,7 @@ impl EcliptixProtocol {
         credential: Vec<u8>,
         policy: GroupSecurityPolicy,
     ) -> Result<EcliptixGroupSession, ProtocolError> {
-        let session =
-            GroupSession::create_with_policy(&self.identity, credential, policy)?;
+        let session = GroupSession::create_with_policy(&self.identity, credential, policy)?;
         Ok(EcliptixGroupSession(session))
     }
 
@@ -338,6 +337,442 @@ impl EcliptixProtocol {
 
     pub fn secure_wipe(data: &mut [u8]) {
         CryptoInterop::secure_wipe(data);
+    }
+}
+
+// ── VoIP API ────────────────────────────────────────────────────────
+
+use crate::core::constants::VOIP_PROTOCOL_VERSION;
+use crate::protocol::voip::frame::FrameHeader;
+use crate::protocol::voip::{
+    self, CallControlType, CallRole, DecryptedFrame, EncryptedFrame, IVoipEventHandler, VoipSession,
+};
+use std::sync::Arc;
+
+pub struct EcliptixVoipSession(VoipSession);
+
+impl EcliptixVoipSession {
+    pub fn encrypt_frame(
+        &self,
+        payload_type: u8,
+        ssrc: u32,
+        timestamp: u32,
+        sequence_number: u16,
+        payload: &[u8],
+    ) -> Result<EncryptedFrame, ProtocolError> {
+        let header = FrameHeader {
+            payload_type,
+            ssrc,
+            timestamp,
+            sequence_number,
+        };
+        self.0.encrypt_frame(&header, payload)
+    }
+
+    pub fn decrypt_frame(
+        &self,
+        encrypted: &EncryptedFrame,
+    ) -> Result<DecryptedFrame, ProtocolError> {
+        self.0.decrypt_frame(encrypted)
+    }
+
+    pub fn call_id(&self) -> Vec<u8> {
+        self.0.call_id()
+    }
+
+    pub fn ssrc(&self) -> u32 {
+        self.0.ssrc()
+    }
+
+    pub fn is_caller(&self) -> bool {
+        self.0.role() == CallRole::Caller
+    }
+
+    pub fn is_shield_mode(&self) -> bool {
+        self.0.is_shield_mode()
+    }
+
+    pub fn send_frame_counter(&self) -> u64 {
+        self.0.send_frame_counter()
+    }
+
+    pub fn recv_frame_counter(&self) -> u64 {
+        self.0.recv_frame_counter()
+    }
+
+    pub fn needs_pq_rekey(&self, elapsed_secs: u64) -> bool {
+        self.0.needs_pq_rekey(elapsed_secs)
+    }
+
+    pub fn apply_rekey(
+        &self,
+        new_keys: voip::call_key_exchange::CallKeyMaterial,
+    ) -> Result<(), ProtocolError> {
+        self.0.apply_rekey(new_keys)
+    }
+
+    pub fn end_call(&self) -> Result<(), ProtocolError> {
+        self.0.end_call()
+    }
+
+    pub fn set_event_handler(&self, handler: Arc<dyn IVoipEventHandler>) {
+        self.0.set_event_handler(handler);
+    }
+
+    pub fn encrypt_call_control(
+        &self,
+        control: CallControlType,
+    ) -> Result<EncryptedFrame, ProtocolError> {
+        self.0.encrypt_call_control(control)
+    }
+
+    pub fn decode_call_control(decrypted: &DecryptedFrame) -> Option<CallControlType> {
+        VoipSession::decode_call_control(decrypted)
+    }
+
+    pub fn generate_call_end_hmac(
+        &self,
+        device_id: &[u8],
+        timestamp: u64,
+    ) -> Result<Vec<u8>, ProtocolError> {
+        self.0.generate_call_end_hmac(device_id, timestamp)
+    }
+
+    pub fn verify_call_end_hmac(
+        &self,
+        device_id: &[u8],
+        timestamp: u64,
+        hmac_value: &[u8],
+    ) -> Result<bool, ProtocolError> {
+        self.0
+            .verify_call_end_hmac(device_id, timestamp, hmac_value)
+    }
+
+    pub fn export_sealed_state(
+        &self,
+        state_key: &[u8],
+        external_counter: u64,
+    ) -> Result<Vec<u8>, ProtocolError> {
+        self.0.export_sealed_state(state_key, external_counter)
+    }
+
+    pub fn build_call_end(
+        &self,
+        device_id: &[u8],
+        timestamp: u64,
+    ) -> Result<Vec<u8>, ProtocolError> {
+        self.0.build_call_end(device_id, timestamp)
+    }
+
+    pub fn process_call_end(&self, call_end_bytes: &[u8]) -> Result<(), ProtocolError> {
+        self.0.process_call_end(call_end_bytes)
+    }
+
+    pub fn initiate_rekey(
+        &self,
+        identity_ed25519_secret: &[u8],
+        peer_kyber_public: &[u8],
+    ) -> Result<Vec<u8>, ProtocolError> {
+        self.0
+            .initiate_rekey(identity_ed25519_secret, peer_kyber_public)
+    }
+
+    pub fn process_rekey(
+        &self,
+        rekey_bytes: &[u8],
+        peer_ed25519_public: &[u8],
+        identity_kyber_secret: &SecureMemoryHandle,
+        peer_kyber_public: &[u8],
+        identity_ed25519_secret: &[u8],
+    ) -> Result<Vec<u8>, ProtocolError> {
+        self.0.process_rekey(
+            rekey_bytes,
+            peer_ed25519_public,
+            identity_kyber_secret,
+            peer_kyber_public,
+            identity_ed25519_secret,
+        )
+    }
+
+    pub fn process_rekey_ack(
+        &self,
+        ack_bytes: &[u8],
+        peer_ed25519_public: &[u8],
+        identity_kyber_secret: &SecureMemoryHandle,
+    ) -> Result<(), ProtocolError> {
+        self.0
+            .process_rekey_ack(ack_bytes, peer_ed25519_public, identity_kyber_secret)
+    }
+
+    pub fn from_sealed_state(
+        data: &[u8],
+        state_key: &[u8],
+        min_external_counter: u64,
+    ) -> Result<Self, ProtocolError> {
+        Ok(Self(VoipSession::from_sealed_state(
+            data,
+            state_key,
+            min_external_counter,
+        )?))
+    }
+
+    pub fn sealed_state_external_counter(data: &[u8]) -> Result<u64, ProtocolError> {
+        VoipSession::sealed_state_external_counter(data)
+    }
+}
+
+pub struct EcliptixCallInitiator {
+    pub init_output: voip::call_key_exchange::CallInitOutput,
+    pub call_id: Vec<u8>,
+    pub shield_mode: bool,
+    pub ratchet_interval_frames: u32,
+    pub pq_rekey_interval_secs: u32,
+}
+
+impl EcliptixCallInitiator {
+    pub fn complete(
+        self,
+        identity_kyber_secret: &SecureMemoryHandle,
+        peer_eph_x25519_public: &[u8],
+        peer_kyber_ct: &[u8],
+        peer_ed25519_public: &[u8],
+        peer_signature: &[u8],
+        peer_key_confirm_mac: &[u8],
+    ) -> Result<EcliptixVoipSession, ProtocolError> {
+        let key_material = voip::caller_finish(
+            &self.init_output,
+            identity_kyber_secret,
+            &self.call_id,
+            peer_eph_x25519_public,
+            peer_kyber_ct,
+            peer_ed25519_public,
+            peer_signature,
+            peer_key_confirm_mac,
+            self.shield_mode,
+        )?;
+        let session = VoipSession::from_key_material(
+            self.call_id,
+            CallRole::Caller,
+            key_material,
+            self.ratchet_interval_frames,
+            self.pq_rekey_interval_secs,
+            self.shield_mode,
+        )?;
+        Ok(EcliptixVoipSession(session))
+    }
+
+    pub fn complete_from_accept(
+        self,
+        identity_kyber_secret: &SecureMemoryHandle,
+        call_accept_bytes: &[u8],
+    ) -> Result<EcliptixVoipSession, ProtocolError> {
+        let call_accept = crate::proto::CallAccept::decode(call_accept_bytes)
+            .map_err(|e| ProtocolError::decode(format!("CallAccept decode: {e}")))?;
+
+        if call_accept.version != VOIP_PROTOCOL_VERSION {
+            return Err(ProtocolError::voip_call(
+                "unsupported VoIP protocol version",
+            ));
+        }
+        if call_accept.call_id != self.call_id {
+            return Err(ProtocolError::voip_call("CallAccept call_id mismatch"));
+        }
+
+        self.complete(
+            identity_kyber_secret,
+            &call_accept.ephemeral_x25519_public,
+            &call_accept.kyber_ciphertext,
+            &call_accept.identity_ed25519_public,
+            &call_accept.signature,
+            &call_accept.key_confirmation_mac,
+        )
+    }
+}
+
+impl EcliptixProtocol {
+    pub fn initiate_call(
+        &self,
+        peer_kyber_public: &[u8],
+        shield_mode: bool,
+        ratchet_interval_frames: u32,
+        pq_rekey_interval_secs: u32,
+    ) -> Result<(EcliptixCallInitiator, Vec<u8>), ProtocolError> {
+        let ed25519_secret = self.identity.get_identity_ed25519_private_key_copy()?;
+        let ed25519_public = self.identity.get_identity_ed25519_public();
+
+        let auth_context = voip::call_key_exchange::CallInitAuthContext {
+            version: VOIP_PROTOCOL_VERSION,
+            media_type: 1,
+            ratchet_interval_frames,
+            pq_rekey_interval_secs,
+            shield_mode,
+        };
+
+        let init_output = voip::call_key_exchange::caller_init_with_context(
+            &ed25519_secret,
+            &ed25519_public,
+            peer_kyber_public,
+            &auth_context,
+        )?;
+
+        let call_id = init_output.call_id.clone();
+
+        // Serialize CallInit protobuf
+        let proto_init = crate::proto::CallInit {
+            version: VOIP_PROTOCOL_VERSION,
+            caller_device_id: Vec::new(), // set by caller
+            call_id: call_id.clone(),
+            ephemeral_x25519_public: init_output.ephemeral_x25519_public.clone(),
+            kyber_ciphertext: init_output.kyber_ciphertext.clone(),
+            identity_ed25519_public: init_output.identity_ed25519_public.clone(),
+            signature: init_output.signature.clone(),
+            key_confirmation_mac: init_output.key_confirmation_mac.clone(),
+            media_type: 1, // audio
+            ratchet_interval_frames,
+            pq_rekey_interval_secs,
+            shield_mode,
+        };
+
+        let mut buf = Vec::new();
+        proto_init
+            .encode(&mut buf)
+            .map_err(|e| ProtocolError::encode(format!("CallInit encode: {e}")))?;
+
+        let initiator = EcliptixCallInitiator {
+            init_output,
+            call_id,
+            shield_mode,
+            ratchet_interval_frames,
+            pq_rekey_interval_secs,
+        };
+
+        Ok((initiator, buf))
+    }
+
+    pub fn accept_call(
+        &self,
+        call_init_bytes: &[u8],
+        peer_kyber_public: &[u8],
+    ) -> Result<(EcliptixVoipSession, Vec<u8>), ProtocolError> {
+        let call_init = crate::proto::CallInit::decode(call_init_bytes)
+            .map_err(|e| ProtocolError::decode(format!("CallInit decode: {e}")))?;
+
+        if call_init.version != VOIP_PROTOCOL_VERSION {
+            return Err(ProtocolError::voip_call(
+                "unsupported VoIP protocol version",
+            ));
+        }
+
+        let ed25519_secret = self.identity.get_identity_ed25519_private_key_copy()?;
+        let ed25519_public = self.identity.get_identity_ed25519_public();
+        let kyber_secret = self.identity.clone_kyber_secret_key()?;
+
+        let auth_context = voip::call_key_exchange::CallInitAuthContext {
+            version: call_init.version,
+            media_type: call_init.media_type,
+            ratchet_interval_frames: call_init.ratchet_interval_frames,
+            pq_rekey_interval_secs: call_init.pq_rekey_interval_secs,
+            shield_mode: call_init.shield_mode,
+        };
+
+        let accept_output = voip::call_key_exchange::callee_accept_with_context(
+            &ed25519_secret,
+            &ed25519_public,
+            &kyber_secret,
+            peer_kyber_public,
+            &call_init.call_id,
+            &call_init.ephemeral_x25519_public,
+            &call_init.kyber_ciphertext,
+            &call_init.identity_ed25519_public,
+            &call_init.signature,
+            &call_init.key_confirmation_mac,
+            &auth_context,
+        )?;
+
+        let proto_accept = crate::proto::CallAccept {
+            version: VOIP_PROTOCOL_VERSION,
+            callee_device_id: Vec::new(),
+            call_id: call_init.call_id.clone(),
+            ephemeral_x25519_public: accept_output.ephemeral_x25519_public,
+            kyber_ciphertext: accept_output.kyber_ciphertext,
+            identity_ed25519_public: accept_output.identity_ed25519_public,
+            signature: accept_output.signature,
+            key_confirmation_mac: accept_output.key_confirmation_mac,
+        };
+
+        let mut buf = Vec::new();
+        proto_accept
+            .encode(&mut buf)
+            .map_err(|e| ProtocolError::encode(format!("CallAccept encode: {e}")))?;
+
+        let session = VoipSession::from_key_material(
+            call_init.call_id,
+            CallRole::Callee,
+            accept_output.key_material,
+            call_init.ratchet_interval_frames,
+            call_init.pq_rekey_interval_secs,
+            call_init.shield_mode,
+        )?;
+
+        Ok((EcliptixVoipSession(session), buf))
+    }
+
+    pub fn complete_call(
+        &self,
+        initiator: EcliptixCallInitiator,
+        call_accept_bytes: &[u8],
+    ) -> Result<EcliptixVoipSession, ProtocolError> {
+        let kyber_secret = self.identity.clone_kyber_secret_key()?;
+        initiator.complete_from_accept(&kyber_secret, call_accept_bytes)
+    }
+
+    pub fn initiate_call_rekey(
+        &self,
+        session: &EcliptixVoipSession,
+        peer_kyber_public: &[u8],
+    ) -> Result<Vec<u8>, ProtocolError> {
+        let ed25519_secret = self.identity.get_identity_ed25519_private_key_copy()?;
+        session.initiate_rekey(&ed25519_secret, peer_kyber_public)
+    }
+
+    pub fn process_call_rekey(
+        &self,
+        session: &EcliptixVoipSession,
+        rekey_bytes: &[u8],
+        peer_ed25519_public: &[u8],
+        peer_kyber_public: &[u8],
+    ) -> Result<Vec<u8>, ProtocolError> {
+        let ed25519_secret = self.identity.get_identity_ed25519_private_key_copy()?;
+        let kyber_secret = self.identity.clone_kyber_secret_key()?;
+        session.process_rekey(
+            rekey_bytes,
+            peer_ed25519_public,
+            &kyber_secret,
+            peer_kyber_public,
+            &ed25519_secret,
+        )
+    }
+
+    pub fn process_call_rekey_ack(
+        &self,
+        session: &EcliptixVoipSession,
+        ack_bytes: &[u8],
+        peer_ed25519_public: &[u8],
+    ) -> Result<(), ProtocolError> {
+        let kyber_secret = self.identity.clone_kyber_secret_key()?;
+        session.process_rekey_ack(ack_bytes, peer_ed25519_public, &kyber_secret)
+    }
+
+    pub fn import_call_state(
+        &self,
+        data: &[u8],
+        state_key: &[u8],
+        min_external_counter: u64,
+    ) -> Result<(EcliptixVoipSession, u64), ProtocolError> {
+        let session =
+            EcliptixVoipSession::from_sealed_state(data, state_key, min_external_counter)?;
+        let external_counter = EcliptixVoipSession::sealed_state_external_counter(data)?;
+        Ok((session, external_counter))
     }
 }
 
@@ -443,10 +878,7 @@ impl EcliptixGroupSession {
         self.0.encrypt_edit(new_content, target_message_id)
     }
 
-    pub fn encrypt_delete(
-        &self,
-        target_message_id: &[u8],
-    ) -> Result<Vec<u8>, ProtocolError> {
+    pub fn encrypt_delete(&self, target_message_id: &[u8]) -> Result<Vec<u8>, ProtocolError> {
         self.0.encrypt_delete(target_message_id)
     }
 

@@ -108,6 +108,15 @@ pub enum ProtocolError {
     #[error("franking verification failed: {0}")]
     FrankingFailed(String),
 
+    #[error("VoIP call error: {0}")]
+    VoipCall(String),
+
+    #[error("VoIP media error: {0}")]
+    VoipMedia(String),
+
+    #[error("VoIP rekey error: {0}")]
+    VoipRekey(String),
+
     #[error("secure-memory error: {0}")]
     Crypto(#[from] CryptoError),
 }
@@ -206,5 +215,20 @@ impl ProtocolError {
     #[inline]
     pub fn franking_failed(msg: impl Into<String>) -> Self {
         ProtocolError::FrankingFailed(msg.into())
+    }
+
+    #[inline]
+    pub fn voip_call(msg: impl Into<String>) -> Self {
+        ProtocolError::VoipCall(msg.into())
+    }
+
+    #[inline]
+    pub fn voip_media(msg: impl Into<String>) -> Self {
+        ProtocolError::VoipMedia(msg.into())
+    }
+
+    #[inline]
+    pub fn voip_rekey(msg: impl Into<String>) -> Self {
+        ProtocolError::VoipRekey(msg.into())
     }
 }

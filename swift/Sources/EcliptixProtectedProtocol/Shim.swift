@@ -72,6 +72,9 @@ internal let EPP_ERROR_TREE_INTEGRITY: UInt32 = 22
 internal let EPP_ERROR_WELCOME: UInt32 = 23
 internal let EPP_ERROR_MESSAGE_EXPIRED: UInt32 = 24
 internal let EPP_ERROR_FRANKING: UInt32 = 25
+internal let EPP_ERROR_VOIP_CALL: UInt32 = 26
+internal let EPP_ERROR_VOIP_MEDIA: UInt32 = 27
+internal let EPP_ERROR_VOIP_REKEY: UInt32 = 28
 
 // MARK: - Envelope type constants
 
@@ -689,6 +692,240 @@ internal func dataFromBuffer(_ buffer: NativeEppBuffer) -> Data? {
 }
 
 /// Calls the FFI, checks the error code, releases the native error, and throws on failure.
+internal struct NativeEppEncryptedFrame {
+    var call_id: NativeEppBuffer
+    var ssrc: UInt32
+    var frame_counter: UInt64
+    var ratchet_generation: UInt32
+    var encrypted_payload: NativeEppBuffer
+    var nonce: NativeEppBuffer
+    var encrypted_header: NativeEppBuffer
+}
+
+internal struct NativeEppDecryptedFrame {
+    var payload: NativeEppBuffer
+    var payload_type: UInt8
+    var ssrc: UInt32
+    var timestamp: UInt32
+    var sequence_number: UInt16
+    var frame_counter: UInt64
+    var ratchet_generation: UInt32
+}
+
+@_silgen_name("epp_voip_accept_call")
+internal func native_epp_voip_accept_call(
+    _ identity: UnsafeRawPointer?,
+    _ callInitBytes: UnsafePointer<UInt8>?,
+    _ callInitLen: Int,
+    _ peerKyberPublic: UnsafePointer<UInt8>?,
+    _ peerKyberPublicLen: Int,
+    _ outAcceptBytes: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ outSession: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_call_init_start")
+internal func native_epp_voip_call_init_start(
+    _ identity: UnsafeRawPointer?,
+    _ peerKyberPublic: UnsafePointer<UInt8>?,
+    _ peerKyberPublicLen: Int,
+    _ shieldMode: UInt8,
+    _ ratchetIntervalFrames: UInt32,
+    _ pqRekeyIntervalSecs: UInt32,
+    _ outInitBytes: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ outInitiator: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_call_init_complete")
+internal func native_epp_voip_call_init_complete(
+    _ initiatorHandle: UnsafeMutableRawPointer?,
+    _ identity: UnsafeRawPointer?,
+    _ acceptBytes: UnsafePointer<UInt8>?,
+    _ acceptLen: Int,
+    _ outSession: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_call_initiator_destroy")
+internal func native_epp_voip_call_initiator_destroy(
+    _ handle: UnsafeMutableRawPointer?
+)
+
+@_silgen_name("epp_voip_encrypt_frame")
+internal func native_epp_voip_encrypt_frame(
+    _ handle: UnsafeRawPointer?,
+    _ payloadType: UInt8,
+    _ ssrc: UInt32,
+    _ timestamp: UInt32,
+    _ sequenceNumber: UInt16,
+    _ payload: UnsafePointer<UInt8>?,
+    _ payloadLen: Int,
+    _ outFrame: UnsafeMutablePointer<NativeEppEncryptedFrame>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_decrypt_frame")
+internal func native_epp_voip_decrypt_frame(
+    _ handle: UnsafeRawPointer?,
+    _ callId: UnsafePointer<UInt8>?,
+    _ callIdLen: Int,
+    _ ssrc: UInt32,
+    _ frameCounter: UInt64,
+    _ ratchetGeneration: UInt32,
+    _ encryptedPayload: UnsafePointer<UInt8>?,
+    _ encryptedPayloadLen: Int,
+    _ nonce: UnsafePointer<UInt8>?,
+    _ nonceLen: Int,
+    _ encryptedHeader: UnsafePointer<UInt8>?,
+    _ encryptedHeaderLen: Int,
+    _ outFrame: UnsafeMutablePointer<NativeEppDecryptedFrame>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_call_id")
+internal func native_epp_voip_call_id(
+    _ handle: UnsafeRawPointer?,
+    _ outBuf: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_ssrc")
+internal func native_epp_voip_ssrc(
+    _ handle: UnsafeRawPointer?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_is_shield_mode")
+internal func native_epp_voip_is_shield_mode(
+    _ handle: UnsafeRawPointer?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt8
+
+@_silgen_name("epp_voip_end_call")
+internal func native_epp_voip_end_call(
+    _ handle: UnsafeRawPointer?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_generate_call_end_hmac")
+internal func native_epp_voip_generate_call_end_hmac(
+    _ handle: UnsafeRawPointer?,
+    _ deviceId: UnsafePointer<UInt8>?,
+    _ deviceIdLen: Int,
+    _ timestamp: UInt64,
+    _ outHmac: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_verify_call_end_hmac")
+internal func native_epp_voip_verify_call_end_hmac(
+    _ handle: UnsafeRawPointer?,
+    _ deviceId: UnsafePointer<UInt8>?,
+    _ deviceIdLen: Int,
+    _ timestamp: UInt64,
+    _ hmacValue: UnsafePointer<UInt8>?,
+    _ hmacValueLen: Int,
+    _ outValid: UnsafeMutablePointer<UInt8>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_build_call_end")
+internal func native_epp_voip_build_call_end(
+    _ handle: UnsafeRawPointer?,
+    _ deviceId: UnsafePointer<UInt8>?,
+    _ deviceIdLen: Int,
+    _ timestamp: UInt64,
+    _ outBuf: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_process_call_end")
+internal func native_epp_voip_process_call_end(
+    _ handle: UnsafeRawPointer?,
+    _ callEndBytes: UnsafePointer<UInt8>?,
+    _ callEndLen: Int,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_encrypt_call_control")
+internal func native_epp_voip_encrypt_call_control(
+    _ handle: UnsafeRawPointer?,
+    _ controlType: UInt8,
+    _ dtmfDigit: UInt8,
+    _ outFrame: UnsafeMutablePointer<NativeEppEncryptedFrame>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_export_sealed_state")
+internal func native_epp_voip_export_sealed_state(
+    _ handle: UnsafeRawPointer?,
+    _ stateKey: UnsafePointer<UInt8>?,
+    _ stateKeyLen: Int,
+    _ externalCounter: UInt64,
+    _ outBuf: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_initiate_rekey")
+internal func native_epp_voip_initiate_rekey(
+    _ handle: UnsafeRawPointer?,
+    _ identity: UnsafeRawPointer?,
+    _ peerKyberPublic: UnsafePointer<UInt8>?,
+    _ peerKyberPublicLen: Int,
+    _ outRekeyBytes: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_process_rekey")
+internal func native_epp_voip_process_rekey(
+    _ handle: UnsafeRawPointer?,
+    _ identity: UnsafeRawPointer?,
+    _ peerEd25519Public: UnsafePointer<UInt8>?,
+    _ peerEd25519PublicLen: Int,
+    _ rekeyBytes: UnsafePointer<UInt8>?,
+    _ rekeyLen: Int,
+    _ peerKyberPublic: UnsafePointer<UInt8>?,
+    _ peerKyberPublicLen: Int,
+    _ outAckBytes: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_process_rekey_ack")
+internal func native_epp_voip_process_rekey_ack(
+    _ handle: UnsafeRawPointer?,
+    _ identity: UnsafeRawPointer?,
+    _ peerEd25519Public: UnsafePointer<UInt8>?,
+    _ peerEd25519PublicLen: Int,
+    _ ackBytes: UnsafePointer<UInt8>?,
+    _ ackLen: Int,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_import_sealed_state")
+internal func native_epp_voip_import_sealed_state(
+    _ data: UnsafePointer<UInt8>?,
+    _ dataLen: Int,
+    _ stateKey: UnsafePointer<UInt8>?,
+    _ stateKeyLen: Int,
+    _ minExternalCounter: UInt64,
+    _ outSession: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_sealed_state_external_counter")
+internal func native_epp_voip_sealed_state_external_counter(
+    _ data: UnsafePointer<UInt8>?,
+    _ dataLen: Int,
+    _ outExternalCounter: UnsafeMutablePointer<UInt64>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_session_destroy")
+internal func native_epp_voip_session_destroy(
+    _ handle: UnsafeMutableRawPointer?
+)
+
 internal func checkResult(_ code: UInt32, _ nativeError: inout NativeEppError) throws {
     guard code == EPP_SUCCESS else {
         let error = EppError.from(code: code, nativeError: nativeError)

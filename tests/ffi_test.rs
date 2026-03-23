@@ -1,7 +1,6 @@
 #![cfg(feature = "ffi")]
 // Copyright (c) 2026 Oleksandr Melnychenko. All rights reserved.
 // SPDX-License-Identifier: MIT
-
 #![allow(clippy::borrow_as_ptr, unsafe_code)]
 
 use ecliptix_protocol::crypto::CryptoInterop;
@@ -12,12 +11,45 @@ fn init() {
 
 mod ffi {
     use ecliptix_protocol::ffi::api::*;
+    use ecliptix_protocol::proto::CallAccept;
+    use prost::Message;
     use std::ptr;
 
     const fn null_error() -> EppError {
         EppError {
             code: EppErrorCode::EppSuccess,
             message: ptr::null_mut(),
+        }
+    }
+
+    const fn null_buffer() -> EppBuffer {
+        EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        }
+    }
+
+    const fn null_encrypted_frame() -> EppEncryptedFrame {
+        EppEncryptedFrame {
+            call_id: null_buffer(),
+            ssrc: 0,
+            frame_counter: 0,
+            ratchet_generation: 0,
+            encrypted_payload: null_buffer(),
+            nonce: null_buffer(),
+            encrypted_header: null_buffer(),
+        }
+    }
+
+    const fn null_decrypted_frame() -> EppDecryptedFrame {
+        EppDecryptedFrame {
+            payload: null_buffer(),
+            payload_type: 0,
+            ssrc: 0,
+            timestamp: 0,
+            sequence_number: 0,
+            frame_counter: 0,
+            ratchet_generation: 0,
         }
     }
 
@@ -228,6 +260,400 @@ mod ffi {
             epp_buffer_release(&mut meta_buf);
             epp_session_destroy(&mut bob_session_h);
             epp_session_destroy(&mut alice_session_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn ffi_voip_call_init_complete_rejects_wrong_version_without_consuming_initiator() {
+        init_lib();
+
+        let mut alice_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut bob_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut err = null_error();
+        unsafe {
+            epp_identity_create(&mut alice_h, &mut err);
+            epp_identity_create(&mut bob_h, &mut err);
+        }
+
+        let mut alice_kyber = vec![0u8; 1184];
+        let mut bob_kyber = vec![0u8; 1184];
+        let code = unsafe {
+            epp_identity_get_kyber_public(bob_h, bob_kyber.as_mut_ptr(), bob_kyber.len(), &mut err)
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        let code = unsafe {
+            epp_identity_get_kyber_public(
+                alice_h,
+                alice_kyber.as_mut_ptr(),
+                alice_kyber.len(),
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let mut init_buf = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        let mut init_h: *mut EppVoipCallInitiatorHandle = ptr::null_mut();
+        let code = unsafe {
+            epp_voip_call_init_start(
+                alice_h,
+                bob_kyber.as_ptr(),
+                bob_kyber.len(),
+                0,
+                512,
+                60,
+                &mut init_buf,
+                &mut init_h,
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let mut accept_buf = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        let mut bob_session_h: *mut EppVoipSessionHandle = ptr::null_mut();
+        let code = unsafe {
+            epp_voip_accept_call(
+                bob_h,
+                init_buf.data,
+                init_buf.length,
+                alice_kyber.as_ptr(),
+                alice_kyber.len(),
+                &mut accept_buf,
+                &mut bob_session_h,
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let accept_slice =
+            unsafe { std::slice::from_raw_parts(accept_buf.data, accept_buf.length) };
+        let mut accept = CallAccept::decode(accept_slice).unwrap();
+        accept.version += 1;
+        let mut bad_accept = Vec::new();
+        accept.encode(&mut bad_accept).unwrap();
+
+        let mut alice_session_h: *mut EppVoipSessionHandle = ptr::null_mut();
+        let code = unsafe {
+            epp_voip_call_init_complete(
+                init_h,
+                alice_h,
+                bad_accept.as_ptr(),
+                bad_accept.len(),
+                &mut alice_session_h,
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppErrorInvalidInput);
+        assert!(alice_session_h.is_null());
+
+        let code = unsafe {
+            epp_voip_call_init_complete(
+                init_h,
+                alice_h,
+                accept_buf.data,
+                accept_buf.length,
+                &mut alice_session_h,
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        assert!(!alice_session_h.is_null());
+
+        unsafe {
+            epp_buffer_release(&mut init_buf);
+            epp_buffer_release(&mut accept_buf);
+            epp_voip_call_initiator_destroy(init_h);
+            epp_voip_session_destroy(bob_session_h);
+            epp_voip_session_destroy(alice_session_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn ffi_voip_rekey_restore_and_call_end_roundtrip() {
+        init_lib();
+
+        let mut alice_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut bob_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut err = null_error();
+        unsafe {
+            epp_identity_create(&mut alice_h, &mut err);
+            epp_identity_create(&mut bob_h, &mut err);
+        }
+
+        let mut alice_kyber = vec![0u8; 1184];
+        let mut bob_kyber = vec![0u8; 1184];
+        let mut alice_ed = vec![0u8; 32];
+        let mut bob_ed = vec![0u8; 32];
+        unsafe {
+            assert_eq!(
+                epp_identity_get_kyber_public(
+                    alice_h,
+                    alice_kyber.as_mut_ptr(),
+                    alice_kyber.len(),
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_identity_get_kyber_public(
+                    bob_h,
+                    bob_kyber.as_mut_ptr(),
+                    bob_kyber.len(),
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_identity_get_ed25519_public(
+                    alice_h,
+                    alice_ed.as_mut_ptr(),
+                    alice_ed.len(),
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_identity_get_ed25519_public(bob_h, bob_ed.as_mut_ptr(), bob_ed.len(), &mut err),
+                EppErrorCode::EppSuccess
+            );
+        }
+
+        let mut init_buf = null_buffer();
+        let mut init_h: *mut EppVoipCallInitiatorHandle = ptr::null_mut();
+        let mut accept_buf = null_buffer();
+        let mut rekey_buf = null_buffer();
+        let mut ack_buf = null_buffer();
+        let mut sealed_buf = null_buffer();
+        let mut call_end_buf = null_buffer();
+        let mut alice_session_h: *mut EppVoipSessionHandle = ptr::null_mut();
+        let mut bob_session_h: *mut EppVoipSessionHandle = ptr::null_mut();
+        let mut restored_alice_h: *mut EppVoipSessionHandle = ptr::null_mut();
+
+        unsafe {
+            assert_eq!(
+                epp_voip_call_init_start(
+                    alice_h,
+                    bob_kyber.as_ptr(),
+                    bob_kyber.len(),
+                    0,
+                    512,
+                    60,
+                    &mut init_buf,
+                    &mut init_h,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+
+            assert_eq!(
+                epp_voip_accept_call(
+                    bob_h,
+                    init_buf.data,
+                    init_buf.length,
+                    alice_kyber.as_ptr(),
+                    alice_kyber.len(),
+                    &mut accept_buf,
+                    &mut bob_session_h,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+
+            assert_eq!(
+                epp_voip_call_init_complete(
+                    init_h,
+                    alice_h,
+                    accept_buf.data,
+                    accept_buf.length,
+                    &mut alice_session_h,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+
+            assert_eq!(
+                epp_voip_initiate_rekey(
+                    alice_session_h,
+                    alice_h,
+                    bob_kyber.as_ptr(),
+                    bob_kyber.len(),
+                    &mut rekey_buf,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+
+            assert_eq!(
+                epp_voip_process_rekey(
+                    bob_session_h,
+                    bob_h,
+                    alice_ed.as_ptr(),
+                    alice_ed.len(),
+                    rekey_buf.data,
+                    rekey_buf.length,
+                    alice_kyber.as_ptr(),
+                    alice_kyber.len(),
+                    &mut ack_buf,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+
+            assert_eq!(
+                epp_voip_process_rekey_ack(
+                    alice_session_h,
+                    alice_h,
+                    bob_ed.as_ptr(),
+                    bob_ed.len(),
+                    ack_buf.data,
+                    ack_buf.length,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+        }
+
+        let state_key = [0x42u8; 32];
+        let mut external_counter = 0u64;
+
+        unsafe {
+            assert_eq!(
+                epp_voip_export_sealed_state(
+                    alice_session_h,
+                    state_key.as_ptr(),
+                    state_key.len(),
+                    7,
+                    &mut sealed_buf,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_voip_sealed_state_external_counter(
+                    sealed_buf.data,
+                    sealed_buf.length,
+                    &mut external_counter,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(external_counter, 7);
+            assert_eq!(
+                epp_voip_import_sealed_state(
+                    sealed_buf.data,
+                    sealed_buf.length,
+                    state_key.as_ptr(),
+                    state_key.len(),
+                    7,
+                    &mut restored_alice_h,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+        }
+
+        let payload = b"ffi-voip";
+        let mut enc_frame = null_encrypted_frame();
+        let mut dec_frame = null_decrypted_frame();
+
+        unsafe {
+            let alice_ssrc = epp_voip_ssrc(restored_alice_h, &mut err);
+            assert_eq!(
+                epp_voip_encrypt_frame(
+                    restored_alice_h,
+                    111,
+                    alice_ssrc,
+                    160,
+                    1,
+                    payload.as_ptr(),
+                    payload.len(),
+                    &mut enc_frame,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_voip_decrypt_frame(
+                    bob_session_h,
+                    enc_frame.call_id.data,
+                    enc_frame.call_id.length,
+                    enc_frame.ssrc,
+                    enc_frame.frame_counter,
+                    enc_frame.ratchet_generation,
+                    enc_frame.encrypted_payload.data,
+                    enc_frame.encrypted_payload.length,
+                    enc_frame.nonce.data,
+                    enc_frame.nonce.length,
+                    enc_frame.encrypted_header.data,
+                    enc_frame.encrypted_header.length,
+                    &mut dec_frame,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            let decrypted =
+                std::slice::from_raw_parts(dec_frame.payload.data, dec_frame.payload.length);
+            assert_eq!(decrypted, payload);
+
+            assert_eq!(
+                epp_voip_build_call_end(
+                    restored_alice_h,
+                    b"alice-device".as_ptr(),
+                    b"alice-device".len(),
+                    999,
+                    &mut call_end_buf,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_voip_process_call_end(
+                    bob_session_h,
+                    call_end_buf.data,
+                    call_end_buf.length,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+
+            let mut failed_frame = null_encrypted_frame();
+            let code = epp_voip_encrypt_frame(
+                bob_session_h,
+                111,
+                epp_voip_ssrc(bob_session_h, &mut err),
+                320,
+                2,
+                payload.as_ptr(),
+                payload.len(),
+                &mut failed_frame,
+                &mut err,
+            );
+            assert_ne!(code, EppErrorCode::EppSuccess);
+
+            epp_buffer_release(&mut init_buf);
+            epp_buffer_release(&mut accept_buf);
+            epp_buffer_release(&mut rekey_buf);
+            epp_buffer_release(&mut ack_buf);
+            epp_buffer_release(&mut sealed_buf);
+            epp_buffer_release(&mut call_end_buf);
+            epp_buffer_release(&mut enc_frame.call_id);
+            epp_buffer_release(&mut enc_frame.encrypted_payload);
+            epp_buffer_release(&mut enc_frame.nonce);
+            epp_buffer_release(&mut enc_frame.encrypted_header);
+            epp_buffer_release(&mut dec_frame.payload);
+            epp_voip_call_initiator_destroy(init_h);
+            epp_voip_session_destroy(alice_session_h);
+            epp_voip_session_destroy(bob_session_h);
+            epp_voip_session_destroy(restored_alice_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
         }

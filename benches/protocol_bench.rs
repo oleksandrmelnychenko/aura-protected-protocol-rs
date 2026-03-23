@@ -821,5 +821,160 @@ criterion_group! {
         bench_group_encrypt_decrypt,
         bench_group_update,
         bench_group_sealed_state,
+        bench_voip_encrypt_frame,
+        bench_voip_decrypt_frame,
+        bench_voip_key_exchange,
+        bench_voip_ratchet_advance,
 }
 criterion_main!(benches);
+
+fn create_voip_session_pair() -> (
+    ecliptix_protocol::protocol::voip::VoipSession,
+    ecliptix_protocol::protocol::voip::VoipSession,
+) {
+    use ecliptix_protocol::protocol::voip::{
+        callee_accept, caller_finish, caller_init, CallRole, VoipSession,
+    };
+
+    let alice = IdentityKeys::create(1).unwrap();
+    let bob = IdentityKeys::create(1).unwrap();
+
+    let alice_ed_secret = alice.get_identity_ed25519_private_key_copy().unwrap();
+    let alice_ed_public = alice.get_identity_ed25519_public();
+    let alice_kyber_pub = alice.get_kyber_public();
+    let alice_kyber_sec = alice.clone_kyber_secret_key().unwrap();
+
+    let bob_ed_secret = bob.get_identity_ed25519_private_key_copy().unwrap();
+    let bob_ed_public = bob.get_identity_ed25519_public();
+    let bob_kyber_pub = bob.get_kyber_public();
+    let bob_kyber_sec = bob.clone_kyber_secret_key().unwrap();
+
+    let init_output = caller_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub).unwrap();
+    let call_id = init_output.call_id.clone();
+
+    let accept_output = callee_accept(
+        &bob_ed_secret,
+        &bob_ed_public,
+        &bob_kyber_sec,
+        &alice_kyber_pub,
+        &call_id,
+        &init_output.ephemeral_x25519_public,
+        &init_output.kyber_ciphertext,
+        &init_output.identity_ed25519_public,
+        &init_output.signature,
+        &init_output.key_confirmation_mac,
+        false,
+    )
+    .unwrap();
+
+    let alice_keys = caller_finish(
+        &init_output,
+        &alice_kyber_sec,
+        &call_id,
+        &accept_output.ephemeral_x25519_public,
+        &accept_output.kyber_ciphertext,
+        &accept_output.identity_ed25519_public,
+        &accept_output.signature,
+        &accept_output.key_confirmation_mac,
+        false,
+    )
+    .unwrap();
+
+    let alice_session = VoipSession::from_key_material(
+        call_id.clone(),
+        CallRole::Caller,
+        alice_keys,
+        512,
+        60,
+        false,
+    )
+    .unwrap();
+    let bob_session = VoipSession::from_key_material(
+        call_id,
+        CallRole::Callee,
+        accept_output.key_material,
+        512,
+        60,
+        false,
+    )
+    .unwrap();
+
+    (alice_session, bob_session)
+}
+
+fn bench_voip_encrypt_frame(c: &mut Criterion) {
+    init();
+    let (alice, _bob) = create_voip_session_pair();
+    let payload = vec![0xABu8; 320];
+
+    c.bench_function("voip_encrypt_frame_320B", |b| {
+        let mut seq = 0u16;
+        b.iter(|| {
+            let header = ecliptix_protocol::protocol::voip::frame::FrameHeader {
+                payload_type: 111,
+                ssrc: alice.ssrc(),
+                timestamp: u32::from(seq) * 160,
+                sequence_number: seq,
+            };
+            let result = alice.encrypt_frame(&header, black_box(&payload));
+            seq = seq.wrapping_add(1);
+            black_box(result).unwrap();
+        });
+    });
+}
+
+fn bench_voip_decrypt_frame(c: &mut Criterion) {
+    init();
+    let (alice, bob) = create_voip_session_pair();
+    let payload = vec![0xABu8; 320];
+
+    let mut frames = Vec::new();
+    for i in 0u16..1000 {
+        let header = ecliptix_protocol::protocol::voip::frame::FrameHeader {
+            payload_type: 111,
+            ssrc: alice.ssrc(),
+            timestamp: u32::from(i) * 160,
+            sequence_number: i,
+        };
+        frames.push(alice.encrypt_frame(&header, &payload).unwrap());
+    }
+
+    let mut idx = 0;
+    c.bench_function("voip_decrypt_frame_320B", |b| {
+        b.iter(|| {
+            let result = bob.decrypt_frame(black_box(&frames[idx]));
+            idx += 1;
+            if idx >= frames.len() {
+                idx = 0;
+            }
+            black_box(result)
+        });
+    });
+}
+
+fn bench_voip_key_exchange(c: &mut Criterion) {
+    init();
+    c.bench_function("voip_full_key_exchange", |b| {
+        b.iter(|| {
+            black_box(create_voip_session_pair());
+        });
+    });
+}
+
+fn bench_voip_ratchet_advance(c: &mut Criterion) {
+    init();
+    use ecliptix_protocol::crypto::SecureMemoryHandle;
+    use ecliptix_protocol::protocol::voip::key_ratchet::MediaKeyRatchet;
+
+    let key_bytes = CryptoInterop::get_random_bytes(32);
+    let mut handle = SecureMemoryHandle::allocate(32).unwrap();
+    handle.write(&key_bytes).unwrap();
+    let prefix = [0x01u8, 0x02, 0x03, 0x04];
+    let mut ratchet = MediaKeyRatchet::new(handle, prefix);
+
+    c.bench_function("voip_ratchet_advance", |b| {
+        b.iter(|| {
+            black_box(ratchet.advance().unwrap());
+        });
+    });
+}

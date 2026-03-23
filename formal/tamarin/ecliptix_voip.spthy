@@ -1,0 +1,154 @@
+theory EcliptixVoIP
+begin
+
+builtins: diffie-hellman, hashing, signing
+
+functions:
+    kyber_pk/1,
+    kyber_encaps/2,
+    kyber_decaps/2,
+    mac/2
+
+equations:
+    kyber_decaps(kyber_encaps(ss, kyber_pk(sk)), sk) = ss
+
+restriction Equality:
+    "All x y #i. Eq(x, y) @i ==> x = y"
+
+rule Generate_Keys:
+    let ed_pk   = pk(~ed_sk)
+        kpk     = kyber_pk(~kyber_sk)
+    in
+    [ Fr(~ed_sk), Fr(~kyber_sk) ]
+  --[ GenerateKeys($A) ]->
+    [ !LTK($A, ~ed_sk, ~kyber_sk, ed_pk, kpk),
+      Out(ed_pk), Out(kpk) ]
+
+rule Caller_Init:
+    let eph_pub_C    = 'g'^~eph_priv_C
+        kyber_ct_C   = kyber_encaps(~kyber_ss_C, kpk_E)
+        sig_msg      = <~call_id, eph_pub_C, kyber_ct_C>
+        sig          = sign(sig_msg, ~ed_sk_C)
+        kc_mac_C     = mac('caller-confirm', <~call_id, eph_pub_C, kyber_ct_C>)
+    in
+    [ !LTK($C, ~ed_sk_C, ~kyber_sk_C, ed_pk_C, kpk_C),
+      !LTK($E, ed_sk_E, kyber_sk_E, ed_pk_E, kpk_E),
+      Fr(~eph_priv_C), Fr(~kyber_ss_C), Fr(~call_id) ]
+  --[ CallerInitStarted($C, $E, ~call_id) ]->
+    [ Out(<~call_id, eph_pub_C, kyber_ct_C, ed_pk_C, sig, kc_mac_C>),
+      CallerWait($C, $E, ~call_id, ~eph_priv_C, ~kyber_ss_C, ed_pk_E, kpk_E) ]
+
+rule Callee_Accept:
+    let kyber_ss_C   = kyber_decaps(kyber_ct_C, ~kyber_sk_E)
+        sig_msg      = <call_id, eph_pub_C, kyber_ct_C>
+        eph_pub_E    = 'g'^~eph_priv_E
+        classical_dh = eph_pub_C^~eph_priv_E
+        kyber_ct_E   = kyber_encaps(~kyber_ss_E, kpk_C)
+        root_secret  = h(<'voip-root', classical_dh, kyber_ss_C, ~kyber_ss_E>)
+        send_key     = h(<'media-send', root_secret>)
+        recv_key     = h(<'media-recv', root_secret>)
+        t_hash       = h(<'voip-transcript', call_id, eph_pub_C, eph_pub_E, kyber_ct_C, kyber_ct_E>)
+        kc_callee    = mac('callee-confirm', t_hash)
+    in
+    [ !LTK($E, ~ed_sk_E, ~kyber_sk_E, ed_pk_E, kpk_E),
+      !LTK($C, ed_sk_C, kyber_sk_C, ed_pk_C, kpk_C),
+      In(<call_id, eph_pub_C, kyber_ct_C, ed_pk_C, sig, kc_mac_C>),
+      Fr(~eph_priv_E), Fr(~kyber_ss_E) ]
+  --[ Eq(verify(sig, sig_msg, ed_pk_C), true),
+      CalleeAccepted($E, $C, call_id, root_secret),
+      CalleeRunning($E, $C, t_hash),
+      MediaKey($E, $C, 'callee', send_key),
+      MediaKey($E, $C, 'callee', recv_key) ]->
+    [ Out(<eph_pub_E, kyber_ct_E, kc_callee>),
+      CalleeSession($E, $C, call_id, root_secret, t_hash) ]
+
+rule Caller_Finish:
+    let classical_dh = eph_pub_E^~eph_priv_C
+        kyber_ss_E   = kyber_decaps(kyber_ct_E, ~kyber_sk_C)
+        root_secret  = h(<'voip-root', classical_dh, ~kyber_ss_C, kyber_ss_E>)
+        send_key     = h(<'media-send', root_secret>)
+        recv_key     = h(<'media-recv', root_secret>)
+        t_hash       = h(<'voip-transcript', ~call_id, eph_pub_C, eph_pub_E, kyber_ct_C, kyber_ct_E>)
+        kc_callee_ex = mac('callee-confirm', t_hash)
+        kc_caller    = mac('caller-confirm', t_hash)
+    in
+    [ CallerWait($C, $E, ~call_id, ~eph_priv_C, ~kyber_ss_C, ed_pk_E, kpk_E),
+      !LTK($C, ed_sk_C, ~kyber_sk_C, ed_pk_C, kpk_C),
+      In(<eph_pub_E, kyber_ct_E, kc_callee>) ]
+  --[ Eq(kc_callee, kc_callee_ex),
+      CallerCompleted($C, $E, ~call_id, root_secret),
+      CallerCommit($C, $E, t_hash),
+      MediaKey($C, $E, 'caller', send_key),
+      MediaKey($C, $E, 'caller', recv_key),
+      VoIPEstablished($C, $E, root_secret) ]->
+    [ VoIPSession($C, $E, ~call_id, root_secret) ]
+
+rule Callee_Finish:
+    [ CalleeSession($E, $C, call_id, root_secret, t_hash) ]
+  --[ CalleeCommit($E, $C, t_hash),
+      VoIPEstablished($E, $C, root_secret) ]->
+    [ VoIPSession($E, $C, call_id, root_secret) ]
+
+rule PQ_Rekey:
+    let new_eph_pub   = 'g'^~new_eph_priv
+        new_dh        = 'g'^~new_eph_priv
+        kyber_ct_rk   = kyber_encaps(~new_kyber_ss, kpk_B)
+        new_root      = h(<'voip-rekey', old_root, new_dh, ~new_kyber_ss>)
+        new_send_key  = h(<'media-send', new_root>)
+        new_recv_key  = h(<'media-recv', new_root>)
+    in
+    [ VoIPSession($A, $B, call_id, old_root),
+      !LTK($B, ed_sk_B, kyber_sk_B, ed_pk_B, kpk_B),
+      Fr(~new_eph_priv), Fr(~new_kyber_ss) ]
+  --[ Rekeyed($A, $B, call_id, new_root),
+      MediaKey($A, $B, 'rekey', new_send_key),
+      MediaKey($A, $B, 'rekey', new_recv_key) ]->
+    [ VoIPSession($A, $B, call_id, new_root),
+      Out(kyber_ct_rk) ]
+
+rule Reveal_All:
+    [ !LTK($A, ~ed_sk, ~kyber_sk, ed_pk, kpk) ]
+  --[ Compromise($A), FullCompromise($A) ]->
+    [ Out(~ed_sk), Out(~kyber_sk) ]
+
+rule Reveal_Classical:
+    [ !LTK($A, ~ed_sk, ~kyber_sk, ed_pk, kpk) ]
+  --[ Compromise($A) ]->
+    [ Out(~ed_sk) ]
+
+lemma voip_key_secrecy:
+    "All A B role k #i.
+        MediaKey(A, B, role, k) @i
+        ==> not(Ex #j. K(k) @j)
+            | (Ex #r. Compromise(A) @r)
+            | (Ex #r. Compromise(B) @r)"
+
+lemma voip_mutual_authentication:
+    "All A B t #i.
+        CallerCommit(A, B, t) @i
+        ==> (Ex #j. CalleeRunning(B, A, t) @j & j < i)
+            | (Ex #r. Compromise(A) @r)
+            | (Ex #r. Compromise(B) @r)"
+
+lemma voip_forward_secrecy:
+    "All A B role k #i #j.
+        MediaKey(A, B, role, k) @i & K(k) @j
+        ==> (Ex #r. Compromise(A) @r & r < i)
+            | (Ex #r. Compromise(B) @r & r < i)
+            | (Ex #r. FullCompromise(A) @r)
+            | (Ex #r. FullCompromise(B) @r)"
+
+lemma voip_pq_resistance:
+    "All A B role k #i #j.
+        MediaKey(A, B, role, k) @i & K(k) @j
+        ==> (Ex #r. FullCompromise(A) @r)
+            | (Ex #r. FullCompromise(B) @r)"
+
+lemma voip_session_exists:
+    exists-trace
+    "Ex A B k #i #j.
+        VoIPEstablished(A, B, k) @i
+        & VoIPEstablished(B, A, k) @j
+        & not(A = B)"
+
+end

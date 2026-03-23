@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Oleksandr Melnychenko. All rights reserved.
 // SPDX-License-Identifier: MIT
 
-#![allow(clippy::too_many_arguments, unsafe_code)]
+#![allow(clippy::missing_safety_doc, clippy::too_many_arguments, unsafe_code)]
 // # FFI Safety Contract
 //
 // All `pub unsafe extern "C"` functions in this module share these preconditions:
@@ -21,11 +21,10 @@ use std::mem::size_of;
 use std::os::raw::c_char;
 
 use crate::core::constants::{
-    AES_GCM_NONCE_BYTES, AES_KEY_BYTES, DEFAULT_ONE_TIME_KEY_COUNT,
-    ED25519_PUBLIC_KEY_BYTES, HMAC_BYTES, KYBER_PUBLIC_KEY_BYTES, MAX_BUFFER_SIZE,
-    MAX_ENVELOPE_MESSAGE_SIZE, MAX_GROUP_MESSAGE_SIZE, MAX_HANDSHAKE_MESSAGE_SIZE,
-    MESSAGE_ID_BYTES, PROTOCOL_VERSION, PSK_BYTES, ROOT_KEY_BYTES,
-    X25519_PUBLIC_KEY_BYTES,
+    AES_GCM_NONCE_BYTES, AES_KEY_BYTES, DEFAULT_ONE_TIME_KEY_COUNT, ED25519_PUBLIC_KEY_BYTES,
+    HMAC_BYTES, KYBER_PUBLIC_KEY_BYTES, MAX_BUFFER_SIZE, MAX_ENVELOPE_MESSAGE_SIZE,
+    MAX_GROUP_MESSAGE_SIZE, MAX_HANDSHAKE_MESSAGE_SIZE, MESSAGE_ID_BYTES, PROTOCOL_VERSION,
+    PSK_BYTES, ROOT_KEY_BYTES, X25519_PUBLIC_KEY_BYTES,
 };
 use crate::core::errors::ProtocolError;
 use crate::crypto::SecureMemoryHandle;
@@ -64,6 +63,9 @@ pub enum EppErrorCode {
     EppErrorWelcome = 23,
     EppErrorMessageExpired = 24,
     EppErrorFranking = 25,
+    EppErrorVoipCall = 26,
+    EppErrorVoipMedia = 27,
+    EppErrorVoipRekey = 28,
 }
 
 #[repr(C)]
@@ -97,6 +99,30 @@ pub struct EppSessionHandle(pub Option<Session>);
 pub struct EppHandshakeInitiatorHandle(pub Option<HandshakeInitiator>);
 pub struct EppHandshakeResponderHandle(pub Option<HandshakeResponder>);
 pub struct EppGroupSessionHandle(pub Option<GroupSession>);
+
+pub struct EppVoipSessionHandle(pub Option<crate::protocol::voip::VoipSession>);
+
+#[repr(C)]
+pub struct EppEncryptedFrame {
+    pub call_id: EppBuffer,
+    pub ssrc: u32,
+    pub frame_counter: u64,
+    pub ratchet_generation: u32,
+    pub encrypted_payload: EppBuffer,
+    pub nonce: EppBuffer,
+    pub encrypted_header: EppBuffer,
+}
+
+#[repr(C)]
+pub struct EppDecryptedFrame {
+    pub payload: EppBuffer,
+    pub payload_type: u8,
+    pub ssrc: u32,
+    pub timestamp: u32,
+    pub sequence_number: u16,
+    pub frame_counter: u64,
+    pub ratchet_generation: u32,
+}
 
 pub struct EppKeyPackageSecretsHandle {
     pub x25519_private: SecureMemoryHandle,
@@ -163,6 +189,9 @@ const fn error_code_from_protocol(e: &ProtocolError) -> EppErrorCode {
         ProtocolError::WelcomeError(_) => EppErrorCode::EppErrorWelcome,
         ProtocolError::MessageExpired(_) => EppErrorCode::EppErrorMessageExpired,
         ProtocolError::FrankingFailed(_) => EppErrorCode::EppErrorFranking,
+        ProtocolError::VoipCall(_) => EppErrorCode::EppErrorVoipCall,
+        ProtocolError::VoipMedia(_) => EppErrorCode::EppErrorVoipMedia,
+        ProtocolError::VoipRekey(_) => EppErrorCode::EppErrorVoipRekey,
     }
 }
 
@@ -1381,7 +1410,11 @@ pub unsafe extern "C" fn epp_shamir_reconstruct(
             .collect();
         all_shares.push(auth_tag.to_vec());
 
-        match crate::api::EcliptixProtocol::shamir_reconstruct(&all_shares, auth_key_slice, share_count) {
+        match crate::api::EcliptixProtocol::shamir_reconstruct(
+            &all_shares,
+            auth_key_slice,
+            share_count,
+        ) {
             Ok(secret) => {
                 write_buffer(out_secret, secret);
                 EppErrorCode::EppSuccess
@@ -1482,6 +1515,9 @@ pub const extern "C" fn epp_error_string(code: EppErrorCode) -> *const c_char {
         EppErrorCode::EppErrorWelcome => b"Welcome processing error\0",
         EppErrorCode::EppErrorMessageExpired => b"Message expired\0",
         EppErrorCode::EppErrorFranking => b"Franking verification failed\0",
+        EppErrorCode::EppErrorVoipCall => b"VoIP call error\0",
+        EppErrorCode::EppErrorVoipMedia => b"VoIP media error\0",
+        EppErrorCode::EppErrorVoipRekey => b"VoIP rekey error\0",
     };
     s.as_ptr().cast::<c_char>()
 }
@@ -3011,7 +3047,10 @@ pub unsafe extern "C" fn epp_group_decrypt_ex(
                 (*out_result).content_type = r.content_type.to_u32();
                 (*out_result).ttl_seconds = r.ttl_seconds;
                 (*out_result).sent_timestamp = r.sent_timestamp;
-                write_buffer(std::ptr::addr_of_mut!((*out_result).message_id), r.message_id);
+                write_buffer(
+                    std::ptr::addr_of_mut!((*out_result).message_id),
+                    r.message_id,
+                );
                 write_buffer(
                     std::ptr::addr_of_mut!((*out_result).referenced_message_id),
                     r.referenced_message_id,
@@ -3049,12 +3088,8 @@ pub unsafe extern "C" fn epp_group_compute_message_id(
         }
 
         let gid = std::slice::from_raw_parts(group_id, group_id_length);
-        let id = crate::protocol::group::compute_message_id(
-            gid,
-            epoch,
-            sender_leaf_index,
-            generation,
-        );
+        let id =
+            crate::protocol::group::compute_message_id(gid, epoch, sender_leaf_index, generation);
         write_buffer(out_message_id, id);
         EppErrorCode::EppSuccess
     })
@@ -3270,4 +3305,1039 @@ pub unsafe extern "C" fn epp_group_get_pending_reinit(
         }
         EppErrorCode::EppSuccess
     })
+}
+
+unsafe fn require_voip_ref<'a>(
+    handle: *const EppVoipSessionHandle,
+    out_error: *mut EppError,
+) -> Result<&'a crate::protocol::voip::VoipSession, EppErrorCode> {
+    if handle.is_null() {
+        write_error(
+            out_error,
+            EppErrorCode::EppErrorNullPointer,
+            "null VoIP session handle",
+        );
+        return Err(EppErrorCode::EppErrorNullPointer);
+    }
+    (*handle).0.as_ref().map_or_else(
+        || {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorObjectDisposed,
+                "VoIP session disposed",
+            );
+            Err(EppErrorCode::EppErrorObjectDisposed)
+        },
+        Ok,
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_accept_call(
+    identity_handle: *const EppIdentityHandle,
+    call_init_bytes: *const u8,
+    call_init_len: usize,
+    peer_kyber_public: *const u8,
+    peer_kyber_public_len: usize,
+    out_accept_bytes: *mut EppBuffer,
+    out_session: *mut *mut EppVoipSessionHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let identity = match require_identity_ref(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if call_init_bytes.is_null() || call_init_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null CallInit bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if peer_kyber_public.is_null() || peer_kyber_public_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null peer kyber public key",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let init_bytes = std::slice::from_raw_parts(call_init_bytes, call_init_len);
+        let kyber_pub = std::slice::from_raw_parts(peer_kyber_public, peer_kyber_public_len);
+
+        let call_init = match crate::proto::CallInit::decode(init_bytes) {
+            Ok(v) => v,
+            Err(e) => {
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorDecode,
+                    &format!("CallInit decode: {e}"),
+                );
+                return EppErrorCode::EppErrorDecode;
+            }
+        };
+
+        let ed_secret = match identity.get_identity_ed25519_private_key_copy() {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        let ed_public = identity.get_identity_ed25519_public();
+        let kyber_secret = match identity.clone_kyber_secret_key() {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        if call_init.version != crate::core::constants::VOIP_PROTOCOL_VERSION {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "unsupported VoIP protocol version",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let auth_context = crate::protocol::voip::call_key_exchange::CallInitAuthContext {
+            version: call_init.version,
+            media_type: call_init.media_type,
+            ratchet_interval_frames: call_init.ratchet_interval_frames,
+            pq_rekey_interval_secs: call_init.pq_rekey_interval_secs,
+            shield_mode: call_init.shield_mode,
+        };
+
+        let accept_output =
+            match crate::protocol::voip::call_key_exchange::callee_accept_with_context(
+                &ed_secret,
+                &ed_public,
+                &kyber_secret,
+                kyber_pub,
+                &call_init.call_id,
+                &call_init.ephemeral_x25519_public,
+                &call_init.kyber_ciphertext,
+                &call_init.identity_ed25519_public,
+                &call_init.signature,
+                &call_init.key_confirmation_mac,
+                &auth_context,
+            ) {
+                Ok(v) => v,
+                Err(e) => return write_protocol_error(out_error, &e),
+            };
+
+        let proto = crate::proto::CallAccept {
+            version: crate::core::constants::VOIP_PROTOCOL_VERSION,
+            callee_device_id: Vec::new(),
+            call_id: call_init.call_id.clone(),
+            ephemeral_x25519_public: accept_output.ephemeral_x25519_public,
+            kyber_ciphertext: accept_output.kyber_ciphertext,
+            identity_ed25519_public: accept_output.identity_ed25519_public,
+            signature: accept_output.signature,
+            key_confirmation_mac: accept_output.key_confirmation_mac,
+        };
+        let mut buf = Vec::new();
+        if let Err(e) = proto.encode(&mut buf) {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorEncode,
+                &format!("CallAccept encode: {e}"),
+            );
+            return EppErrorCode::EppErrorEncode;
+        }
+        write_buffer(out_accept_bytes, buf);
+
+        let session = match crate::protocol::voip::VoipSession::from_key_material(
+            call_init.call_id,
+            crate::protocol::voip::CallRole::Callee,
+            accept_output.key_material,
+            call_init.ratchet_interval_frames,
+            call_init.pq_rekey_interval_secs,
+            call_init.shield_mode,
+        ) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        if !out_session.is_null() {
+            *out_session = Box::into_raw(Box::new(EppVoipSessionHandle(Some(session))));
+        }
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_encrypt_frame(
+    handle: *const EppVoipSessionHandle,
+    payload_type: u8,
+    ssrc: u32,
+    timestamp: u32,
+    sequence_number: u16,
+    payload: *const u8,
+    payload_len: usize,
+    out_frame: *mut EppEncryptedFrame,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if payload.is_null() || payload_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null payload",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let data = std::slice::from_raw_parts(payload, payload_len);
+        let header = crate::protocol::voip::frame::FrameHeader {
+            payload_type,
+            ssrc,
+            timestamp,
+            sequence_number,
+        };
+
+        let enc = match session.encrypt_frame(&header, data) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        if !out_frame.is_null() {
+            write_buffer(&raw mut (*out_frame).call_id, enc.call_id);
+            (*out_frame).ssrc = enc.ssrc;
+            (*out_frame).frame_counter = enc.frame_counter;
+            (*out_frame).ratchet_generation = enc.ratchet_generation;
+            write_buffer(
+                &raw mut (*out_frame).encrypted_payload,
+                enc.encrypted_payload,
+            );
+            write_buffer(&raw mut (*out_frame).nonce, enc.nonce);
+            write_buffer(&raw mut (*out_frame).encrypted_header, enc.encrypted_header);
+        }
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_decrypt_frame(
+    handle: *const EppVoipSessionHandle,
+    call_id: *const u8,
+    call_id_len: usize,
+    ssrc: u32,
+    frame_counter: u64,
+    ratchet_generation: u32,
+    encrypted_payload: *const u8,
+    encrypted_payload_len: usize,
+    nonce: *const u8,
+    nonce_len: usize,
+    encrypted_header: *const u8,
+    encrypted_header_len: usize,
+    out_frame: *mut EppDecryptedFrame,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+
+        let cid = if call_id.is_null() {
+            &[] as &[u8]
+        } else {
+            std::slice::from_raw_parts(call_id, call_id_len)
+        };
+        let enc_payload = if encrypted_payload.is_null() {
+            &[] as &[u8]
+        } else {
+            std::slice::from_raw_parts(encrypted_payload, encrypted_payload_len)
+        };
+        let enc_nonce = if nonce.is_null() {
+            &[] as &[u8]
+        } else {
+            std::slice::from_raw_parts(nonce, nonce_len)
+        };
+        let enc_header = if encrypted_header.is_null() {
+            &[] as &[u8]
+        } else {
+            std::slice::from_raw_parts(encrypted_header, encrypted_header_len)
+        };
+
+        let encrypted = crate::protocol::voip::EncryptedFrame {
+            call_id: cid.to_vec(),
+            ssrc,
+            frame_counter,
+            ratchet_generation,
+            encrypted_payload: enc_payload.to_vec(),
+            nonce: enc_nonce.to_vec(),
+            encrypted_header: enc_header.to_vec(),
+        };
+
+        let dec = match session.decrypt_frame(&encrypted) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        if !out_frame.is_null() {
+            write_buffer(&raw mut (*out_frame).payload, dec.payload);
+            (*out_frame).payload_type = dec.header.payload_type;
+            (*out_frame).ssrc = dec.header.ssrc;
+            (*out_frame).timestamp = dec.header.timestamp;
+            (*out_frame).sequence_number = dec.header.sequence_number;
+            (*out_frame).frame_counter = dec.frame_counter;
+            (*out_frame).ratchet_generation = dec.ratchet_generation;
+        }
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_call_id(
+    handle: *const EppVoipSessionHandle,
+    out_buf: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        write_buffer(out_buf, session.call_id());
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_ssrc(
+    handle: *const EppVoipSessionHandle,
+    out_error: *mut EppError,
+) -> u32 {
+    ffi_catch_panic_value!(0, {
+        let Ok(session) = require_voip_ref(handle, out_error) else {
+            return 0;
+        };
+        session.ssrc()
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_is_shield_mode(
+    handle: *const EppVoipSessionHandle,
+    out_error: *mut EppError,
+) -> u8 {
+    ffi_catch_panic_value!(0, {
+        let Ok(session) = require_voip_ref(handle, out_error) else {
+            return 0;
+        };
+        u8::from(session.is_shield_mode())
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_end_call(
+    handle: *const EppVoipSessionHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        match session.end_call() {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_generate_call_end_hmac(
+    handle: *const EppVoipSessionHandle,
+    device_id: *const u8,
+    device_id_len: usize,
+    timestamp: u64,
+    out_hmac: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let did = if device_id.is_null() {
+            &[] as &[u8]
+        } else {
+            std::slice::from_raw_parts(device_id, device_id_len)
+        };
+        match session.generate_call_end_hmac(did, timestamp) {
+            Ok(h) => {
+                write_buffer(out_hmac, h);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_verify_call_end_hmac(
+    handle: *const EppVoipSessionHandle,
+    device_id: *const u8,
+    device_id_len: usize,
+    timestamp: u64,
+    hmac_value: *const u8,
+    hmac_value_len: usize,
+    out_valid: *mut u8,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let did = if device_id.is_null() {
+            &[] as &[u8]
+        } else {
+            std::slice::from_raw_parts(device_id, device_id_len)
+        };
+        let hmac_bytes = if hmac_value.is_null() {
+            &[] as &[u8]
+        } else {
+            std::slice::from_raw_parts(hmac_value, hmac_value_len)
+        };
+        match session.verify_call_end_hmac(did, timestamp, hmac_bytes) {
+            Ok(is_valid) => {
+                if !out_valid.is_null() {
+                    *out_valid = u8::from(is_valid);
+                }
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_build_call_end(
+    handle: *const EppVoipSessionHandle,
+    device_id: *const u8,
+    device_id_len: usize,
+    timestamp: u64,
+    out_buf: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let did = if device_id.is_null() {
+            &[] as &[u8]
+        } else {
+            std::slice::from_raw_parts(device_id, device_id_len)
+        };
+        match session.build_call_end(did, timestamp) {
+            Ok(bytes) => {
+                write_buffer(out_buf, bytes);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_process_call_end(
+    handle: *const EppVoipSessionHandle,
+    call_end_bytes: *const u8,
+    call_end_len: usize,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if call_end_bytes.is_null() || call_end_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null CallEnd bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let call_end = std::slice::from_raw_parts(call_end_bytes, call_end_len);
+        match session.process_call_end(call_end) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_encrypt_call_control(
+    handle: *const EppVoipSessionHandle,
+    control_type: u8,
+    dtmf_digit: u8,
+    out_frame: *mut EppEncryptedFrame,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let control = match control_type {
+            1 => crate::protocol::voip::CallControlType::Mute,
+            2 => crate::protocol::voip::CallControlType::Unmute,
+            3 => crate::protocol::voip::CallControlType::Hold,
+            4 => crate::protocol::voip::CallControlType::Unhold,
+            5 => crate::protocol::voip::CallControlType::Dtmf(dtmf_digit),
+            _ => {
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorInvalidInput,
+                    "unknown control type",
+                );
+                return EppErrorCode::EppErrorInvalidInput;
+            }
+        };
+        let enc = match session.encrypt_call_control(control) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        if !out_frame.is_null() {
+            write_buffer(&raw mut (*out_frame).call_id, enc.call_id);
+            (*out_frame).ssrc = enc.ssrc;
+            (*out_frame).frame_counter = enc.frame_counter;
+            (*out_frame).ratchet_generation = enc.ratchet_generation;
+            write_buffer(
+                &raw mut (*out_frame).encrypted_payload,
+                enc.encrypted_payload,
+            );
+            write_buffer(&raw mut (*out_frame).nonce, enc.nonce);
+            write_buffer(&raw mut (*out_frame).encrypted_header, enc.encrypted_header);
+        }
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_export_sealed_state(
+    handle: *const EppVoipSessionHandle,
+    state_key: *const u8,
+    state_key_len: usize,
+    external_counter: u64,
+    out_buf: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if state_key.is_null() || state_key_len != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "state key must be 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let key = std::slice::from_raw_parts(state_key, state_key_len);
+        match session.export_sealed_state(key, external_counter) {
+            Ok(data) => {
+                write_buffer(out_buf, data);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+pub struct EppVoipCallInitiatorHandle {
+    pub init_output: Option<crate::protocol::voip::CallInitOutput>,
+    pub call_id: Vec<u8>,
+    pub shield_mode: bool,
+    pub ratchet_interval_frames: u32,
+    pub pq_rekey_interval_secs: u32,
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_call_init(
+    identity_handle: *const EppIdentityHandle,
+    peer_kyber_public: *const u8,
+    peer_kyber_public_len: usize,
+    shield_mode: u8,
+    ratchet_interval_frames: u32,
+    pq_rekey_interval_secs: u32,
+    out_init_bytes: *mut EppBuffer,
+    out_initiator: *mut *mut EppVoipCallInitiatorHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let identity = match require_identity_ref(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if peer_kyber_public.is_null() || peer_kyber_public_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null peer kyber public key",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let kyber_pub = std::slice::from_raw_parts(peer_kyber_public, peer_kyber_public_len);
+
+        let ed_secret = match identity.get_identity_ed25519_private_key_copy() {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        let ed_public = identity.get_identity_ed25519_public();
+
+        let auth_context = crate::protocol::voip::call_key_exchange::CallInitAuthContext {
+            version: crate::core::constants::VOIP_PROTOCOL_VERSION,
+            media_type: 1,
+            ratchet_interval_frames,
+            pq_rekey_interval_secs,
+            shield_mode: shield_mode != 0,
+        };
+
+        let init_output = match crate::protocol::voip::call_key_exchange::caller_init_with_context(
+            &ed_secret,
+            &ed_public,
+            kyber_pub,
+            &auth_context,
+        ) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        let is_shield = shield_mode != 0;
+        let proto = crate::proto::CallInit {
+            version: crate::core::constants::VOIP_PROTOCOL_VERSION,
+            caller_device_id: Vec::new(),
+            call_id: init_output.call_id.clone(),
+            ephemeral_x25519_public: init_output.ephemeral_x25519_public.clone(),
+            kyber_ciphertext: init_output.kyber_ciphertext.clone(),
+            identity_ed25519_public: init_output.identity_ed25519_public.clone(),
+            signature: init_output.signature.clone(),
+            key_confirmation_mac: init_output.key_confirmation_mac.clone(),
+            media_type: 1,
+            ratchet_interval_frames,
+            pq_rekey_interval_secs,
+            shield_mode: is_shield,
+        };
+        let mut buf = Vec::new();
+        if let Err(e) = proto.encode(&mut buf) {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorEncode,
+                &format!("CallInit encode: {e}"),
+            );
+            return EppErrorCode::EppErrorEncode;
+        }
+        write_buffer(out_init_bytes, buf);
+
+        let call_id = init_output.call_id.clone();
+        let initiator = Box::new(EppVoipCallInitiatorHandle {
+            init_output: Some(init_output),
+            call_id,
+            shield_mode: is_shield,
+            ratchet_interval_frames,
+            pq_rekey_interval_secs,
+        });
+        if !out_initiator.is_null() {
+            *out_initiator = Box::into_raw(initiator);
+        }
+
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_call_init_start(
+    identity_handle: *const EppIdentityHandle,
+    peer_kyber_public: *const u8,
+    peer_kyber_public_len: usize,
+    shield_mode: u8,
+    ratchet_interval_frames: u32,
+    pq_rekey_interval_secs: u32,
+    out_init_bytes: *mut EppBuffer,
+    out_initiator: *mut *mut EppVoipCallInitiatorHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    epp_voip_call_init(
+        identity_handle,
+        peer_kyber_public,
+        peer_kyber_public_len,
+        shield_mode,
+        ratchet_interval_frames,
+        pq_rekey_interval_secs,
+        out_init_bytes,
+        out_initiator,
+        out_error,
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_call_init_complete(
+    initiator_handle: *mut EppVoipCallInitiatorHandle,
+    identity_handle: *const EppIdentityHandle,
+    accept_bytes: *const u8,
+    accept_len: usize,
+    out_session: *mut *mut EppVoipSessionHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        if initiator_handle.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "null initiator handle",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let identity = match require_identity_ref(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if accept_bytes.is_null() || accept_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null CallAccept bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let accept_data = std::slice::from_raw_parts(accept_bytes, accept_len);
+        let accept = match crate::proto::CallAccept::decode(accept_data) {
+            Ok(v) => v,
+            Err(e) => {
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorDecode,
+                    &format!("CallAccept decode: {e}"),
+                );
+                return EppErrorCode::EppErrorDecode;
+            }
+        };
+
+        if accept.version != crate::core::constants::VOIP_PROTOCOL_VERSION {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "unsupported VoIP protocol version",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let initiator = &mut *initiator_handle;
+        let Some(init_output) = initiator.init_output.take() else {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorObjectDisposed,
+                "initiator already consumed",
+            );
+            return EppErrorCode::EppErrorObjectDisposed;
+        };
+
+        let kyber_secret = match identity.clone_kyber_secret_key() {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        let key_material = match crate::protocol::voip::caller_finish(
+            &init_output,
+            &kyber_secret,
+            &initiator.call_id,
+            &accept.ephemeral_x25519_public,
+            &accept.kyber_ciphertext,
+            &accept.identity_ed25519_public,
+            &accept.signature,
+            &accept.key_confirmation_mac,
+            initiator.shield_mode,
+        ) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        let session = match crate::protocol::voip::VoipSession::from_key_material(
+            initiator.call_id.clone(),
+            crate::protocol::voip::CallRole::Caller,
+            key_material,
+            initiator.ratchet_interval_frames,
+            initiator.pq_rekey_interval_secs,
+            initiator.shield_mode,
+        ) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        if !out_session.is_null() {
+            *out_session = Box::into_raw(Box::new(EppVoipSessionHandle(Some(session))));
+        }
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_call_initiator_destroy(handle: *mut EppVoipCallInitiatorHandle) {
+    if !handle.is_null() {
+        drop(Box::from_raw(handle));
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_initiate_rekey(
+    handle: *const EppVoipSessionHandle,
+    identity_handle: *const EppIdentityHandle,
+    peer_kyber_public: *const u8,
+    peer_kyber_public_len: usize,
+    out_rekey_bytes: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let identity = match require_identity_ref(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if peer_kyber_public.is_null() || peer_kyber_public_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null peer kyber public key",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let ed_secret = match identity.get_identity_ed25519_private_key_copy() {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        let kyber_pub = std::slice::from_raw_parts(peer_kyber_public, peer_kyber_public_len);
+
+        match session.initiate_rekey(&ed_secret, kyber_pub) {
+            Ok(bytes) => {
+                write_buffer(out_rekey_bytes, bytes);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_process_rekey(
+    handle: *const EppVoipSessionHandle,
+    identity_handle: *const EppIdentityHandle,
+    peer_ed25519_public: *const u8,
+    peer_ed25519_public_len: usize,
+    rekey_bytes: *const u8,
+    rekey_len: usize,
+    peer_kyber_public: *const u8,
+    peer_kyber_public_len: usize,
+    out_ack_bytes: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let identity = match require_identity_ref(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if rekey_bytes.is_null() || rekey_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null rekey bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if peer_kyber_public.is_null() || peer_kyber_public_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null peer kyber public key",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let rekey_data = std::slice::from_raw_parts(rekey_bytes, rekey_len);
+        let kyber_pub = std::slice::from_raw_parts(peer_kyber_public, peer_kyber_public_len);
+        let ed_secret = match identity.get_identity_ed25519_private_key_copy() {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        let kyber_secret = match identity.clone_kyber_secret_key() {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        if peer_ed25519_public.is_null() || peer_ed25519_public_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null peer ed25519 public key",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let peer_ed_pub = std::slice::from_raw_parts(peer_ed25519_public, peer_ed25519_public_len);
+        match session.process_rekey(
+            rekey_data,
+            peer_ed_pub,
+            &kyber_secret,
+            kyber_pub,
+            &ed_secret,
+        ) {
+            Ok(ack_bytes) => {
+                write_buffer(out_ack_bytes, ack_bytes);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_process_rekey_ack(
+    handle: *const EppVoipSessionHandle,
+    identity_handle: *const EppIdentityHandle,
+    peer_ed25519_public: *const u8,
+    peer_ed25519_public_len: usize,
+    ack_bytes: *const u8,
+    ack_len: usize,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let identity = match require_identity_ref(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if ack_bytes.is_null() || ack_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null rekey ack bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let ack_data = std::slice::from_raw_parts(ack_bytes, ack_len);
+        let kyber_secret = match identity.clone_kyber_secret_key() {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        if peer_ed25519_public.is_null() || peer_ed25519_public_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null peer ed25519 public key",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let peer_ed_pub = std::slice::from_raw_parts(peer_ed25519_public, peer_ed25519_public_len);
+        match session.process_rekey_ack(ack_data, peer_ed_pub, &kyber_secret) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_import_sealed_state(
+    data: *const u8,
+    data_len: usize,
+    state_key: *const u8,
+    state_key_len: usize,
+    min_external_counter: u64,
+    out_session: *mut *mut EppVoipSessionHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        if data.is_null() || data_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null sealed state data",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if state_key.is_null() || state_key_len != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "state key must be 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let state_data = std::slice::from_raw_parts(data, data_len);
+        let key = std::slice::from_raw_parts(state_key, state_key_len);
+
+        let session = match crate::protocol::voip::VoipSession::from_sealed_state(
+            state_data,
+            key,
+            min_external_counter,
+        ) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        if !out_session.is_null() {
+            *out_session = Box::into_raw(Box::new(EppVoipSessionHandle(Some(session))));
+        }
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_sealed_state_external_counter(
+    data: *const u8,
+    data_len: usize,
+    out_external_counter: *mut u64,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        if data.is_null() || data_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null sealed state data",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let state_data = std::slice::from_raw_parts(data, data_len);
+        match crate::protocol::voip::VoipSession::sealed_state_external_counter(state_data) {
+            Ok(counter) => {
+                if !out_external_counter.is_null() {
+                    *out_external_counter = counter;
+                }
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_session_destroy(handle: *mut EppVoipSessionHandle) {
+    if !handle.is_null() {
+        drop(Box::from_raw(handle));
+    }
 }

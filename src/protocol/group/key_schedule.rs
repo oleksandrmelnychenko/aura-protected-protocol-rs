@@ -57,14 +57,30 @@ impl GroupKeySchedule {
         epoch_secret: &[u8],
         enhanced: bool,
     ) -> Result<EpochKeys, ProtocolError> {
-        let mut metadata_key =
-            Self::derive_sub_key(epoch_secret, GROUP_METADATA_KEY_INFO, METADATA_KEY_BYTES, enhanced)?;
-        let mut welcome_key =
-            Self::derive_sub_key(epoch_secret, GROUP_WELCOME_KEY_INFO, WELCOME_KEY_BYTES, enhanced)?;
-        let mut confirmation_key =
-            Self::derive_sub_key(epoch_secret, GROUP_CONFIRM_KEY_INFO, CONFIRMATION_KEY_BYTES, enhanced)?;
-        let mut init_secret =
-            Self::derive_sub_key(epoch_secret, GROUP_INIT_SECRET_INFO, INIT_SECRET_BYTES, enhanced)?;
+        let mut metadata_key = Self::derive_sub_key(
+            epoch_secret,
+            GROUP_METADATA_KEY_INFO,
+            METADATA_KEY_BYTES,
+            enhanced,
+        )?;
+        let mut welcome_key = Self::derive_sub_key(
+            epoch_secret,
+            GROUP_WELCOME_KEY_INFO,
+            WELCOME_KEY_BYTES,
+            enhanced,
+        )?;
+        let mut confirmation_key = Self::derive_sub_key(
+            epoch_secret,
+            GROUP_CONFIRM_KEY_INFO,
+            CONFIRMATION_KEY_BYTES,
+            enhanced,
+        )?;
+        let mut init_secret = Self::derive_sub_key(
+            epoch_secret,
+            GROUP_INIT_SECRET_INFO,
+            INIT_SECRET_BYTES,
+            enhanced,
+        )?;
 
         Ok(EpochKeys {
             epoch_secret: epoch_secret.to_vec(),
@@ -105,9 +121,7 @@ impl GroupKeySchedule {
         group_context_hash: &[u8],
     ) -> Result<Vec<u8>, ProtocolError> {
         let mut info = Vec::with_capacity(
-            GROUP_SENDER_KEY_INFO.len()
-                + std::mem::size_of::<u32>()
-                + group_context_hash.len(),
+            GROUP_SENDER_KEY_INFO.len() + std::mem::size_of::<u32>() + group_context_hash.len(),
         );
         info.extend_from_slice(GROUP_SENDER_KEY_INFO);
         info.extend_from_slice(&leaf_index.to_le_bytes());
@@ -123,10 +137,7 @@ impl GroupKeySchedule {
         policy_bytes: &[u8],
     ) -> Vec<u8> {
         let mut ctx = Vec::with_capacity(
-            group_id.len()
-                + std::mem::size_of::<u64>()
-                + tree_hash.len()
-                + policy_bytes.len(),
+            group_id.len() + std::mem::size_of::<u64>() + tree_hash.len() + policy_bytes.len(),
         );
         ctx.extend_from_slice(group_id);
         ctx.extend_from_slice(&epoch.to_le_bytes());

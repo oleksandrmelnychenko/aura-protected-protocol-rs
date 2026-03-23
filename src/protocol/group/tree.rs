@@ -158,7 +158,9 @@ pub fn parent(x: u32, n: u32) -> Result<u32, ProtocolError> {
     }
     let k = level(x);
     if k >= 31 {
-        return Err(ProtocolError::tree_integrity("parent: node level exceeds tree depth"));
+        return Err(ProtocolError::tree_integrity(
+            "parent: node level exceeds tree depth",
+        ));
     }
     let b = (x >> (k + 1)) & 1;
     let p = (x | (1 << k)) ^ (b << (k + 1));

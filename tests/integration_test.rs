@@ -3705,10 +3705,12 @@ fn group_key_schedule_deterministic() {
     let commit_secret = vec![1u8; 32];
     let ctx_hash = vec![2u8; 32];
 
-    let keys1 = group::GroupKeySchedule::derive_epoch_keys(&init_secret, &commit_secret, &ctx_hash, false)
-        .unwrap();
-    let keys2 = group::GroupKeySchedule::derive_epoch_keys(&init_secret, &commit_secret, &ctx_hash, false)
-        .unwrap();
+    let keys1 =
+        group::GroupKeySchedule::derive_epoch_keys(&init_secret, &commit_secret, &ctx_hash, false)
+            .unwrap();
+    let keys2 =
+        group::GroupKeySchedule::derive_epoch_keys(&init_secret, &commit_secret, &ctx_hash, false)
+            .unwrap();
 
     assert_eq!(keys1.epoch_secret, keys2.epoch_secret);
     assert_eq!(keys1.metadata_key, keys2.metadata_key);
@@ -3725,8 +3727,9 @@ fn group_key_schedule_domain_separation() {
     let commit_secret = vec![1u8; 32];
     let ctx_hash = vec![2u8; 32];
 
-    let keys = group::GroupKeySchedule::derive_epoch_keys(&init_secret, &commit_secret, &ctx_hash, false)
-        .unwrap();
+    let keys =
+        group::GroupKeySchedule::derive_epoch_keys(&init_secret, &commit_secret, &ctx_hash, false)
+            .unwrap();
 
     assert_ne!(keys.epoch_secret, keys.metadata_key);
     assert_ne!(keys.metadata_key, keys.welcome_key);
@@ -3745,9 +3748,11 @@ fn group_key_schedule_different_inputs_different_outputs() {
     let ctx_hash = vec![3u8; 32];
 
     let keys1 =
-        group::GroupKeySchedule::derive_epoch_keys(&init_secret, &commit1, &ctx_hash, false).unwrap();
+        group::GroupKeySchedule::derive_epoch_keys(&init_secret, &commit1, &ctx_hash, false)
+            .unwrap();
     let keys2 =
-        group::GroupKeySchedule::derive_epoch_keys(&init_secret, &commit2, &ctx_hash, false).unwrap();
+        group::GroupKeySchedule::derive_epoch_keys(&init_secret, &commit2, &ctx_hash, false)
+            .unwrap();
 
     assert_ne!(keys1.epoch_secret, keys2.epoch_secret);
 }

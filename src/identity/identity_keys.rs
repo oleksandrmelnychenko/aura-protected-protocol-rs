@@ -172,7 +172,8 @@ impl IdentityKeys {
         spk_secret[0] &= X25519_CLAMP_BYTE0;
         spk_secret[31] &= X25519_CLAMP_BYTE31_LOW;
         spk_secret[31] |= X25519_CLAMP_BYTE31_HIGH;
-        let spk_secret_array: [u8; X25519_PRIVATE_KEY_BYTES] = spk_secret[..X25519_PRIVATE_KEY_BYTES]
+        let spk_secret_array: [u8; X25519_PRIVATE_KEY_BYTES] = spk_secret
+            [..X25519_PRIVATE_KEY_BYTES]
             .try_into()
             .map_err(|_| ProtocolError::key_generation("SPK secret has wrong length"))?;
         let spk_x_secret = StaticSecret::from(spk_secret_array);
@@ -655,14 +656,17 @@ impl IdentityKeys {
         let use_pending = inner.pending_kyber_handshake.is_some() && (is_initiator || !has_peer_ct);
 
         if use_pending {
-            let artifacts = inner.pending_kyber_handshake.as_ref()
+            let artifacts = inner
+                .pending_kyber_handshake
+                .as_ref()
                 .ok_or_else(|| ProtocolError::invalid_state("Pending Kyber handshake missing"))?;
             kyber_ciphertext = artifacts.kyber_ciphertext.clone();
             kyber_ss_bytes = artifacts.kyber_shared_secret.clone();
             used_stored = true;
         } else if has_peer_ct {
-            let peer_ct = remote_bundle.kyber_ciphertext()
-                .ok_or_else(|| ProtocolError::invalid_input("Remote bundle missing Kyber ciphertext"))?;
+            let peer_ct = remote_bundle.kyber_ciphertext().ok_or_else(|| {
+                ProtocolError::invalid_input("Remote bundle missing Kyber ciphertext")
+            })?;
             KyberInterop::validate_ciphertext(peer_ct).map_err(ProtocolError::from_crypto)?;
             let ss_handle = KyberInterop::decapsulate(peer_ct, &inner.kyber_secret_key)
                 .map_err(ProtocolError::from_crypto)?;
@@ -673,8 +677,9 @@ impl IdentityKeys {
             kyber_ss_bytes = ss_b;
             used_stored = false;
         } else {
-            let remote_kyber_pk = remote_bundle.kyber_public()
-                .ok_or_else(|| ProtocolError::invalid_input("Remote bundle missing Kyber public key"))?;
+            let remote_kyber_pk = remote_bundle.kyber_public().ok_or_else(|| {
+                ProtocolError::invalid_input("Remote bundle missing Kyber public key")
+            })?;
             let (ct, ss_handle) = KyberInterop::encapsulate(remote_kyber_pk).map_err(|e| {
                 CryptoInterop::secure_wipe(&mut classical_shared);
                 ProtocolError::from_crypto(e)
@@ -975,8 +980,9 @@ impl IdentityKeys {
                 "Remote bundle must have ephemeral key for responder X3DH",
             ));
         }
-        let peer_ephemeral = remote_bundle.ephemeral_x25519_public()
-            .ok_or_else(|| ProtocolError::invalid_input("Remote bundle missing ephemeral X25519 key"))?;
+        let peer_ephemeral = remote_bundle.ephemeral_x25519_public().ok_or_else(|| {
+            ProtocolError::invalid_input("Remote bundle missing ephemeral X25519 key")
+        })?;
         let peer_identity = remote_bundle.identity_x25519_public();
 
         let mut spk_secret = inner

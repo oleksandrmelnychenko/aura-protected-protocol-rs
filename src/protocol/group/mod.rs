@@ -25,12 +25,12 @@ use crate::core::errors::ProtocolError;
 use crate::crypto::{AesGcm, CryptoInterop, HkdfSha256, MessagePadding, SecureMemoryHandle};
 use crate::identity::IdentityKeys;
 use crate::interfaces::IGroupEventHandler;
+use crate::proto::GroupSecurityPolicy as ProtoGroupSecurityPolicy;
 use crate::proto::{
     GroupApplicationMessage, GroupCommit, GroupKeyPackage, GroupMemberSenderChain, GroupMessage,
     GroupMessagePolicy, GroupPlaintext, GroupProposal, GroupProtocolState, GroupPublicState,
     GroupSenderData, SealedGroupState,
 };
-use crate::proto::GroupSecurityPolicy as ProtoGroupSecurityPolicy;
 
 pub use key_schedule::{EpochKeys, GroupKeySchedule};
 pub use sender_key::{SenderKeyChain, SenderKeyStore};
@@ -387,12 +387,8 @@ impl GroupSession {
         let policy_bytes = policy.policy_bytes();
         let zero_init_secret = vec![0u8; INIT_SECRET_BYTES];
         let commit_secret = CryptoInterop::get_random_bytes(COMMIT_SECRET_BYTES);
-        let group_context_hash = GroupKeySchedule::compute_group_context_hash(
-            &group_id,
-            0,
-            &tree_hash,
-            &policy_bytes,
-        );
+        let group_context_hash =
+            GroupKeySchedule::compute_group_context_hash(&group_id, 0, &tree_hash, &policy_bytes);
 
         let epoch_keys = GroupKeySchedule::derive_epoch_keys(
             &zero_init_secret,
@@ -482,8 +478,7 @@ impl GroupSession {
             identity_x25519,
         )?;
 
-        let security_policy =
-            GroupSecurityPolicy::from_proto_bytes(&result.security_policy_bytes)?;
+        let security_policy = GroupSecurityPolicy::from_proto_bytes(&result.security_policy_bytes)?;
         security_policy.validate()?;
         let init_secret = result.epoch_keys.init_secret.clone();
 
@@ -889,8 +884,7 @@ impl GroupSession {
         let public_state = GroupPublicState::decode(public_state_bytes)
             .map_err(|e| ProtocolError::decode(format!("GroupPublicState decode: {e}")))?;
 
-        let security_policy =
-            GroupSecurityPolicy::from_proto_bytes(&public_state.security_policy)?;
+        let security_policy = GroupSecurityPolicy::from_proto_bytes(&public_state.security_policy)?;
         security_policy.validate()?;
         if security_policy.block_external_join {
             return Err(ProtocolError::group_protocol(
@@ -1360,8 +1354,7 @@ impl GroupSession {
             ));
         }
 
-        let franking_override =
-            inner.security_policy.mandatory_franking && !policy.frankable;
+        let franking_override = inner.security_policy.mandatory_franking && !policy.frankable;
         let effective_policy;
         let policy = if franking_override {
             effective_policy = MessagePolicy {
@@ -1389,8 +1382,7 @@ impl GroupSession {
         let (generation, mut message_key) = inner.sender_store.next_own_message_key(my_leaf_idx)?;
 
         let remaining = policy_max.saturating_sub(generation);
-        let warning_threshold =
-            policy_max / (100 / SENDER_KEY_EXHAUSTION_WARNING_PERCENT);
+        let warning_threshold = policy_max / (100 / SENDER_KEY_EXHAUSTION_WARNING_PERCENT);
         if remaining <= warning_threshold {
             if let Some(handler) = &inner.event_handler {
                 handler.on_sender_key_exhaustion_warning(remaining, policy_max);
@@ -1566,10 +1558,7 @@ impl GroupSession {
         )
     }
 
-    pub fn encrypt_delete(
-        &self,
-        target_message_id: &[u8],
-    ) -> Result<Vec<u8>, ProtocolError> {
+    pub fn encrypt_delete(&self, target_message_id: &[u8]) -> Result<Vec<u8>, ProtocolError> {
         self.encrypt_internal(
             b"",
             &MessagePolicy {
@@ -1712,8 +1701,15 @@ impl GroupSession {
 
         let prev_message_hash = group_plaintext.prev_message_hash.clone();
 
-        let (plaintext, content_type, sealed_payload, franking_data, ttl_seconds, sent_timestamp, referenced_message_id) =
-            Self::parse_group_plaintext(&group_plaintext, &seal_key, &app_msg.franking_tag)?;
+        let (
+            plaintext,
+            content_type,
+            sealed_payload,
+            franking_data,
+            ttl_seconds,
+            sent_timestamp,
+            referenced_message_id,
+        ) = Self::parse_group_plaintext(&group_plaintext, &seal_key, &app_msg.franking_tag)?;
 
         if sealed_payload.is_none() {
             CryptoInterop::secure_wipe(&mut seal_key);
@@ -2060,8 +2056,7 @@ impl GroupSession {
             init_secret: std::mem::take(&mut state.init_secret),
         };
 
-        let security_policy =
-            GroupSecurityPolicy::from_proto_bytes(&state.security_policy)?;
+        let security_policy = GroupSecurityPolicy::from_proto_bytes(&state.security_policy)?;
         security_policy.validate()?;
 
         let mut chains = std::collections::BTreeMap::new();
@@ -2076,7 +2071,8 @@ impl GroupSession {
             )?;
             chains.insert(sc.leaf_index, chain);
         }
-        let sender_store = SenderKeyStore::from_chains(chains, security_policy.effective_max_skipped_per_sender());
+        let sender_store =
+            SenderKeyStore::from_chains(chains, security_policy.effective_max_skipped_per_sender());
 
         let seen_ids = std::mem::take(&mut state.seen_message_ids);
         let seen_set: HashSet<Vec<u8>> = seen_ids.iter().cloned().collect();

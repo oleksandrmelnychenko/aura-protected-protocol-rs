@@ -5,6 +5,7 @@ pub mod group;
 pub mod handshake;
 pub mod nonce;
 pub mod session;
+pub mod voip;
 
 pub use group::{
     ContentType, FrankingData, GroupDecryptResult, GroupSecurityPolicy, GroupSession,
@@ -13,3 +14,4 @@ pub use group::{
 pub use handshake::{HandshakeInitiator, HandshakeResponder};
 pub use nonce::{NonceGenerator, NonceState};
 pub use session::{DecryptResult, HandshakeState, LocalIdentity, PeerIdentity, Session};
+pub use voip::{CallControlType, CallRole, CallState, IVoipEventHandler, VoipSession};

@@ -1,0 +1,133 @@
+syntax = "proto3";
+
+package ecliptix.proto.protocol;
+option csharp_namespace = "Ecliptix.Protobuf.Protocol";
+option swift_prefix = "Ecliptix_Proto_";
+
+message CallInit {
+  uint32 version          = 1;
+  bytes  caller_device_id = 2;
+  bytes  call_id          = 3;
+
+  bytes ephemeral_x25519_public  = 4;
+  bytes kyber_ciphertext         = 5;
+
+  bytes identity_ed25519_public  = 6;
+  bytes signature                = 7;
+
+  bytes key_confirmation_mac     = 8;
+
+  CallMediaType media_type       = 9;
+  uint32 ratchet_interval_frames = 10;
+  uint32 pq_rekey_interval_secs  = 11;
+  bool   shield_mode             = 12;
+}
+
+message CallAccept {
+  uint32 version           = 1;
+  bytes  callee_device_id  = 2;
+  bytes  call_id           = 3;
+
+  bytes ephemeral_x25519_public  = 4;
+  bytes kyber_ciphertext         = 5;
+
+  bytes identity_ed25519_public  = 6;
+  bytes signature                = 7;
+
+  bytes key_confirmation_mac     = 8;
+}
+
+message CallReject {
+  bytes call_id           = 1;
+  bytes device_id         = 2;
+  CallRejectReason reason = 3;
+}
+
+message CallEnd {
+  bytes  call_id    = 1;
+  bytes  device_id  = 2;
+  uint64 timestamp  = 3;
+  bytes  hmac       = 4;
+}
+
+message CallRekey {
+  bytes  call_id                 = 1;
+  uint32 rekey_generation        = 2;
+  bytes  ephemeral_x25519_public = 3;
+  bytes  kyber_ciphertext        = 4;
+  bytes  signature               = 5;
+  bytes  key_confirmation_mac    = 6;
+}
+
+message CallRekeyAck {
+  bytes  call_id                 = 1;
+  uint32 rekey_generation        = 2;
+  bytes  ephemeral_x25519_public = 3;
+  bytes  kyber_ciphertext        = 4;
+  bytes  signature               = 5;
+  bytes  key_confirmation_mac    = 6;
+}
+
+message SecureMediaFrame {
+  bytes  call_id           = 1;
+  uint32 sender_ssrc       = 2;
+  uint64 frame_counter     = 3;
+  uint32 ratchet_generation = 4;
+  bytes  encrypted_payload = 5;
+  bytes  nonce             = 6;
+  bytes  header_bytes      = 7;
+}
+
+enum CallMediaType {
+  CALL_MEDIA_UNSPECIFIED = 0;
+  CALL_MEDIA_AUDIO       = 1;
+  CALL_MEDIA_VIDEO       = 2;
+  CALL_MEDIA_AUDIO_VIDEO = 3;
+}
+
+enum CallRejectReason {
+  CALL_REJECT_UNSPECIFIED = 0;
+  CALL_REJECT_BUSY        = 1;
+  CALL_REJECT_DECLINED    = 2;
+  CALL_REJECT_UNAVAILABLE = 3;
+  CALL_REJECT_TIMEOUT     = 4;
+}
+
+enum VoipSignalType {
+  VOIP_SIGNAL_UNSPECIFIED  = 0;
+  VOIP_SIGNAL_CALL_INIT    = 1;
+  VOIP_SIGNAL_CALL_ACCEPT  = 2;
+  VOIP_SIGNAL_CALL_REJECT  = 3;
+  VOIP_SIGNAL_CALL_END     = 4;
+  VOIP_SIGNAL_REKEY        = 5;
+  VOIP_SIGNAL_REKEY_ACK    = 6;
+}
+
+message VoipEnvelope {
+  bytes           sender_device_id    = 1;
+  bytes           recipient_device_id = 2;
+  VoipSignalType  signal_type         = 3;
+  bytes           call_id             = 4;
+  bytes           encrypted_payload   = 5;
+  uint64          timestamp           = 6;
+}
+
+message VoipSessionState {
+  bytes  call_id                 = 1;
+  uint32 role                    = 2;
+  uint32 ssrc                    = 3;
+  uint64 send_frame_counter      = 4;
+  uint64 replay_high_water       = 5;
+  uint32 ratchet_generation      = 6;
+  uint32 ratchet_interval_frames = 7;
+  uint32 pq_rekey_interval_secs  = 8;
+  bool   shield_mode             = 9;
+  uint32 frames_since_ratchet    = 10;
+  bytes  root_secret             = 11;
+  uint64 external_counter        = 12;
+  bytes  send_ratchet_chain_key  = 13;
+  bytes  recv_ratchet_chain_key  = 14;
+  uint32 send_ratchet_generation = 15;
+  uint32 recv_ratchet_generation = 16;
+  bytes  replay_bitmap           = 17;
+}

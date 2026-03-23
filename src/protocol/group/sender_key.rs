@@ -24,7 +24,13 @@ impl Drop for SenderKeyChain {
 
 impl SenderKeyChain {
     pub fn new(leaf_index: u32, sender_key_base: Vec<u8>) -> Result<Self, ProtocolError> {
-        Self::new_with_policy(leaf_index, sender_key_base, false, MAX_SENDER_KEY_GENERATION, MAX_SKIPPED_SENDER_KEYS_PER_SENDER)
+        Self::new_with_policy(
+            leaf_index,
+            sender_key_base,
+            false,
+            MAX_SENDER_KEY_GENERATION,
+            MAX_SKIPPED_SENDER_KEYS_PER_SENDER,
+        )
     }
 
     pub fn new_with_policy(
@@ -52,7 +58,14 @@ impl SenderKeyChain {
         chain_key: Vec<u8>,
         generation: u32,
     ) -> Result<Self, ProtocolError> {
-        Self::from_state_with_policy(leaf_index, chain_key, generation, false, MAX_SENDER_KEY_GENERATION, MAX_SKIPPED_SENDER_KEYS_PER_SENDER)
+        Self::from_state_with_policy(
+            leaf_index,
+            chain_key,
+            generation,
+            false,
+            MAX_SENDER_KEY_GENERATION,
+            MAX_SKIPPED_SENDER_KEYS_PER_SENDER,
+        )
     }
 
     pub fn from_state_with_policy(
@@ -138,7 +151,8 @@ impl SenderKeyChain {
         let skip_count = (target_generation - self.generation) as usize;
         if skip_count > self.max_skipped_per_sender {
             return Err(ProtocolError::group_protocol(format!(
-                "Too many skipped generations: {skip_count} (max {})", self.max_skipped_per_sender
+                "Too many skipped generations: {skip_count} (max {})",
+                self.max_skipped_per_sender
             )));
         }
 
@@ -173,7 +187,14 @@ impl SenderKeyStore {
         leaf_indices: &[u32],
         group_context_hash: &[u8],
     ) -> Result<Self, ProtocolError> {
-        Self::new_epoch_with_policy(epoch_secret, leaf_indices, group_context_hash, false, MAX_SENDER_KEY_GENERATION, MAX_SKIPPED_SENDER_KEYS_PER_SENDER)
+        Self::new_epoch_with_policy(
+            epoch_secret,
+            leaf_indices,
+            group_context_hash,
+            false,
+            MAX_SENDER_KEY_GENERATION,
+            MAX_SKIPPED_SENDER_KEYS_PER_SENDER,
+        )
     }
 
     pub fn new_epoch_with_policy(
@@ -191,7 +212,16 @@ impl SenderKeyStore {
                 leaf_idx,
                 group_context_hash,
             )?;
-            chains.push((leaf_idx, SenderKeyChain::new_with_policy(leaf_idx, base, enhanced, max_generation, max_skipped_per_sender)?));
+            chains.push((
+                leaf_idx,
+                SenderKeyChain::new_with_policy(
+                    leaf_idx,
+                    base,
+                    enhanced,
+                    max_generation,
+                    max_skipped_per_sender,
+                )?,
+            ));
         }
         Ok(Self {
             chains,
@@ -201,7 +231,10 @@ impl SenderKeyStore {
         })
     }
 
-    pub fn from_chains(chains: BTreeMap<u32, SenderKeyChain>, max_skipped_per_sender: usize) -> Self {
+    pub fn from_chains(
+        chains: BTreeMap<u32, SenderKeyChain>,
+        max_skipped_per_sender: usize,
+    ) -> Self {
         let chains_vec: Vec<(u32, SenderKeyChain)> = chains.into_iter().collect();
         Self {
             chains: chains_vec,

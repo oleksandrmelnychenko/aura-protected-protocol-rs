@@ -178,3 +178,41 @@ pub const MKD_KYBER_SEED_2_INFO: &[u8] = b"ecliptix-kyber-seed-2";
 
 pub const SPK_ID_INFO: &[u8] = b"Ecliptix-SPK-ID";
 pub const SPK_ID_BYTES: usize = 4;
+
+// ── VoIP constants ──────────────────────────────────────────────────
+
+pub const VOIP_PROTOCOL_VERSION: u32 = 1;
+pub const CALL_ID_BYTES: usize = 32;
+pub const SSRC_BYTES: usize = 4;
+
+pub const VOIP_MEDIA_KEY_BYTES: usize = 32;
+pub const VOIP_MEDIA_NONCE_BYTES: usize = 12;
+pub const VOIP_HEADER_KEY_BYTES: usize = 32;
+
+pub const DEFAULT_RATCHET_INTERVAL_FRAMES: u32 = 512;
+pub const DEFAULT_PQ_REKEY_INTERVAL_SECS: u32 = 60;
+pub const MAX_RATCHET_GENERATION: u32 = 0x00FF_FFFF;
+pub const MAX_FRAME_COUNTER: u64 = 0xFFFF_FFFF_FFFF;
+pub const MAX_VOIP_FRAME_SIZE: usize = 64 * 1024;
+pub const VOIP_FRAME_PADDING_BLOCK: usize = 16;
+pub const MAX_SKIPPED_RATCHET_GENERATIONS: u32 = 8;
+pub const VOIP_CALL_INIT_TIMEOUT_SECS: u64 = 30;
+pub const VOIP_CALL_ACTIVE_IDLE_TIMEOUT_SECS: u64 = 5 * 60;
+pub const VOIP_CALL_MAX_LIFETIME_SECS: u64 = 24 * 60 * 60;
+
+pub const VOIP_ROOT_SECRET_INFO: &[u8] = b"Ecliptix-VoIP-RootSecret";
+pub const VOIP_MEDIA_KEY_SEND_INFO: &[u8] = b"Ecliptix-VoIP-MediaKey-Send";
+pub const VOIP_MEDIA_KEY_RECV_INFO: &[u8] = b"Ecliptix-VoIP-MediaKey-Recv";
+pub const VOIP_HEADER_KEY_SEND_INFO: &[u8] = b"Ecliptix-VoIP-HeaderKey-Send";
+pub const VOIP_HEADER_KEY_RECV_INFO: &[u8] = b"Ecliptix-VoIP-HeaderKey-Recv";
+pub const VOIP_RATCHET_CHAIN_INFO: &[u8] = b"Ecliptix-VoIP-RatchetChain";
+pub const VOIP_FRAME_KEY_INFO: &[u8] = b"Ecliptix-VoIP-FrameKey";
+pub const VOIP_REKEY_INFO: &[u8] = b"Ecliptix-VoIP-Rekey";
+pub const VOIP_KEY_CONFIRM_CALLER_INFO: &[u8] = b"Ecliptix-VoIP-KeyConfirm-Caller";
+pub const VOIP_KEY_CONFIRM_CALLEE_INFO: &[u8] = b"Ecliptix-VoIP-KeyConfirm-Callee";
+pub const VOIP_HYBRID_SALT_PREFIX: &[u8] = b"Ecliptix-PQ-VoIP-Hybrid::";
+pub const VOIP_CALL_END_HMAC_INFO: &[u8] = b"Ecliptix-VoIP-CallEnd-HMAC";
+pub const VOIP_SHIELD_KDF_PASS1: &[u8] = b"Ecliptix-VoIP-Shield-Pass1";
+pub const VOIP_SHIELD_KDF_PASS2: &[u8] = b"Ecliptix-VoIP-Shield-Pass2";
+pub const VOIP_NONCE_PREFIX_INFO: &[u8] = b"Ecliptix-VoIP-NoncePrefix";
+pub const VOIP_NONCE_PREFIX_BYTES: usize = 4;

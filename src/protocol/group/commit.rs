@@ -93,15 +93,23 @@ pub fn create_commit(
         .checked_add(1)
         .ok_or_else(|| ProtocolError::group_protocol("Epoch counter overflow"))?;
     let policy_bytes = policy.policy_bytes();
-    let group_context_hash =
-        GroupKeySchedule::compute_group_context_hash(group_id, new_epoch, &tree_hash, &policy_bytes);
+    let group_context_hash = GroupKeySchedule::compute_group_context_hash(
+        group_id,
+        new_epoch,
+        &tree_hash,
+        &policy_bytes,
+    );
 
     let mut joiner_zeroizing =
         GroupKeySchedule::derive_joiner_secret(prev_init_secret, &commit_secret);
     let joiner_secret = std::mem::take(&mut *joiner_zeroizing);
 
-    let mut epoch_keys =
-        GroupKeySchedule::derive_epoch_keys(prev_init_secret, &commit_secret, &group_context_hash, policy.enhanced_key_schedule)?;
+    let mut epoch_keys = GroupKeySchedule::derive_epoch_keys(
+        prev_init_secret,
+        &commit_secret,
+        &group_context_hash,
+        policy.enhanced_key_schedule,
+    )?;
     epoch_keys = apply_psk_proposals(epoch_keys, &proposals, psk_resolver)?;
     CryptoInterop::secure_wipe(&mut commit_secret);
 
@@ -267,8 +275,12 @@ pub fn process_commit(
 
     let tree_hash = tree.tree_hash()?;
     let policy_bytes = policy.policy_bytes();
-    let group_context_hash =
-        GroupKeySchedule::compute_group_context_hash(group_id, commit.epoch, &tree_hash, &policy_bytes);
+    let group_context_hash = GroupKeySchedule::compute_group_context_hash(
+        group_id,
+        commit.epoch,
+        &tree_hash,
+        &policy_bytes,
+    );
 
     let mut epoch_keys = GroupKeySchedule::derive_epoch_keys(
         init_secret_for_epoch,

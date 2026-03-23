@@ -168,7 +168,8 @@ impl ShamirSecretSharing {
             return Err(ProtocolError::invalid_input("Auth key must be 32 bytes"));
         }
 
-        let auth_tag = shares.last()
+        let auth_tag = shares
+            .last()
             .ok_or_else(|| ProtocolError::invalid_input("Empty shares list"))?;
         let data_shares = &shares[..shares.len() - 1];
 
