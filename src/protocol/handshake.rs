@@ -5,6 +5,7 @@ use crate::core::constants::*;
 use crate::core::errors::ProtocolError;
 use crate::crypto::{CryptoInterop, HkdfSha256, KyberInterop};
 use crate::identity::IdentityKeys;
+use crate::models::key_materials::Ed25519KeyPair;
 use crate::proto::{HandshakeAck, HandshakeInit, PreKeyBundle};
 use crate::protocol::nonce::NonceGenerator;
 use crate::protocol::session::{build_protocol_state, HandshakeState, Session};
@@ -122,6 +123,62 @@ fn build_metadata_context(
     context
 }
 
+fn build_init_identity_binding_message(
+    initiator_identity_ed25519_public: &[u8],
+    initiator_identity_x25519_public: &[u8],
+    initiator_kyber_public: &[u8],
+) -> Vec<u8> {
+    let mut message = Vec::with_capacity(
+        HANDSHAKE_INIT_IDENTITY_BINDING_INFO.len()
+            + initiator_identity_ed25519_public.len()
+            + initiator_identity_x25519_public.len()
+            + initiator_kyber_public.len(),
+    );
+    message.extend_from_slice(HANDSHAKE_INIT_IDENTITY_BINDING_INFO);
+    message.extend_from_slice(initiator_identity_ed25519_public);
+    message.extend_from_slice(initiator_identity_x25519_public);
+    message.extend_from_slice(initiator_kyber_public);
+    message
+}
+
+fn sign_init_identity_binding(
+    ed25519_secret: &[u8],
+    initiator_identity_ed25519_public: &[u8],
+    initiator_identity_x25519_public: &[u8],
+    initiator_kyber_public: &[u8],
+) -> Result<Vec<u8>, ProtocolError> {
+    if ed25519_secret.len() != ED25519_SECRET_KEY_BYTES {
+        return Err(ProtocolError::invalid_input(
+            "Invalid Ed25519 secret key size for handshake identity binding",
+        ));
+    }
+    let sk_array: [u8; ED25519_SECRET_KEY_BYTES] = ed25519_secret
+        .try_into()
+        .map_err(|_| ProtocolError::invalid_input("Invalid Ed25519 secret key size"))?;
+    let signing_key = ed25519_dalek::SigningKey::from_keypair_bytes(&sk_array)
+        .map_err(|_| ProtocolError::key_generation("Invalid Ed25519 keypair bytes"))?;
+    let message = build_init_identity_binding_message(
+        initiator_identity_ed25519_public,
+        initiator_identity_x25519_public,
+        initiator_kyber_public,
+    );
+    use ed25519_dalek::Signer;
+    Ok(signing_key.sign(&message).to_bytes().to_vec())
+}
+
+fn verify_init_identity_binding(init: &HandshakeInit) -> Result<(), ProtocolError> {
+    let message = build_init_identity_binding_message(
+        &init.initiator_identity_ed25519_public,
+        &init.initiator_identity_x25519_public,
+        &init.initiator_kyber_public,
+    );
+    Ed25519KeyPair::verify(
+        &init.initiator_identity_ed25519_public,
+        &message,
+        &init.initiator_identity_binding_signature,
+    )
+}
+
 fn validate_bundle(bundle: &PreKeyBundle) -> Result<(), ProtocolError> {
     if bundle.version != PROTOCOL_VERSION {
         return Err(ProtocolError::invalid_input("Invalid PreKeyBundle version"));
@@ -207,6 +264,11 @@ fn validate_init_message(init: &HandshakeInit) -> Result<(), ProtocolError> {
             "Invalid key confirmation MAC size",
         ));
     }
+    if init.initiator_identity_binding_signature.len() != ED25519_SIGNATURE_BYTES {
+        return Err(ProtocolError::invalid_input(
+            "Invalid initiator identity binding signature size",
+        ));
+    }
     if init.initiator_kyber_public.len() != KYBER_PUBLIC_KEY_BYTES {
         return Err(ProtocolError::invalid_input(
             "Initiator Kyber public key required for handshake",
@@ -222,6 +284,7 @@ fn validate_init_message(init: &HandshakeInit) -> Result<(), ProtocolError> {
         .map_err(ProtocolError::from_crypto)?;
 
     validate_max_messages_per_chain(init.max_messages_per_chain)?;
+    verify_init_identity_binding(init)?;
     Ok(())
 }
 
@@ -425,6 +488,18 @@ impl HandshakeInitiator {
                 "Invalid local Kyber public key size",
             ));
         }
+        let mut ed25519_secret = identity_keys.get_identity_ed25519_private_key_copy()?;
+        let identity_binding_signature =
+            sign_init_identity_binding(&ed25519_secret, &ed_public, &id_public, &kyber_public)
+                .inspect_err(|_| {
+                    CryptoInterop::secure_wipe(&mut identity_private);
+                    CryptoInterop::secure_wipe(&mut eph_private);
+                    CryptoInterop::secure_wipe(&mut root_key);
+                    CryptoInterop::secure_wipe(&mut kyber_shared_secret);
+                    CryptoInterop::secure_wipe(&mut kc_i);
+                    CryptoInterop::secure_wipe(&mut kc_r);
+                })?;
+        CryptoInterop::secure_wipe(&mut ed25519_secret);
 
         let mut init_message = HandshakeInit {
             version: PROTOCOL_VERSION,
@@ -436,6 +511,7 @@ impl HandshakeInitiator {
             initiator_kyber_public: kyber_public.clone(),
             max_messages_per_chain,
             key_confirmation_mac: vec![],
+            initiator_identity_binding_signature: identity_binding_signature,
         };
 
         let transcript_hash =
@@ -812,6 +888,50 @@ impl HandshakeResponder {
         )
         .map_err(ProtocolError::from_crypto)?;
         if !eq {
+            // Diagnostic: include hashes for debugging MAC mismatch
+            use sha2::{Digest as _, Sha256};
+            fn to_hex(bytes: &[u8]) -> String {
+                use std::fmt::Write as _;
+                let mut out = String::with_capacity(bytes.len() * 2);
+                for byte in bytes {
+                    let _ = write!(&mut out, "{byte:02x}");
+                }
+                out
+            }
+            let th_hash = {
+                let mut h = Sha256::new();
+                h.update(&transcript_hash);
+                to_hex(&h.finalize()[..8])
+            };
+            let expected_hex = to_hex(&expected_init_mac[..8.min(expected_init_mac.len())]);
+            let received_hex = to_hex(
+                &init_message.key_confirmation_mac
+                    [..8.min(init_message.key_confirmation_mac.len())],
+            );
+            let bundle_diag = {
+                let mut bb = Vec::new();
+                local_bundle.encode(&mut bb).ok();
+                let mut h = Sha256::new();
+                h.update(&bb);
+                format!(
+                    "bundle_len={} bundle_sha={}",
+                    bb.len(),
+                    to_hex(&h.finalize()[..8])
+                )
+            };
+            let init_diag = {
+                let mut ic = init_message;
+                ic.key_confirmation_mac.clear();
+                let mut ib = Vec::new();
+                ic.encode(&mut ib).ok();
+                let mut h = Sha256::new();
+                h.update(&ib);
+                format!(
+                    "init_len={} init_sha={}",
+                    ib.len(),
+                    to_hex(&h.finalize()[..8])
+                )
+            };
             CryptoInterop::secure_wipe(&mut spk_private);
             CryptoInterop::secure_wipe(&mut identity_private);
             if !opk_private.is_empty() {
@@ -821,7 +941,7 @@ impl HandshakeResponder {
             CryptoInterop::secure_wipe(&mut kyber_shared_secret);
             CryptoInterop::secure_wipe(&mut kc_r);
             return Err(ProtocolError::handshake(
-                "Initiator key confirmation failed",
+                format!("Initiator key confirmation failed: th_sha={th_hash} expected_mac={expected_hex} received_mac={received_hex} {bundle_diag} {init_diag}"),
             ));
         }
 

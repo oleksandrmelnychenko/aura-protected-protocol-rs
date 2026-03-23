@@ -97,6 +97,10 @@ public final class EppHandshakeInitiator {
     /// After this call succeeds, the initiator is consumed and the returned session
     /// is ready for encrypting and decrypting messages.
     ///
+    /// Call `peerIdentity()` and optionally `identityBindingHash()` on the
+    /// returned session before trusting it, if your application pins or verifies
+    /// peers out of band.
+    ///
     /// - Parameter handshakeAck: The handshake-ack payload received from the responder.
     /// - Returns: The established `EppSession`.
     /// - Throws: `EppError.objectDisposed` if the initiator has been destroyed,
@@ -121,6 +125,36 @@ public final class EppHandshakeInitiator {
             throw EppError.from(code: result, nativeError: outError)
         }
         return EppSession(handle: sessionHandle)
+    }
+
+    /// Completes the handshake and immediately verifies the peer identity.
+    ///
+    /// This is the safest one-shot flow when your application already knows
+    /// the expected peer identity out of band.
+    public func finishVerifyingPeer(
+        handshakeAck: Data,
+        expectedPeerIdentity: EppSessionIdentity
+    ) throws -> EppSession {
+        let session = try finish(handshakeAck: handshakeAck)
+        try session.requirePeerIdentity(
+            ed25519PublicKey: expectedPeerIdentity.ed25519PublicKey,
+            x25519PublicKey: expectedPeerIdentity.x25519PublicKey
+        )
+        return session
+    }
+
+    /// Completes the handshake and immediately verifies the peer identity.
+    public func finishVerifyingPeer(
+        handshakeAck: Data,
+        expectedPeerEd25519PublicKey: Data,
+        expectedPeerX25519PublicKey: Data
+    ) throws -> EppSession {
+        let session = try finish(handshakeAck: handshakeAck)
+        try session.requirePeerIdentity(
+            ed25519PublicKey: expectedPeerEd25519PublicKey,
+            x25519PublicKey: expectedPeerX25519PublicKey
+        )
+        return session
     }
 }
 
@@ -203,6 +237,10 @@ public final class EppHandshakeResponder {
     /// After this call succeeds, the responder is consumed and the returned session
     /// is ready for encrypting and decrypting messages.
     ///
+    /// Call `peerIdentity()` and optionally `identityBindingHash()` on the
+    /// returned session before trusting it, if your application pins or verifies
+    /// peers out of band.
+    ///
     /// - Returns: The established `EppSession`.
     /// - Throws: `EppError.objectDisposed` if the responder has been destroyed,
     ///   or another `EppError` if the handshake finish fails.
@@ -222,6 +260,34 @@ public final class EppHandshakeResponder {
             throw EppError.from(code: result, nativeError: outError)
         }
         return EppSession(handle: sessionHandle)
+    }
+
+    /// Completes the handshake and immediately verifies the peer identity.
+    ///
+    /// This is the safest one-shot flow when your application already knows
+    /// the expected peer identity out of band.
+    public func finishVerifyingPeer(
+        expectedPeerIdentity: EppSessionIdentity
+    ) throws -> EppSession {
+        let session = try finish()
+        try session.requirePeerIdentity(
+            ed25519PublicKey: expectedPeerIdentity.ed25519PublicKey,
+            x25519PublicKey: expectedPeerIdentity.x25519PublicKey
+        )
+        return session
+    }
+
+    /// Completes the handshake and immediately verifies the peer identity.
+    public func finishVerifyingPeer(
+        expectedPeerEd25519PublicKey: Data,
+        expectedPeerX25519PublicKey: Data
+    ) throws -> EppSession {
+        let session = try finish()
+        try session.requirePeerIdentity(
+            ed25519PublicKey: expectedPeerEd25519PublicKey,
+            x25519PublicKey: expectedPeerX25519PublicKey
+        )
+        return session
     }
 }
 
@@ -246,9 +312,10 @@ public enum EcliptixProtectedProtocol {
         }
     }
 
-    /// Shuts down the EPP library and releases global resources.
+    /// Calls the native shutdown hook.
     ///
-    /// After calling this, no further EPP operations should be performed.
+    /// The current native implementation is a no-op and does not release
+    /// meaningful global resources. It is kept only for API symmetry.
     public static func shutdown() {
         native_epp_shutdown()
     }
@@ -259,7 +326,7 @@ public enum EcliptixProtectedProtocol {
         return String(cString: ptr)
     }
 
-    /// Derives a 64-byte root key from an opaque session key and user context.
+    /// Derives an application key from an opaque session key and user context.
     ///
     /// This is typically used to derive storage encryption keys from session material
     /// combined with application-specific context.
@@ -267,13 +334,18 @@ public enum EcliptixProtectedProtocol {
     /// - Parameters:
     ///   - opaqueSessionKey: The session key material.
     ///   - userContext: Application-specific context bytes.
-    /// - Returns: A 64-byte derived root key.
+    /// - Parameter outputLength: Requested key length in bytes. Must be 1...64.
+    /// - Returns: A derived key of exactly `outputLength` bytes.
     /// - Throws: `EppError` if key derivation fails.
     public static func deriveRootKey(
         opaqueSessionKey: Data,
-        userContext: Data
+        userContext: Data,
+        outputLength: Int = 64
     ) throws -> Data {
-        let rootKeyLength = 64
+        guard (1...64).contains(outputLength) else {
+            throw EppError.invalidInput("outputLength must be in 1...64")
+        }
+        let rootKeyLength = outputLength
         var outKey = Data(count: rootKeyLength)
         var outError = NativeEppError(code: 0, message: nil)
         let result = opaqueSessionKey.withUnsafeBytes { sessionKeyBytes in

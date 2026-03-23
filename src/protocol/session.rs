@@ -111,7 +111,6 @@ fn compute_identity_binding_hash(
             "Invalid X25519 identity key sizes for binding",
         ));
     }
-
     let mut ed_keys = [local_ed25519.to_vec(), peer_ed25519.to_vec()];
     if ed_keys[0] > ed_keys[1] {
         ed_keys.swap(0, 1);
@@ -120,7 +119,6 @@ fn compute_identity_binding_hash(
     if x_keys[0] > x_keys[1] {
         x_keys.swap(0, 1);
     }
-
     let mut input = Vec::with_capacity(
         IDENTITY_BINDING_INFO.len()
             + ed_keys[0].len()
@@ -2164,6 +2162,15 @@ impl Session {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .is_initiator
+    }
+
+    pub fn get_session_id(&self) -> Vec<u8> {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .state
+            .session_id
+            .clone()
     }
 
     pub fn get_peer_identity(&self) -> PeerIdentity {

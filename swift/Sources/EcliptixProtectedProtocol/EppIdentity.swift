@@ -3,6 +3,12 @@
 
 import Foundation
 
+private extension Data {
+    var eppHexString: String {
+        map { String(format: "%02x", $0) }.joined()
+    }
+}
+
 /// Represents a cryptographic identity in the Ecliptix Protected Protocol.
 ///
 /// An identity encapsulates X25519, Ed25519, and Kyber key pairs used for
@@ -171,6 +177,21 @@ public final class EppIdentity {
         }
     }
 
+    public func sessionIdentity() throws -> EppSessionIdentity {
+        EppSessionIdentity(
+            ed25519PublicKey: try ed25519PublicKey,
+            x25519PublicKey: try x25519PublicKey
+        )
+    }
+
+    public func ed25519FingerprintHex() throws -> String {
+        try ed25519PublicKey.eppHexString
+    }
+
+    public func x25519FingerprintHex() throws -> String {
+        try x25519PublicKey.eppHexString
+    }
+
     /// Creates a pre-key bundle from this identity for use in handshake protocols.
     ///
     /// The pre-key bundle contains the public keys needed by a peer to initiate
@@ -184,6 +205,24 @@ public final class EppIdentity {
         var outBuffer = NativeEppBuffer(data: nil, length: 0)
         var outError = NativeEppError(code: 0, message: nil)
         let result = native_epp_prekey_bundle_create(handle, &outBuffer, &outError)
+        defer {
+            if outBuffer.data != nil { native_epp_buffer_release(&outBuffer) }
+            native_epp_error_free(&outError)
+        }
+        guard result == EPP_SUCCESS else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+        guard let data = dataFromBuffer(outBuffer) else {
+            throw EppError.bufferTooSmall
+        }
+        return data
+    }
+
+    public func replenishOneTimePrekeys(count: UInt32) throws -> Data {
+        guard handle != nil else { throw EppError.objectDisposed }
+        var outBuffer = NativeEppBuffer(data: nil, length: 0)
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = native_epp_prekey_bundle_replenish(handle, count, &outBuffer, &outError)
         defer {
             if outBuffer.data != nil { native_epp_buffer_release(&outBuffer) }
             native_epp_error_free(&outError)

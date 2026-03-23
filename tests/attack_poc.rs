@@ -68,6 +68,33 @@ fn create_session_pair_with_chain_limit(max_messages_per_chain: u32) -> (Session
     (alice_session, bob_session)
 }
 
+const fn external_join_policy() -> ecliptix_protocol::protocol::group::GroupSecurityPolicy {
+    let mut policy = ecliptix_protocol::protocol::group::GroupSecurityPolicy::shield();
+    policy.block_external_join = false;
+    policy
+}
+
+fn create_external_joinable_group(identity: &IdentityKeys, credential: &[u8]) -> GroupSession {
+    GroupSession::create_with_policy(identity, credential.to_vec(), external_join_policy()).unwrap()
+}
+
+fn authorize_and_join_external(
+    owner: &GroupSession,
+    joiner: &IdentityKeys,
+    credential: &[u8],
+) -> (GroupSession, Vec<u8>) {
+    let authorization = owner
+        .authorize_external_join(
+            &joiner.get_identity_ed25519_public(),
+            &joiner.get_identity_x25519_public(),
+            credential,
+        )
+        .unwrap();
+    let public_state = owner.export_public_state().unwrap();
+    GroupSession::from_external_join(&public_state, &authorization, joiner, credential.to_vec())
+        .unwrap()
+}
+
 #[test]
 fn attack_replay_after_nonce_cache_overflow() {
     init();
@@ -552,12 +579,10 @@ fn attack_external_init_small_order_ephemeral_key() {
     init();
 
     let alice_id = IdentityKeys::create(10).unwrap();
-    let alice_session = GroupSession::create(&alice_id, b"alice".to_vec()).unwrap();
-
-    let public_state = alice_session.export_public_state().unwrap();
+    let alice_session = create_external_joinable_group(&alice_id, b"alice");
     let joiner_id = IdentityKeys::create(10).unwrap();
     let (_joiner_session, ext_commit_bytes) =
-        GroupSession::from_external_join(&public_state, &joiner_id, b"joiner".to_vec()).unwrap();
+        authorize_and_join_external(&alice_session, &joiner_id, b"joiner");
 
     let commit =
         ecliptix_protocol::proto::GroupCommit::decode(ext_commit_bytes.as_slice()).unwrap();
@@ -626,7 +651,7 @@ fn defense_stack_wipe_does_not_break_group_operations() {
     let bob_id = IdentityKeys::create(20).unwrap();
     let carol_id = IdentityKeys::create(30).unwrap();
 
-    let alice_session = GroupSession::create(&alice_id, b"alice".to_vec()).unwrap();
+    let alice_session = create_external_joinable_group(&alice_id, b"alice");
 
     let (bob_kp, bob_x25519_priv, bob_kyber_sec) =
         group::key_package::create_key_package(&bob_id, b"bob".to_vec()).unwrap();
@@ -641,9 +666,8 @@ fn defense_stack_wipe_does_not_break_group_operations() {
     )
     .unwrap();
 
-    let public_state = alice_session.export_public_state().unwrap();
     let (carol_session, ext_commit) =
-        GroupSession::from_external_join(&public_state, &carol_id, b"carol".to_vec()).unwrap();
+        authorize_and_join_external(&alice_session, &carol_id, b"carol");
     alice_session.process_commit(&ext_commit).unwrap();
     bob_session.process_commit(&ext_commit).unwrap();
 

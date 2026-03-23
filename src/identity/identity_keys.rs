@@ -6,12 +6,13 @@ use crate::core::errors::ProtocolError;
 use crate::crypto::{
     CryptoInterop, HkdfSha256, KyberInterop, MasterKeyDerivation, SecureMemoryHandle,
 };
+use crate::interfaces::IIdentityEventHandler;
 use crate::models::bundles::LocalPublicKeyBundle;
 use crate::models::key_materials::{Ed25519KeyPair, SignedPreKeyPair, X25519KeyPair};
 use crate::models::keys::{OneTimePreKey, OneTimePreKeyPublic};
 use crate::models::IdentityKeyBundle;
 use ed25519_dalek::{Signer, SigningKey};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
@@ -44,6 +45,7 @@ struct IdentityKeysInner {
     ephemeral_secret_key: Option<SecureMemoryHandle>,
     ephemeral_x25519_public: Option<Vec<u8>>,
     selected_one_time_pre_key_id: Option<u32>,
+    event_handler: Option<Arc<dyn IIdentityEventHandler>>,
 }
 
 pub struct IdentityKeys {
@@ -74,6 +76,7 @@ impl IdentityKeys {
                 ephemeral_secret_key: None,
                 ephemeral_x25519_public: None,
                 selected_one_time_pre_key_id: None,
+                event_handler: None,
             }),
         }
     }
@@ -485,6 +488,32 @@ impl IdentityKeys {
             .map_err(ProtocolError::from_crypto)
     }
 
+    /// Generate `count` fresh OTKs, add them to the local pool, and return
+    /// their (id, public_key) pairs so the caller can upload them to the key
+    /// server.  IDs are random and collision-free within the new batch.
+    pub fn replenish_one_time_pre_keys(
+        &self,
+        count: u32,
+    ) -> Result<Vec<(u32, Vec<u8>)>, ProtocolError> {
+        let new_opks = Self::generate_one_time_pre_keys(count)?;
+        let pairs: Vec<(u32, Vec<u8>)> = new_opks
+            .iter()
+            .map(|opk| (opk.id(), opk.public_key_vec()))
+            .collect();
+        let mut inner = self
+            .inner
+            .write()
+            .map_err(|_| ProtocolError::invalid_state("IdentityKeys write lock poisoned"))?;
+        inner.one_time_pre_keys.extend(new_opks);
+        Ok(pairs)
+    }
+
+    pub fn set_event_handler(&self, handler: Arc<dyn IIdentityEventHandler>) {
+        if let Ok(mut inner) = self.inner.write() {
+            inner.event_handler = Some(handler);
+        }
+    }
+
     pub fn consume_one_time_pre_key_by_id(&self, id: u32) -> Result<(), ProtocolError> {
         let mut inner = self
             .inner
@@ -496,6 +525,15 @@ impl IdentityKeys {
             .position(|opk| opk.id() == id)
             .ok_or_else(|| ProtocolError::invalid_input("OPK with requested ID not found"))?;
         inner.one_time_pre_keys.remove(pos);
+
+        let remaining = u32::try_from(inner.one_time_pre_keys.len()).unwrap_or(u32::MAX);
+        let max_capacity = DEFAULT_ONE_TIME_KEY_COUNT;
+        let threshold = max_capacity * OTK_EXHAUSTION_WARNING_PERCENT / 100;
+        if remaining <= threshold {
+            if let Some(ref handler) = inner.event_handler {
+                handler.on_otk_exhaustion_warning(remaining, max_capacity);
+            }
+        }
         Ok(())
     }
 

@@ -3,6 +3,46 @@
 
 import Foundation
 
+private extension Data {
+    var eppHexString: String {
+        map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+public struct EppSessionIdentity: Sendable {
+    public let ed25519PublicKey: Data
+    public let x25519PublicKey: Data
+
+    public func matches(
+        ed25519PublicKey expectedEd25519: Data,
+        x25519PublicKey expectedX25519: Data
+    ) -> Bool {
+        ed25519PublicKey == expectedEd25519 && x25519PublicKey == expectedX25519
+    }
+
+    public var ed25519FingerprintHex: String {
+        ed25519PublicKey.eppHexString
+    }
+
+    public var x25519FingerprintHex: String {
+        x25519PublicKey.eppHexString
+    }
+}
+
+public struct EppEnvelopeMetadata: Sendable {
+    public let envelopeType: UInt32
+    public let envelopeId: UInt32
+    public let messageIndex: UInt64
+    public let correlationId: String?
+}
+
+public struct EppSessionVerificationSnapshot: Sendable {
+    public let sessionId: Data
+    public let identityBindingHash: Data
+    public let localIdentity: EppSessionIdentity
+    public let peerIdentity: EppSessionIdentity
+}
+
 /// Represents a 1:1 encrypted session in the Ecliptix Protected Protocol.
 ///
 /// A session is created through a handshake between two identities and provides
@@ -29,8 +69,8 @@ public final class EppSession {
 
     /// Encrypts plaintext into an encrypted envelope.
     ///
-    /// The envelope type, ID, and correlation ID are metadata fields that are
-    /// authenticated (included in the AAD) but not encrypted.
+    /// The envelope type, ID, and correlation ID are authenticated and encrypted
+    /// inside the outer envelope metadata.
     ///
     /// - Parameters:
     ///   - plaintext: The data to encrypt.
@@ -42,7 +82,7 @@ public final class EppSession {
     ///   or another `EppError` if encryption fails.
     public func encrypt(
         plaintext: Data,
-        envelopeType: UInt32 = EPP_ENVELOPE_REQUEST,
+        envelopeType: UInt32 = 0, // EPP_ENVELOPE_REQUEST
         envelopeId: UInt32 = 0,
         correlationId: String = ""
     ) throws -> Data {
@@ -114,6 +154,72 @@ public final class EppSession {
             throw EppError.bufferTooSmall
         }
         return data
+    }
+
+    public func decryptWithMetadata(
+        encryptedEnvelope: Data
+    ) throws -> (plaintext: Data, metadata: EppEnvelopeMetadata) {
+        guard handle != nil else {
+            throw EppError.objectDisposed
+        }
+        var outPlaintext = NativeEppBuffer(data: nil, length: 0)
+        var outMetadata = NativeEppBuffer(data: nil, length: 0)
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = encryptedEnvelope.withUnsafeBytes { envelopeBytes in
+            native_epp_session_decrypt(
+                handle,
+                envelopeBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                encryptedEnvelope.count,
+                &outPlaintext,
+                &outMetadata,
+                &outError
+            )
+        }
+        defer {
+            if outPlaintext.data != nil { native_epp_buffer_release(&outPlaintext) }
+            if outMetadata.data != nil { native_epp_buffer_release(&outMetadata) }
+            native_epp_error_free(&outError)
+        }
+        guard result == EPP_SUCCESS else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+        guard let plaintext = dataFromBuffer(outPlaintext),
+              let metadataBytes = dataFromBuffer(outMetadata) else {
+            throw EppError.bufferTooSmall
+        }
+        var nativeMeta = NativeEppEnvelopeMetadata(
+            envelope_type: 0,
+            envelope_id: 0,
+            message_index: 0,
+            correlation_id: nil,
+            correlation_id_length: 0
+        )
+        var parseError = NativeEppError(code: 0, message: nil)
+        let parseResult = metadataBytes.withUnsafeBytes { bytes in
+            native_epp_envelope_metadata_parse(
+                bytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                metadataBytes.count,
+                &nativeMeta,
+                &parseError
+            )
+        }
+        defer {
+            native_epp_envelope_metadata_free(&nativeMeta)
+            native_epp_error_free(&parseError)
+        }
+        guard parseResult == EPP_SUCCESS else {
+            throw EppError.from(code: parseResult, nativeError: parseError)
+        }
+        let correlationId = nativeMeta.correlation_id.map { String(cString: $0) }
+        return (
+            plaintext,
+            EppEnvelopeMetadata(
+                envelopeType: nativeMeta.envelope_type,
+                envelopeId: nativeMeta.envelope_id,
+                messageIndex: nativeMeta.message_index,
+                correlationId: correlationId
+            )
+        )
     }
 
     /// Serializes the session state, encrypted under the given key, for persistent storage.
@@ -194,6 +300,109 @@ public final class EppSession {
             throw EppError.from(code: result, nativeError: outError)
         }
         return (EppSession(handle: handle), outCounter)
+    }
+
+    public func sessionId() throws -> Data {
+        guard handle != nil else { throw EppError.objectDisposed }
+        var outBuffer = NativeEppBuffer(data: nil, length: 0)
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = native_epp_session_get_id(handle, &outBuffer, &outError)
+        defer {
+            if outBuffer.data != nil { native_epp_buffer_release(&outBuffer) }
+            native_epp_error_free(&outError)
+        }
+        guard result == EPP_SUCCESS else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+        guard let data = dataFromBuffer(outBuffer) else {
+            throw EppError.bufferTooSmall
+        }
+        return data
+    }
+
+    public func identityBindingHash() throws -> Data {
+        guard handle != nil else { throw EppError.objectDisposed }
+        var outBuffer = NativeEppBuffer(data: nil, length: 0)
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = native_epp_session_get_identity_binding_hash(handle, &outBuffer, &outError)
+        defer {
+            if outBuffer.data != nil { native_epp_buffer_release(&outBuffer) }
+            native_epp_error_free(&outError)
+        }
+        guard result == EPP_SUCCESS else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+        guard let data = dataFromBuffer(outBuffer) else {
+            throw EppError.bufferTooSmall
+        }
+        return data
+    }
+
+    public func peerIdentity() throws -> EppSessionIdentity {
+        guard handle != nil else { throw EppError.objectDisposed }
+        var native = NativeEppSessionPeerIdentity(
+            ed25519_public: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+            x25519_public: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        )
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = native_epp_session_get_peer_identity(handle, &native, &outError)
+        defer { native_epp_error_free(&outError) }
+        guard result == EPP_SUCCESS else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+        return EppSessionIdentity(
+            ed25519PublicKey: withUnsafeBytes(of: native.ed25519_public) { Data($0) },
+            x25519PublicKey: withUnsafeBytes(of: native.x25519_public) { Data($0) }
+        )
+    }
+
+    public func localIdentity() throws -> EppSessionIdentity {
+        guard handle != nil else { throw EppError.objectDisposed }
+        var native = NativeEppSessionPeerIdentity(
+            ed25519_public: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+            x25519_public: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        )
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = native_epp_session_get_local_identity(handle, &native, &outError)
+        defer { native_epp_error_free(&outError) }
+        guard result == EPP_SUCCESS else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+        return EppSessionIdentity(
+            ed25519PublicKey: withUnsafeBytes(of: native.ed25519_public) { Data($0) },
+            x25519PublicKey: withUnsafeBytes(of: native.x25519_public) { Data($0) }
+        )
+    }
+
+    public func verifyPeerIdentity(
+        ed25519PublicKey expectedEd25519: Data,
+        x25519PublicKey expectedX25519: Data
+    ) throws -> Bool {
+        try peerIdentity().matches(
+            ed25519PublicKey: expectedEd25519,
+            x25519PublicKey: expectedX25519
+        )
+    }
+
+    public func requirePeerIdentity(
+        ed25519PublicKey expectedEd25519: Data,
+        x25519PublicKey expectedX25519: Data
+    ) throws {
+        guard try verifyPeerIdentity(
+            ed25519PublicKey: expectedEd25519,
+            x25519PublicKey: expectedX25519
+        ) else {
+            throw EppError.handshake("Peer identity verification failed")
+        }
+    }
+
+    public func verificationSnapshot() throws -> EppSessionVerificationSnapshot {
+        EppSessionVerificationSnapshot(
+            sessionId: try sessionId(),
+            identityBindingHash: try identityBindingHash(),
+            localIdentity: try localIdentity(),
+            peerIdentity: try peerIdentity()
+        )
     }
 
     /// Returns the number of nonce values remaining before the session must be rekeyed.

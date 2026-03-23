@@ -70,6 +70,7 @@ pub const KEY_CONFIRM_INIT_INFO: &[u8] = b"Ecliptix-KeyConfirm-I";
 pub const KEY_CONFIRM_RESP_INFO: &[u8] = b"Ecliptix-KeyConfirm-R";
 pub const TRANSCRIPT_LABEL: &[u8] = b"Ecliptix-Handshake-Transcript";
 pub const IDENTITY_BINDING_INFO: &[u8] = b"Ecliptix-Identity-Binding";
+pub const HANDSHAKE_INIT_IDENTITY_BINDING_INFO: &[u8] = b"Ecliptix-Handshake-Init-Identity-Binding";
 pub const HYBRID_SALT_PREFIX: &[u8] = b"Ecliptix-PQ-Hybrid::";
 
 pub const X3DH_FILL_BYTE: u8 = 0xFF;
@@ -117,6 +118,7 @@ pub const GROUP_NODE_KEY_INFO: &[u8] = b"Ecliptix-Group-NodeKey";
 pub const GROUP_JOINER_SECRET_INFO: &[u8] = b"Ecliptix-Group-JoinerSecret";
 pub const GROUP_HYBRID_PATH_INFO: &[u8] = b"Ecliptix-Group-HybridPath";
 pub const GROUP_STATE_HMAC_INFO: &[u8] = b"Ecliptix-Group-StateHMAC";
+pub const GROUP_EXTERNAL_JOIN_AUTH_INFO: &[u8] = b"Ecliptix-Group-ExternalJoinAuth";
 pub const GROUP_HYBRID_SALT_PREFIX: &[u8] = b"Ecliptix-PQ-Group-Hybrid::";
 pub const GROUP_TREE_HASH_INFO: &[u8] = b"Ecliptix-Group-TreeHash";
 pub const GROUP_PARENT_HASH_LABEL: &[u8] = b"Ecliptix-Group-ParentHash";
@@ -154,6 +156,7 @@ pub const MESSAGE_PADDING_BLOCK_SIZE: usize = 64;
 
 pub const RATCHET_STALLING_WARNING_THRESHOLD: u64 = 100;
 pub const SENDER_KEY_EXHAUSTION_WARNING_PERCENT: u32 = 10;
+pub const OTK_EXHAUSTION_WARNING_PERCENT: u32 = 10;
 
 pub const SHIELD_MAX_MESSAGES_PER_EPOCH: u32 = 1_000;
 pub const SHIELD_MAX_SKIPPED_KEYS_PER_SENDER: u32 = 4;

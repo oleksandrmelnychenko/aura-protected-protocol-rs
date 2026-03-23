@@ -30,6 +30,7 @@ message HandshakeInit {
   bytes key_confirmation_mac = 7;
   bytes initiator_kyber_public = 8;
   uint32 max_messages_per_chain = 9;
+  bytes initiator_identity_binding_signature = 10;
 }
 
 message HandshakeAck {

@@ -27,20 +27,14 @@ pub fn create_key_package(
     let identity_ed25519 = identity.get_identity_ed25519_public();
     let identity_x25519 = identity.get_identity_x25519_public();
 
-    let mut sign_content = Vec::with_capacity(
-        size_of::<u32>()
-            + ED25519_PUBLIC_KEY_BYTES
-            + X25519_PUBLIC_KEY_BYTES
-            + X25519_PUBLIC_KEY_BYTES
-            + KYBER_PUBLIC_KEY_BYTES
-            + credential.len(),
+    let sign_content = build_signed_content(
+        GROUP_PROTOCOL_VERSION,
+        &identity_ed25519,
+        &identity_x25519,
+        &x25519_public,
+        &kyber_public,
+        &credential,
     );
-    sign_content.extend_from_slice(&GROUP_PROTOCOL_VERSION.to_le_bytes());
-    sign_content.extend_from_slice(&identity_ed25519);
-    sign_content.extend_from_slice(&identity_x25519);
-    sign_content.extend_from_slice(&x25519_public);
-    sign_content.extend_from_slice(&kyber_public);
-    sign_content.extend_from_slice(&credential);
 
     let mut ed25519_secret = identity.get_identity_ed25519_private_key_copy()?;
     let signature = ed25519_sign(&ed25519_secret, &sign_content)?;
@@ -58,6 +52,31 @@ pub fn create_key_package(
     };
 
     Ok((kp, x25519_private, kyber_secret))
+}
+
+pub fn build_signed_content(
+    version: u32,
+    identity_ed25519_public: &[u8],
+    identity_x25519_public: &[u8],
+    leaf_x25519_public: &[u8],
+    leaf_kyber_public: &[u8],
+    credential: &[u8],
+) -> Vec<u8> {
+    let mut sign_content = Vec::with_capacity(
+        size_of::<u32>()
+            + ED25519_PUBLIC_KEY_BYTES
+            + X25519_PUBLIC_KEY_BYTES
+            + X25519_PUBLIC_KEY_BYTES
+            + KYBER_PUBLIC_KEY_BYTES
+            + credential.len(),
+    );
+    sign_content.extend_from_slice(&version.to_le_bytes());
+    sign_content.extend_from_slice(identity_ed25519_public);
+    sign_content.extend_from_slice(identity_x25519_public);
+    sign_content.extend_from_slice(leaf_x25519_public);
+    sign_content.extend_from_slice(leaf_kyber_public);
+    sign_content.extend_from_slice(credential);
+    sign_content
 }
 
 pub fn validate_key_package(pkg: &GroupKeyPackage) -> Result<(), ProtocolError> {
@@ -104,24 +123,37 @@ pub fn validate_key_package(pkg: &GroupKeyPackage) -> Result<(), ProtocolError> 
 
     KyberInterop::validate_public_key(&pkg.leaf_kyber_public)?;
 
-    let mut sign_content = Vec::with_capacity(
-        size_of::<u32>()
-            + ED25519_PUBLIC_KEY_BYTES
-            + X25519_PUBLIC_KEY_BYTES
-            + X25519_PUBLIC_KEY_BYTES
-            + KYBER_PUBLIC_KEY_BYTES
-            + pkg.credential.len(),
+    let sign_content = build_signed_content(
+        pkg.version,
+        &pkg.identity_ed25519_public,
+        &pkg.identity_x25519_public,
+        &pkg.leaf_x25519_public,
+        &pkg.leaf_kyber_public,
+        &pkg.credential,
     );
-    sign_content.extend_from_slice(&pkg.version.to_le_bytes());
-    sign_content.extend_from_slice(&pkg.identity_ed25519_public);
-    sign_content.extend_from_slice(&pkg.identity_x25519_public);
-    sign_content.extend_from_slice(&pkg.leaf_x25519_public);
-    sign_content.extend_from_slice(&pkg.leaf_kyber_public);
-    sign_content.extend_from_slice(&pkg.credential);
 
     ed25519_verify(&pkg.identity_ed25519_public, &pkg.signature, &sign_content)?;
 
     Ok(())
+}
+
+pub fn sign_existing_key_package(
+    ed25519_secret: &[u8],
+    identity_ed25519_public: &[u8],
+    identity_x25519_public: &[u8],
+    leaf_x25519_public: &[u8],
+    leaf_kyber_public: &[u8],
+    credential: &[u8],
+) -> Result<Vec<u8>, ProtocolError> {
+    let sign_content = build_signed_content(
+        GROUP_PROTOCOL_VERSION,
+        identity_ed25519_public,
+        identity_x25519_public,
+        leaf_x25519_public,
+        leaf_kyber_public,
+        credential,
+    );
+    ed25519_sign(ed25519_secret, &sign_content)
 }
 
 fn ed25519_sign(secret_key: &[u8], message: &[u8]) -> Result<Vec<u8>, ProtocolError> {

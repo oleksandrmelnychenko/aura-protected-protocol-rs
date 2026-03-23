@@ -94,9 +94,30 @@ API розрахований на три ролі:
 | `epp_group_serialize` | + | + | - | Зберегти стан групи |
 | `epp_group_deserialize` | + | + | - | Відновити стан групи |
 | `epp_group_export_public_state` | + | + | - | Публічний стан |
+| `epp_group_authorize_external_join` | + | + | - | Видати дозвіл на external join |
 | **Group — PSK & ReInit** | | | |
 | `epp_group_set_psk` | + | + | - | Встановити PSK |
 | `epp_group_get_pending_reinit` | + | + | - | Перевірити ReInit |
+| **Group — Edit / Delete** | | | |
+| `epp_group_encrypt_edit` | + | + | - | Шифрувати edit-повідомлення |
+| `epp_group_encrypt_delete` | + | + | - | Шифрувати delete-повідомлення |
+| `epp_group_decrypt_ex` | + | + | - | Повне дешифрування (з sealed/franking) |
+| `epp_group_decrypt_result_free` | + | + | - | Звільнити EppGroupDecryptResult |
+| `epp_group_compute_message_id` | + | + | + | Обчислити стабільний Message ID |
+| **Session — Identity** | | | |
+| `epp_session_get_id` | + | + | - | Отримати Session ID |
+| `epp_session_get_identity_binding_hash` | + | + | - | Отримати Identity Binding Hash |
+| `epp_session_get_peer_identity` | + | + | - | Отримати identity peer-а |
+| `epp_session_get_local_identity` | + | + | - | Отримати локальну identity |
+| **OTK Replenishment** | | | |
+| `epp_prekey_bundle_replenish` | + | + | - | Поповнити OTK пул |
+| **Envelope Metadata** | | | |
+| `epp_envelope_metadata_parse` | + | + | - | Розпарсити EnvelopeMetadata |
+| `epp_envelope_metadata_free` | + | + | - | Звільнити EnvelopeMetadata |
+| **Event Callbacks** | | | |
+| `epp_session_set_event_handler` | + | + | - | Реєстрація callback-ів сесії |
+| `epp_group_set_event_handler` | + | + | - | Реєстрація callback-ів групи |
+| `epp_identity_set_event_handler` | + | + | - | Реєстрація callback-ів identity |
 | **Memory / Errors** | | | |
 | `epp_buffer_release` | + | + | + | Звільнити data буфера |
 | `epp_buffer_alloc` | + | + | + | Алокувати буфер |
@@ -397,6 +418,34 @@ EppErrorCode epp_prekey_bundle_create(
 - `out_bundle.data`: звільнити через `epp_buffer_release`
 - Bundle передається peer'у, який використає його в `epp_handshake_initiator_start`
 
+### `epp_prekey_bundle_replenish`
+
+```c
+EppErrorCode epp_prekey_bundle_replenish(
+    EppIdentityHandle* identity_handle,
+    uint32_t           count,           // [in] кількість нових OTK (> 0)
+    EppBuffer*         out_keys,        // [out] Protobuf PreKeyBundle з новими OTK
+    EppError*          out_error
+);
+```
+
+Генерує `count` нових One-Time Pre-Keys та додає їх до локального пулу. Повертає частковий `PreKeyBundle` proto (тільки поле `one_time_pre_keys`) для завантаження на сервер.
+
+- Викликати після отримання `on_otk_exhaustion_warning` callback (залишок < 10%)
+- `out_keys.data`: звільнити через `epp_buffer_release`
+- Повернений bundle надіслати на сервер через ваш API; сервер додає нові OTK до сховища
+
+**Типовий OTK replenishment flow:**
+```c
+// У callback on_otk_exhaustion_warning:
+EppBuffer new_keys = {0};
+EppError err = {0};
+epp_prekey_bundle_replenish(identity, 50, &new_keys, &err);
+// Надіслати new_keys.data на сервер
+upload_otks_to_server(new_keys.data, new_keys.length);
+epp_buffer_release(&new_keys);
+```
+
 ---
 
 ## Handshake — Initiator
@@ -618,6 +667,92 @@ EppErrorCode epp_session_deserialize_sealed(
 
 ---
 
+## Session — Identity & Verification
+> Ролі: **Client** + **Server**
+
+Після завершення handshake (`epp_handshake_initiator_finish` / `epp_handshake_responder_finish`) сесія містить повну ідентифікаційну інформацію peer-а. Використовуйте ці функції для peer verification перед тим як вважати сесію trusted.
+
+### `EppSessionPeerIdentity`
+
+```c
+typedef struct EppSessionPeerIdentity {
+    uint8_t ed25519_public[32];   // Ed25519 signing key (для fingerprint)
+    uint8_t x25519_public[32];    // X25519 DH key
+} EppSessionPeerIdentity;
+```
+
+Фіксована структура, stack-allocated. Не потребує звільнення.
+
+### `epp_session_get_id`
+
+```c
+EppErrorCode epp_session_get_id(
+    EppSessionHandle* handle,
+    EppBuffer*        out_session_id,   // [out] 16 байт Session ID
+    EppError*         out_error
+);
+```
+
+Повертає 16-байтний Session ID — детермінований ідентифікатор сесії, однаковий у обох сторін.
+
+### `epp_session_get_identity_binding_hash`
+
+```c
+EppErrorCode epp_session_get_identity_binding_hash(
+    EppSessionHandle* handle,
+    EppBuffer*        out_binding_hash,   // [out] 32 байти Identity Binding Hash
+    EppError*         out_error
+);
+```
+
+Повертає 32-байтний Identity Binding Hash — криптографічно прив'язує конкретну пару ключів peer-а до цієї сесії. Порівнювати з очікуваним значенням для peer verification. Однаковий у обох сторін.
+
+### `epp_session_get_peer_identity`
+
+```c
+EppErrorCode epp_session_get_peer_identity(
+    EppSessionHandle*      handle,
+    EppSessionPeerIdentity* out_identity,   // [out] stack-allocated struct
+    EppError*              out_error
+);
+```
+
+Повертає Ed25519 та X25519 public keys peer-а. Використовується для:
+- порівняння з раніше збереженими ключами (TOFU / key pinning)
+- відображення fingerprint у UI
+- детектування key change attack
+
+### `epp_session_get_local_identity`
+
+```c
+EppErrorCode epp_session_get_local_identity(
+    EppSessionHandle*      handle,
+    EppSessionPeerIdentity* out_identity,   // [out] stack-allocated struct
+    EppError*              out_error
+);
+```
+
+Повертає Ed25519 та X25519 public keys локальної сторони (з поточної сесії).
+
+**Типовий peer verification flow:**
+```c
+EppSessionPeerIdentity peer_id = {0};
+epp_session_get_peer_identity(session, &peer_id, &err);
+
+// Порівняти з відомими ключами:
+if (memcmp(peer_id.ed25519_public, known_key, 32) != 0) {
+    // Key mismatch — попередити або заблокувати
+}
+
+// Або отримати binding hash для верифікації:
+EppBuffer binding = {0};
+epp_session_get_identity_binding_hash(session, &binding, &err);
+// Показати binding.data як fingerprint і верифікувати з peer OOB
+epp_buffer_release(&binding);
+```
+
+---
+
 ## Key Derivation
 > Ролі: **Client** + **Server**
 
@@ -812,6 +947,27 @@ EppErrorCode epp_group_join(
 
 Приєднується до групи через Welcome message (отриманий після Add-commit).
 
+### `epp_group_authorize_external_join`
+
+```c
+EppErrorCode epp_group_authorize_external_join(
+    EppGroupSessionHandle* handle,
+    const uint8_t*         joiner_identity_ed25519_public,        // [in] 32 байти
+    size_t                 joiner_identity_ed25519_public_length,  // [in] == 32
+    const uint8_t*         joiner_identity_x25519_public,         // [in] 32 байти
+    size_t                 joiner_identity_x25519_public_length,   // [in] == 32
+    const uint8_t*         joiner_credential,      // [in] credential (або NULL)
+    size_t                 joiner_credential_length,
+    EppBuffer*             out_authorization,       // [out] authorization artifact
+    EppError*              out_error
+);
+```
+
+Видає authorization artifact для зовнішнього учасника. Чинний член групи підписує дані joiner-а. `out_authorization` треба передати joiner-у, який передасть його в `epp_group_join_external`.
+
+- Викликається **до** того, як joiner викличе `epp_group_join_external`
+- `out_authorization.data`: звільнити через `epp_buffer_release`
+
 ### `epp_group_join_external`
 
 ```c
@@ -819,6 +975,8 @@ EppErrorCode epp_group_join_external(
     EppIdentityHandle*      identity_handle,
     const uint8_t*          public_state,          // [in] від export_public_state
     size_t                  public_state_length,
+    const uint8_t*          authorization,         // [in] artifact від authorize_external_join
+    size_t                  authorization_length,
     const uint8_t*          credential,
     size_t                  credential_length,
     EppGroupSessionHandle** out_group_handle,      // [out] групова сесія
@@ -827,7 +985,20 @@ EppErrorCode epp_group_join_external(
 );
 ```
 
-Зовнішній join без запрошення — через публічний стан групи. Commit треба надіслати всім членам.
+Зовнішній join з authorization artifact — через публічний стан групи. Commit треба надіслати всім членам.
+
+**Повний flow external join:**
+```
+Існуючий член:
+  epp_group_export_public_state() → public_state
+  epp_group_authorize_external_join(joiner_ed, joiner_x, ...) → authorization
+
+Joiner:
+  epp_group_join_external(public_state, authorization, ...) → group_handle + commit
+
+Всі члени:
+  epp_group_process_commit(commit)
+```
 
 ---
 
@@ -925,6 +1096,70 @@ EppErrorCode epp_group_decrypt(
 
 Дешифрує групове повідомлення. Повертає leaf index відправника і generation (для ordering).
 
+### `epp_group_decrypt_ex`
+
+```c
+typedef struct EppGroupDecryptResult {
+    EppBuffer plaintext;             // розшифрований payload
+    uint32_t  sender_leaf_index;     // leaf index відправника
+    uint32_t  generation;           // generation counter
+    uint32_t  content_type;         // 0=Normal 1=Sealed 2=Disappearing 3=SealedDisappearing 4=Edit 5=Delete
+    uint32_t  ttl_seconds;          // TTL (для Disappearing; 0 якщо не встановлено)
+    uint64_t  sent_timestamp;       // unix timestamp відправника (для Disappearing)
+    EppBuffer message_id;           // 32 байти стабільний Message ID
+    EppBuffer referenced_message_id;// 32 байти ID повідомлення-цілі (для Edit/Delete; порожній інакше)
+    uint8_t   has_sealed_payload;   // 1 якщо є sealed payload
+    uint8_t   has_franking_data;    // 1 якщо є franking data
+    EppBuffer sealed_hint;          // hint текст sealed-повідомлення (може бути порожнім)
+    EppBuffer sealed_encrypted_content; // зашифрований контент sealed-повідомлення
+    EppBuffer sealed_nonce;         // 12 байт nonce для reveal_sealed
+    EppBuffer sealed_key;           // 32 байти seal key для reveal_sealed
+    EppBuffer franking_tag;         // 32 байти HMAC commitment (для модерації)
+    EppBuffer franking_key;         // 32 байти franking key
+    EppBuffer franking_content;     // plaintext контент (для verify_franking)
+    EppBuffer franking_sealed_content; // sealed контент (для verify_franking; може бути порожнім)
+} EppGroupDecryptResult;
+
+EppErrorCode epp_group_decrypt_ex(
+    EppGroupSessionHandle*  handle,
+    const uint8_t*          ciphertext,
+    size_t                  ciphertext_length,
+    EppGroupDecryptResult*  out_result,   // [out] caller-allocated struct (stack або heap)
+    EppError*               out_error
+);
+```
+
+Розширена версія `epp_group_decrypt`. Повертає повну структуру з усіма полями: content_type, TTL, message ID, referenced ID (для Edit/Delete), sealed payload (для `reveal_sealed`), franking data (для `verify_franking`).
+
+**Використання:**
+```c
+EppGroupDecryptResult result = {0};  // нульова ініціалізація обов'язкова!
+EppError err = {0};
+
+EppErrorCode code = epp_group_decrypt_ex(group, ct, ct_len, &result, &err);
+if (code == EPP_SUCCESS) {
+    printf("From leaf %u, gen %u\n", result.sender_leaf_index, result.generation);
+    if (result.content_type == 1 && result.has_sealed_payload) {
+        // Є sealed payload — можна викликати reveal_sealed пізніше
+        // result.sealed_key / sealed_nonce / sealed_encrypted_content
+    }
+    if (result.has_franking_data) {
+        // Є franking data — можна verify_franking
+    }
+    epp_group_decrypt_result_free(&result);
+}
+```
+
+### `epp_group_decrypt_result_free`
+
+```c
+void epp_group_decrypt_result_free(EppGroupDecryptResult* result);
+```
+
+Звільняє всі heap-allocated буфери всередині `EppGroupDecryptResult` через `epp_buffer_release`. **Не** звільняє сам struct (caller-allocated).
+
+**Важливо:** Викликати лише після успішного `epp_group_decrypt_ex` (код `EPP_SUCCESS`). Якщо функція повернула помилку — struct не повністю заповнений; `epp_group_decrypt_result_free` все одно безпечний якщо struct був нульово-ініціалізований (`= {0}`), оскільки `epp_buffer_release` перевіряє `data != NULL`.
+
 ---
 
 ## Group — Sealed / Disappearing / Frankable
@@ -1015,6 +1250,52 @@ EppErrorCode epp_group_verify_franking(
 
 ---
 
+## Group — Edit / Delete
+> Ролі: **Client** + **Server**
+
+### `epp_group_encrypt_edit`
+
+```c
+EppErrorCode epp_group_encrypt_edit(
+    EppGroupSessionHandle* handle,
+    const uint8_t*         new_content,              // [in] новий текст повідомлення
+    size_t                 new_content_length,        // [in] макс. 1 МБ
+    const uint8_t*         target_message_id,        // [in] 32 байти — ID редагованого повідомлення
+    size_t                 target_message_id_length,  // [in] == 32
+    EppBuffer*             out_ciphertext,
+    EppError*              out_error
+);
+```
+
+Шифрує Edit-повідомлення — заміну вмісту раніше надісланого повідомлення. `target_message_id` — стабільний ID (з `epp_group_compute_message_id` або `epp_group_decrypt_ex.message_id`) редагованого повідомлення. При decrypt `content_type == 4` (Edit), `referenced_message_id` вказує на ціль.
+
+### `epp_group_encrypt_delete`
+
+```c
+EppErrorCode epp_group_encrypt_delete(
+    EppGroupSessionHandle* handle,
+    const uint8_t*         target_message_id,        // [in] 32 байти — ID повідомлення для видалення
+    size_t                 target_message_id_length,  // [in] == 32
+    EppBuffer*             out_ciphertext,
+    EppError*              out_error
+);
+```
+
+Шифрує Delete-повідомлення — сигнал для видалення. `target_message_id` — ID повідомлення, яке треба видалити. При decrypt `content_type == 5` (Delete), `referenced_message_id` вказує на ціль.
+
+**Content type константи:**
+
+| Значення | Тип | Опис |
+|----------|-----|------|
+| 0 | Normal | Звичайне повідомлення |
+| 1 | Sealed | Двошарове шифрування з hint |
+| 2 | Disappearing | З TTL, протокольний enforcement |
+| 3 | SealedDisappearing | Sealed + TTL |
+| 4 | Edit | Редагування раніше надісланого |
+| 5 | Delete | Видалення раніше надісланого |
+
+---
+
 ## Group — State & Getters
 > Ролі: **Client** + **Server**
 
@@ -1066,6 +1347,26 @@ EppErrorCode epp_group_get_member_leaf_indices(
 
 - Кількість елементів: `out_indices.length / 4`
 - Зчитувати: `uint32_t idx = *(uint32_t*)(out_indices.data + i * 4)`
+
+### `epp_group_compute_message_id`
+
+```c
+EppErrorCode epp_group_compute_message_id(
+    const uint8_t* group_id,            // [in] 32 байти group ID
+    size_t         group_id_length,      // [in] == 32
+    uint64_t       epoch,               // [in] epoch в якій надіслано повідомлення
+    uint32_t       sender_leaf_index,   // [in] leaf index відправника
+    uint32_t       generation,          // [in] generation counter з encrypt/decrypt
+    EppBuffer*     out_message_id,      // [out] 32 байти стабільний Message ID
+    EppError*      out_error
+);
+```
+
+Обчислює детермінований 32-байтний Message ID з `(group_id, epoch, sender_leaf_index, generation)`. ID однаковий у відправника і всіх отримувачів — використовується для Edit/Delete targeting та дедублікації. Relay може викликати без identity (Relay-роль).
+
+- Усі чотири вхідні параметри повинні точно збігатися між відправником і отримувачем
+- `generation` береться з `epp_group_decrypt_ex.generation` або з `epp_group_encrypt` (якщо відправник зберігає його)
+- `out_message_id.data`: звільнити через `epp_buffer_release`
 
 ### `epp_group_destroy`
 
@@ -1155,6 +1456,192 @@ EppErrorCode epp_group_get_pending_reinit(
 ```
 
 Перевіряє чи є pending ReInit. Якщо `out_new_group_id.length > 0` — треба створити нову групу.
+
+---
+
+## Envelope Metadata
+> Ролі: **Client** + **Server**
+
+### `EppEnvelopeMetadata`
+
+```c
+typedef struct EppEnvelopeMetadata {
+    EppEnvelopeType envelope_type;       // тип конверта
+    uint32_t        envelope_id;         // id повідомлення
+    uint64_t        message_index;       // порядковий номер у chain
+    char*           correlation_id;      // heap-allocated UTF-8 рядок (або NULL)
+    size_t          correlation_id_length;
+} EppEnvelopeMetadata;
+```
+
+Caller-allocated struct (stack). Поле `correlation_id` — heap-allocated, звільняється через `epp_envelope_metadata_free`. Сам struct **не** звільняти.
+
+### `epp_envelope_metadata_parse`
+
+```c
+EppErrorCode epp_envelope_metadata_parse(
+    const uint8_t*      metadata_bytes,   // [in] Protobuf EnvelopeMetadata bytes (з epp_session_decrypt)
+    size_t              metadata_length,
+    EppEnvelopeMetadata* out_meta,        // [out] caller-allocated struct
+    EppError*           out_error
+);
+```
+
+Парсить `out_metadata` blob, повернутий `epp_session_decrypt`, у зручну C-структуру.
+
+```c
+EppBuffer plaintext = {0}, metadata_buf = {0};
+EppError err = {0};
+epp_session_decrypt(session, ct, ct_len, &plaintext, &metadata_buf, &err);
+
+EppEnvelopeMetadata meta = {0};
+epp_envelope_metadata_parse(metadata_buf.data, metadata_buf.length, &meta, &err);
+printf("Type=%d id=%u corr=%s\n", meta.envelope_type, meta.envelope_id,
+       meta.correlation_id ? meta.correlation_id : "(none)");
+
+epp_envelope_metadata_free(&meta);
+epp_buffer_release(&metadata_buf);
+epp_buffer_release(&plaintext);
+```
+
+### `epp_envelope_metadata_free`
+
+```c
+void epp_envelope_metadata_free(EppEnvelopeMetadata* meta);
+```
+
+Звільняє heap-allocated `correlation_id` та обнуляє відповідні поля. **Не** звільняє сам struct.
+
+---
+
+## Event Callbacks
+> Ролі: **Client** + **Server**
+
+Event callbacks дозволяють отримувати сповіщення про зміни стану сесії/групи/identity без polling. Кожен callback slot може бути `NULL` — відповідна подія ігнорується. `user_data` передається у кожен callback незміненим.
+
+**Важливо про thread safety:** `user_data` та ресурси, на які він вказує, повинні бути доступні з тих потоків, в яких викликаються `encrypt`/`decrypt`/`process_commit`. Синхронізація — на стороні caller.
+
+### Session event callbacks
+
+```c
+// Тип: виклик після завершення handshake. session_id — 16 байт.
+typedef void (*EppOnHandshakeCompleted)(const uint8_t* session_id, size_t session_id_len,
+                                        void* user_data);
+
+// Тип: виклик при кожній ротації DH ratchet.
+typedef void (*EppOnRatchetRotated)(uint64_t epoch, void* user_data);
+
+// Тип: виклик при внутрішній помилці протоколу (non-fatal).
+typedef void (*EppOnSessionError)(EppErrorCode code, const char* message, void* user_data);
+
+// Тип: виклик коли залишок nonce падає нижче ~20%.
+typedef void (*EppOnNonceExhaustionWarning)(uint64_t remaining, uint64_t max_capacity,
+                                             void* user_data);
+
+// Тип: виклик коли багато повідомлень без DH ratchet кроку.
+typedef void (*EppOnRatchetStallingWarning)(uint64_t messages_since_ratchet, void* user_data);
+
+typedef struct EppSessionEventCallbacks {
+    EppOnHandshakeCompleted    on_handshake_completed;     // або NULL
+    EppOnRatchetRotated        on_ratchet_rotated;         // або NULL
+    EppOnSessionError          on_error;                   // або NULL
+    EppOnNonceExhaustionWarning on_nonce_exhaustion_warning; // або NULL
+    EppOnRatchetStallingWarning on_ratchet_stalling_warning; // або NULL
+    void*                      user_data;                  // передається кожному callback
+} EppSessionEventCallbacks;
+
+EppErrorCode epp_session_set_event_handler(
+    EppSessionHandle*               handle,
+    const EppSessionEventCallbacks* callbacks,   // [in] копіюється за значенням
+    EppError*                       out_error
+);
+```
+
+Реєструє C callback-и на сесії. Struct копіюється — caller може звільнити після виклику. Новий виклик `set_event_handler` замінює попередній handler.
+
+### Group event callbacks
+
+```c
+// Тип: виклик при додаванні нового учасника через Commit.
+// identity_ed25519 — 32 байти Ed25519 public key нового учасника.
+typedef void (*EppOnMemberAdded)(uint32_t leaf_index,
+                                  const uint8_t* identity_ed25519, size_t identity_ed25519_len,
+                                  void* user_data);
+
+// Тип: виклик при видаленні учасника через Commit.
+typedef void (*EppOnMemberRemoved)(uint32_t leaf_index, void* user_data);
+
+// Тип: виклик при кожному просуванні epoch.
+typedef void (*EppOnEpochAdvanced)(uint64_t new_epoch, uint32_t member_count, void* user_data);
+
+// Тип: виклик коли sender key generation наближається до max_messages_per_epoch.
+typedef void (*EppOnSenderKeyExhaustionWarning)(uint32_t remaining, uint32_t max_capacity,
+                                                 void* user_data);
+
+// Тип: виклик коли Commit містить ReInit proposal. Група застаріла — мігрувати.
+// new_group_id / new_group_id_len дійсні тільки під час callback.
+typedef void (*EppOnReInitProposed)(const uint8_t* new_group_id, size_t new_group_id_len,
+                                     uint32_t new_version, void* user_data);
+
+typedef struct EppGroupEventCallbacks {
+    EppOnMemberAdded                on_member_added;                  // або NULL
+    EppOnMemberRemoved              on_member_removed;                // або NULL
+    EppOnEpochAdvanced              on_epoch_advanced;                // або NULL
+    EppOnSenderKeyExhaustionWarning on_sender_key_exhaustion_warning; // або NULL
+    EppOnReInitProposed             on_reinit_proposed;               // або NULL
+    void*                           user_data;
+} EppGroupEventCallbacks;
+
+EppErrorCode epp_group_set_event_handler(
+    EppGroupSessionHandle*        handle,
+    const EppGroupEventCallbacks* callbacks,   // [in] копіюється за значенням
+    EppError*                     out_error
+);
+```
+
+### Identity event callbacks
+
+```c
+// Тип: виклик коли OTK пул падає нижче ~10% від DEFAULT_ONE_TIME_KEY_COUNT (100).
+// Потрібно викликати epp_prekey_bundle_replenish та завантажити нові OTK на сервер.
+typedef void (*EppOnOtkExhaustionWarning)(uint32_t remaining, uint32_t max_capacity,
+                                           void* user_data);
+
+typedef struct EppIdentityEventCallbacks {
+    EppOnOtkExhaustionWarning on_otk_exhaustion_warning;   // або NULL
+    void*                     user_data;
+} EppIdentityEventCallbacks;
+
+EppErrorCode epp_identity_set_event_handler(
+    EppIdentityHandle*              handle,
+    const EppIdentityEventCallbacks* callbacks,   // [in] копіюється за значенням
+    EppError*                       out_error
+);
+```
+
+**Повний приклад реєстрації:**
+```c
+static void on_nonce_warn(uint64_t remaining, uint64_t max, void* ud) {
+    printf("Nonce low: %llu / %llu — re-handshake soon\n", remaining, max);
+}
+
+static void on_otk_warn(uint32_t remaining, uint32_t max, void* ud) {
+    // replenish OTKs
+    epp_prekey_bundle_replenish((EppIdentityHandle*)ud, 50, &keys, &err);
+    upload_to_server(keys.data, keys.length);
+    epp_buffer_release(&keys);
+}
+
+EppSessionEventCallbacks session_cbs = {0};
+session_cbs.on_nonce_exhaustion_warning = on_nonce_warn;
+session_cbs.user_data = NULL;
+epp_session_set_event_handler(session, &session_cbs, &err);
+
+EppIdentityEventCallbacks id_cbs = {0};
+id_cbs.on_otk_exhaustion_warning = on_otk_warn;
+id_cbs.user_data = identity;
+epp_identity_set_event_handler(identity, &id_cbs, &err);
+```
 
 ---
 

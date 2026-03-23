@@ -720,26 +720,43 @@ fn bench_group_encrypt_decrypt(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("encrypt", size), &payload, |b, payload| {
             b.iter_custom(|iters| {
-                let (alice_session, _bob_session) = create_group_pair();
-                let start = std::time::Instant::now();
-                for _ in 0..iters {
-                    let _ = alice_session.encrypt(black_box(payload)).unwrap();
+                // SHIELD_MAX_MESSAGES_PER_EPOCH = 1000; stay well under it per session.
+                const BATCH: u64 = 500;
+                let mut total = std::time::Duration::ZERO;
+                let mut remaining = iters;
+                while remaining > 0 {
+                    let n = remaining.min(BATCH);
+                    let (alice_session, _bob_session) = create_group_pair();
+                    let start = std::time::Instant::now();
+                    for _ in 0..n {
+                        let _ = alice_session.encrypt(black_box(payload)).unwrap();
+                    }
+                    total += start.elapsed();
+                    remaining -= n;
                 }
-                start.elapsed()
+                total
             });
         });
 
         group.bench_with_input(BenchmarkId::new("decrypt", size), &payload, |b, payload| {
             b.iter_custom(|iters| {
-                let (alice_session, bob_session) = create_group_pair();
-                let cts: Vec<_> = (0..iters)
-                    .map(|_| alice_session.encrypt(payload).unwrap())
-                    .collect();
-                let start = std::time::Instant::now();
-                for ct in &cts {
-                    let _ = bob_session.decrypt(black_box(ct)).unwrap();
+                const BATCH: u64 = 500;
+                let mut total = std::time::Duration::ZERO;
+                let mut remaining = iters;
+                while remaining > 0 {
+                    let n = remaining.min(BATCH);
+                    let (alice_session, bob_session) = create_group_pair();
+                    let cts: Vec<_> = (0..n)
+                        .map(|_| alice_session.encrypt(payload).unwrap())
+                        .collect();
+                    let start = std::time::Instant::now();
+                    for ct in &cts {
+                        let _ = bob_session.decrypt(black_box(ct)).unwrap();
+                    }
+                    total += start.elapsed();
+                    remaining -= n;
                 }
-                start.elapsed()
+                total
             });
         });
     }

@@ -11,18 +11,18 @@ let package = Package(
     products: [
         .library(
             name: "EcliptixProtectedProtocol",
-            targets: ["EcliptixProtectedProtocol"]
+            targets: ["EcliptixProtectedProtocolSwift", "EcliptixProtectedProtocol"]
         )
     ],
     targets: [
         .binaryTarget(
-            name: "EcliptixProtectedProtocolBinary",
-            url: "https://github.com/oleksandrmelnychenko/ecliptix-protected-protocol-rs/releases/download/v1.0.0/EcliptixProtectedProtocol.xcframework.zip",
-            checksum: "065281d0db6f0c52ab97a4b912b20faeb84c580fec845578d0f70fcbcc380b21"
+            name: "EcliptixProtectedProtocol",
+            url: "https://github.com/oleksandrmelnychenko/ecliptix-protected-protocol-rs/releases/download/v1.0.2/ecliptix-protected-protocol.xcframework.zip",
+            checksum: "7a4e4968cb4efd1d8ee5fb45d0895629304214d747a4eddbfac581026b2bb0a0"
         ),
         .target(
-            name: "EcliptixProtectedProtocol",
-            dependencies: ["EcliptixProtectedProtocolBinary"],
+            name: "EcliptixProtectedProtocolSwift",
+            dependencies: ["EcliptixProtectedProtocol"],
             path: "swift/Sources/EcliptixProtectedProtocol"
         )
     ]

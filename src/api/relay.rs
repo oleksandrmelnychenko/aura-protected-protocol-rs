@@ -7,6 +7,7 @@ use crate::core::constants::*;
 use crate::core::errors::ProtocolError;
 use crate::proto::e2e::{CryptoEnvelope, CryptoPayloadType};
 use crate::proto::{GroupCommit, GroupKeyPackage, GroupMessage, GroupWelcome};
+use crate::protocol::group::key_package;
 
 #[derive(Debug, Clone)]
 pub struct GroupMemberRecord {
@@ -172,37 +173,7 @@ pub fn validate_key_package_for_storage(
 ) -> Result<GroupKeyPackage, ProtocolError> {
     let kp = GroupKeyPackage::decode(key_package_bytes)
         .map_err(|e| ProtocolError::decode(format!("KeyPackage decode: {e}")))?;
-
-    if kp.version != GROUP_PROTOCOL_VERSION {
-        return Err(ProtocolError::invalid_input(format!(
-            "Unsupported KeyPackage version: {}",
-            kp.version
-        )));
-    }
-    if kp.identity_ed25519_public.len() != ED25519_PUBLIC_KEY_BYTES {
-        return Err(ProtocolError::invalid_input(
-            "Invalid Ed25519 public key size",
-        ));
-    }
-    if kp.identity_x25519_public.len() != X25519_PUBLIC_KEY_BYTES {
-        return Err(ProtocolError::invalid_input(
-            "Invalid X25519 public key size",
-        ));
-    }
-    if kp.leaf_x25519_public.len() != X25519_PUBLIC_KEY_BYTES {
-        return Err(ProtocolError::invalid_input(
-            "Invalid leaf X25519 public key size",
-        ));
-    }
-    if kp.leaf_kyber_public.len() != KYBER_PUBLIC_KEY_BYTES {
-        return Err(ProtocolError::invalid_input(
-            "Invalid leaf Kyber public key size",
-        ));
-    }
-    if kp.signature.len() != ED25519_SIGNATURE_BYTES {
-        return Err(ProtocolError::invalid_input("Invalid signature size"));
-    }
-
+    key_package::validate_key_package(&kp)?;
     Ok(kp)
 }
 

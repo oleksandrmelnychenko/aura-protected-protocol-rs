@@ -128,6 +128,7 @@ pub fn apply_add(tree: &mut RatchetTree, add: &GroupAddProposal) -> Result<u32, 
         credential: kp.credential.clone(),
         identity_ed25519_public: kp.identity_ed25519_public.clone(),
         identity_x25519_public: kp.identity_x25519_public.clone(),
+        signature: kp.signature.clone(),
     };
 
     tree.add_leaf(

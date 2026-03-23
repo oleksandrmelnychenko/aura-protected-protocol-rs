@@ -14,6 +14,30 @@ fn init() {
     });
 }
 
+const fn permissive_group_policy() -> GroupSecurityPolicy {
+    GroupSecurityPolicy {
+        max_messages_per_epoch: 0,
+        max_skipped_keys_per_sender: 0,
+        block_external_join: false,
+        enhanced_key_schedule: false,
+        mandatory_franking: false,
+    }
+}
+
+fn authorize_external_join_api(
+    group: &EcliptixGroupSession,
+    joiner: &EcliptixProtocol,
+    credential: &[u8],
+) -> Vec<u8> {
+    group
+        .authorize_external_join(
+            &joiner.identity_ed25519_public(),
+            &joiner.identity_x25519_public(),
+            credential,
+        )
+        .unwrap()
+}
+
 // ---------------------------------------------------------------------------
 // EcliptixProtocol construction
 // ---------------------------------------------------------------------------
@@ -144,8 +168,9 @@ fn api_p2p_session_serialize_deserialize() {
         ecliptix_protocol::api::EcliptixSession::sealed_external_counter(&sealed).unwrap();
     assert_eq!(counter, 1);
 
-    let mut restored =
+    let (mut restored, restored_counter) =
         ecliptix_protocol::api::EcliptixSession::deserialize(&sealed, &key, 0).unwrap();
+    assert_eq!(restored_counter, 1);
 
     let ct2 = restored.encrypt(b"after restore", 0, 2, None).unwrap();
     let result = bob_session.decrypt(&ct2).unwrap();
@@ -302,14 +327,17 @@ fn api_group_external_join() {
     init();
 
     let alice_proto = EcliptixProtocol::new(5).unwrap();
-    let alice_group = alice_proto.create_group(b"alice".to_vec()).unwrap();
+    let alice_group = alice_proto
+        .create_group_with_policy(b"alice".to_vec(), permissive_group_policy())
+        .unwrap();
 
     let public_state = alice_group.export_public_state().unwrap();
     assert!(!public_state.is_empty());
 
     let charlie_proto = EcliptixProtocol::new(5).unwrap();
+    let authorization = authorize_external_join_api(&alice_group, &charlie_proto, b"charlie");
     let (charlie_group, ext_commit) = charlie_proto
-        .join_group_external(&public_state, b"charlie".to_vec())
+        .join_group_external(&public_state, &authorization, b"charlie".to_vec())
         .unwrap();
     assert!(!ext_commit.is_empty());
 
@@ -339,7 +367,9 @@ fn api_group_serialize_deserialize() {
     let counter = EcliptixGroupSession::sealed_external_counter(&sealed).unwrap();
     assert_eq!(counter, 1);
 
-    let restored = EcliptixGroupSession::deserialize(&sealed, &key, ed_secret, 0).unwrap();
+    let (restored, restored_counter) =
+        EcliptixGroupSession::deserialize(&sealed, &key, ed_secret, 0).unwrap();
+    assert_eq!(restored_counter, 1);
     assert_eq!(session.group_id().unwrap(), restored.group_id().unwrap());
     assert_eq!(session.epoch().unwrap(), restored.epoch().unwrap());
     assert_eq!(
@@ -497,7 +527,7 @@ fn api_group_join_external_invalid_state_fails() {
     init();
 
     let proto = EcliptixProtocol::new(0).unwrap();
-    let result = proto.join_group_external(b"garbage", b"cred".to_vec());
+    let result = proto.join_group_external(b"garbage", b"invalid-auth", b"cred".to_vec());
     assert!(result.is_err());
 }
 
@@ -744,7 +774,7 @@ fn shield_blocks_external_join() {
     let public_state = session.export_public_state().unwrap();
 
     let joiner = EcliptixProtocol::new(0).unwrap();
-    let result = joiner.join_group_external(&public_state, b"join".to_vec());
+    let result = joiner.join_group_external(&public_state, b"invalid-auth", b"join".to_vec());
     assert!(
         result.is_err(),
         "External join should be blocked by shield policy"
@@ -824,7 +854,9 @@ fn shield_policy_survives_serialization() {
 
     let key = vec![0xABu8; 32];
     let data = session.serialize(&key, 42).unwrap();
-    let restored = EcliptixGroupSession::deserialize(&data, &key, ed25519_sk, 0).unwrap();
+    let (restored, restored_counter) =
+        EcliptixGroupSession::deserialize(&data, &key, ed25519_sk, 0).unwrap();
+    assert_eq!(restored_counter, 42);
 
     assert!(restored.is_shielded().unwrap());
     let policy = restored.security_policy().unwrap();

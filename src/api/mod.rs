@@ -9,7 +9,6 @@ use zeroize::Zeroizing;
 use crate::core::constants::{
     AES_GCM_NONCE_BYTES, AES_GCM_TAG_BYTES, DEFAULT_MESSAGES_PER_CHAIN, MAX_BUFFER_SIZE,
     MAX_ENVELOPE_MESSAGE_SIZE, OPAQUE_ROOT_INFO, OPAQUE_SESSION_KEY_BYTES, PROTOCOL_VERSION,
-    ROOT_KEY_BYTES,
 };
 use crate::core::errors::ProtocolError;
 use crate::crypto::{CryptoInterop, HkdfSha256, SecureMemoryHandle, ShamirSecretSharing};
@@ -22,6 +21,11 @@ use crate::protocol::{HandshakeInitiator, HandshakeResponder, Session};
 pub struct DecryptResult {
     pub plaintext: Vec<u8>,
     pub metadata: Vec<u8>,
+}
+
+pub struct SessionIdentity {
+    pub ed25519_public: Vec<u8>,
+    pub x25519_public: Vec<u8>,
 }
 
 pub struct EcliptixSession(Session);
@@ -68,10 +72,11 @@ impl EcliptixSession {
         data: &[u8],
         key: &[u8],
         min_external_counter: u64,
-    ) -> Result<Self, ProtocolError> {
+    ) -> Result<(Self, u64), ProtocolError> {
+        let external_counter = Session::sealed_state_external_counter(data)?;
         let provider = StaticStateKeyProvider::new(key.to_vec())?;
         let session = Session::from_sealed_state(data, &provider, min_external_counter)?;
-        Ok(Self(session))
+        Ok((Self(session), external_counter))
     }
 
     pub fn sealed_external_counter(data: &[u8]) -> Result<u64, ProtocolError> {
@@ -80,6 +85,30 @@ impl EcliptixSession {
 
     pub fn nonce_remaining(&self) -> Result<u64, ProtocolError> {
         self.0.nonce_remaining()
+    }
+
+    pub fn session_id(&self) -> Vec<u8> {
+        self.0.get_session_id()
+    }
+
+    pub fn peer_identity(&self) -> SessionIdentity {
+        let peer = self.0.get_peer_identity();
+        SessionIdentity {
+            ed25519_public: peer.ed25519_public.clone(),
+            x25519_public: peer.x25519_public.clone(),
+        }
+    }
+
+    pub fn local_identity(&self) -> SessionIdentity {
+        let local = self.0.get_local_identity();
+        SessionIdentity {
+            ed25519_public: local.ed25519_public.clone(),
+            x25519_public: local.x25519_public.clone(),
+        }
+    }
+
+    pub fn identity_binding_hash(&self) -> Vec<u8> {
+        self.0.get_identity_binding_hash()
     }
 }
 
@@ -135,6 +164,14 @@ impl EcliptixProtocol {
         &self,
     ) -> Result<Zeroizing<Vec<u8>>, ProtocolError> {
         self.identity.get_identity_ed25519_private_key_copy()
+    }
+
+    pub fn identity_ed25519_public(&self) -> Vec<u8> {
+        self.identity.get_identity_ed25519_public()
+    }
+
+    pub fn identity_x25519_public(&self) -> Vec<u8> {
+        self.identity.get_identity_x25519_public()
     }
 
     pub fn pre_key_bundle(&self) -> Result<Vec<u8>, ProtocolError> {
@@ -262,10 +299,15 @@ impl EcliptixProtocol {
     pub fn join_group_external(
         &self,
         public_state_bytes: &[u8],
+        authorization_bytes: &[u8],
         credential: Vec<u8>,
     ) -> Result<(EcliptixGroupSession, Vec<u8>), ProtocolError> {
-        let (session, commit_bytes) =
-            GroupSession::from_external_join(public_state_bytes, &self.identity, credential)?;
+        let (session, commit_bytes) = GroupSession::from_external_join(
+            public_state_bytes,
+            authorization_bytes,
+            &self.identity,
+            credential,
+        )?;
         Ok((EcliptixGroupSession(session), commit_bytes))
     }
 
@@ -298,6 +340,7 @@ impl EcliptixProtocol {
     pub fn derive_root_key(
         opaque_session_key: &[u8],
         user_context: &[u8],
+        output_length: usize,
     ) -> Result<Vec<u8>, ProtocolError> {
         if opaque_session_key.len() != OPAQUE_SESSION_KEY_BYTES {
             return Err(ProtocolError::invalid_input(
@@ -309,9 +352,14 @@ impl EcliptixProtocol {
                 "OPAQUE user context length invalid",
             ));
         }
+        if output_length == 0 || output_length > 64 {
+            return Err(ProtocolError::invalid_input(
+                "OPAQUE output length must be in the range 1..=64",
+            ));
+        }
         let key = HkdfSha256::derive_key_bytes(
             opaque_session_key,
-            ROOT_KEY_BYTES,
+            output_length,
             user_context,
             OPAQUE_ROOT_INFO,
         )?;
@@ -835,6 +883,19 @@ impl EcliptixGroupSession {
         self.0.export_public_state()
     }
 
+    pub fn authorize_external_join(
+        &self,
+        joiner_identity_ed25519_public: &[u8],
+        joiner_identity_x25519_public: &[u8],
+        joiner_credential: &[u8],
+    ) -> Result<Vec<u8>, ProtocolError> {
+        self.0.authorize_external_join(
+            joiner_identity_ed25519_public,
+            joiner_identity_x25519_public,
+            joiner_credential,
+        )
+    }
+
     pub fn set_psk_resolver(
         &self,
         resolver: Box<dyn group::PskResolver>,
@@ -908,10 +969,11 @@ impl EcliptixGroupSession {
         key: &[u8],
         ed25519_secret: Zeroizing<Vec<u8>>,
         min_external_counter: u64,
-    ) -> Result<Self, ProtocolError> {
+    ) -> Result<(Self, u64), ProtocolError> {
+        let external_counter = GroupSession::sealed_state_external_counter(data)?;
         let session =
             GroupSession::from_sealed_state(data, key, ed25519_secret, min_external_counter)?;
-        Ok(Self(session))
+        Ok((Self(session), external_counter))
     }
 
     pub fn sealed_external_counter(data: &[u8]) -> Result<u64, ProtocolError> {

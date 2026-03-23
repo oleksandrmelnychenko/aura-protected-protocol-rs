@@ -52,6 +52,17 @@ message GroupProposal {
 message GroupExternalInitProposal {
   bytes ephemeral_x25519_public = 1;  // 32 bytes
   bytes kyber_ciphertext = 2;          // 1088 bytes
+  bytes authorization = 3;             // Serialized GroupExternalJoinAuthorization
+}
+
+message GroupExternalJoinAuthorization {
+  bytes group_id = 1;                  // 32 bytes
+  uint64 epoch = 2;
+  bytes joiner_identity_ed25519_public = 3;
+  bytes joiner_identity_x25519_public = 4;
+  bytes joiner_credential = 5;
+  uint32 authorizer_leaf_index = 6;
+  bytes authorizer_signature = 7;      // Ed25519(authorizer, auth_without_sig)
 }
 
 // Pre-Shared Key injection (MLS RFC 9420 §12.2).
@@ -99,6 +110,7 @@ message GroupUpdatePath {
   bytes leaf_x25519_public = 1;       // 32 bytes — new leaf DH public
   bytes leaf_kyber_public = 2;        // 1184 bytes — new leaf Kyber public
   repeated GroupUpdatePathNode nodes = 3;  // One per internal node on direct path
+  bytes leaf_signature = 4;           // Ed25519 over the updated leaf package contents
 }
 
 message GroupUpdatePathNode {

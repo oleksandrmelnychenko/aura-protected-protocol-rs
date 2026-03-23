@@ -39,10 +39,16 @@ Swift-обгортка над C FFI бібліотеки Ecliptix Protocol. Зб
 
 ### Крок 3: Handshake — респондер (сервер)
 
-Респондер використовує **C FFI** напряму: `epp_handshake_responder_start` та `epp_handshake_responder_finish` (у Swift-обгортці зараз може не бути публічного класу; якщо є — виклики аналогічні).
+Swift-обгортка надає `EppHandshakeResponder` (аналогічно `EppHandshakeInitiator`):
 
-- Вхід: `identity`, `local_prekey_bundle` (свій bundle), `handshake_init` (байти від клієнта), `config`.
-- Вихід: `handshake_ack` (відправити клієнту), потім `epp_handshake_responder_finish` → `EppSessionHandle`.
+| Що викликати | Що передавати | Повертає |
+|--------------|---------------|----------|
+| `EppHandshakeResponder.start(identity:localPrekeyBundle:handshakeInit:config:)` | `identity` — локальна, `localPrekeyBundle` — свій bundle, `handshakeInit` — байти від ініціатора, `config` — опційно | `(responder, handshakeAck: Data)` |
+| `responder.finish()` | — | `EppSession` |
+
+**Що передати:** Респондер отримує `handshakeInit` від ініціатора, надсилає `handshakeAck` назад, викликає `finish()` і отримує сесію.
+
+C FFI еквівалент (для прямої інтеграції без Swift-обгортки): `epp_handshake_responder_start` (вхід: `identity`, `local_prekey_bundle`, `handshake_init`, `config`; вихід: `handshake_ack`) → `epp_handshake_responder_finish` → `EppSessionHandle`.
 
 ### Крок 4: Шифрування / дешифрування (1:1)
 
@@ -175,8 +181,9 @@ Swift-обгортка:
 
 ## Збірка Swift-пакету
 
-1. Зібрати XCFramework з Rust: `bash scripts/build-xcframework.sh` (або аналог з репозиторію).
-2. Покласти артефакт у `swift/XCFrameworks/EcliptixProtocol.xcframework`.
-3. У проекті додати залежність на Swift Package (шлях до папки `swift`).
+1. Зібрати XCFramework з Rust через локальний release flow або CI workflow.
+2. Release artifact має назву `ecliptix-protected-protocol.xcframework.zip`.
+3. Локальний Swift package використовує checked-in binary target у `swift/XCFrameworks/EcliptixProtocolC.xcframework`.
+4. У проекті додати залежність на Swift Package (шлях до папки `swift`).
 
 Клієнт (iOS/macOS) використовує цю обгортку для identity, handshake, encrypt/decrypt, групових операцій та sealed serialize/deserialize з коректним `external_counter`.

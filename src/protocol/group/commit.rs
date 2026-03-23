@@ -6,9 +6,10 @@ use prost::Message;
 use crate::core::constants::*;
 use crate::core::errors::ProtocolError;
 use crate::crypto::{CryptoInterop, HkdfSha256, KyberInterop};
-use crate::proto::{GroupCommit, GroupProposal};
+use crate::proto::{GroupCommit, GroupExternalJoinAuthorization, GroupKeyPackage, GroupProposal};
 use crate::security::DhValidator;
 
+use super::key_package;
 use super::key_schedule::{EpochKeys, GroupKeySchedule};
 use super::membership;
 use super::sender_key::SenderKeyStore;
@@ -57,8 +58,22 @@ pub fn create_commit(
 
     let added_leaf_indices = membership::apply_proposals(tree, &proposals)?;
 
-    let (update_path, mut commit_secret, new_private_keys) =
+    let (mut update_path, mut commit_secret, new_private_keys) =
         TreeKem::create_update_path(tree, my_leaf_idx)?;
+
+    let my_leaf = tree.get_leaf_data(my_leaf_idx).ok_or_else(|| {
+        ProtocolError::group_protocol(format!(
+            "Committer leaf {my_leaf_idx} is blank before update path signing",
+        ))
+    })?;
+    update_path.leaf_signature = key_package::sign_existing_key_package(
+        ed25519_secret,
+        &my_leaf.identity_ed25519_public,
+        &my_leaf.identity_x25519_public,
+        &update_path.leaf_x25519_public,
+        &update_path.leaf_kyber_public,
+        &my_leaf.credential,
+    )?;
 
     let leaf_node = super::tree::checked_leaf_to_node(my_leaf_idx)?;
     tree.set_node_public_keys(
@@ -66,6 +81,7 @@ pub fn create_commit(
         update_path.leaf_x25519_public.clone(),
         update_path.leaf_kyber_public.clone(),
     )?;
+    tree.set_leaf_signature(my_leaf_idx, update_path.leaf_signature.clone())?;
 
     let direct_path = super::tree::direct_path(my_leaf_idx, tree.leaf_count())?;
     for (i, &node_idx) in direct_path.iter().enumerate() {
@@ -183,7 +199,13 @@ pub fn process_commit(
     });
 
     if is_external_join {
+        if policy.block_external_join {
+            return Err(ProtocolError::group_protocol(
+                "External join blocked by group security policy",
+            ));
+        }
         validate_external_join_structure(&commit.proposals)?;
+        validate_external_join_authorization(tree, group_id, current_epoch, &commit.proposals)?;
     }
 
     if !is_external_join && commit.committer_leaf_index >= tree.leaf_count() {
@@ -270,8 +292,17 @@ pub fn process_commit(
         .as_ref()
         .ok_or_else(|| ProtocolError::group_protocol("Commit missing update_path"))?;
 
+    let committer_leaf_data = tree
+        .get_leaf_data(commit.committer_leaf_index)
+        .ok_or_else(|| ProtocolError::group_protocol("Committer leaf metadata missing"))?;
+    validate_leaf_update_signature(committer_leaf_data, update_path)?;
+
     let mut commit_secret =
         TreeKem::process_update_path(tree, update_path, commit.committer_leaf_index, my_leaf_idx)?;
+    tree.set_leaf_signature(
+        commit.committer_leaf_index,
+        update_path.leaf_signature.clone(),
+    )?;
 
     let tree_hash = tree.tree_hash()?;
     let policy_bytes = policy.policy_bytes();
@@ -480,10 +511,109 @@ fn validate_external_join_structure(proposals: &[GroupProposal]) -> Result<(), P
     Ok(())
 }
 
+fn validate_external_join_authorization(
+    tree: &RatchetTree,
+    group_id: &[u8],
+    current_epoch: u64,
+    proposals: &[GroupProposal],
+) -> Result<(), ProtocolError> {
+    let external_init = proposals
+        .iter()
+        .find_map(|proposal| match &proposal.proposal {
+            Some(crate::proto::group_proposal::Proposal::ExternalInit(ext)) => Some(ext),
+            _ => None,
+        });
+    let add_key_package = proposals
+        .iter()
+        .find_map(|proposal| match &proposal.proposal {
+            Some(crate::proto::group_proposal::Proposal::Add(add)) => add.key_package.as_ref(),
+            _ => None,
+        });
+    let external_init = external_init.ok_or_else(|| {
+        ProtocolError::group_protocol("External join commit missing ExternalInit proposal")
+    })?;
+    let add_key_package = add_key_package.ok_or_else(|| {
+        ProtocolError::group_protocol("External join commit missing Add proposal with KeyPackage")
+    })?;
+    if external_init.authorization.is_empty() {
+        return Err(ProtocolError::group_protocol(
+            "External join authorization is required",
+        ));
+    }
+
+    let auth = GroupExternalJoinAuthorization::decode(external_init.authorization.as_slice())
+        .map_err(|e| ProtocolError::decode(format!("External join auth decode: {e}")))?;
+    if auth.group_id != group_id {
+        return Err(ProtocolError::group_protocol(
+            "External join authorization group_id mismatch",
+        ));
+    }
+    if auth.epoch != current_epoch {
+        return Err(ProtocolError::group_protocol(format!(
+            "External join authorization epoch mismatch: expected {current_epoch}, got {}",
+            auth.epoch
+        )));
+    }
+    if auth.joiner_identity_ed25519_public != add_key_package.identity_ed25519_public
+        || auth.joiner_identity_x25519_public != add_key_package.identity_x25519_public
+        || auth.joiner_credential != add_key_package.credential
+    {
+        return Err(ProtocolError::group_protocol(
+            "External join authorization does not match Add proposal identity",
+        ));
+    }
+    let authorizer_leaf = tree
+        .get_leaf_data(auth.authorizer_leaf_index)
+        .ok_or_else(|| ProtocolError::group_protocol("External join authorizer leaf is blank"))?;
+    let mut auth_for_verify = auth.clone();
+    auth_for_verify.authorizer_signature.clear();
+    let mut auth_bytes = Vec::new();
+    auth_for_verify
+        .encode(&mut auth_bytes)
+        .map_err(|e| ProtocolError::encode(format!("External join auth encode: {e}")))?;
+    ed25519_verify_message(
+        &authorizer_leaf.identity_ed25519_public,
+        &auth.authorizer_signature,
+        &auth_bytes,
+        "External join authorization signature verification failed",
+    )
+}
+
+fn validate_leaf_update_signature(
+    committer_leaf: &super::tree::LeafData,
+    update_path: &crate::proto::GroupUpdatePath,
+) -> Result<(), ProtocolError> {
+    let key_package = GroupKeyPackage {
+        version: GROUP_PROTOCOL_VERSION,
+        identity_ed25519_public: committer_leaf.identity_ed25519_public.clone(),
+        identity_x25519_public: committer_leaf.identity_x25519_public.clone(),
+        leaf_x25519_public: update_path.leaf_x25519_public.clone(),
+        leaf_kyber_public: update_path.leaf_kyber_public.clone(),
+        signature: update_path.leaf_signature.clone(),
+        credential: committer_leaf.credential.clone(),
+        created_at: None,
+    };
+    key_package::validate_key_package(&key_package)
+}
+
 fn ed25519_verify_commit(
     public_key: &[u8],
     signature: &[u8],
     message: &[u8],
+) -> Result<(), ProtocolError> {
+    ed25519_verify_message(
+        public_key,
+        signature,
+        message,
+        "Committer Ed25519 signature verification failed",
+    )
+}
+
+fn ed25519_verify_message(
+    public_key: &[u8],
+    signature: &[u8],
+    message: &[u8],
+    context: &str,
 ) -> Result<(), ProtocolError> {
     if public_key.len() != ED25519_PUBLIC_KEY_BYTES {
         return Err(ProtocolError::invalid_input(
@@ -505,7 +635,6 @@ fn ed25519_verify_commit(
         .map_err(|_| ProtocolError::invalid_input("Invalid Ed25519 signature size"))?;
     let sig = ed25519_dalek::Signature::from_bytes(&sig_array);
     use ed25519_dalek::Verifier;
-    vk.verify(message, &sig).map_err(|_| {
-        ProtocolError::group_protocol("Committer Ed25519 signature verification failed")
-    })
+    vk.verify(message, &sig)
+        .map_err(|_| ProtocolError::group_protocol(context))
 }

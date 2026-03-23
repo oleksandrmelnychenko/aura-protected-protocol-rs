@@ -65,6 +65,7 @@ pub struct LeafData {
     pub credential: Vec<u8>,
     pub identity_ed25519_public: Vec<u8>,
     pub identity_x25519_public: Vec<u8>,
+    pub signature: Vec<u8>,
 }
 
 pub struct RatchetTree {
@@ -262,7 +263,7 @@ fn log2(x: u32) -> Result<u32, ProtocolError> {
     if x == 0 {
         return Err(ProtocolError::tree_integrity("log2(0) is undefined"));
     }
-    Ok(31 - x.leading_zeros())
+    Ok(x.ilog2())
 }
 
 #[inline]
@@ -275,6 +276,7 @@ fn is_all_zero(bytes: &[u8]) -> bool {
 }
 
 impl RatchetTree {
+    #[allow(clippy::too_many_arguments)]
     pub fn new_single(
         x25519_public: Vec<u8>,
         kyber_public: Vec<u8>,
@@ -283,6 +285,7 @@ impl RatchetTree {
         identity_ed25519: Vec<u8>,
         identity_x25519: Vec<u8>,
         credential: Vec<u8>,
+        signature: Vec<u8>,
     ) -> Result<Self, ProtocolError> {
         if x25519_public.len() != X25519_PUBLIC_KEY_BYTES {
             return Err(ProtocolError::invalid_input(
@@ -309,6 +312,7 @@ impl RatchetTree {
             credential,
             identity_ed25519_public: identity_ed25519,
             identity_x25519_public: identity_x25519,
+            signature,
         };
 
         Ok(Self {
@@ -528,6 +532,24 @@ impl RatchetTree {
                 "Cannot set private keys on blank node",
             )),
         }
+    }
+
+    pub fn set_leaf_signature(
+        &mut self,
+        leaf_idx: u32,
+        signature: Vec<u8>,
+    ) -> Result<(), ProtocolError> {
+        let Some(leaf) = self
+            .leaves
+            .get_mut(leaf_idx as usize)
+            .and_then(|l| l.as_mut())
+        else {
+            return Err(ProtocolError::tree_integrity(
+                "Cannot set signature on blank leaf",
+            ));
+        };
+        leaf.signature = signature;
+        Ok(())
     }
 
     pub fn update_leaf(
@@ -938,10 +960,28 @@ impl RatchetTree {
             let node_idx = checked_leaf_to_node(i)? as usize;
             if node_idx < proto_nodes.len() {
                 if let Some(ref kp) = proto_nodes[node_idx].key_package {
+                    super::key_package::validate_key_package(kp)?;
+                    match &nodes[node_idx] {
+                        TreeNodeContent::Populated { keys, .. } => {
+                            if keys.x25519_public != kp.leaf_x25519_public
+                                || keys.kyber_public != kp.leaf_kyber_public
+                            {
+                                return Err(ProtocolError::tree_integrity(
+                                    "Leaf key package does not match leaf node public keys",
+                                ));
+                            }
+                        }
+                        TreeNodeContent::Blank => {
+                            return Err(ProtocolError::tree_integrity(
+                                "Blank leaf cannot carry a key package",
+                            ));
+                        }
+                    }
                     leaves.push(Some(LeafData {
                         credential: kp.credential.clone(),
                         identity_ed25519_public: kp.identity_ed25519_public.clone(),
                         identity_x25519_public: kp.identity_x25519_public.clone(),
+                        signature: kp.signature.clone(),
                     }));
                 } else {
                     leaves.push(None);
@@ -975,7 +1015,7 @@ impl RatchetTree {
             identity_x25519_public: ld.identity_x25519_public.clone(),
             leaf_x25519_public: x25519_pub.to_vec(),
             leaf_kyber_public: kyber_pub.to_vec(),
-            signature: vec![],
+            signature: ld.signature.clone(),
             credential: ld.credential.clone(),
             created_at: None,
         })

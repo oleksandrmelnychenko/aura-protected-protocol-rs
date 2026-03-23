@@ -66,7 +66,13 @@ jobs:
 
       - name: Install protobuf compiler (Windows)
         if: matrix.os == 'windows-latest'
-        run: choco install protoc -y
+        shell: pwsh
+        run: |
+          $version = "27.3"
+          $url = "https://github.com/protocolbuffers/protobuf/releases/download/v${version}/protoc-${version}-win64.zip"
+          Invoke-WebRequest -Uri $url -OutFile protoc.zip
+          Expand-Archive protoc.zip -DestinationPath "$env:LOCALAPPDATA\protoc"
+          "$env:LOCALAPPDATA\protoc\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17 # stable
         with:

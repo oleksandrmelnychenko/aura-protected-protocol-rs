@@ -44,6 +44,7 @@ impl TreeKem {
                 leaf_x25519_public: x25519_pub,
                 leaf_kyber_public: kyber_pub,
                 nodes: vec![],
+                leaf_signature: vec![],
             };
             return Ok((
                 update_path,
@@ -148,6 +149,7 @@ impl TreeKem {
             leaf_x25519_public: leaf_x25519_pub,
             leaf_kyber_public: leaf_kyber_pub,
             nodes: update_nodes,
+            leaf_signature: vec![],
         };
 
         Ok((final_update_path, commit_secret, new_private_keys))

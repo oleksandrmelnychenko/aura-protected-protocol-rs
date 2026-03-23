@@ -22,6 +22,7 @@ mod inner {
     unsafe impl Sync for SecureMemoryHandle {}
 
     impl SecureMemoryHandle {
+        #[allow(unsafe_code)]
         pub fn allocate(size: usize) -> Result<Self, CryptoError> {
             if size == 0 || size > MAX_BUFFER_SIZE {
                 return Err(CryptoError::AllocationFailed { size });
@@ -120,6 +121,7 @@ mod inner {
     unsafe impl Sync for SecureMemoryHandle {}
 
     impl SecureMemoryHandle {
+        #[allow(unsafe_code)]
         pub fn allocate(size: usize) -> Result<Self, CryptoError> {
             if size == 0 || size > MAX_BUFFER_SIZE {
                 return Err(CryptoError::AllocationFailed { size });
@@ -209,6 +211,7 @@ mod inner {
     }
 
     impl Drop for SecureMemoryHandle {
+        #[allow(unsafe_code)]
         fn drop(&mut self) {
             self.data.zeroize();
             if self.mlocked {

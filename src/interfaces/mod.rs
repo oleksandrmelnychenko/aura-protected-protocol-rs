@@ -4,10 +4,6 @@
 use crate::core::errors::ProtocolError;
 use crate::crypto::{CryptoInterop, SecureMemoryHandle};
 
-pub trait IKeyProvider: Send + Sync {
-    fn get_key_bytes(&self) -> Result<Vec<u8>, ProtocolError>;
-}
-
 pub trait IStateKeyProvider: Send + Sync {
     fn get_state_encryption_key(&self) -> Result<SecureMemoryHandle, ProtocolError>;
 }
@@ -28,6 +24,19 @@ pub trait IGroupEventHandler: Send + Sync {
     fn on_member_removed(&self, leaf_index: u32);
     fn on_epoch_advanced(&self, new_epoch: u64, member_count: u32);
     fn on_sender_key_exhaustion_warning(&self, remaining: u32, max_capacity: u32);
+    /// Fired when a ReInit proposal is applied in a Commit.
+    /// The group should be considered deprecated; migrate to a new group
+    /// identified by `new_group_id` using the protocol version `new_version`.
+    fn on_reinit_proposed(&self, new_group_id: &[u8], new_version: u32) {
+        let _ = (new_group_id, new_version);
+    }
+}
+
+pub trait IIdentityEventHandler: Send + Sync {
+    /// Fired after an OTK is consumed and the remaining pool has dropped below
+    /// the exhaustion-warning threshold.  The caller should upload fresh OTKs
+    /// via `replenish_one_time_pre_keys` to avoid running out.
+    fn on_otk_exhaustion_warning(&self, remaining: u32, max_capacity: u32);
 }
 
 pub struct StaticStateKeyProvider {

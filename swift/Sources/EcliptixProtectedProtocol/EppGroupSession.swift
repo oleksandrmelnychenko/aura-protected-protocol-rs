@@ -10,7 +10,7 @@ import Foundation
 /// The policy defines limits on messages per epoch, skipped keys, and whether
 /// features like external join, enhanced key schedule, and mandatory franking
 /// are enabled.
-public struct EppGroupSecurityPolicy {
+public struct EppGroupSecurityPolicy: Sendable {
 
     /// Maximum number of messages allowed per epoch before a commit is required.
     public var maxMessagesPerEpoch: UInt32
@@ -31,13 +31,13 @@ public struct EppGroupSecurityPolicy {
     ///
     /// - Parameters:
     ///   - maxMessagesPerEpoch: Maximum messages per epoch (default: 1000).
-    ///   - maxSkippedKeysPerSender: Maximum skipped keys per sender (default: 256).
+    ///   - maxSkippedKeysPerSender: Maximum skipped keys per sender (default: 32).
     ///   - blockExternalJoin: Block external joins (default: false).
     ///   - enhancedKeySchedule: Enable enhanced key schedule (default: false).
     ///   - mandatoryFranking: Require franking on all messages (default: false).
     public init(
         maxMessagesPerEpoch: UInt32 = 1000,
-        maxSkippedKeysPerSender: UInt32 = 256,
+        maxSkippedKeysPerSender: UInt32 = 32,
         blockExternalJoin: Bool = false,
         enhancedKeySchedule: Bool = false,
         mandatoryFranking: Bool = false
@@ -53,7 +53,7 @@ public struct EppGroupSecurityPolicy {
     /// enhanced key schedule enabled, and mandatory franking.
     public static let shield = EppGroupSecurityPolicy(
         maxMessagesPerEpoch: 1000,
-        maxSkippedKeysPerSender: 256,
+        maxSkippedKeysPerSender: 4,
         blockExternalJoin: true,
         enhancedKeySchedule: true,
         mandatoryFranking: true
@@ -105,7 +105,7 @@ public struct EppGroupDecryptResult {
     /// The time-to-live in seconds for disappearing messages (0 if not a disappearing message).
     public let ttlSeconds: UInt32
 
-    /// The timestamp (Unix epoch, milliseconds) when the message was sent.
+    /// The timestamp (Unix epoch, seconds) when the message was sent.
     public let sentTimestamp: UInt64
 
     /// The unique message identifier.
@@ -119,6 +119,15 @@ public struct EppGroupDecryptResult {
 
     /// Whether this message contains franking data for accountability verification.
     public let hasFrankingData: Bool
+
+    public let sealedHint: Data?
+    public let sealedEncryptedContent: Data?
+    public let sealedNonce: Data?
+    public let sealedKey: Data?
+    public let frankingTag: Data?
+    public let frankingKey: Data?
+    public let frankingContent: Data?
+    public let frankingSealedContent: Data?
 }
 
 // MARK: - Key Package Secrets
@@ -167,7 +176,7 @@ public final class EppGroupSession {
 
     // MARK: - Creation
 
-    /// Creates a new group session with default security policy.
+    /// Creates a new group session with the hardened shielded security policy.
     ///
     /// The caller becomes the first (and only) member of the group.
     ///
@@ -340,7 +349,8 @@ public final class EppGroupSession {
         return EppGroupSession(handle: handle)
     }
 
-    /// Joins a group externally using only the group's public state (no welcome message needed).
+    /// Joins a group externally using the group's public state plus an
+    /// authorization artifact issued by an existing member.
     ///
     /// This produces a commit that must be distributed to all existing members for them
     /// to recognize the new member.
@@ -354,6 +364,7 @@ public final class EppGroupSession {
     public static func joinExternal(
         identity: EppIdentity,
         publicState: Data,
+        authorization: Data,
         credential: Data
     ) throws -> (session: EppGroupSession, commit: Data) {
         guard identity.handle != nil else { throw EppError.objectDisposed }
@@ -361,17 +372,21 @@ public final class EppGroupSession {
         var outCommit = NativeEppBuffer(data: nil, length: 0)
         var outError = NativeEppError(code: 0, message: nil)
         let result = publicState.withUnsafeBytes { stateBytes in
-            credential.withUnsafeBytes { credBytes in
-                native_epp_group_join_external(
-                    identity.handle,
-                    stateBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                    publicState.count,
-                    credBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                    credential.count,
-                    &outHandle,
-                    &outCommit,
-                    &outError
-                )
+            authorization.withUnsafeBytes { authBytes in
+                credential.withUnsafeBytes { credBytes in
+                    native_epp_group_join_external(
+                        identity.handle,
+                        stateBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        publicState.count,
+                        authBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        authorization.count,
+                        credBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        credential.count,
+                        &outHandle,
+                        &outCommit,
+                        &outError
+                    )
+                }
             }
         }
         defer {
@@ -385,6 +400,46 @@ public final class EppGroupSession {
             throw EppError.bufferTooSmall
         }
         return (EppGroupSession(handle: handle), commitData)
+    }
+
+    public func authorizeExternalJoin(
+        joinerIdentity: EppIdentity,
+        credential: Data
+    ) throws -> Data {
+        guard handle != nil else { throw EppError.objectDisposed }
+        guard joinerIdentity.handle != nil else { throw EppError.objectDisposed }
+        let joinerEd = try joinerIdentity.ed25519PublicKey
+        let joinerX = try joinerIdentity.x25519PublicKey
+        var outAuthorization = NativeEppBuffer(data: nil, length: 0)
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = joinerEd.withUnsafeBytes { edBytes in
+            joinerX.withUnsafeBytes { xBytes in
+                credential.withUnsafeBytes { credBytes in
+                    native_epp_group_authorize_external_join(
+                        handle,
+                        edBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        joinerEd.count,
+                        xBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        joinerX.count,
+                        credBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        credential.count,
+                        &outAuthorization,
+                        &outError
+                    )
+                }
+            }
+        }
+        defer {
+            if outAuthorization.data != nil { native_epp_buffer_release(&outAuthorization) }
+            native_epp_error_free(&outError)
+        }
+        guard result == EPP_SUCCESS else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+        guard let data = dataFromBuffer(outAuthorization) else {
+            throw EppError.bufferTooSmall
+        }
+        return data
     }
 
     // MARK: - Membership
@@ -593,7 +648,15 @@ public final class EppGroupSession {
             message_id: NativeEppBuffer(data: nil, length: 0),
             referenced_message_id: NativeEppBuffer(data: nil, length: 0),
             has_sealed_payload: 0,
-            has_franking_data: 0
+            has_franking_data: 0,
+            sealed_hint: NativeEppBuffer(data: nil, length: 0),
+            sealed_encrypted_content: NativeEppBuffer(data: nil, length: 0),
+            sealed_nonce: NativeEppBuffer(data: nil, length: 0),
+            sealed_key: NativeEppBuffer(data: nil, length: 0),
+            franking_tag: NativeEppBuffer(data: nil, length: 0),
+            franking_key: NativeEppBuffer(data: nil, length: 0),
+            franking_content: NativeEppBuffer(data: nil, length: 0),
+            franking_sealed_content: NativeEppBuffer(data: nil, length: 0)
         )
         var outError = NativeEppError(code: 0, message: nil)
         let result = ciphertext.withUnsafeBytes { ctBytes in
@@ -619,6 +682,14 @@ public final class EppGroupSession {
             throw EppError.bufferTooSmall
         }
         let referencedMessageId = dataFromBuffer(nativeResult.referenced_message_id)
+        let sealedHint = dataFromBuffer(nativeResult.sealed_hint)
+        let sealedEncryptedContent = dataFromBuffer(nativeResult.sealed_encrypted_content)
+        let sealedNonce = dataFromBuffer(nativeResult.sealed_nonce)
+        let sealedKey = dataFromBuffer(nativeResult.sealed_key)
+        let frankingTag = dataFromBuffer(nativeResult.franking_tag)
+        let frankingKey = dataFromBuffer(nativeResult.franking_key)
+        let frankingContent = dataFromBuffer(nativeResult.franking_content)
+        let frankingSealedContent = dataFromBuffer(nativeResult.franking_sealed_content)
         return EppGroupDecryptResult(
             plaintext: plaintext,
             senderLeafIndex: nativeResult.sender_leaf_index,
@@ -629,7 +700,15 @@ public final class EppGroupSession {
             messageId: messageId,
             referencedMessageId: referencedMessageId,
             hasSealedPayload: nativeResult.has_sealed_payload != 0,
-            hasFrankingData: nativeResult.has_franking_data != 0
+            hasFrankingData: nativeResult.has_franking_data != 0,
+            sealedHint: sealedHint,
+            sealedEncryptedContent: sealedEncryptedContent,
+            sealedNonce: sealedNonce,
+            sealedKey: sealedKey,
+            frankingTag: frankingTag,
+            frankingKey: frankingKey,
+            frankingContent: frankingContent,
+            frankingSealedContent: frankingSealedContent
         )
     }
 

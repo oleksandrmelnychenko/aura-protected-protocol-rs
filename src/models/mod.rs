@@ -9,4 +9,4 @@ pub mod keys;
 pub use bundles::LocalPublicKeyBundle;
 pub use identity_key_bundle::IdentityKeyBundle;
 pub use key_materials::{Ed25519KeyPair, SignedPreKeyPair, X25519KeyPair};
-pub use keys::{ChainKey, MessageKey, OneTimePreKey, OneTimePreKeyPublic};
+pub use keys::{OneTimePreKey, OneTimePreKeyPublic};

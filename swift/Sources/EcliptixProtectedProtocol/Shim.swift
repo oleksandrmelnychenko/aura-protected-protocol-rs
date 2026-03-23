@@ -42,6 +42,37 @@ internal struct NativeEppGroupDecryptResult {
     var referenced_message_id: NativeEppBuffer
     var has_sealed_payload: UInt8
     var has_franking_data: UInt8
+    var sealed_hint: NativeEppBuffer
+    var sealed_encrypted_content: NativeEppBuffer
+    var sealed_nonce: NativeEppBuffer
+    var sealed_key: NativeEppBuffer
+    var franking_tag: NativeEppBuffer
+    var franking_key: NativeEppBuffer
+    var franking_content: NativeEppBuffer
+    var franking_sealed_content: NativeEppBuffer
+}
+
+internal struct NativeEppSessionPeerIdentity {
+    var ed25519_public: (
+        UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+        UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+        UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+        UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8
+    )
+    var x25519_public: (
+        UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+        UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+        UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+        UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8
+    )
+}
+
+internal struct NativeEppEnvelopeMetadata {
+    var envelope_type: UInt32
+    var envelope_id: UInt32
+    var message_index: UInt64
+    var correlation_id: UnsafeMutablePointer<CChar>?
+    var correlation_id_length: Int
 }
 
 // MARK: - Error code constants
@@ -159,6 +190,14 @@ internal func native_epp_prekey_bundle_create(
     _ out_error: UnsafeMutablePointer<NativeEppError>?
 ) -> UInt32
 
+@_silgen_name("epp_prekey_bundle_replenish")
+internal func native_epp_prekey_bundle_replenish(
+    _ identity_handle: UnsafeMutableRawPointer?,
+    _ count: UInt32,
+    _ out_keys: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
 // MARK: - Handshake initiator
 
 @_silgen_name("epp_handshake_initiator_start")
@@ -238,6 +277,19 @@ internal func native_epp_session_decrypt(
     _ out_error: UnsafeMutablePointer<NativeEppError>?
 ) -> UInt32
 
+@_silgen_name("epp_envelope_metadata_parse")
+internal func native_epp_envelope_metadata_parse(
+    _ metadata_bytes: UnsafePointer<UInt8>?,
+    _ metadata_length: Int,
+    _ out_meta: UnsafeMutablePointer<NativeEppEnvelopeMetadata>?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_envelope_metadata_free")
+internal func native_epp_envelope_metadata_free(
+    _ meta: UnsafeMutablePointer<NativeEppEnvelopeMetadata>?
+)
+
 @_silgen_name("epp_session_serialize_sealed")
 internal func native_epp_session_serialize_sealed(
     _ handle: UnsafeMutableRawPointer?,
@@ -264,6 +316,34 @@ internal func native_epp_session_deserialize_sealed(
 internal func native_epp_session_nonce_remaining(
     _ handle: UnsafeMutableRawPointer?,
     _ out_remaining: UnsafeMutablePointer<UInt64>?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_session_get_id")
+internal func native_epp_session_get_id(
+    _ handle: UnsafeMutableRawPointer?,
+    _ out_session_id: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_session_get_identity_binding_hash")
+internal func native_epp_session_get_identity_binding_hash(
+    _ handle: UnsafeMutableRawPointer?,
+    _ out_binding_hash: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_session_get_peer_identity")
+internal func native_epp_session_get_peer_identity(
+    _ handle: UnsafeMutableRawPointer?,
+    _ out_identity: UnsafeMutablePointer<NativeEppSessionPeerIdentity>?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_session_get_local_identity")
+internal func native_epp_session_get_local_identity(
+    _ handle: UnsafeMutableRawPointer?,
+    _ out_identity: UnsafeMutablePointer<NativeEppSessionPeerIdentity>?,
     _ out_error: UnsafeMutablePointer<NativeEppError>?
 ) -> UInt32
 
@@ -421,11 +501,26 @@ internal func native_epp_group_join(
     _ out_error: UnsafeMutablePointer<NativeEppError>?
 ) -> UInt32
 
+@_silgen_name("epp_group_authorize_external_join")
+internal func native_epp_group_authorize_external_join(
+    _ handle: UnsafeMutableRawPointer?,
+    _ joiner_identity_ed25519_public: UnsafePointer<UInt8>?,
+    _ joiner_identity_ed25519_public_length: Int,
+    _ joiner_identity_x25519_public: UnsafePointer<UInt8>?,
+    _ joiner_identity_x25519_public_length: Int,
+    _ joiner_credential: UnsafePointer<UInt8>?,
+    _ joiner_credential_length: Int,
+    _ out_authorization: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
 @_silgen_name("epp_group_join_external")
 internal func native_epp_group_join_external(
     _ identity_handle: UnsafeMutableRawPointer?,
     _ public_state: UnsafePointer<UInt8>?,
     _ public_state_length: Int,
+    _ authorization: UnsafePointer<UInt8>?,
+    _ authorization_length: Int,
     _ credential: UnsafePointer<UInt8>?,
     _ credential_length: Int,
     _ out_group_handle: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,

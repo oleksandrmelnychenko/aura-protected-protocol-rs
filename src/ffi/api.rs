@@ -18,7 +18,8 @@
 use prost::Message;
 use std::ffi::CString;
 use std::mem::size_of;
-use std::os::raw::c_char;
+use std::os::raw::{c_char, c_void};
+use std::sync::Arc;
 
 use crate::core::constants::{
     AES_GCM_NONCE_BYTES, AES_KEY_BYTES, DEFAULT_ONE_TIME_KEY_COUNT, ED25519_PUBLIC_KEY_BYTES,
@@ -30,6 +31,7 @@ use crate::core::errors::ProtocolError;
 use crate::crypto::SecureMemoryHandle;
 use crate::crypto::{CryptoInterop, KyberInterop};
 use crate::identity::IdentityKeys;
+use crate::interfaces::{IGroupEventHandler, IIdentityEventHandler, IProtocolEventHandler};
 use crate::proto::{OneTimePreKey, PreKeyBundle, SecureEnvelope};
 use crate::protocol::group::{GroupSecurityPolicy, GroupSession};
 use crate::protocol::{HandshakeInitiator, HandshakeResponder, Session};
@@ -1242,7 +1244,7 @@ pub unsafe extern "C" fn epp_derive_root_key(
         let ikm = std::slice::from_raw_parts(opaque_session_key, opaque_session_key_length);
         let ctx = std::slice::from_raw_parts(user_context, user_context_length);
 
-        match crate::api::EcliptixProtocol::derive_root_key(ikm, ctx) {
+        match crate::api::EcliptixProtocol::derive_root_key(ikm, ctx, out_root_key_length) {
             Ok(key) => {
                 std::ptr::copy_nonoverlapping(key.as_ptr(), out_root_key, ROOT_KEY_BYTES);
                 EppErrorCode::EppSuccess
@@ -1307,7 +1309,7 @@ pub unsafe extern "C" fn epp_shamir_split(
             Err(e) => return write_protocol_error(out_error, &e),
         };
 
-        let data_share_count = shares.len() - 1;
+        let data_share_count = shares.len().saturating_sub(1);
         if data_share_count == 0 {
             write_error(
                 out_error,
@@ -1323,9 +1325,8 @@ pub unsafe extern "C" fn epp_shamir_split(
             write_error(out_error, EppErrorCode::EppErrorGeneric, "Empty shares");
             return EppErrorCode::EppErrorGeneric;
         };
-        let Some(total_len) = data_share_count
-            .checked_mul(data_share_len)
-            .and_then(|v| v.checked_add(auth_tag.len()))
+        let Some(total_len) =
+            data_share_count.checked_mul(data_share_len.saturating_add(auth_tag.len()))
         else {
             write_error(
                 out_error,
@@ -1337,9 +1338,9 @@ pub unsafe extern "C" fn epp_shamir_split(
         let mut flat = Vec::with_capacity(total_len);
         for ds in &shares[..data_share_count] {
             flat.extend_from_slice(ds);
+            flat.extend_from_slice(auth_tag);
         }
-        flat.extend_from_slice(auth_tag);
-        *out_share_length = data_share_len;
+        *out_share_length = data_share_len + auth_tag.len();
         write_buffer(out_shares, flat);
 
         EppErrorCode::EppSuccess
@@ -1387,28 +1388,60 @@ pub unsafe extern "C" fn epp_shamir_reconstruct(
             return EppErrorCode::EppErrorInvalidInput;
         }
 
-        let expected_len = share_count
-            .saturating_mul(share_length)
-            .saturating_add(HMAC_BYTES);
+        let expected_len = share_count.saturating_mul(share_length);
         if shares_length != expected_len {
             write_error(
                 out_error,
                 EppErrorCode::EppErrorInvalidInput,
-                "shares_length must equal share_count * share_length + 32",
+                "shares_length must equal share_count * share_length",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if share_length <= HMAC_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "share_length must be larger than the embedded auth tag",
             );
             return EppErrorCode::EppErrorInvalidInput;
         }
 
         let flat_slice = std::slice::from_raw_parts(shares, shares_length);
         let auth_key_slice = std::slice::from_raw_parts(auth_key, auth_key_length);
+        let data_share_len = share_length - HMAC_BYTES;
 
-        let data_bytes = &flat_slice[..share_count * share_length];
-        let auth_tag = &flat_slice[share_count * share_length..];
-
-        let mut all_shares: Vec<Vec<u8>> = (0..share_count)
-            .map(|i| data_bytes[i * share_length..(i + 1) * share_length].to_vec())
-            .collect();
-        all_shares.push(auth_tag.to_vec());
+        let mut auth_tag: Option<Vec<u8>> = None;
+        let mut all_shares: Vec<Vec<u8>> = Vec::with_capacity(share_count + 1);
+        for i in 0..share_count {
+            let start = i * share_length;
+            let data_end = start + data_share_len;
+            let end = start + share_length;
+            let share = flat_slice[start..data_end].to_vec();
+            let share_tag = flat_slice[data_end..end].to_vec();
+            if let Some(existing) = &auth_tag {
+                if existing != &share_tag {
+                    write_error(
+                        out_error,
+                        EppErrorCode::EppErrorInvalidInput,
+                        "All Shamir shares must carry the same auth tag",
+                    );
+                    return EppErrorCode::EppErrorInvalidInput;
+                }
+            } else {
+                auth_tag = Some(share_tag);
+            }
+            all_shares.push(share);
+        }
+        if let Some(tag) = auth_tag {
+            all_shares.push(tag);
+        } else {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Missing embedded auth tag",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
 
         match crate::api::EcliptixProtocol::shamir_reconstruct(
             &all_shares,
@@ -2383,7 +2416,63 @@ pub unsafe extern "C" fn epp_group_export_public_state(
 }
 
 /// # Safety
-/// See module-level FFI safety contract.  `(public_state, public_state_length)` and
+/// See module-level FFI safety contract.  `(joiner_identity_ed25519_public, joiner_identity_ed25519_public_length)`,
+/// `(joiner_identity_x25519_public, joiner_identity_x25519_public_length)`, and
+/// `(joiner_credential, joiner_credential_length)` must form valid readable slices.
+#[no_mangle]
+pub unsafe extern "C" fn epp_group_authorize_external_join(
+    handle: *mut EppGroupSessionHandle,
+    joiner_identity_ed25519_public: *const u8,
+    joiner_identity_ed25519_public_length: usize,
+    joiner_identity_x25519_public: *const u8,
+    joiner_identity_x25519_public_length: usize,
+    joiner_credential: *const u8,
+    joiner_credential_length: usize,
+    out_authorization: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if joiner_identity_ed25519_public.is_null()
+            || joiner_identity_x25519_public.is_null()
+            || out_authorization.is_null()
+        {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let session = match require_group_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let joiner_ed = std::slice::from_raw_parts(
+            joiner_identity_ed25519_public,
+            joiner_identity_ed25519_public_length,
+        );
+        let joiner_x = std::slice::from_raw_parts(
+            joiner_identity_x25519_public,
+            joiner_identity_x25519_public_length,
+        );
+        let joiner_credential = if joiner_credential.is_null() || joiner_credential_length == 0 {
+            &[][..]
+        } else {
+            std::slice::from_raw_parts(joiner_credential, joiner_credential_length)
+        };
+        match session.authorize_external_join(joiner_ed, joiner_x, joiner_credential) {
+            Ok(bytes) => {
+                write_buffer(out_authorization, bytes);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+/// # Safety
+/// See module-level FFI safety contract.  `(public_state, public_state_length)`,
+/// `(authorization, authorization_length)`, and
 /// `(credential, credential_length)` must form valid readable slices.
 /// `out_group_handle` must point to writable `*mut EppGroupSessionHandle`.
 #[no_mangle]
@@ -2391,6 +2480,8 @@ pub unsafe extern "C" fn epp_group_join_external(
     identity_handle: *mut EppIdentityHandle,
     public_state: *const u8,
     public_state_length: usize,
+    authorization: *const u8,
+    authorization_length: usize,
     credential: *const u8,
     credential_length: usize,
     out_group_handle: *mut *mut EppGroupSessionHandle,
@@ -2398,7 +2489,11 @@ pub unsafe extern "C" fn epp_group_join_external(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
-        if public_state.is_null() || out_group_handle.is_null() || out_commit.is_null() {
+        if public_state.is_null()
+            || authorization.is_null()
+            || out_group_handle.is_null()
+            || out_commit.is_null()
+        {
             write_error(
                 out_error,
                 EppErrorCode::EppErrorNullPointer,
@@ -2424,6 +2519,11 @@ pub unsafe extern "C" fn epp_group_join_external(
         }
 
         let state_slice = std::slice::from_raw_parts(public_state, public_state_length);
+        let auth_slice = if authorization.is_null() || authorization_length == 0 {
+            &[][..]
+        } else {
+            std::slice::from_raw_parts(authorization, authorization_length)
+        };
         let cred = if credential.is_null() || credential_length == 0 {
             vec![]
         } else {
@@ -2434,7 +2534,7 @@ pub unsafe extern "C" fn epp_group_join_external(
             Ok(v) => v,
             Err(code) => return code,
         };
-        match GroupSession::from_external_join(state_slice, identity, cred) {
+        match GroupSession::from_external_join(state_slice, auth_slice, identity, cred) {
             Ok((session, commit_bytes)) => {
                 *out_group_handle = Box::into_raw(Box::new(EppGroupSessionHandle(Some(session))));
                 write_buffer(out_commit, commit_bytes);
@@ -4340,4 +4440,555 @@ pub unsafe extern "C" fn epp_voip_session_destroy(handle: *mut EppVoipSessionHan
     if !handle.is_null() {
         drop(Box::from_raw(handle));
     }
+}
+
+// ─── Session identity / ID getters ─────────────────────────────────────────
+
+#[repr(C)]
+pub struct EppSessionPeerIdentity {
+    pub ed25519_public: [u8; ED25519_PUBLIC_KEY_BYTES],
+    pub x25519_public: [u8; X25519_PUBLIC_KEY_BYTES],
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_session_get_id(
+    handle: *mut EppSessionHandle,
+    out_session_id: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_session_id.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_session_id is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let session = match require_session_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        write_buffer(out_session_id, session.get_session_id());
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_session_get_identity_binding_hash(
+    handle: *mut EppSessionHandle,
+    out_binding_hash: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_binding_hash.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_binding_hash is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let session = match require_session_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        write_buffer(out_binding_hash, session.get_identity_binding_hash());
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_session_get_peer_identity(
+    handle: *mut EppSessionHandle,
+    out_identity: *mut EppSessionPeerIdentity,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_identity.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_identity is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let session = match require_session_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let peer = session.get_peer_identity();
+        if peer.ed25519_public.len() != ED25519_PUBLIC_KEY_BYTES
+            || peer.x25519_public.len() != X25519_PUBLIC_KEY_BYTES
+        {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidState,
+                "Peer identity keys have unexpected length",
+            );
+            return EppErrorCode::EppErrorInvalidState;
+        }
+        let mut result = EppSessionPeerIdentity {
+            ed25519_public: [0u8; ED25519_PUBLIC_KEY_BYTES],
+            x25519_public: [0u8; X25519_PUBLIC_KEY_BYTES],
+        };
+        result.ed25519_public.copy_from_slice(&peer.ed25519_public);
+        result.x25519_public.copy_from_slice(&peer.x25519_public);
+        *out_identity = result;
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_session_get_local_identity(
+    handle: *mut EppSessionHandle,
+    out_identity: *mut EppSessionPeerIdentity,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_identity.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_identity is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let session = match require_session_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let local = session.get_local_identity();
+        if local.ed25519_public.len() != ED25519_PUBLIC_KEY_BYTES
+            || local.x25519_public.len() != X25519_PUBLIC_KEY_BYTES
+        {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidState,
+                "Local identity keys have unexpected length",
+            );
+            return EppErrorCode::EppErrorInvalidState;
+        }
+        let mut result = EppSessionPeerIdentity {
+            ed25519_public: [0u8; ED25519_PUBLIC_KEY_BYTES],
+            x25519_public: [0u8; X25519_PUBLIC_KEY_BYTES],
+        };
+        result.ed25519_public.copy_from_slice(&local.ed25519_public);
+        result.x25519_public.copy_from_slice(&local.x25519_public);
+        *out_identity = result;
+        EppErrorCode::EppSuccess
+    })
+}
+
+// ─── OTK replenishment ─────────────────────────────────────────────────────
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_prekey_bundle_replenish(
+    identity_handle: *mut EppIdentityHandle,
+    count: u32,
+    out_keys: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_keys.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_keys is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if count == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "count must be > 0",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let identity = match require_identity_mut(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let pairs = match identity.replenish_one_time_pre_keys(count) {
+            Ok(p) => p,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        let proto_opks: Vec<OneTimePreKey> = pairs
+            .into_iter()
+            .map(|(id, pk)| OneTimePreKey {
+                one_time_pre_key_id: id,
+                public_key: pk,
+            })
+            .collect();
+        let partial_bundle = PreKeyBundle {
+            version: PROTOCOL_VERSION,
+            one_time_pre_keys: proto_opks,
+            ..Default::default()
+        };
+        let mut buf = Vec::new();
+        if let Err(e) = partial_bundle.encode(&mut buf) {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorEncode,
+                &format!("Failed to encode replenished OTKs: {e}"),
+            );
+            return EppErrorCode::EppErrorEncode;
+        }
+        write_buffer(out_keys, buf);
+        EppErrorCode::EppSuccess
+    })
+}
+
+// ─── EnvelopeMetadata parsing ──────────────────────────────────────────────
+
+#[repr(C)]
+pub struct EppEnvelopeMetadata {
+    pub envelope_type: EppEnvelopeType,
+    pub envelope_id: u32,
+    pub message_index: u64,
+    pub correlation_id: *mut c_char,
+    pub correlation_id_length: usize,
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_envelope_metadata_parse(
+    metadata_bytes: *const u8,
+    metadata_length: usize,
+    out_meta: *mut EppEnvelopeMetadata,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if metadata_bytes.is_null() || out_meta.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let slice = std::slice::from_raw_parts(metadata_bytes, metadata_length);
+        let proto = match crate::proto::EnvelopeMetadata::decode(slice) {
+            Ok(m) => m,
+            Err(e) => {
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorDecode,
+                    &format!("Failed to decode EnvelopeMetadata: {e}"),
+                );
+                return EppErrorCode::EppErrorDecode;
+            }
+        };
+        let envelope_type = match proto.envelope_type {
+            1 => EppEnvelopeType::EppEnvelopeResponse,
+            2 => EppEnvelopeType::EppEnvelopeNotification,
+            3 => EppEnvelopeType::EppEnvelopeHeartbeat,
+            4 => EppEnvelopeType::EppEnvelopeErrorResponse,
+            _ => EppEnvelopeType::EppEnvelopeRequest,
+        };
+        let (correlation_id_ptr, correlation_id_length) =
+            proto
+                .correlation_id
+                .as_ref()
+                .map_or((std::ptr::null_mut(), 0), |cid| {
+                    let cstr = CString::new(cid.as_str()).unwrap_or_default();
+                    let len = cstr.as_bytes().len();
+                    (cstr.into_raw(), len)
+                });
+        *out_meta = EppEnvelopeMetadata {
+            envelope_type,
+            envelope_id: proto.envelope_id,
+            message_index: proto.message_index,
+            correlation_id: correlation_id_ptr,
+            correlation_id_length,
+        };
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_envelope_metadata_free(meta: *mut EppEnvelopeMetadata) {
+    if meta.is_null() {
+        return;
+    }
+    if !unsafe { (*meta).correlation_id }.is_null() {
+        unsafe {
+            drop(CString::from_raw((*meta).correlation_id));
+            (*meta).correlation_id = std::ptr::null_mut();
+            (*meta).correlation_id_length = 0;
+        }
+    }
+}
+
+// ─── C event callbacks — 1-to-1 session ────────────────────────────────────
+
+pub type EppOnHandshakeCompleted = Option<
+    unsafe extern "C" fn(session_id: *const u8, session_id_len: usize, user_data: *mut c_void),
+>;
+
+pub type EppOnRatchetRotated = Option<unsafe extern "C" fn(epoch: u64, user_data: *mut c_void)>;
+
+pub type EppOnSessionError = Option<
+    unsafe extern "C" fn(code: EppErrorCode, message: *const c_char, user_data: *mut c_void),
+>;
+
+pub type EppOnNonceExhaustionWarning =
+    Option<unsafe extern "C" fn(remaining: u64, max_capacity: u64, user_data: *mut c_void)>;
+
+pub type EppOnRatchetStallingWarning =
+    Option<unsafe extern "C" fn(messages_since_ratchet: u64, user_data: *mut c_void)>;
+
+#[repr(C)]
+pub struct EppSessionEventCallbacks {
+    pub on_handshake_completed: EppOnHandshakeCompleted,
+    pub on_ratchet_rotated: EppOnRatchetRotated,
+    pub on_error: EppOnSessionError,
+    pub on_nonce_exhaustion_warning: EppOnNonceExhaustionWarning,
+    pub on_ratchet_stalling_warning: EppOnRatchetStallingWarning,
+    pub user_data: *mut c_void,
+}
+
+struct CFfiSessionEventHandler {
+    callbacks: EppSessionEventCallbacks,
+}
+
+#[allow(clippy::non_send_fields_in_send_ty)]
+unsafe impl Send for CFfiSessionEventHandler {}
+unsafe impl Sync for CFfiSessionEventHandler {}
+
+impl IProtocolEventHandler for CFfiSessionEventHandler {
+    fn on_handshake_completed(&self, session_id: &[u8]) {
+        if let Some(cb) = self.callbacks.on_handshake_completed {
+            unsafe {
+                cb(
+                    session_id.as_ptr(),
+                    session_id.len(),
+                    self.callbacks.user_data,
+                )
+            };
+        }
+    }
+
+    fn on_ratchet_rotated(&self, epoch: u64) {
+        if let Some(cb) = self.callbacks.on_ratchet_rotated {
+            unsafe { cb(epoch, self.callbacks.user_data) };
+        }
+    }
+
+    fn on_error(&self, error: &ProtocolError) {
+        if let Some(cb) = self.callbacks.on_error {
+            let code = error_code_from_protocol(error);
+            let msg = CString::new(error.to_string()).unwrap_or_default();
+            unsafe { cb(code, msg.as_ptr(), self.callbacks.user_data) };
+        }
+    }
+
+    fn on_nonce_exhaustion_warning(&self, remaining: u64, max_capacity: u64) {
+        if let Some(cb) = self.callbacks.on_nonce_exhaustion_warning {
+            unsafe { cb(remaining, max_capacity, self.callbacks.user_data) };
+        }
+    }
+
+    fn on_ratchet_stalling_warning(&self, messages_since_ratchet: u64) {
+        if let Some(cb) = self.callbacks.on_ratchet_stalling_warning {
+            unsafe { cb(messages_since_ratchet, self.callbacks.user_data) };
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_session_set_event_handler(
+    handle: *mut EppSessionHandle,
+    callbacks: *const EppSessionEventCallbacks,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if callbacks.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "callbacks is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let session = match require_session_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let cbs = std::ptr::read(callbacks);
+        let handler = Arc::new(CFfiSessionEventHandler { callbacks: cbs });
+        session.set_event_handler(handler);
+        EppErrorCode::EppSuccess
+    })
+}
+
+// ─── C event callbacks — group session ─────────────────────────────────────
+
+pub type EppOnMemberAdded = Option<
+    unsafe extern "C" fn(
+        leaf_index: u32,
+        identity_ed25519: *const u8,
+        identity_ed25519_len: usize,
+        user_data: *mut c_void,
+    ),
+>;
+
+pub type EppOnMemberRemoved = Option<unsafe extern "C" fn(leaf_index: u32, user_data: *mut c_void)>;
+
+pub type EppOnEpochAdvanced =
+    Option<unsafe extern "C" fn(new_epoch: u64, member_count: u32, user_data: *mut c_void)>;
+
+pub type EppOnSenderKeyExhaustionWarning =
+    Option<unsafe extern "C" fn(remaining: u32, max_capacity: u32, user_data: *mut c_void)>;
+
+pub type EppOnReInitProposed = Option<
+    unsafe extern "C" fn(
+        new_group_id: *const u8,
+        new_group_id_len: usize,
+        new_version: u32,
+        user_data: *mut c_void,
+    ),
+>;
+
+#[repr(C)]
+pub struct EppGroupEventCallbacks {
+    pub on_member_added: EppOnMemberAdded,
+    pub on_member_removed: EppOnMemberRemoved,
+    pub on_epoch_advanced: EppOnEpochAdvanced,
+    pub on_sender_key_exhaustion_warning: EppOnSenderKeyExhaustionWarning,
+    pub on_reinit_proposed: EppOnReInitProposed,
+    pub user_data: *mut c_void,
+}
+
+struct CFfiGroupEventHandler {
+    callbacks: EppGroupEventCallbacks,
+}
+
+#[allow(clippy::non_send_fields_in_send_ty)]
+unsafe impl Send for CFfiGroupEventHandler {}
+unsafe impl Sync for CFfiGroupEventHandler {}
+
+impl IGroupEventHandler for CFfiGroupEventHandler {
+    fn on_member_added(&self, leaf_index: u32, identity_ed25519: &[u8]) {
+        if let Some(cb) = self.callbacks.on_member_added {
+            unsafe {
+                cb(
+                    leaf_index,
+                    identity_ed25519.as_ptr(),
+                    identity_ed25519.len(),
+                    self.callbacks.user_data,
+                )
+            };
+        }
+    }
+
+    fn on_member_removed(&self, leaf_index: u32) {
+        if let Some(cb) = self.callbacks.on_member_removed {
+            unsafe { cb(leaf_index, self.callbacks.user_data) };
+        }
+    }
+
+    fn on_epoch_advanced(&self, new_epoch: u64, member_count: u32) {
+        if let Some(cb) = self.callbacks.on_epoch_advanced {
+            unsafe { cb(new_epoch, member_count, self.callbacks.user_data) };
+        }
+    }
+
+    fn on_sender_key_exhaustion_warning(&self, remaining: u32, max_capacity: u32) {
+        if let Some(cb) = self.callbacks.on_sender_key_exhaustion_warning {
+            unsafe { cb(remaining, max_capacity, self.callbacks.user_data) };
+        }
+    }
+
+    fn on_reinit_proposed(&self, new_group_id: &[u8], new_version: u32) {
+        if let Some(cb) = self.callbacks.on_reinit_proposed {
+            unsafe {
+                cb(
+                    new_group_id.as_ptr(),
+                    new_group_id.len(),
+                    new_version,
+                    self.callbacks.user_data,
+                )
+            };
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_group_set_event_handler(
+    handle: *mut EppGroupSessionHandle,
+    callbacks: *const EppGroupEventCallbacks,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if callbacks.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "callbacks is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let session = match require_group_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let cbs = std::ptr::read(callbacks);
+        let handler = Arc::new(CFfiGroupEventHandler { callbacks: cbs });
+        session.set_event_handler(handler);
+        EppErrorCode::EppSuccess
+    })
+}
+
+// ─── C event callbacks — identity ──────────────────────────────────────────
+
+pub type EppOnOtkExhaustionWarning =
+    Option<unsafe extern "C" fn(remaining: u32, max_capacity: u32, user_data: *mut c_void)>;
+
+#[repr(C)]
+pub struct EppIdentityEventCallbacks {
+    pub on_otk_exhaustion_warning: EppOnOtkExhaustionWarning,
+    pub user_data: *mut c_void,
+}
+
+struct CFfiIdentityEventHandler {
+    callbacks: EppIdentityEventCallbacks,
+}
+
+#[allow(clippy::non_send_fields_in_send_ty)]
+unsafe impl Send for CFfiIdentityEventHandler {}
+unsafe impl Sync for CFfiIdentityEventHandler {}
+
+impl IIdentityEventHandler for CFfiIdentityEventHandler {
+    fn on_otk_exhaustion_warning(&self, remaining: u32, max_capacity: u32) {
+        if let Some(cb) = self.callbacks.on_otk_exhaustion_warning {
+            unsafe { cb(remaining, max_capacity, self.callbacks.user_data) };
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_identity_set_event_handler(
+    handle: *mut EppIdentityHandle,
+    callbacks: *const EppIdentityEventCallbacks,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if callbacks.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "callbacks is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let identity = match require_identity_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let cbs = std::ptr::read(callbacks);
+        let handler = Arc::new(CFfiIdentityEventHandler { callbacks: cbs });
+        identity.set_event_handler(handler);
+        EppErrorCode::EppSuccess
+    })
 }
