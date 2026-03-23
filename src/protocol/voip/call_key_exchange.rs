@@ -713,16 +713,70 @@ pub fn caller_finish(
     peer_key_confirm_mac: &[u8],
     shield_mode: bool,
 ) -> Result<CallKeyMaterial, ProtocolError> {
+    caller_finish_internal(
+        init_output,
+        identity_kyber_secret,
+        call_id,
+        peer_eph_x25519_public,
+        peer_kyber_ct,
+        peer_ed25519_public,
+        peer_signature,
+        peer_key_confirm_mac,
+        shield_mode,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn caller_finish_with_context(
+    init_output: &CallInitOutput,
+    identity_kyber_secret: &SecureMemoryHandle,
+    call_id: &[u8],
+    peer_eph_x25519_public: &[u8],
+    peer_kyber_ct: &[u8],
+    peer_ed25519_public: &[u8],
+    peer_signature: &[u8],
+    peer_key_confirm_mac: &[u8],
+    auth_context: &CallInitAuthContext,
+) -> Result<CallKeyMaterial, ProtocolError> {
+    caller_finish_internal(
+        init_output,
+        identity_kyber_secret,
+        call_id,
+        peer_eph_x25519_public,
+        peer_kyber_ct,
+        peer_ed25519_public,
+        peer_signature,
+        peer_key_confirm_mac,
+        auth_context.shield_mode,
+        Some(auth_context),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn caller_finish_internal(
+    init_output: &CallInitOutput,
+    identity_kyber_secret: &SecureMemoryHandle,
+    call_id: &[u8],
+    peer_eph_x25519_public: &[u8],
+    peer_kyber_ct: &[u8],
+    peer_ed25519_public: &[u8],
+    peer_signature: &[u8],
+    peer_key_confirm_mac: &[u8],
+    shield_mode: bool,
+    auth_context: Option<&CallInitAuthContext>,
+) -> Result<CallKeyMaterial, ProtocolError> {
     if call_id.len() != CALL_ID_BYTES {
         return Err(ProtocolError::voip_call("invalid call_id size"));
     }
 
-    verify_call_signature(
+    verify_call_signature_with_context(
         peer_ed25519_public,
         call_id,
         peer_eph_x25519_public,
         peer_kyber_ct,
         peer_signature,
+        auth_context,
     )?;
 
     let eph_priv_bytes = init_output
@@ -757,8 +811,12 @@ pub fn caller_finish(
     )?;
     CryptoInterop::secure_wipe(&mut combined_pq);
 
-    let expected_mac =
-        compute_key_confirm_mac(&root_secret, VOIP_KEY_CONFIRM_CALLEE_INFO, call_id)?;
+    let expected_mac = compute_key_confirm_mac_with_context(
+        &root_secret,
+        VOIP_KEY_CONFIRM_CALLEE_INFO,
+        call_id,
+        auth_context,
+    )?;
     if !CryptoInterop::constant_time_equals(peer_key_confirm_mac, &expected_mac).unwrap_or(false) {
         return Err(ProtocolError::voip_call(
             "callee key confirmation MAC mismatch",

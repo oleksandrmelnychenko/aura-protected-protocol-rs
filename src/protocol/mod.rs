@@ -11,7 +11,7 @@ pub use group::{
     ContentType, FrankingData, GroupDecryptResult, GroupSecurityPolicy, GroupSession,
     MessagePolicy, SealedPayload,
 };
-pub use handshake::{HandshakeInitiator, HandshakeResponder};
+pub use handshake::{HandshakeInitReplayGuard, HandshakeInitiator, HandshakeResponder};
 pub use nonce::{NonceGenerator, NonceState};
 pub use session::{DecryptResult, HandshakeState, LocalIdentity, PeerIdentity, Session};
 pub use voip::{CallControlType, CallRole, CallState, IVoipEventHandler, VoipSession};

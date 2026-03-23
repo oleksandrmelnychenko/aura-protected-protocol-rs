@@ -4149,7 +4149,14 @@ pub unsafe extern "C" fn epp_voip_call_init_complete(
             Err(e) => return write_protocol_error(out_error, &e),
         };
 
-        let key_material = match crate::protocol::voip::caller_finish(
+        let auth_context = crate::protocol::voip::call_key_exchange::CallInitAuthContext {
+            version: crate::core::constants::VOIP_PROTOCOL_VERSION,
+            media_type: 1,
+            ratchet_interval_frames: initiator.ratchet_interval_frames,
+            pq_rekey_interval_secs: initiator.pq_rekey_interval_secs,
+            shield_mode: initiator.shield_mode,
+        };
+        let key_material = match crate::protocol::voip::call_key_exchange::caller_finish_with_context(
             &init_output,
             &kyber_secret,
             &initiator.call_id,
@@ -4158,7 +4165,7 @@ pub unsafe extern "C" fn epp_voip_call_init_complete(
             &accept.identity_ed25519_public,
             &accept.signature,
             &accept.key_confirmation_mac,
-            initiator.shield_mode,
+            &auth_context,
         ) {
             Ok(v) => v,
             Err(e) => return write_protocol_error(out_error, &e),

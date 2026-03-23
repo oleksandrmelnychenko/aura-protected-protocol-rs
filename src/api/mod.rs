@@ -587,7 +587,14 @@ impl EcliptixCallInitiator {
         peer_signature: &[u8],
         peer_key_confirm_mac: &[u8],
     ) -> Result<EcliptixVoipSession, ProtocolError> {
-        let key_material = voip::caller_finish(
+        let auth_context = voip::call_key_exchange::CallInitAuthContext {
+            version: VOIP_PROTOCOL_VERSION,
+            media_type: 1,
+            ratchet_interval_frames: self.ratchet_interval_frames,
+            pq_rekey_interval_secs: self.pq_rekey_interval_secs,
+            shield_mode: self.shield_mode,
+        };
+        let key_material = voip::call_key_exchange::caller_finish_with_context(
             &self.init_output,
             identity_kyber_secret,
             &self.call_id,
@@ -596,7 +603,7 @@ impl EcliptixCallInitiator {
             peer_ed25519_public,
             peer_signature,
             peer_key_confirm_mac,
-            self.shield_mode,
+            &auth_context,
         )?;
         let session = VoipSession::from_key_material(
             self.call_id,

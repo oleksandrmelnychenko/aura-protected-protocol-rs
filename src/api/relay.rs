@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Oleksandr Melnychenko. All rights reserved.
 // SPDX-License-Identifier: MIT
 
+use std::collections::HashSet;
 use std::mem::size_of;
 
 use prost::Message;
@@ -87,9 +88,38 @@ pub fn validate_commit_for_relay(
         return Err(ProtocolError::group_protocol("Commit group_id mismatch"));
     }
 
+    if commit.proposals.len() > MAX_PROPOSALS_PER_COMMIT {
+        return Err(ProtocolError::group_protocol(format!(
+            "Commit has too many proposals: {} > {}",
+            commit.proposals.len(),
+            MAX_PROPOSALS_PER_COMMIT
+        )));
+    }
+
     if commit.update_path.is_none() {
         return Err(ProtocolError::group_protocol("Commit missing update_path"));
     }
+
+    let committer = roster
+        .find_member(commit.committer_leaf_index)
+        .ok_or_else(|| {
+            ProtocolError::group_membership(format!(
+                "Committer leaf {} is not a group member",
+                commit.committer_leaf_index
+            ))
+        })?;
+    let mut commit_for_verify = commit.clone();
+    let signature = std::mem::take(&mut commit_for_verify.committer_signature);
+    let mut commit_bytes_for_verify = Vec::new();
+    commit_for_verify
+        .encode(&mut commit_bytes_for_verify)
+        .map_err(|e| ProtocolError::encode(format!("Commit encode for verify: {e}")))?;
+    verify_ed25519_message(
+        &committer.identity_ed25519_public,
+        &signature,
+        &commit_bytes_for_verify,
+        "Committer Ed25519 signature verification failed",
+    )?;
 
     let mut added_identities = Vec::new();
     let mut removed_leaves = Vec::new();
@@ -100,11 +130,7 @@ pub fn validate_commit_for_relay(
                 let kp = add.key_package.as_ref().ok_or_else(|| {
                     ProtocolError::group_membership("Add proposal missing key package")
                 })?;
-                if kp.identity_ed25519_public.len() != ED25519_PUBLIC_KEY_BYTES {
-                    return Err(ProtocolError::invalid_input(
-                        "Invalid Ed25519 key size in Add",
-                    ));
-                }
+                key_package::validate_key_package(kp)?;
                 added_identities.push(kp.identity_ed25519_public.clone());
             }
             Some(crate::proto::group_proposal::Proposal::Remove(remove)) => {
@@ -151,6 +177,12 @@ pub fn validate_group_message_for_relay(
 
     let msg = GroupMessage::decode(message_bytes)
         .map_err(|e| ProtocolError::decode(format!("GroupMessage decode: {e}")))?;
+    if msg.version != GROUP_PROTOCOL_VERSION {
+        return Err(ProtocolError::group_protocol(format!(
+            "GroupMessage protocol version mismatch: expected {}, got {}",
+            GROUP_PROTOCOL_VERSION, msg.version
+        )));
+    }
 
     if msg.group_id != roster.group_id {
         return Err(ProtocolError::group_protocol(
@@ -179,8 +211,6 @@ pub fn validate_commit_for_relay_strict(
     expected_sender_identity_ed25519: Option<&[u8]>,
 ) -> Result<RelayCommitInfo, ProtocolError> {
     let info = validate_commit_for_relay(commit_bytes, roster)?;
-    let commit = GroupCommit::decode(commit_bytes)
-        .map_err(|e| ProtocolError::decode(format!("Commit decode: {e}")))?;
     let committer = roster
         .find_member(info.committer_leaf_index)
         .ok_or_else(|| {
@@ -193,19 +223,6 @@ pub fn validate_commit_for_relay_strict(
     if let Some(expected_identity) = expected_sender_identity_ed25519 {
         bind_sender_identity(committer, expected_identity)?;
     }
-
-    let mut commit_for_verify = commit;
-    let signature = std::mem::take(&mut commit_for_verify.committer_signature);
-    let mut commit_bytes_for_verify = Vec::new();
-    commit_for_verify
-        .encode(&mut commit_bytes_for_verify)
-        .map_err(|e| ProtocolError::encode(format!("Commit encode for verify: {e}")))?;
-    verify_ed25519_message(
-        &committer.identity_ed25519_public,
-        &signature,
-        &commit_bytes_for_verify,
-        "Committer Ed25519 signature verification failed",
-    )?;
 
     Ok(info)
 }
@@ -222,6 +239,12 @@ pub fn validate_group_message_for_relay_strict(
 
     let msg = GroupMessage::decode(message_bytes)
         .map_err(|e| ProtocolError::decode(format!("GroupMessage decode: {e}")))?;
+    if msg.version != GROUP_PROTOCOL_VERSION {
+        return Err(ProtocolError::group_protocol(format!(
+            "GroupMessage protocol version mismatch: expected {}, got {}",
+            GROUP_PROTOCOL_VERSION, msg.version
+        )));
+    }
 
     if msg.group_id != roster.group_id {
         return Err(ProtocolError::group_protocol(
@@ -268,6 +291,9 @@ pub fn validate_group_message_for_relay_strict(
 pub fn validate_key_package_for_storage(
     key_package_bytes: &[u8],
 ) -> Result<GroupKeyPackage, ProtocolError> {
+    if key_package_bytes.len() > MAX_GROUP_MESSAGE_SIZE {
+        return Err(ProtocolError::invalid_input("KeyPackage too large"));
+    }
     let kp = GroupKeyPackage::decode(key_package_bytes)
         .map_err(|e| ProtocolError::decode(format!("KeyPackage decode: {e}")))?;
     key_package::validate_key_package(&kp)?;
@@ -277,6 +303,9 @@ pub fn validate_key_package_for_storage(
 pub fn validate_prekey_bundle_for_storage(
     prekey_bundle_bytes: &[u8],
 ) -> Result<PreKeyBundle, ProtocolError> {
+    if prekey_bundle_bytes.len() > MAX_PROTOBUF_MESSAGE_SIZE {
+        return Err(ProtocolError::invalid_input("PreKeyBundle too large"));
+    }
     let bundle = PreKeyBundle::decode(prekey_bundle_bytes)
         .map_err(|e| ProtocolError::decode(format!("PreKeyBundle decode: {e}")))?;
     validate_bundle(&bundle)?;
@@ -309,22 +338,120 @@ pub fn apply_commit_to_roster(
     info: &RelayCommitInfo,
     added_members: Vec<GroupMemberRecord>,
 ) -> Result<(), ProtocolError> {
+    let Some(expected_epoch) = roster.epoch.checked_add(1) else {
+        return Err(ProtocolError::group_protocol("Roster epoch overflow"));
+    };
+    if info.new_epoch != expected_epoch {
+        return Err(ProtocolError::group_protocol(format!(
+            "Roster epoch update mismatch: expected {}, got {}",
+            expected_epoch, info.new_epoch
+        )));
+    }
+
+    let mut updated_roster = roster.clone();
+
     for &leaf_idx in &info.removed_leaves {
-        roster.members.retain(|m| m.leaf_index != leaf_idx);
+        if updated_roster.find_member(leaf_idx).is_none() {
+            return Err(ProtocolError::group_membership(format!(
+                "Removed leaf {} is not present in roster",
+                leaf_idx
+            )));
+        }
+        updated_roster.members.retain(|m| m.leaf_index != leaf_idx);
+    }
+
+    let mut expected_added = info.added_identities.clone();
+    let mut seen_leaf_indices = HashSet::new();
+    let mut seen_identities = HashSet::new();
+    for member in &updated_roster.members {
+        seen_leaf_indices.insert(member.leaf_index);
+        seen_identities.insert(member.identity_ed25519_public.clone());
+    }
+    let Some(projected_member_count) = updated_roster
+        .members
+        .len()
+        .checked_add(expected_added.len())
+    else {
+        return Err(ProtocolError::group_membership(
+            "Updated roster member count overflow",
+        ));
+    };
+    if projected_member_count > MAX_GROUP_MEMBERS {
+        return Err(ProtocolError::group_membership(format!(
+            "Updated roster would exceed max members: {} > {}",
+            projected_member_count, MAX_GROUP_MEMBERS
+        )));
     }
 
     for member in added_members {
-        roster.members.push(member);
+        if member.identity_ed25519_public.len() != ED25519_PUBLIC_KEY_BYTES {
+            return Err(ProtocolError::invalid_input(
+                "Invalid Ed25519 key size in added member",
+            ));
+        }
+        if member.identity_x25519_public.len() != X25519_PUBLIC_KEY_BYTES {
+            return Err(ProtocolError::invalid_input(
+                "Invalid X25519 key size in added member",
+            ));
+        }
+        if member.credential.is_empty() || member.credential.len() > MAX_CREDENTIAL_SIZE {
+            return Err(ProtocolError::invalid_input(
+                "Invalid credential size in added member",
+            ));
+        }
+
+        let mut found = false;
+        let mut i = 0usize;
+        while i < expected_added.len() {
+            if expected_added[i] == member.identity_ed25519_public {
+                expected_added.swap_remove(i);
+                found = true;
+                break;
+            }
+            i += 1;
+        }
+        if !found {
+            return Err(ProtocolError::group_membership(
+                "Added member identity not present in commit Add proposals",
+            ));
+        }
+
+        if !seen_leaf_indices.insert(member.leaf_index) {
+            return Err(ProtocolError::group_membership(
+                "Duplicate leaf index in updated roster",
+            ));
+        }
+        if !seen_identities.insert(member.identity_ed25519_public.clone()) {
+            return Err(ProtocolError::group_membership(
+                "Duplicate identity in updated roster",
+            ));
+        }
+        updated_roster.members.push(member);
     }
 
-    roster.epoch = info.new_epoch;
+    if !expected_added.is_empty() {
+        return Err(ProtocolError::group_membership(
+            "Missing added member records for commit Add proposals",
+        ));
+    }
+
+    updated_roster.epoch = info.new_epoch;
+    *roster = updated_roster;
 
     Ok(())
 }
 
 pub fn extract_welcome_target(welcome_bytes: &[u8]) -> Result<(Vec<u8>, u64, u32), ProtocolError> {
+    if welcome_bytes.len() > MAX_GROUP_MESSAGE_SIZE {
+        return Err(ProtocolError::invalid_input("Welcome too large"));
+    }
     let welcome = GroupWelcome::decode(welcome_bytes)
         .map_err(|e| ProtocolError::decode(format!("Welcome decode: {e}")))?;
+    if welcome.group_id.len() != GROUP_ID_BYTES {
+        return Err(ProtocolError::invalid_input(
+            "Invalid Welcome group_id size",
+        ));
+    }
 
     Ok((welcome.group_id, welcome.epoch, welcome.target_leaf_index))
 }
@@ -426,7 +553,10 @@ pub fn validate_crypto_envelope(envelope_bytes: &[u8]) -> Result<CryptoEnvelope,
         ));
     }
 
-    if envelope.payload_type == CryptoPayloadType::CryptoPayloadUnspecified as i32 {
+    let Ok(payload_type_enum) = CryptoPayloadType::try_from(envelope.payload_type) else {
+        return Err(ProtocolError::invalid_input("CryptoPayloadType is unknown"));
+    };
+    if payload_type_enum == CryptoPayloadType::CryptoPayloadUnspecified {
         return Err(ProtocolError::invalid_input(
             "CryptoPayloadType must be specified",
         ));
@@ -440,14 +570,16 @@ pub fn validate_crypto_envelope(envelope_bytes: &[u8]) -> Result<CryptoEnvelope,
         return Err(ProtocolError::invalid_input("encrypted_payload too large"));
     }
 
-    let payload_type = envelope.payload_type;
-    let needs_group_id = payload_type == CryptoPayloadType::CryptoPayloadGroupMessage as i32
-        || payload_type == CryptoPayloadType::CryptoPayloadGroupCommit as i32;
+    let needs_group_id = payload_type_enum == CryptoPayloadType::CryptoPayloadGroupMessage
+        || payload_type_enum == CryptoPayloadType::CryptoPayloadGroupCommit;
 
     if needs_group_id && envelope.group_id.is_empty() {
         return Err(ProtocolError::invalid_input(
             "group_id required for group message/commit",
         ));
+    }
+    if needs_group_id && envelope.group_id.len() != GROUP_ID_BYTES {
+        return Err(ProtocolError::invalid_input("Invalid group_id size"));
     }
 
     Ok(envelope)
@@ -513,11 +645,14 @@ pub fn validate_voip_envelope(envelope_bytes: &[u8]) -> Result<VoipEnvelope, Pro
         ));
     }
 
-    if envelope.signal_type == VoipSignalType::VoipSignalUnspecified as i32 {
+    let Ok(signal_type) = VoipSignalType::try_from(envelope.signal_type) else {
+        return Err(ProtocolError::voip_call("VoipSignalType is unknown"));
+    };
+    if signal_type == VoipSignalType::VoipSignalUnspecified {
         return Err(ProtocolError::voip_call("VoipSignalType must be specified"));
     }
 
-    if envelope.call_id.is_empty() || envelope.call_id.len() > 64 {
+    if envelope.call_id.len() != CALL_ID_BYTES {
         return Err(ProtocolError::voip_call("invalid call_id in VoIP envelope"));
     }
 

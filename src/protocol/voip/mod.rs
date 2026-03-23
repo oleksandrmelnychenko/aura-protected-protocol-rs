@@ -20,8 +20,8 @@ use media_crypto::MediaCrypto;
 use replay_window::ReplayWindow;
 
 pub use call_key_exchange::{
-    callee_accept, caller_finish, caller_init, rekey_complete, rekey_initiate, CallAcceptOutput,
-    CallInitOutput, CallKeyMaterial as VoipKeyMaterial,
+    callee_accept, caller_finish, caller_finish_with_context, caller_init, rekey_complete,
+    rekey_initiate, CallAcceptOutput, CallInitOutput, CallKeyMaterial as VoipKeyMaterial,
 };
 
 type HmacSha256 = Hmac<Sha256>;

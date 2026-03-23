@@ -12,6 +12,7 @@ use crate::models::key_materials::{Ed25519KeyPair, SignedPreKeyPair, X25519KeyPa
 use crate::models::keys::{OneTimePreKey, OneTimePreKeyPublic};
 use crate::models::IdentityKeyBundle;
 use ed25519_dalek::{Signer, SigningKey};
+use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 use zeroize::Zeroizing;
@@ -45,6 +46,9 @@ struct IdentityKeysInner {
     ephemeral_secret_key: Option<SecureMemoryHandle>,
     ephemeral_x25519_public: Option<Vec<u8>>,
     selected_one_time_pre_key_id: Option<u32>,
+    inflight_handshake_init_hashes: HashSet<Vec<u8>>,
+    recent_handshake_init_hashes: HashSet<Vec<u8>>,
+    recent_handshake_init_order: VecDeque<Vec<u8>>,
     event_handler: Option<Arc<dyn IIdentityEventHandler>>,
 }
 
@@ -76,6 +80,9 @@ impl IdentityKeys {
                 ephemeral_secret_key: None,
                 ephemeral_x25519_public: None,
                 selected_one_time_pre_key_id: None,
+                inflight_handshake_init_hashes: HashSet::new(),
+                recent_handshake_init_hashes: HashSet::new(),
+                recent_handshake_init_order: VecDeque::new(),
                 event_handler: None,
             }),
         }
@@ -534,6 +541,101 @@ impl IdentityKeys {
                 handler.on_otk_exhaustion_warning(remaining, max_capacity);
             }
         }
+        Ok(())
+    }
+
+    pub fn reserve_handshake_init_fingerprint(
+        &self,
+        fingerprint: &[u8],
+    ) -> Result<bool, ProtocolError> {
+        if fingerprint.len() != HMAC_BYTES {
+            return Err(ProtocolError::invalid_input(
+                "Invalid HandshakeInit fingerprint size",
+            ));
+        }
+        let mut inner = self
+            .inner
+            .write()
+            .map_err(|_| ProtocolError::invalid_state("IdentityKeys write lock poisoned"))?;
+
+        if inner.recent_handshake_init_hashes.contains(fingerprint)
+            || inner.inflight_handshake_init_hashes.contains(fingerprint)
+        {
+            return Ok(false);
+        }
+
+        inner
+            .inflight_handshake_init_hashes
+            .insert(fingerprint.to_vec());
+
+        Ok(true)
+    }
+
+    pub fn remember_handshake_init_fingerprint(
+        &self,
+        fingerprint: &[u8],
+    ) -> Result<(), ProtocolError> {
+        if fingerprint.len() != HMAC_BYTES {
+            return Err(ProtocolError::invalid_input(
+                "Invalid HandshakeInit fingerprint size",
+            ));
+        }
+        let mut inner = self
+            .inner
+            .write()
+            .map_err(|_| ProtocolError::invalid_state("IdentityKeys write lock poisoned"))?;
+
+        inner.inflight_handshake_init_hashes.remove(fingerprint);
+
+        if inner.recent_handshake_init_hashes.contains(fingerprint) {
+            return Ok(());
+        }
+
+        let fingerprint = fingerprint.to_vec();
+        inner
+            .recent_handshake_init_hashes
+            .insert(fingerprint.clone());
+        inner.recent_handshake_init_order.push_back(fingerprint);
+
+        while inner.recent_handshake_init_order.len() > MAX_SEEN_HANDSHAKE_INITS {
+            let Some(oldest) = inner.recent_handshake_init_order.pop_front() else {
+                break;
+            };
+            inner.recent_handshake_init_hashes.remove(&oldest);
+        }
+
+        Ok(())
+    }
+
+    pub fn release_handshake_init_fingerprint(&self, fingerprint: &[u8]) {
+        if fingerprint.len() != HMAC_BYTES {
+            return;
+        }
+        if let Ok(mut inner) = self.inner.write() {
+            inner.inflight_handshake_init_hashes.remove(fingerprint);
+        }
+    }
+
+    pub fn forget_handshake_init_fingerprint(
+        &self,
+        fingerprint: &[u8],
+    ) -> Result<(), ProtocolError> {
+        if fingerprint.len() != HMAC_BYTES {
+            return Err(ProtocolError::invalid_input(
+                "Invalid HandshakeInit fingerprint size",
+            ));
+        }
+        let mut inner = self
+            .inner
+            .write()
+            .map_err(|_| ProtocolError::invalid_state("IdentityKeys write lock poisoned"))?;
+
+        inner.inflight_handshake_init_hashes.remove(fingerprint);
+        inner.recent_handshake_init_hashes.remove(fingerprint);
+        inner
+            .recent_handshake_init_order
+            .retain(|entry| entry.as_slice() != fingerprint);
+
         Ok(())
     }
 

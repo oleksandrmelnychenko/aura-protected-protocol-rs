@@ -27,19 +27,19 @@
 
 | Що викликати | Що передавати | Повертає |
 |--------------|---------------|----------|
-| `relay::validate_commit_for_relay(commit_bytes, roster)` | `commit_bytes` — сирі байти GroupCommit, `roster` — поточний `GroupRoster` | `Result<RelayCommitInfo, ProtocolError>` |
+| `relay::validate_commit_for_relay_strict(commit_bytes, roster, expected_sender_identity_ed25519)` | `commit_bytes` — сирі байти GroupCommit, `roster` — поточний `GroupRoster`, `expected_sender_identity_ed25519` — ідентичність з auth-контексту (опційно) | `Result<RelayCommitInfo, ProtocolError>` |
 
-Перевіряє: epoch = roster.epoch + 1, committer є членом, `group_id` збігається з roster, є `update_path`. У `RelayCommitInfo`: `committer_leaf_index`, `new_epoch`, `added_identities`, `removed_leaves`.
+Перевіряє: epoch = roster.epoch + 1, committer є членом, `group_id` збігається з roster, є `update_path`, а також Ed25519 підпис комітера. У `RelayCommitInfo`: `committer_leaf_index`, `new_epoch`, `added_identities`, `removed_leaves`.
 
-**Що передавати:** Сервер зберігає по одному `GroupRoster` на групу (group_id, epoch, список членів). Перед прийняттям коміту викликає `validate_commit_for_relay`; після успіху застосовує зміни до roster (див. нижче).
+**Що передавати:** Сервер зберігає по одному `GroupRoster` на групу (group_id, epoch, список членів). Перед прийняттям коміту викликає `validate_commit_for_relay_strict`; після успіху застосовує зміни до roster (див. нижче).
 
 ### 3. Валідація групового повідомлення (Application)
 
 | Що викликати | Що передавати | Повертає |
 |--------------|---------------|----------|
-| `relay::validate_group_message_for_relay(message_bytes, roster)` | `message_bytes` — сирі байти GroupMessage (application content), `roster` — поточний roster групи | `Result<(), ProtocolError>` |
+| `relay::validate_group_message_for_relay_strict(message_bytes, roster, sender_leaf_index, expected_sender_identity_ed25519)` | `message_bytes` — сирі байти GroupMessage (application content), `roster` — поточний roster групи, `sender_leaf_index` та `expected_sender_identity_ed25519` — з auth-контексту | `Result<(), ProtocolError>` |
 
-Перевіряє: `group_id` та `epoch` збігаються з roster, контент — application. Викликати після десеріалізації `encrypted_payload` у GroupMessage (якщо сервер перевіряє тип контенту).
+Перевіряє: версію протоколу, `group_id` та `epoch` збігаються з roster, контент — application, Ed25519 підпис відправника і (за потреби) binding до очікуваної identity.
 
 ### 4. Валідація Key Package (зберігання / Add)
 
@@ -137,8 +137,9 @@
 1. Отримати від клієнта байти CryptoEnvelope.
 2. Викликати `validate_crypto_envelope(envelope_bytes)`.
 3. За `payload_type` та `group_id` визначити групу; завантажити її `GroupRoster`.
-4. Якщо це Commit: `validate_commit_for_relay(commit_bytes, roster)` → `RelayCommitInfo`; `commit_recipients(roster, committer)` → список одержувачів; для кожного одержувача можна зберегти/відправити Commit; потім `apply_commit_to_roster` + доставка Welcome цільовому leaf.
-5. Якщо це GroupMessage: `validate_group_message_for_relay(message_bytes, roster)`; `message_recipients(roster)` або `crypto_envelope_recipients(envelope, roster)` → кому доставити; `store_event` для кожного одержувача або відправка в реальному часі.
+4. Якщо це Commit: `validate_commit_for_relay_strict(commit_bytes, roster, expected_sender_identity_ed25519)` → `RelayCommitInfo`; `commit_recipients(roster, committer)` → список одержувачів; для кожного одержувача можна зберегти/відправити Commit; потім `apply_commit_to_roster` + доставка Welcome цільовому leaf.
+5. Якщо це GroupMessage: `validate_group_message_for_relay_strict(message_bytes, roster, sender_leaf_index, expected_sender_identity_ed25519)`; `message_recipients(roster)` або `crypto_envelope_recipients(envelope, roster)` → кому доставити; `store_event` для кожного одержувача або відправка в реальному часі.
 6. Для 1:1 envelope сервер лише пересилає blob одержувачу за його ідентифікатором (наприклад, за session/device).
+7. `sender_device_id`, `sender_leaf_index` та identity для strict-валідації мають братися з автентифікованого transport/session контексту, а не довірятися напряму полям у payload.
 
 Уся криптографія (дешифрування, перевірка підписів всередині payload) виконується на клієнті; сервер лише валідує формат і маршрутизує.

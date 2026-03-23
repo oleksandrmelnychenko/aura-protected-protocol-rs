@@ -12,7 +12,7 @@ use crate::protocol::session::{build_protocol_state, HandshakeState, Session};
 use crate::security::DhValidator;
 use hmac::{Hmac, Mac};
 use prost::Message;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
@@ -86,10 +86,7 @@ fn build_transcript_hash(
 
     let mut init_copy = init.clone();
     init_copy.key_confirmation_mac.clear();
-    let mut init_bytes = Vec::new();
-    init_copy
-        .encode(&mut init_bytes)
-        .map_err(|e| ProtocolError::encode(format!("Failed to serialize HandshakeInit: {e}")))?;
+    let init_bytes = encode_handshake_init_canonical(&init_copy)?;
 
     let mut transcript = Vec::with_capacity(8 + bundle_bytes.len() + init_bytes.len());
     #[allow(clippy::cast_possible_truncation)]
@@ -105,6 +102,18 @@ fn build_transcript_hash(
         .map_err(|_| ProtocolError::handshake("HMAC-SHA256 init failed"))?;
     mac.update(&transcript);
     Ok(mac.finalize().into_bytes().to_vec())
+}
+
+fn encode_handshake_init_canonical(init: &HandshakeInit) -> Result<Vec<u8>, ProtocolError> {
+    let mut init_bytes = Vec::new();
+    init.encode(&mut init_bytes)
+        .map_err(|e| ProtocolError::encode(format!("Failed to serialize HandshakeInit: {e}")))?;
+    Ok(init_bytes)
+}
+
+fn build_handshake_init_fingerprint(init: &HandshakeInit) -> Result<Vec<u8>, ProtocolError> {
+    let init_bytes = encode_handshake_init_canonical(init)?;
+    Ok(Sha256::digest(&init_bytes).to_vec())
 }
 
 fn build_metadata_context(
@@ -659,6 +668,128 @@ struct ResponderState {
     session_state: HandshakeState,
 }
 
+pub trait HandshakeInitReplayGuard: Send + Sync {
+    /// Reserve a fingerprint before expensive handshake processing starts.
+    fn reserve(&self, init_fingerprint: &[u8]) -> Result<bool, ProtocolError>;
+
+    /// Promote a reserved fingerprint into a durable replay marker.
+    /// Returning `Err` must mean the reservation can still be released via `release`.
+    fn commit(&self, init_fingerprint: &[u8]) -> Result<(), ProtocolError>;
+
+    /// Release a previously reserved but uncommitted fingerprint.
+    fn release(&self, init_fingerprint: &[u8]) -> Result<(), ProtocolError>;
+}
+
+struct HandshakeInitReplayReservation<'a> {
+    identity_keys: &'a IdentityKeys,
+    replay_guard: Option<&'a dyn HandshakeInitReplayGuard>,
+    fingerprint: Vec<u8>,
+    local_reserved: bool,
+    local_committed: bool,
+    remote_reserved: bool,
+    committed: bool,
+}
+
+impl<'a> HandshakeInitReplayReservation<'a> {
+    fn reserve(
+        identity_keys: &'a IdentityKeys,
+        fingerprint: Vec<u8>,
+        replay_guard: Option<&'a dyn HandshakeInitReplayGuard>,
+    ) -> Result<Self, ProtocolError> {
+        let mut remote_reserved = false;
+        if let Some(replay_guard) = replay_guard {
+            let is_fresh = replay_guard.reserve(&fingerprint)?;
+            if !is_fresh {
+                return Err(ProtocolError::replay_attack(
+                    "Replay attack detected: duplicate HandshakeInit",
+                ));
+            }
+            remote_reserved = true;
+        }
+        let is_fresh = identity_keys.reserve_handshake_init_fingerprint(&fingerprint)?;
+        if !is_fresh {
+            if remote_reserved {
+                let Some(replay_guard) = replay_guard else {
+                    return Err(ProtocolError::invalid_state(
+                        "Replay guard reservation state inconsistent",
+                    ));
+                };
+                replay_guard.release(&fingerprint)?;
+            }
+            return Err(ProtocolError::replay_attack(
+                "Replay attack detected: duplicate HandshakeInit",
+            ));
+        }
+        Ok(Self {
+            identity_keys,
+            replay_guard,
+            fingerprint,
+            local_reserved: true,
+            local_committed: false,
+            remote_reserved,
+            committed: false,
+        })
+    }
+
+    fn commit(mut self) -> Result<(), ProtocolError> {
+        self.identity_keys
+            .remember_handshake_init_fingerprint(&self.fingerprint)?;
+        self.local_reserved = false;
+        self.local_committed = true;
+
+        if let Some(replay_guard) = self.replay_guard {
+            if let Err(commit_err) = replay_guard.commit(&self.fingerprint) {
+                let forget_result = self
+                    .identity_keys
+                    .forget_handshake_init_fingerprint(&self.fingerprint);
+                if forget_result.is_ok() {
+                    self.local_committed = false;
+                }
+
+                let release_result = if self.remote_reserved {
+                    replay_guard.release(&self.fingerprint)
+                } else {
+                    Ok(())
+                };
+                if release_result.is_ok() {
+                    self.remote_reserved = false;
+                }
+
+                forget_result?;
+                release_result?;
+                return Err(commit_err);
+            }
+            self.remote_reserved = false;
+        }
+
+        self.committed = true;
+        Ok(())
+    }
+}
+
+impl Drop for HandshakeInitReplayReservation<'_> {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+
+        if self.remote_reserved {
+            if let Some(replay_guard) = self.replay_guard {
+                let _ = replay_guard.release(&self.fingerprint);
+            }
+        }
+
+        if self.local_committed {
+            let _ = self
+                .identity_keys
+                .forget_handshake_init_fingerprint(&self.fingerprint);
+        } else if self.local_reserved {
+            self.identity_keys
+                .release_handshake_init_fingerprint(&self.fingerprint);
+        }
+    }
+}
+
 pub struct HandshakeResponder {
     ack_message: HandshakeAck,
     ack_bytes: Vec<u8>,
@@ -672,6 +803,22 @@ impl HandshakeResponder {
         init_message_bytes: &[u8],
         max_messages_per_chain: u32,
     ) -> Result<Self, ProtocolError> {
+        Self::process_with_replay_guard(
+            identity_keys,
+            local_bundle,
+            init_message_bytes,
+            max_messages_per_chain,
+            None,
+        )
+    }
+
+    pub fn process_with_replay_guard(
+        identity_keys: &mut IdentityKeys,
+        local_bundle: &PreKeyBundle,
+        init_message_bytes: &[u8],
+        max_messages_per_chain: u32,
+        replay_guard: Option<&dyn HandshakeInitReplayGuard>,
+    ) -> Result<Self, ProtocolError> {
         validate_bundle(local_bundle)?;
         validate_max_messages_per_chain(max_messages_per_chain)?;
 
@@ -680,6 +827,9 @@ impl HandshakeResponder {
         }
         let init_message = HandshakeInit::decode(init_message_bytes)
             .map_err(|e| ProtocolError::decode(format!("Failed to parse HandshakeInit: {e}")))?;
+        let init_fingerprint = build_handshake_init_fingerprint(&init_message)?;
+        let replay_reservation =
+            HandshakeInitReplayReservation::reserve(identity_keys, init_fingerprint, replay_guard)?;
         validate_init_message(&init_message)?;
 
         if CryptoInterop::constant_time_equals(
@@ -888,50 +1038,6 @@ impl HandshakeResponder {
         )
         .map_err(ProtocolError::from_crypto)?;
         if !eq {
-            // Diagnostic: include hashes for debugging MAC mismatch
-            use sha2::{Digest as _, Sha256};
-            fn to_hex(bytes: &[u8]) -> String {
-                use std::fmt::Write as _;
-                let mut out = String::with_capacity(bytes.len() * 2);
-                for byte in bytes {
-                    let _ = write!(&mut out, "{byte:02x}");
-                }
-                out
-            }
-            let th_hash = {
-                let mut h = Sha256::new();
-                h.update(&transcript_hash);
-                to_hex(&h.finalize()[..8])
-            };
-            let expected_hex = to_hex(&expected_init_mac[..8.min(expected_init_mac.len())]);
-            let received_hex = to_hex(
-                &init_message.key_confirmation_mac
-                    [..8.min(init_message.key_confirmation_mac.len())],
-            );
-            let bundle_diag = {
-                let mut bb = Vec::new();
-                local_bundle.encode(&mut bb).ok();
-                let mut h = Sha256::new();
-                h.update(&bb);
-                format!(
-                    "bundle_len={} bundle_sha={}",
-                    bb.len(),
-                    to_hex(&h.finalize()[..8])
-                )
-            };
-            let init_diag = {
-                let mut ic = init_message;
-                ic.key_confirmation_mac.clear();
-                let mut ib = Vec::new();
-                ic.encode(&mut ib).ok();
-                let mut h = Sha256::new();
-                h.update(&ib);
-                format!(
-                    "init_len={} init_sha={}",
-                    ib.len(),
-                    to_hex(&h.finalize()[..8])
-                )
-            };
             CryptoInterop::secure_wipe(&mut spk_private);
             CryptoInterop::secure_wipe(&mut identity_private);
             if !opk_private.is_empty() {
@@ -940,10 +1046,12 @@ impl HandshakeResponder {
             CryptoInterop::secure_wipe(&mut root_key);
             CryptoInterop::secure_wipe(&mut kyber_shared_secret);
             CryptoInterop::secure_wipe(&mut kc_r);
+            CryptoInterop::secure_wipe(&mut { expected_init_mac });
             return Err(ProtocolError::handshake(
-                format!("Initiator key confirmation failed: th_sha={th_hash} expected_mac={expected_hex} received_mac={received_hex} {bundle_diag} {init_diag}"),
+                "Initiator key confirmation failed",
             ));
         }
+        CryptoInterop::secure_wipe(&mut { expected_init_mac });
 
         let ack_mac = compute_hmac_sha256(&kc_r, &transcript_hash)?;
         CryptoInterop::secure_wipe(&mut kc_r);
@@ -1039,6 +1147,10 @@ impl HandshakeResponder {
         CryptoInterop::secure_wipe(&mut { metadata_key });
         CryptoInterop::secure_wipe(&mut { session_id });
 
+        // Commit replay reservation before burning OPK state. If distributed replay
+        // commit fails, caller must be able to retry the same HandshakeInit without
+        // losing one-time key inventory.
+        replay_reservation.commit()?;
         if let Some(opk_id) = used_opk_id {
             identity_keys.consume_one_time_pre_key_by_id(opk_id)?;
         }

@@ -10,7 +10,7 @@ use ecliptix_protocol::crypto::{CryptoInterop, SecureMemoryHandle};
 use ecliptix_protocol::identity::IdentityKeys;
 use ecliptix_protocol::proto::{CallRekey, CallRekeyAck, PreKeyBundle};
 use ecliptix_protocol::protocol::voip::call_key_exchange::{
-    callee_accept, callee_accept_with_context, caller_finish, caller_init,
+    callee_accept, callee_accept_with_context, caller_finish, caller_finish_with_context, caller_init,
     caller_init_with_context, CallInitAuthContext,
 };
 use ecliptix_protocol::protocol::voip::frame::{build_frame_aad, FrameHeader};
@@ -670,6 +670,72 @@ fn call_key_exchange_call_init_policy_tamper_rejected() {
         &init_output.identity_ed25519_public,
         &init_output.signature,
         &init_output.key_confirmation_mac,
+        &tampered_context,
+    );
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn call_key_exchange_call_accept_policy_tamper_rejected() {
+    init();
+    let alice = create_identity();
+    let bob = create_identity();
+
+    let alice_ed_secret = alice.get_identity_ed25519_private_key_copy().unwrap();
+    let alice_ed_public = alice.get_identity_ed25519_public();
+    let alice_kyber_pub = alice.get_kyber_public();
+    let alice_kyber_sec = alice.clone_kyber_secret_key().unwrap();
+
+    let bob_ed_secret = bob.get_identity_ed25519_private_key_copy().unwrap();
+    let bob_ed_public = bob.get_identity_ed25519_public();
+    let bob_kyber_pub = bob.get_kyber_public();
+    let bob_kyber_sec = bob.clone_kyber_secret_key().unwrap();
+
+    let signed_context = CallInitAuthContext {
+        version: VOIP_PROTOCOL_VERSION,
+        media_type: 1,
+        ratchet_interval_frames: 512,
+        pq_rekey_interval_secs: 60,
+        shield_mode: true,
+    };
+    let tampered_context = CallInitAuthContext {
+        shield_mode: false,
+        ..signed_context
+    };
+
+    let init_output = caller_init_with_context(
+        &alice_ed_secret,
+        &alice_ed_public,
+        &bob_kyber_pub,
+        &signed_context,
+    )
+    .unwrap();
+
+    let accept_output = callee_accept_with_context(
+        &bob_ed_secret,
+        &bob_ed_public,
+        &bob_kyber_sec,
+        &alice_kyber_pub,
+        &init_output.call_id,
+        &init_output.ephemeral_x25519_public,
+        &init_output.kyber_ciphertext,
+        &init_output.identity_ed25519_public,
+        &init_output.signature,
+        &init_output.key_confirmation_mac,
+        &signed_context,
+    )
+    .unwrap();
+
+    let result = caller_finish_with_context(
+        &init_output,
+        &alice_kyber_sec,
+        &init_output.call_id,
+        &accept_output.ephemeral_x25519_public,
+        &accept_output.kyber_ciphertext,
+        &accept_output.identity_ed25519_public,
+        &accept_output.signature,
+        &accept_output.key_confirmation_mac,
         &tampered_context,
     );
 
@@ -1467,6 +1533,22 @@ fn relay_validate_voip_envelope_unspecified_type_rejected() {
         recipient_device_id: vec![5, 6, 7, 8],
         signal_type: VoipSignalType::VoipSignalUnspecified as i32,
         call_id: vec![1; 32],
+        encrypted_payload: vec![0xAA; 100],
+        timestamp: 0,
+    };
+    let mut buf = Vec::new();
+    envelope.encode(&mut buf).unwrap();
+    assert!(validate_voip_envelope(&buf).is_err());
+}
+
+#[test]
+fn relay_validate_voip_envelope_invalid_call_id_size_rejected() {
+    init();
+    let envelope = VoipEnvelope {
+        sender_device_id: vec![1, 2, 3, 4],
+        recipient_device_id: vec![5, 6, 7, 8],
+        signal_type: VoipSignalType::VoipSignalCallInit as i32,
+        call_id: vec![1; 16],
         encrypted_payload: vec![0xAA; 100],
         timestamp: 0,
     };

@@ -3,14 +3,17 @@
 
 #![allow(clippy::borrow_as_ptr, unsafe_code)]
 
+use ecliptix_protocol::core::errors::ProtocolError;
 use ecliptix_protocol::crypto::{
     AesGcm, CryptoInterop, HkdfSha256, KyberInterop, MasterKeyDerivation, SecureMemoryHandle,
     ShamirSecretSharing,
 };
 use ecliptix_protocol::identity::IdentityKeys;
 use ecliptix_protocol::interfaces::StaticStateKeyProvider;
-use ecliptix_protocol::proto::PreKeyBundle;
-use ecliptix_protocol::protocol::{HandshakeInitiator, HandshakeResponder};
+use ecliptix_protocol::proto::{HandshakeInit, PreKeyBundle};
+use ecliptix_protocol::protocol::{
+    HandshakeInitReplayGuard, HandshakeInitiator, HandshakeResponder,
+};
 use prost::Message;
 
 fn init() {
@@ -430,6 +433,49 @@ fn build_proto_bundle(ik: &IdentityKeys) -> Vec<u8> {
     buf
 }
 
+fn count_local_opks(ik: &IdentityKeys) -> usize {
+    ik.create_public_bundle().unwrap().one_time_pre_key_count()
+}
+
+fn encode_varint(mut value: u64, out: &mut Vec<u8>) {
+    while value >= 0x80 {
+        out.push(((value as u8) & 0x7f) | 0x80);
+        value >>= 7;
+    }
+    out.push(value as u8);
+}
+
+fn encode_uint32_field(field_number: u32, value: u32, out: &mut Vec<u8>) {
+    encode_varint(u64::from(field_number) << 3, out);
+    encode_varint(u64::from(value), out);
+}
+
+fn encode_bytes_field(field_number: u32, value: &[u8], out: &mut Vec<u8>) {
+    if value.is_empty() {
+        return;
+    }
+    encode_varint((u64::from(field_number) << 3) | 2, out);
+    encode_varint(value.len() as u64, out);
+    out.extend_from_slice(value);
+}
+
+fn encode_handshake_init_reverse_wire_order(init: &HandshakeInit) -> Vec<u8> {
+    let mut out = Vec::new();
+    encode_bytes_field(10, &init.initiator_identity_binding_signature, &mut out);
+    encode_uint32_field(9, init.max_messages_per_chain, &mut out);
+    encode_bytes_field(8, &init.initiator_kyber_public, &mut out);
+    encode_bytes_field(7, &init.key_confirmation_mac, &mut out);
+    encode_bytes_field(6, &init.kyber_ciphertext, &mut out);
+    if let Some(one_time_pre_key_id) = init.one_time_pre_key_id {
+        encode_uint32_field(5, one_time_pre_key_id, &mut out);
+    }
+    encode_bytes_field(4, &init.initiator_ephemeral_x25519_public, &mut out);
+    encode_bytes_field(3, &init.initiator_identity_x25519_public, &mut out);
+    encode_bytes_field(2, &init.initiator_identity_ed25519_public, &mut out);
+    encode_uint32_field(1, init.version, &mut out);
+    out
+}
+
 #[test]
 fn full_handshake_and_session_encrypt_decrypt() {
     init();
@@ -467,6 +513,398 @@ fn full_handshake_and_session_encrypt_decrypt() {
     assert_eq!(
         reply_dec.metadata.correlation_id,
         Some("corr-1".to_string())
+    );
+}
+
+#[test]
+fn handshake_responder_rejects_replayed_init_message() {
+    init();
+    let mut alice = IdentityKeys::create(5).unwrap();
+    let mut bob = IdentityKeys::create(0).unwrap();
+
+    let bob_bundle = PreKeyBundle::decode(build_proto_bundle(&bob).as_slice()).unwrap();
+    let initiator = HandshakeInitiator::start(&mut alice, &bob_bundle, 1000).unwrap();
+    let init_bytes = initiator.encoded_message().to_vec();
+
+    let first = HandshakeResponder::process(&mut bob, &bob_bundle, &init_bytes, 1000);
+    assert!(first.is_ok());
+
+    let second = HandshakeResponder::process(&mut bob, &bob_bundle, &init_bytes, 1000);
+    assert!(second.is_err());
+    let err = second.err().unwrap().to_string();
+    assert!(
+        err.contains("duplicate HandshakeInit"),
+        "unexpected error: {err}"
+    );
+}
+
+struct InMemoryHandshakeReplayGuard {
+    seen: std::sync::Mutex<std::collections::HashSet<Vec<u8>>>,
+    reserve_calls: std::sync::atomic::AtomicUsize,
+    commit_calls: std::sync::atomic::AtomicUsize,
+    release_calls: std::sync::atomic::AtomicUsize,
+    fail_next_commit: std::sync::atomic::AtomicBool,
+}
+
+impl InMemoryHandshakeReplayGuard {
+    fn new() -> Self {
+        Self::new_with_commit_failure(false)
+    }
+
+    fn new_with_commit_failure(fail_next_commit: bool) -> Self {
+        Self {
+            seen: std::sync::Mutex::new(std::collections::HashSet::new()),
+            reserve_calls: std::sync::atomic::AtomicUsize::new(0),
+            commit_calls: std::sync::atomic::AtomicUsize::new(0),
+            release_calls: std::sync::atomic::AtomicUsize::new(0),
+            fail_next_commit: std::sync::atomic::AtomicBool::new(fail_next_commit),
+        }
+    }
+}
+
+impl HandshakeInitReplayGuard for InMemoryHandshakeReplayGuard {
+    fn reserve(&self, init_fingerprint: &[u8]) -> Result<bool, ProtocolError> {
+        self.reserve_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut seen = self
+            .seen
+            .lock()
+            .map_err(|_| ProtocolError::invalid_state("Replay guard lock poisoned"))?;
+        if seen.contains(init_fingerprint) {
+            return Ok(false);
+        }
+        seen.insert(init_fingerprint.to_vec());
+        Ok(true)
+    }
+
+    fn commit(&self, _init_fingerprint: &[u8]) -> Result<(), ProtocolError> {
+        self.commit_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self
+            .fail_next_commit
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(ProtocolError::handshake(
+                "Injected replay guard commit failure",
+            ));
+        }
+        Ok(())
+    }
+
+    fn release(&self, init_fingerprint: &[u8]) -> Result<(), ProtocolError> {
+        self.release_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut seen = self
+            .seen
+            .lock()
+            .map_err(|_| ProtocolError::invalid_state("Replay guard lock poisoned"))?;
+        seen.remove(init_fingerprint);
+        Ok(())
+    }
+}
+
+#[test]
+fn handshake_responder_replay_guard_hook_is_used() {
+    init();
+    let mut alice = IdentityKeys::create(5).unwrap();
+    let mut bob = IdentityKeys::create(0).unwrap();
+    let replay_guard = InMemoryHandshakeReplayGuard::new();
+
+    let bob_bundle = PreKeyBundle::decode(build_proto_bundle(&bob).as_slice()).unwrap();
+    let initiator = HandshakeInitiator::start(&mut alice, &bob_bundle, 1000).unwrap();
+    let init_bytes = initiator.encoded_message().to_vec();
+
+    let first = HandshakeResponder::process_with_replay_guard(
+        &mut bob,
+        &bob_bundle,
+        &init_bytes,
+        1000,
+        Some(&replay_guard),
+    );
+    assert!(first.is_ok());
+    assert_eq!(
+        replay_guard
+            .reserve_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    assert_eq!(
+        replay_guard
+            .commit_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    assert_eq!(
+        replay_guard
+            .release_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+
+    let second = HandshakeResponder::process_with_replay_guard(
+        &mut bob,
+        &bob_bundle,
+        &init_bytes,
+        1000,
+        Some(&replay_guard),
+    );
+    assert!(second.is_err());
+    assert_eq!(
+        replay_guard
+            .reserve_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        2
+    );
+    assert_eq!(
+        replay_guard
+            .commit_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    assert_eq!(
+        replay_guard
+            .release_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+}
+
+#[test]
+fn handshake_responder_replay_guard_release_hook_is_used_on_failure() {
+    init();
+    let mut alice = IdentityKeys::create(5).unwrap();
+    let mut bob = IdentityKeys::create(0).unwrap();
+    let replay_guard = InMemoryHandshakeReplayGuard::new();
+
+    let bob_bundle = PreKeyBundle::decode(build_proto_bundle(&bob).as_slice()).unwrap();
+    let initiator = HandshakeInitiator::start(&mut alice, &bob_bundle, 1000).unwrap();
+    let init_bytes = initiator.encoded_message().to_vec();
+
+    let first = HandshakeResponder::process_with_replay_guard(
+        &mut bob,
+        &bob_bundle,
+        &init_bytes,
+        999,
+        Some(&replay_guard),
+    );
+    assert!(first.is_err());
+    assert_eq!(
+        replay_guard
+            .reserve_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    assert_eq!(
+        replay_guard
+            .commit_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+    assert_eq!(
+        replay_guard
+            .release_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+
+    let second = HandshakeResponder::process_with_replay_guard(
+        &mut bob,
+        &bob_bundle,
+        &init_bytes,
+        1000,
+        Some(&replay_guard),
+    );
+    assert!(second.is_ok());
+    assert_eq!(
+        replay_guard
+            .reserve_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        2
+    );
+    assert_eq!(
+        replay_guard
+            .commit_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    assert_eq!(
+        replay_guard
+            .release_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+}
+
+#[test]
+fn handshake_responder_replay_guard_commit_failure_allows_retry() {
+    init();
+    let mut alice = IdentityKeys::create(5).unwrap();
+    let mut bob = IdentityKeys::create(0).unwrap();
+    let replay_guard = InMemoryHandshakeReplayGuard::new_with_commit_failure(true);
+
+    let bob_bundle = PreKeyBundle::decode(build_proto_bundle(&bob).as_slice()).unwrap();
+    let initiator = HandshakeInitiator::start(&mut alice, &bob_bundle, 1000).unwrap();
+    let init_bytes = initiator.encoded_message().to_vec();
+
+    let first = HandshakeResponder::process_with_replay_guard(
+        &mut bob,
+        &bob_bundle,
+        &init_bytes,
+        1000,
+        Some(&replay_guard),
+    );
+    assert!(first.is_err());
+    let err = first.err().unwrap().to_string();
+    assert!(err.contains("Injected replay guard commit failure"));
+    assert_eq!(
+        replay_guard
+            .reserve_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    assert_eq!(
+        replay_guard
+            .commit_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    assert_eq!(
+        replay_guard
+            .release_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+
+    let second = HandshakeResponder::process_with_replay_guard(
+        &mut bob,
+        &bob_bundle,
+        &init_bytes,
+        1000,
+        Some(&replay_guard),
+    );
+    assert!(
+        second.is_ok(),
+        "retry after distributed replay guard commit failure must remain possible"
+    );
+    assert_eq!(
+        replay_guard
+            .reserve_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        2
+    );
+    assert_eq!(
+        replay_guard
+            .commit_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        2
+    );
+    assert_eq!(
+        replay_guard
+            .release_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+}
+
+#[test]
+fn handshake_responder_replay_guard_commit_failure_does_not_burn_opk_before_commit() {
+    init();
+    let mut alice = IdentityKeys::create(5).unwrap();
+    let mut bob = IdentityKeys::create(3).unwrap();
+    let replay_guard = InMemoryHandshakeReplayGuard::new_with_commit_failure(true);
+
+    let initial_opk_count = count_local_opks(&bob);
+    assert!(
+        initial_opk_count > 0,
+        "test requires responder bundle to include OPKs"
+    );
+
+    let bob_bundle = PreKeyBundle::decode(build_proto_bundle(&bob).as_slice()).unwrap();
+    assert!(
+        !bob_bundle.one_time_pre_keys.is_empty(),
+        "test requires handshake path with OPK usage"
+    );
+    let initiator = HandshakeInitiator::start(&mut alice, &bob_bundle, 1000).unwrap();
+    let init_bytes = initiator.encoded_message().to_vec();
+
+    let first = HandshakeResponder::process_with_replay_guard(
+        &mut bob,
+        &bob_bundle,
+        &init_bytes,
+        1000,
+        Some(&replay_guard),
+    );
+    assert!(first.is_err());
+    let err = first.err().unwrap().to_string();
+    assert!(err.contains("Injected replay guard commit failure"));
+    assert_eq!(
+        count_local_opks(&bob),
+        initial_opk_count,
+        "OPK inventory must not change when replay commit fails"
+    );
+
+    let second = HandshakeResponder::process_with_replay_guard(
+        &mut bob,
+        &bob_bundle,
+        &init_bytes,
+        1000,
+        Some(&replay_guard),
+    );
+    assert!(
+        second.is_ok(),
+        "retry after distributed replay guard commit failure must remain possible"
+    );
+    assert_eq!(
+        count_local_opks(&bob),
+        initial_opk_count - 1,
+        "exactly one OPK must be consumed only after successful commit"
+    );
+}
+
+#[test]
+fn handshake_responder_allows_retry_after_pre_auth_failure() {
+    init();
+    let mut alice = IdentityKeys::create(5).unwrap();
+    let mut bob = IdentityKeys::create(0).unwrap();
+
+    let bob_bundle = PreKeyBundle::decode(build_proto_bundle(&bob).as_slice()).unwrap();
+    let initiator = HandshakeInitiator::start(&mut alice, &bob_bundle, 1000).unwrap();
+    let init_bytes = initiator.encoded_message().to_vec();
+
+    let first = HandshakeResponder::process(&mut bob, &bob_bundle, &init_bytes, 999);
+    assert!(first.is_err());
+    let err = first.err().unwrap().to_string();
+    assert!(err.contains("Handshake ratchet config mismatch"));
+
+    let second = HandshakeResponder::process(&mut bob, &bob_bundle, &init_bytes, 1000);
+    assert!(
+        second.is_ok(),
+        "retry after pre-auth failure must remain possible"
+    );
+}
+
+#[test]
+fn handshake_responder_rejects_replay_with_alternate_protobuf_field_order() {
+    init();
+    let mut alice = IdentityKeys::create(5).unwrap();
+    let mut bob = IdentityKeys::create(0).unwrap();
+
+    let bob_bundle = PreKeyBundle::decode(build_proto_bundle(&bob).as_slice()).unwrap();
+    let initiator = HandshakeInitiator::start(&mut alice, &bob_bundle, 1000).unwrap();
+    let init_bytes = initiator.encoded_message().to_vec();
+    let init_message = HandshakeInit::decode(init_bytes.as_slice()).unwrap();
+    let reordered_bytes = encode_handshake_init_reverse_wire_order(&init_message);
+    assert_ne!(reordered_bytes, init_bytes);
+
+    let first = HandshakeResponder::process(&mut bob, &bob_bundle, &init_bytes, 1000);
+    assert!(first.is_ok());
+
+    let second = HandshakeResponder::process(&mut bob, &bob_bundle, &reordered_bytes, 1000);
+    assert!(second.is_err());
+    let err = second.err().unwrap().to_string();
+    assert!(
+        err.contains("duplicate HandshakeInit"),
+        "unexpected error: {err}"
     );
 }
 
@@ -4284,6 +4722,89 @@ fn relay_apply_commit_to_roster() {
 }
 
 #[test]
+fn relay_apply_commit_to_roster_rejects_added_identity_mismatch() {
+    use ecliptix_protocol::api::relay::*;
+
+    let mut roster = GroupRoster::new(
+        vec![0x11; 32],
+        GroupMemberRecord {
+            leaf_index: 0,
+            identity_ed25519_public: vec![0xAA; 32],
+            identity_x25519_public: vec![0xBB; 32],
+            credential: b"alice".to_vec(),
+        },
+    );
+
+    let info = RelayCommitInfo {
+        committer_leaf_index: 0,
+        new_epoch: 1,
+        added_identities: vec![vec![0xCC; 32]],
+        removed_leaves: vec![],
+    };
+
+    let wrong_member = GroupMemberRecord {
+        leaf_index: 1,
+        identity_ed25519_public: vec![0xDD; 32],
+        identity_x25519_public: vec![0xEE; 32],
+        credential: b"bob".to_vec(),
+    };
+
+    let result = apply_commit_to_roster(&mut roster, &info, vec![wrong_member]);
+    assert!(result.is_err());
+}
+
+#[test]
+fn relay_apply_commit_to_roster_error_does_not_mutate_roster() {
+    use ecliptix_protocol::api::relay::*;
+
+    let mut roster = GroupRoster::new(
+        vec![0x11; 32],
+        GroupMemberRecord {
+            leaf_index: 0,
+            identity_ed25519_public: vec![0xAA; 32],
+            identity_x25519_public: vec![0xBB; 32],
+            credential: b"alice".to_vec(),
+        },
+    );
+    roster.members.push(GroupMemberRecord {
+        leaf_index: 1,
+        identity_ed25519_public: vec![0xAB; 32],
+        identity_x25519_public: vec![0xBC; 32],
+        credential: b"bob".to_vec(),
+    });
+
+    let info = RelayCommitInfo {
+        committer_leaf_index: 0,
+        new_epoch: 1,
+        added_identities: vec![vec![0xCC; 32], vec![0xDD; 32]],
+        removed_leaves: vec![1],
+    };
+
+    let added_members = vec![
+        GroupMemberRecord {
+            leaf_index: 2,
+            identity_ed25519_public: vec![0xCC; 32],
+            identity_x25519_public: vec![0xCD; 32],
+            credential: b"charlie".to_vec(),
+        },
+        GroupMemberRecord {
+            leaf_index: 2,
+            identity_ed25519_public: vec![0xDD; 32],
+            identity_x25519_public: vec![0xDE; 32],
+            credential: b"dave".to_vec(),
+        },
+    ];
+
+    let result = apply_commit_to_roster(&mut roster, &info, added_members);
+    assert!(result.is_err());
+    assert_eq!(roster.epoch, 0);
+    assert_eq!(roster.member_count(), 2);
+    assert!(roster.find_member(0).is_some());
+    assert!(roster.find_member(1).is_some());
+    assert!(roster.find_member(2).is_none());
+}
+
+#[test]
 fn relay_validate_key_package_for_storage() {
     use ecliptix_protocol::api::relay::*;
     use prost::Message;
@@ -4309,6 +4830,15 @@ fn relay_validate_key_package_for_storage() {
 }
 
 #[test]
+fn relay_validate_key_package_for_storage_oversize_rejected() {
+    use ecliptix_protocol::api::relay::validate_key_package_for_storage;
+
+    let oversized = vec![0u8; 1024 * 1024 + 1];
+    let result = validate_key_package_for_storage(&oversized);
+    assert!(result.is_err());
+}
+
+#[test]
 fn relay_validate_prekey_bundle_for_storage() {
     use ecliptix_protocol::api::relay::validate_prekey_bundle_for_storage;
 
@@ -4322,6 +4852,40 @@ fn relay_validate_prekey_bundle_for_storage() {
     assert_eq!(validated.identity_ed25519_public.len(), 32);
 
     let result = validate_prekey_bundle_for_storage(&bundle[..16]);
+    assert!(result.is_err());
+}
+
+#[test]
+fn relay_validate_prekey_bundle_for_storage_oversize_rejected() {
+    use ecliptix_protocol::api::relay::validate_prekey_bundle_for_storage;
+
+    let oversized = vec![0u8; 1024 * 1024 + 1];
+    let result = validate_prekey_bundle_for_storage(&oversized);
+    assert!(result.is_err());
+}
+
+#[test]
+fn relay_extract_welcome_target_invalid_group_id_size_rejected() {
+    use ecliptix_protocol::api::relay::extract_welcome_target;
+    use ecliptix_protocol::proto::GroupWelcome;
+    use prost::Message;
+
+    init();
+
+    let welcome = GroupWelcome {
+        version: 1,
+        group_id: vec![0xAB; 16],
+        epoch: 1,
+        encrypted_group_info: vec![0xCD; 32],
+        welcome_nonce: vec![0xEF; 12],
+        encrypted_joiner_secret: None,
+        tree_hash: vec![0x11; 32],
+        target_leaf_index: 1,
+    };
+    let mut buf = Vec::new();
+    welcome.encode(&mut buf).unwrap();
+
+    let result = extract_welcome_target(&buf);
     assert!(result.is_err());
 }
 
@@ -4369,6 +4933,97 @@ fn relay_validate_commit_for_relay_strict_checks_signature_and_sender_binding() 
         Some(&charlie.identity_ed25519_public()),
     )
     .is_err());
+}
+
+#[test]
+fn relay_validate_commit_for_relay_rejects_too_many_proposals_before_signature() {
+    use ecliptix_protocol::api::relay::{
+        validate_commit_for_relay, GroupMemberRecord, GroupRoster,
+    };
+    use ecliptix_protocol::proto::{GroupCommit, GroupProposal};
+    use prost::Message;
+
+    init();
+
+    let alice = EcliptixProtocol::new(10).unwrap();
+    let bob = EcliptixProtocol::new(10).unwrap();
+    let (bob_kp, _, _) = bob.generate_key_package(b"bob".to_vec()).unwrap();
+    let alice_group = alice.create_group(b"alice".to_vec()).unwrap();
+    let group_id = alice_group.group_id().unwrap();
+    let (commit_bytes, _) = alice_group.add_member(&bob_kp).unwrap();
+
+    let roster = GroupRoster::new(
+        group_id,
+        GroupMemberRecord {
+            leaf_index: 0,
+            identity_ed25519_public: alice.identity_ed25519_public(),
+            identity_x25519_public: alice.identity_x25519_public(),
+            credential: b"alice".to_vec(),
+        },
+    );
+
+    let mut commit = GroupCommit::decode(commit_bytes.as_slice()).unwrap();
+    let proposal = commit
+        .proposals
+        .first()
+        .cloned()
+        .unwrap_or(GroupProposal { proposal: None });
+    while commit.proposals.len() <= 64 {
+        commit.proposals.push(proposal.clone());
+    }
+    let mut oversized = Vec::new();
+    commit.encode(&mut oversized).unwrap();
+
+    let result = validate_commit_for_relay(&oversized, &roster);
+    assert!(result.is_err());
+    let err = result.err().unwrap().to_string();
+    assert!(
+        err.contains("too many proposals"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn relay_validate_commit_for_relay_rejects_invalid_add_key_package() {
+    use ecliptix_protocol::api::relay::{
+        validate_commit_for_relay, GroupMemberRecord, GroupRoster,
+    };
+    use ecliptix_protocol::proto::{group_proposal, GroupCommit};
+    use prost::Message;
+
+    init();
+
+    let alice = EcliptixProtocol::new(10).unwrap();
+    let bob = EcliptixProtocol::new(10).unwrap();
+    let (bob_kp, _, _) = bob.generate_key_package(b"bob".to_vec()).unwrap();
+    let alice_group = alice.create_group(b"alice".to_vec()).unwrap();
+    let group_id = alice_group.group_id().unwrap();
+    let (commit_bytes, _) = alice_group.add_member(&bob_kp).unwrap();
+
+    let roster = GroupRoster::new(
+        group_id,
+        GroupMemberRecord {
+            leaf_index: 0,
+            identity_ed25519_public: alice.identity_ed25519_public(),
+            identity_x25519_public: alice.identity_x25519_public(),
+            credential: b"alice".to_vec(),
+        },
+    );
+
+    let mut commit = GroupCommit::decode(commit_bytes.as_slice()).unwrap();
+    for proposal in &mut commit.proposals {
+        if let Some(group_proposal::Proposal::Add(add)) = proposal.proposal.as_mut() {
+            if let Some(kp) = add.key_package.as_mut() {
+                kp.signature.clear();
+                break;
+            }
+        }
+    }
+    let mut tampered = Vec::new();
+    commit.encode(&mut tampered).unwrap();
+
+    let result = validate_commit_for_relay(&tampered, &roster);
+    assert!(result.is_err());
 }
 
 #[test]
@@ -8262,6 +8917,30 @@ fn validate_crypto_envelope_group_message_without_group_id_rejected() {
 }
 
 #[test]
+fn validate_crypto_envelope_group_message_wrong_group_id_size_rejected() {
+    use ecliptix_protocol::api::relay::validate_crypto_envelope;
+    use ecliptix_protocol::proto::e2e::*;
+    use prost::Message;
+    init();
+
+    let envelope = CryptoEnvelope {
+        sender_device_id: vec![1; 16],
+        recipient_device_id: vec![],
+        payload_type: CryptoPayloadType::CryptoPayloadGroupMessage as i32,
+        encrypted_payload: vec![0xAA; 64],
+        group_id: vec![0xBB; 16],
+        epoch: 1,
+        generation: 0,
+        sender_leaf_index: 0,
+    };
+    let mut buf = Vec::new();
+    envelope.encode(&mut buf).unwrap();
+
+    let result = validate_crypto_envelope(&buf);
+    assert!(result.is_err());
+}
+
+#[test]
 fn validate_crypto_envelope_key_package_without_group_id_ok() {
     use ecliptix_protocol::api::relay::validate_crypto_envelope;
     use ecliptix_protocol::proto::e2e::*;
@@ -8283,6 +8962,30 @@ fn validate_crypto_envelope_key_package_without_group_id_ok() {
 
     let result = validate_crypto_envelope(&buf);
     assert!(result.is_ok());
+}
+
+#[test]
+fn validate_crypto_envelope_unknown_payload_type_rejected() {
+    use ecliptix_protocol::api::relay::validate_crypto_envelope;
+    use ecliptix_protocol::proto::e2e::CryptoEnvelope;
+    use prost::Message;
+    init();
+
+    let envelope = CryptoEnvelope {
+        sender_device_id: vec![1; 16],
+        recipient_device_id: vec![],
+        payload_type: i32::MAX,
+        encrypted_payload: vec![0xAA; 64],
+        group_id: vec![0xBB; 32],
+        epoch: 1,
+        generation: 0,
+        sender_leaf_index: 0,
+    };
+    let mut buf = Vec::new();
+    envelope.encode(&mut buf).unwrap();
+
+    let result = validate_crypto_envelope(&buf);
+    assert!(result.is_err());
 }
 
 #[test]
