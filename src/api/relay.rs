@@ -1,13 +1,18 @@
 // Copyright (c) 2026 Oleksandr Melnychenko. All rights reserved.
 // SPDX-License-Identifier: MIT
 
+use std::mem::size_of;
+
 use prost::Message;
 
 use crate::core::constants::*;
 use crate::core::errors::ProtocolError;
 use crate::proto::e2e::{CryptoEnvelope, CryptoPayloadType};
-use crate::proto::{GroupCommit, GroupKeyPackage, GroupMessage, GroupWelcome};
+use crate::proto::{
+    GroupApplicationMessage, GroupCommit, GroupKeyPackage, GroupMessage, GroupWelcome, PreKeyBundle,
+};
 use crate::protocol::group::key_package;
+use crate::protocol::handshake::validate_bundle;
 
 #[derive(Debug, Clone)]
 pub struct GroupMemberRecord {
@@ -168,6 +173,98 @@ pub fn validate_group_message_for_relay(
     }
 }
 
+pub fn validate_commit_for_relay_strict(
+    commit_bytes: &[u8],
+    roster: &GroupRoster,
+    expected_sender_identity_ed25519: Option<&[u8]>,
+) -> Result<RelayCommitInfo, ProtocolError> {
+    let info = validate_commit_for_relay(commit_bytes, roster)?;
+    let commit = GroupCommit::decode(commit_bytes)
+        .map_err(|e| ProtocolError::decode(format!("Commit decode: {e}")))?;
+    let committer = roster
+        .find_member(info.committer_leaf_index)
+        .ok_or_else(|| {
+            ProtocolError::group_membership(format!(
+                "Committer leaf {} is not a group member",
+                info.committer_leaf_index
+            ))
+        })?;
+
+    if let Some(expected_identity) = expected_sender_identity_ed25519 {
+        bind_sender_identity(committer, expected_identity)?;
+    }
+
+    let mut commit_for_verify = commit;
+    let signature = std::mem::take(&mut commit_for_verify.committer_signature);
+    let mut commit_bytes_for_verify = Vec::new();
+    commit_for_verify
+        .encode(&mut commit_bytes_for_verify)
+        .map_err(|e| ProtocolError::encode(format!("Commit encode for verify: {e}")))?;
+    verify_ed25519_message(
+        &committer.identity_ed25519_public,
+        &signature,
+        &commit_bytes_for_verify,
+        "Committer Ed25519 signature verification failed",
+    )?;
+
+    Ok(info)
+}
+
+pub fn validate_group_message_for_relay_strict(
+    message_bytes: &[u8],
+    roster: &GroupRoster,
+    sender_leaf_index: u32,
+    expected_sender_identity_ed25519: Option<&[u8]>,
+) -> Result<(), ProtocolError> {
+    if message_bytes.len() > MAX_GROUP_MESSAGE_SIZE {
+        return Err(ProtocolError::invalid_input("GroupMessage too large"));
+    }
+
+    let msg = GroupMessage::decode(message_bytes)
+        .map_err(|e| ProtocolError::decode(format!("GroupMessage decode: {e}")))?;
+
+    if msg.group_id != roster.group_id {
+        return Err(ProtocolError::group_protocol(
+            "GroupMessage group_id mismatch",
+        ));
+    }
+
+    if msg.epoch != roster.epoch {
+        return Err(ProtocolError::group_protocol(format!(
+            "GroupMessage epoch mismatch: expected {}, got {}",
+            roster.epoch, msg.epoch
+        )));
+    }
+
+    let Some(crate::proto::group_message::Content::Application(app)) = &msg.content else {
+        return Err(ProtocolError::group_protocol(
+            "Expected application message content",
+        ));
+    };
+
+    let sender = roster.find_member(sender_leaf_index).ok_or_else(|| {
+        ProtocolError::group_membership(format!(
+            "Sender leaf {sender_leaf_index} is not a group member"
+        ))
+    })?;
+
+    if let Some(expected_identity) = expected_sender_identity_ed25519 {
+        bind_sender_identity(sender, expected_identity)?;
+    }
+
+    let mut app_for_verify = app.clone();
+    let signature = std::mem::take(&mut app_for_verify.sender_signature);
+    let signature_input = build_app_signature_input(&msg.group_id, msg.epoch, &app_for_verify);
+    verify_ed25519_message(
+        &sender.identity_ed25519_public,
+        &signature,
+        &signature_input,
+        "Sender Ed25519 signature verification failed",
+    )?;
+
+    Ok(())
+}
+
 pub fn validate_key_package_for_storage(
     key_package_bytes: &[u8],
 ) -> Result<GroupKeyPackage, ProtocolError> {
@@ -175,6 +272,15 @@ pub fn validate_key_package_for_storage(
         .map_err(|e| ProtocolError::decode(format!("KeyPackage decode: {e}")))?;
     key_package::validate_key_package(&kp)?;
     Ok(kp)
+}
+
+pub fn validate_prekey_bundle_for_storage(
+    prekey_bundle_bytes: &[u8],
+) -> Result<PreKeyBundle, ProtocolError> {
+    let bundle = PreKeyBundle::decode(prekey_bundle_bytes)
+        .map_err(|e| ProtocolError::decode(format!("PreKeyBundle decode: {e}")))?;
+    validate_bundle(&bundle)?;
+    Ok(bundle)
 }
 
 #[derive(Debug)]
@@ -221,6 +327,85 @@ pub fn extract_welcome_target(welcome_bytes: &[u8]) -> Result<(Vec<u8>, u64, u32
         .map_err(|e| ProtocolError::decode(format!("Welcome decode: {e}")))?;
 
     Ok((welcome.group_id, welcome.epoch, welcome.target_leaf_index))
+}
+
+fn bind_sender_identity(
+    member: &GroupMemberRecord,
+    expected_sender_identity_ed25519: &[u8],
+) -> Result<(), ProtocolError> {
+    if member.identity_ed25519_public != expected_sender_identity_ed25519 {
+        return Err(ProtocolError::group_membership(
+            "Sender identity does not match roster leaf",
+        ));
+    }
+    Ok(())
+}
+
+fn build_app_signature_input(
+    group_id: &[u8],
+    epoch: u64,
+    app_msg: &GroupApplicationMessage,
+) -> Vec<u8> {
+    const LEN_PREFIX_COUNT: usize = 6;
+    let mut input = Vec::with_capacity(
+        GROUP_MESSAGE_SIGNATURE_INFO.len()
+            + size_of::<u32>()
+            + size_of::<u64>()
+            + LEN_PREFIX_COUNT * size_of::<u32>()
+            + group_id.len()
+            + app_msg.encrypted_sender_data.len()
+            + app_msg.sender_data_nonce.len()
+            + app_msg.encrypted_payload.len()
+            + app_msg.payload_nonce.len()
+            + app_msg.franking_tag.len(),
+    );
+    input.extend_from_slice(GROUP_MESSAGE_SIGNATURE_INFO);
+    input.extend_from_slice(&GROUP_PROTOCOL_VERSION.to_le_bytes());
+    input.extend_from_slice(&epoch.to_le_bytes());
+    append_len_prefixed(&mut input, group_id);
+    append_len_prefixed(&mut input, &app_msg.encrypted_sender_data);
+    append_len_prefixed(&mut input, &app_msg.sender_data_nonce);
+    append_len_prefixed(&mut input, &app_msg.encrypted_payload);
+    append_len_prefixed(&mut input, &app_msg.payload_nonce);
+    append_len_prefixed(&mut input, &app_msg.franking_tag);
+    input
+}
+
+fn append_len_prefixed(buf: &mut Vec<u8>, bytes: &[u8]) {
+    let len = u32::try_from(bytes.len()).expect("length prefix exceeds u32");
+    buf.extend_from_slice(&len.to_le_bytes());
+    buf.extend_from_slice(bytes);
+}
+
+fn verify_ed25519_message(
+    public_key: &[u8],
+    signature: &[u8],
+    message: &[u8],
+    context: &str,
+) -> Result<(), ProtocolError> {
+    if public_key.len() != ED25519_PUBLIC_KEY_BYTES {
+        return Err(ProtocolError::invalid_input(
+            "Invalid Ed25519 public key size",
+        ));
+    }
+    if signature.len() != ED25519_SIGNATURE_BYTES {
+        return Err(ProtocolError::invalid_input(
+            "Invalid Ed25519 signature size",
+        ));
+    }
+
+    let pk_array: [u8; ED25519_PUBLIC_KEY_BYTES] = public_key
+        .try_into()
+        .map_err(|_| ProtocolError::invalid_input("Invalid Ed25519 public key size"))?;
+    let vk = ed25519_dalek::VerifyingKey::from_bytes(&pk_array)
+        .map_err(|_| ProtocolError::group_protocol("Invalid Ed25519 public key"))?;
+    let sig_array: [u8; ED25519_SIGNATURE_BYTES] = signature
+        .try_into()
+        .map_err(|_| ProtocolError::invalid_input("Invalid Ed25519 signature size"))?;
+    let sig = ed25519_dalek::Signature::from_bytes(&sig_array);
+    use ed25519_dalek::Verifier;
+    vk.verify(message, &sig)
+        .map_err(|_| ProtocolError::group_protocol(context))
 }
 
 const MAX_DEVICE_ID_BYTES: usize = 16;

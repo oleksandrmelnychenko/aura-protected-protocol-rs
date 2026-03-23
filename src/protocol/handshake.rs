@@ -179,7 +179,7 @@ fn verify_init_identity_binding(init: &HandshakeInit) -> Result<(), ProtocolErro
     )
 }
 
-fn validate_bundle(bundle: &PreKeyBundle) -> Result<(), ProtocolError> {
+pub(crate) fn validate_bundle(bundle: &PreKeyBundle) -> Result<(), ProtocolError> {
     if bundle.version != PROTOCOL_VERSION {
         return Err(ProtocolError::invalid_input("Invalid PreKeyBundle version"));
     }

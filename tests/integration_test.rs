@@ -4309,6 +4309,123 @@ fn relay_validate_key_package_for_storage() {
 }
 
 #[test]
+fn relay_validate_prekey_bundle_for_storage() {
+    use ecliptix_protocol::api::relay::validate_prekey_bundle_for_storage;
+
+    init();
+
+    let proto = EcliptixProtocol::new(10).unwrap();
+    let bundle = proto.pre_key_bundle().unwrap();
+
+    let validated = validate_prekey_bundle_for_storage(&bundle).unwrap();
+    assert_eq!(validated.version, 1);
+    assert_eq!(validated.identity_ed25519_public.len(), 32);
+
+    let result = validate_prekey_bundle_for_storage(&bundle[..16]);
+    assert!(result.is_err());
+}
+
+#[test]
+fn relay_validate_commit_for_relay_strict_checks_signature_and_sender_binding() {
+    use ecliptix_protocol::api::relay::{
+        validate_commit_for_relay_strict, GroupMemberRecord, GroupRoster,
+    };
+
+    init();
+
+    let alice = EcliptixProtocol::new(10).unwrap();
+    let bob = EcliptixProtocol::new(10).unwrap();
+    let (bob_kp, _, _) = bob.generate_key_package(b"bob".to_vec()).unwrap();
+    let alice_group = alice.create_group(b"alice".to_vec()).unwrap();
+    let group_id = alice_group.group_id().unwrap();
+    let (commit_bytes, _) = alice_group.add_member(&bob_kp).unwrap();
+
+    let roster = GroupRoster::new(
+        group_id,
+        GroupMemberRecord {
+            leaf_index: 0,
+            identity_ed25519_public: alice.identity_ed25519_public(),
+            identity_x25519_public: alice.identity_x25519_public(),
+            credential: b"alice".to_vec(),
+        },
+    );
+
+    validate_commit_for_relay_strict(
+        &commit_bytes,
+        &roster,
+        Some(&alice.identity_ed25519_public()),
+    )
+    .unwrap();
+
+    let mut tampered = commit_bytes.clone();
+    let last = tampered.len() - 1;
+    tampered[last] ^= 0x01;
+    assert!(validate_commit_for_relay_strict(&tampered, &roster, None).is_err());
+
+    let charlie = EcliptixProtocol::new(10).unwrap();
+    assert!(validate_commit_for_relay_strict(
+        &commit_bytes,
+        &roster,
+        Some(&charlie.identity_ed25519_public()),
+    )
+    .is_err());
+}
+
+#[test]
+fn relay_validate_group_message_for_relay_strict_checks_signature_and_sender_binding() {
+    use ecliptix_protocol::api::relay::{
+        validate_group_message_for_relay_strict, GroupMemberRecord, GroupRoster,
+    };
+    use ecliptix_protocol::proto::{group_message, GroupMessage};
+    use prost::Message;
+
+    init();
+
+    let alice = EcliptixProtocol::new(10).unwrap();
+    let alice_group = alice.create_group(b"alice".to_vec()).unwrap();
+    let group_id = alice_group.group_id().unwrap();
+    let msg_bytes = alice_group.encrypt(b"hello group").unwrap();
+
+    let roster = GroupRoster::new(
+        group_id,
+        GroupMemberRecord {
+            leaf_index: 0,
+            identity_ed25519_public: alice.identity_ed25519_public(),
+            identity_x25519_public: alice.identity_x25519_public(),
+            credential: b"alice".to_vec(),
+        },
+    );
+
+    validate_group_message_for_relay_strict(
+        &msg_bytes,
+        &roster,
+        0,
+        Some(&alice.identity_ed25519_public()),
+    )
+    .unwrap();
+
+    let mut tampered = GroupMessage::decode(msg_bytes.as_slice()).unwrap();
+    match tampered.content.as_mut() {
+        Some(group_message::Content::Application(app)) => {
+            app.sender_signature[0] ^= 0x01;
+        }
+        _ => panic!("expected application message"),
+    }
+    let mut tampered_bytes = Vec::new();
+    tampered.encode(&mut tampered_bytes).unwrap();
+    assert!(validate_group_message_for_relay_strict(&tampered_bytes, &roster, 0, None).is_err());
+
+    let bob = EcliptixProtocol::new(10).unwrap();
+    assert!(validate_group_message_for_relay_strict(
+        &msg_bytes,
+        &roster,
+        0,
+        Some(&bob.identity_ed25519_public()),
+    )
+    .is_err());
+}
+
+#[test]
 fn group_api_serialize_deserialize() {
     use ecliptix_protocol::api::EcliptixProtocol;
 
