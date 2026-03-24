@@ -8,7 +8,8 @@ use zeroize::Zeroizing;
 
 use crate::core::constants::{
     AES_GCM_NONCE_BYTES, AES_GCM_TAG_BYTES, DEFAULT_MESSAGES_PER_CHAIN, MAX_BUFFER_SIZE,
-    MAX_ENVELOPE_MESSAGE_SIZE, OPAQUE_ROOT_INFO, OPAQUE_SESSION_KEY_BYTES, PROTOCOL_VERSION,
+    MAX_ENVELOPE_MESSAGE_SIZE, MAX_VOIP_SIGNAL_MESSAGE_SIZE, OPAQUE_ROOT_INFO,
+    OPAQUE_SESSION_KEY_BYTES, PROTOCOL_VERSION,
 };
 use crate::core::errors::ProtocolError;
 use crate::crypto::{CryptoInterop, HkdfSha256, SecureMemoryHandle, ShamirSecretSharing};
@@ -621,6 +622,9 @@ impl EcliptixCallInitiator {
         identity_kyber_secret: &SecureMemoryHandle,
         call_accept_bytes: &[u8],
     ) -> Result<EcliptixVoipSession, ProtocolError> {
+        if call_accept_bytes.len() > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
+            return Err(ProtocolError::voip_call("CallAccept too large"));
+        }
         let call_accept = crate::proto::CallAccept::decode(call_accept_bytes)
             .map_err(|e| ProtocolError::decode(format!("CallAccept decode: {e}")))?;
 
@@ -709,6 +713,9 @@ impl EcliptixProtocol {
         call_init_bytes: &[u8],
         peer_kyber_public: &[u8],
     ) -> Result<(EcliptixVoipSession, Vec<u8>), ProtocolError> {
+        if call_init_bytes.len() > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
+            return Err(ProtocolError::voip_call("CallInit too large"));
+        }
         let call_init = crate::proto::CallInit::decode(call_init_bytes)
             .map_err(|e| ProtocolError::decode(format!("CallInit decode: {e}")))?;
 
@@ -797,6 +804,9 @@ impl EcliptixProtocol {
         peer_ed25519_public: &[u8],
         peer_kyber_public: &[u8],
     ) -> Result<Vec<u8>, ProtocolError> {
+        if rekey_bytes.len() > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
+            return Err(ProtocolError::voip_rekey("CallRekey too large"));
+        }
         let ed25519_secret = self.identity.get_identity_ed25519_private_key_copy()?;
         let kyber_secret = self.identity.clone_kyber_secret_key()?;
         session.process_rekey(
@@ -814,6 +824,9 @@ impl EcliptixProtocol {
         ack_bytes: &[u8],
         peer_ed25519_public: &[u8],
     ) -> Result<(), ProtocolError> {
+        if ack_bytes.len() > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
+            return Err(ProtocolError::voip_rekey("CallRekeyAck too large"));
+        }
         let kyber_secret = self.identity.clone_kyber_secret_key()?;
         session.process_rekey_ack(ack_bytes, peer_ed25519_public, &kyber_secret)
     }

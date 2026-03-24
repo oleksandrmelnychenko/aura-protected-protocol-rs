@@ -224,3 +224,13 @@ doc = false
 name = "fuzz_voip_relay"
 path = "fuzz_targets/fuzz_voip_relay.rs"
 doc = false
+
+[[bin]]
+name = "fuzz_voip_rekey_messages"
+path = "fuzz_targets/fuzz_voip_rekey_messages.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_voip_rekey_signature"
+path = "fuzz_targets/fuzz_voip_rekey_signature.rs"
+doc = false

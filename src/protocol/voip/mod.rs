@@ -19,6 +19,7 @@ use key_ratchet::MediaKeyRatchet;
 use media_crypto::MediaCrypto;
 use replay_window::ReplayWindow;
 
+#[allow(deprecated)]
 pub use call_key_exchange::{
     callee_accept, caller_finish, caller_finish_with_context, caller_init, rekey_complete,
     rekey_initiate, CallAcceptOutput, CallInitOutput, CallKeyMaterial as VoipKeyMaterial,
@@ -550,6 +551,9 @@ impl VoipSession {
         if data.len() < header_size + AES_GCM_TAG_BYTES {
             return Err(ProtocolError::voip_call("sealed state too short"));
         }
+        if data.len() > MAX_VOIP_SIGNAL_MESSAGE_SIZE + MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE {
+            return Err(ProtocolError::voip_call("sealed state too large"));
+        }
 
         let stored_counter = u64::from_le_bytes(
             data[..8]
@@ -667,6 +671,17 @@ impl VoipSession {
             ReplayWindow::from_parts(state.replay_high_water, replay_words)
         };
 
+        let ratchet_interval_frames = if state.ratchet_interval_frames == 0 {
+            DEFAULT_RATCHET_INTERVAL_FRAMES
+        } else {
+            state.ratchet_interval_frames
+        };
+        let pq_rekey_interval_secs = if state.pq_rekey_interval_secs == 0 {
+            DEFAULT_PQ_REKEY_INTERVAL_SECS
+        } else {
+            state.pq_rekey_interval_secs
+        };
+
         let inner = VoipSessionInner {
             call_id: state.call_id,
             role,
@@ -680,8 +695,8 @@ impl VoipSession {
             send_frame_counter: state.send_frame_counter,
             replay_window,
             ratchet_generation: state.ratchet_generation,
-            ratchet_interval_frames: state.ratchet_interval_frames,
-            pq_rekey_interval_secs: state.pq_rekey_interval_secs,
+            ratchet_interval_frames,
+            pq_rekey_interval_secs,
             shield_mode: state.shield_mode,
             frames_since_ratchet: state.frames_since_ratchet,
             event_handler: None,
@@ -811,6 +826,9 @@ impl VoipSession {
         if inner.state != CallState::Active {
             return Err(ProtocolError::voip_rekey("cannot rekey: call not active"));
         }
+        if inner.pending_rekey.is_some() {
+            return Err(ProtocolError::voip_rekey("rekey already pending"));
+        }
 
         let (init_output, new_gen) = call_key_exchange::rekey_initiate(
             identity_ed25519_secret,
@@ -853,6 +871,9 @@ impl VoipSession {
             return Err(ProtocolError::voip_rekey(
                 "cannot process rekey: call not active",
             ));
+        }
+        if rekey_bytes.len() > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
+            return Err(ProtocolError::voip_rekey("rekey message too large"));
         }
 
         let rekey = crate::proto::CallRekey::decode(rekey_bytes)
@@ -904,7 +925,9 @@ impl VoipSession {
         let eph_public = x25519_dalek::PublicKey::from(&eph_secret);
         let eph_public_bytes = eph_public.to_bytes().to_vec();
 
-        let peer_eph: [u8; 32] = rekey.ephemeral_x25519_public[..32]
+        let peer_eph: [u8; X25519_PUBLIC_KEY_BYTES] = rekey
+            .ephemeral_x25519_public
+            .as_slice()
             .try_into()
             .map_err(|_| ProtocolError::voip_rekey("invalid rekey ephemeral key"))?;
         let classical_ss = eph_secret
@@ -997,6 +1020,9 @@ impl VoipSession {
                 "cannot process rekey ack: call not active",
             ));
         }
+        if ack_bytes.len() > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
+            return Err(ProtocolError::voip_rekey("rekey ack message too large"));
+        }
 
         let ack = crate::proto::CallRekeyAck::decode(ack_bytes)
             .map_err(|e| ProtocolError::decode(format!("CallRekeyAck decode: {e}")))?;
@@ -1031,10 +1057,13 @@ impl VoipSession {
             .ephemeral_x25519_private
             .read_bytes(X25519_PRIVATE_KEY_BYTES)
             .map_err(ProtocolError::from_crypto)?;
-        let eph_priv_arr: [u8; 32] = eph_priv[..32]
+        let eph_priv_arr: [u8; X25519_PRIVATE_KEY_BYTES] = eph_priv
+            .as_slice()
             .try_into()
             .map_err(|_| ProtocolError::voip_rekey("invalid rekey private key"))?;
-        let peer_eph: [u8; 32] = ack.ephemeral_x25519_public[..32]
+        let peer_eph: [u8; X25519_PUBLIC_KEY_BYTES] = ack
+            .ephemeral_x25519_public
+            .as_slice()
             .try_into()
             .map_err(|_| ProtocolError::voip_rekey("invalid rekey ack ephemeral key"))?;
 

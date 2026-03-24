@@ -302,6 +302,14 @@ pub fn verify_rekey_signature(
     if signature.len() != ED25519_SIGNATURE_BYTES {
         return Err(ProtocolError::voip_rekey("invalid signature size"));
     }
+    if eph_x25519_public.len() != X25519_PUBLIC_KEY_BYTES {
+        return Err(ProtocolError::voip_rekey(
+            "invalid rekey ephemeral key size",
+        ));
+    }
+    if kyber_ct.len() != KYBER_CIPHERTEXT_BYTES {
+        return Err(ProtocolError::voip_rekey("invalid rekey ciphertext size"));
+    }
 
     let pk_bytes: [u8; ED25519_PUBLIC_KEY_BYTES] = ed25519_public
         .try_into()
@@ -469,6 +477,9 @@ fn derive_call_keys(
     })
 }
 
+#[deprecated(
+    note = "Use caller_init_with_context to bind call policy/auth context into signature and MAC."
+)]
 pub fn caller_init(
     identity_ed25519_secret: &[u8],
     identity_ed25519_public: &[u8],
@@ -588,14 +599,20 @@ pub fn callee_accept_with_context(
     )?;
     CryptoInterop::secure_wipe(&mut combined_pq);
 
-    let signature = sign_call_material(
+    let signature = sign_call_material_with_context(
         identity_ed25519_secret,
         call_id,
         &eph_public_bytes,
         &callee_kyber_ct,
+        Some(auth_context),
     )?;
 
-    let mac = compute_key_confirm_mac(&root_secret, VOIP_KEY_CONFIRM_CALLEE_INFO, call_id)?;
+    let mac = compute_key_confirm_mac_with_context(
+        &root_secret,
+        VOIP_KEY_CONFIRM_CALLEE_INFO,
+        call_id,
+        Some(auth_context),
+    )?;
 
     let key_material = derive_call_keys(&root_secret, call_id, false, auth_context.shield_mode)?;
 
@@ -610,6 +627,9 @@ pub fn callee_accept_with_context(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[deprecated(
+    note = "Use callee_accept_with_context to enforce auth-context binding for call setup."
+)]
 pub fn callee_accept(
     identity_ed25519_secret: &[u8],
     identity_ed25519_public: &[u8],
@@ -702,6 +722,9 @@ pub fn callee_accept(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[deprecated(
+    note = "Use caller_finish_with_context to enforce auth-context binding for call setup."
+)]
 pub fn caller_finish(
     init_output: &CallInitOutput,
     identity_kyber_secret: &SecureMemoryHandle,

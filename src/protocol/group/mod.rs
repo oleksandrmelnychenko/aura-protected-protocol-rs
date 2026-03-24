@@ -254,6 +254,14 @@ pub fn compute_message_id(
     h.finalize().to_vec()
 }
 
+fn build_replay_message_id(payload_nonce: &[u8], sender_leaf_index: u32, generation: u32) -> Vec<u8> {
+    let mut msg_id = Vec::with_capacity(payload_nonce.len() + 8);
+    msg_id.extend_from_slice(payload_nonce);
+    msg_id.extend_from_slice(&sender_leaf_index.to_le_bytes());
+    msg_id.extend_from_slice(&generation.to_le_bytes());
+    msg_id
+}
+
 pub struct MessagePolicy {
     pub content_type: ContentType,
     pub ttl_seconds: u32,
@@ -1852,9 +1860,11 @@ impl GroupSession {
             &signature_input,
         )?;
 
-        let mut msg_id = Vec::with_capacity(app_msg.payload_nonce.len() + 4);
-        msg_id.extend_from_slice(&app_msg.payload_nonce);
-        msg_id.extend_from_slice(&sender_data.generation.to_le_bytes());
+        let msg_id = build_replay_message_id(
+            &app_msg.payload_nonce,
+            sender_data.sender_leaf_index,
+            sender_data.generation,
+        );
         if inner.seen_message_ids.contains(&msg_id) {
             return Err(ProtocolError::replay_attack("Duplicate group message"));
         }
@@ -2334,5 +2344,18 @@ impl GroupSession {
             .map_err(|e| ProtocolError::group_protocol(format!("HMAC init: {e}")))?;
         mac.update(data);
         Ok(mac.finalize().into_bytes().to_vec())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_replay_message_id;
+
+    #[test]
+    fn replay_message_id_differs_for_different_senders() {
+        let nonce = vec![1u8; 12];
+        let id_a = build_replay_message_id(&nonce, 10, 7);
+        let id_b = build_replay_message_id(&nonce, 11, 7);
+        assert_ne!(id_a, id_b);
     }
 }

@@ -3456,6 +3456,14 @@ pub unsafe extern "C" fn epp_voip_accept_call(
             );
             return EppErrorCode::EppErrorInvalidInput;
         }
+        if call_init_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "CallInit too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
         if peer_kyber_public.is_null() || peer_kyber_public_len == 0 {
             write_error(
                 out_error,
@@ -3661,6 +3669,38 @@ pub unsafe extern "C" fn epp_voip_decrypt_frame(
         } else {
             std::slice::from_raw_parts(encrypted_header, encrypted_header_len)
         };
+        if cid.len() > CALL_ID_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "call_id too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if enc_payload.len() > MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "encrypted payload too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if enc_header.len() > MAX_VOIP_ENCRYPTED_HEADER_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "encrypted header too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if enc_nonce.len() > AES_GCM_NONCE_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "nonce too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
 
         let encrypted = crate::protocol::voip::EncryptedFrame {
             call_id: cid.to_vec(),
@@ -4111,6 +4151,14 @@ pub unsafe extern "C" fn epp_voip_call_init_complete(
             );
             return EppErrorCode::EppErrorInvalidInput;
         }
+        if accept_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "CallAccept too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
 
         let accept_data = std::slice::from_raw_parts(accept_bytes, accept_len);
         let accept = match crate::proto::CallAccept::decode(accept_data) {
@@ -4270,6 +4318,14 @@ pub unsafe extern "C" fn epp_voip_process_rekey(
             );
             return EppErrorCode::EppErrorInvalidInput;
         }
+        if rekey_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "CallRekey too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
         if peer_kyber_public.is_null() || peer_kyber_public_len == 0 {
             write_error(
                 out_error,
@@ -4342,6 +4398,14 @@ pub unsafe extern "C" fn epp_voip_process_rekey_ack(
             );
             return EppErrorCode::EppErrorInvalidInput;
         }
+        if ack_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "CallRekeyAck too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
 
         let ack_data = std::slice::from_raw_parts(ack_bytes, ack_len);
         let kyber_secret = match identity.clone_kyber_secret_key() {
@@ -4381,6 +4445,14 @@ pub unsafe extern "C" fn epp_voip_import_sealed_state(
                 out_error,
                 EppErrorCode::EppErrorInvalidInput,
                 "null sealed state data",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if data_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE + MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "sealed state too large",
             );
             return EppErrorCode::EppErrorInvalidInput;
         }

@@ -1229,6 +1229,47 @@ fn voip_rekey_tampered_generation_rejected() {
 }
 
 #[test]
+fn voip_rekey_short_ephemeral_key_rejected_without_panic() {
+    init();
+    let (alice_id, bob_id, alice, bob) = setup_voip_session_pair_with_identities(false);
+
+    let alice_ed_secret = alice_id.get_identity_ed25519_private_key_copy().unwrap();
+    let alice_ed_public = alice_id.get_identity_ed25519_public();
+    let alice_kyber_pub = alice_id.get_kyber_public();
+    let bob_ed_secret = bob_id.get_identity_ed25519_private_key_copy().unwrap();
+    let bob_kyber_pub = bob_id.get_kyber_public();
+    let bob_kyber_secret = bob_id.clone_kyber_secret_key().unwrap();
+
+    let rekey_bytes = alice
+        .initiate_rekey(&alice_ed_secret, &bob_kyber_pub)
+        .unwrap();
+    let mut rekey = CallRekey::decode(rekey_bytes.as_slice()).unwrap();
+    rekey.ephemeral_x25519_public = vec![0xAA; 3];
+    rekey.signature = ecliptix_protocol::protocol::voip::call_key_exchange::sign_rekey_material(
+        &alice_ed_secret,
+        &rekey.call_id,
+        rekey.rekey_generation,
+        &rekey.ephemeral_x25519_public,
+        &rekey.kyber_ciphertext,
+    )
+    .unwrap();
+    let mut tampered = Vec::new();
+    rekey.encode(&mut tampered).unwrap();
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        bob.process_rekey(
+            &tampered,
+            &alice_ed_public,
+            &bob_kyber_secret,
+            &alice_kyber_pub,
+            &bob_ed_secret,
+        )
+    }));
+    assert!(result.is_ok(), "process_rekey panicked on malformed key");
+    assert!(result.unwrap().is_err());
+}
+
+#[test]
 fn voip_rekey_invalid_ack_does_not_clear_pending_rekey() {
     init();
     let (alice_id, bob_id, alice, bob) = setup_voip_session_pair_with_identities(false);
@@ -1266,6 +1307,51 @@ fn voip_rekey_invalid_ack_does_not_clear_pending_rekey() {
     alice
         .process_rekey_ack(&ack_bytes, &bob_ed_public, &alice_kyber_secret)
         .unwrap();
+}
+
+#[test]
+fn voip_rekey_ack_short_ephemeral_key_rejected_without_panic() {
+    init();
+    let (alice_id, bob_id, alice, bob) = setup_voip_session_pair_with_identities(false);
+
+    let alice_ed_secret = alice_id.get_identity_ed25519_private_key_copy().unwrap();
+    let alice_kyber_secret = alice_id.clone_kyber_secret_key().unwrap();
+    let alice_kyber_pub = alice_id.get_kyber_public();
+    let bob_ed_secret = bob_id.get_identity_ed25519_private_key_copy().unwrap();
+    let bob_ed_public = bob_id.get_identity_ed25519_public();
+    let bob_kyber_pub = bob_id.get_kyber_public();
+    let bob_kyber_secret = bob_id.clone_kyber_secret_key().unwrap();
+
+    let rekey_bytes = alice
+        .initiate_rekey(&alice_ed_secret, &bob_kyber_pub)
+        .unwrap();
+    let ack_bytes = bob
+        .process_rekey(
+            &rekey_bytes,
+            &alice_id.get_identity_ed25519_public(),
+            &bob_kyber_secret,
+            &alice_kyber_pub,
+            &bob_ed_secret,
+        )
+        .unwrap();
+    let mut ack = CallRekeyAck::decode(ack_bytes.as_slice()).unwrap();
+    ack.ephemeral_x25519_public = vec![0xBB; 5];
+    ack.signature = ecliptix_protocol::protocol::voip::call_key_exchange::sign_rekey_material(
+        &bob_ed_secret,
+        &ack.call_id,
+        ack.rekey_generation,
+        &ack.ephemeral_x25519_public,
+        &ack.kyber_ciphertext,
+    )
+    .unwrap();
+    let mut tampered_ack = Vec::new();
+    ack.encode(&mut tampered_ack).unwrap();
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        alice.process_rekey_ack(&tampered_ack, &bob_ed_public, &alice_kyber_secret)
+    }));
+    assert!(result.is_ok(), "process_rekey_ack panicked on malformed key");
+    assert!(result.unwrap().is_err());
 }
 
 // ════════════════════════════════════════════════════════════════════
