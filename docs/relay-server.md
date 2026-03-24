@@ -114,6 +114,23 @@
 
 Сервер використовує це, щоб знати, кому доставити Welcome (одному клієнту за `target_leaf_index`).
 
+## VoIP relay (legacy signaling hardening)
+
+| Що викликати | Що передавати | Повертає |
+|--------------|---------------|----------|
+| `relay::validate_voip_envelope(envelope_bytes)` | сирі байти `VoipEnvelope` | `Result<VoipEnvelope, ProtocolError>` |
+| `relay::process_voip_signal(envelope, store, server_timestamp)` | валідований `VoipEnvelope`, реалізація `VoipCallStore`, unix timestamp | `Result<VoipRelayAction, ProtocolError>` |
+
+`process_voip_signal` виконує stateful перевірки для call lifecycle:
+
+- не дозволяє підміни `recipient_device_id`;
+- блокує сигнали від не-учасників дзвінка;
+- контролює дозволені переходи станів (`Initiated -> Active -> Rekeying -> Ended`);
+- блокує replay/invalid sequencing для rekey/rekey-ack;
+- дропає прострочені дзвінки за timeout/lifetime policy.
+
+Практично: для VoIP ingress спочатку викликайте `validate_voip_envelope`, потім `process_voip_signal`, і лише після успіху форвардьте payload цільовому пристрою.
+
 ## Зберігання подій (PendingEventStore)
 
 Сервер реалізує трейт `PendingEventStore` і передає його туди, де потрібна черга подій для пристроїв:
@@ -143,3 +160,5 @@
 7. `sender_device_id`, `sender_leaf_index` та identity для strict-валідації мають братися з автентифікованого transport/session контексту, а не довірятися напряму полям у payload.
 
 Уся криптографія (дешифрування, перевірка підписів всередині payload) виконується на клієнті; сервер лише валідує формат і маршрутизує.
+
+Див. також узгоджений контракт `protocol <-> relay <-> Swift`: [docs/epp-relay-swift-alignment.md](epp-relay-swift-alignment.md).

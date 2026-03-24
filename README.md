@@ -312,6 +312,7 @@ docs/
     message-franking.md      Message franking design doc
     shield-mode.md           Shield mode design doc
   ffi-swift.md            Swift FFI guide
+  epp-relay-swift-alignment.md  Cross-repo contract (EPP <-> Relay <-> Swift)
   relay-server.md         Relay server guide
 proto/
   protocol/       Protobuf message definitions
@@ -397,14 +398,16 @@ The server never decrypts traffic — it validates format, routes by `group_id`,
 All relay functions are in `ecliptix_protocol::api::relay`:
 
 - `validate_crypto_envelope()` — validate 1:1 envelope structure
-- `validate_commit_for_relay()` — validate group commit
-- `validate_group_message_for_relay()` — validate group message
+- `validate_commit_for_relay_strict()` — validate group commit + bind sender identity from auth context
+- `validate_group_message_for_relay_strict()` — validate group message + sender signature + auth-context identity binding
 - `apply_commit_to_roster()` — update group membership
 - `extract_welcome_target()` — find welcome recipient
-- `commit_recipients()` / `message_recipients()` — delivery targets
+- `commit_recipients()` / `message_recipients()` / `crypto_envelope_recipients()` — delivery targets
+- `validate_voip_envelope()` / `process_voip_signal()` — VoIP relay validation and call-state-safe routing
 - `PendingEventStore` trait — event persistence (store/fetch/ack by device_id)
 
 See [docs/relay-server.md](docs/relay-server.md) for full guide.
+Cross-repo integration contract is documented in [docs/epp-relay-swift-alignment.md](docs/epp-relay-swift-alignment.md).
 
 ## CI
 
