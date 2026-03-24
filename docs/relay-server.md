@@ -27,7 +27,7 @@
 
 | Що викликати | Що передавати | Повертає |
 |--------------|---------------|----------|
-| `relay::validate_commit_for_relay_strict(commit_bytes, roster, expected_sender_identity_ed25519)` | `commit_bytes` — сирі байти GroupCommit, `roster` — поточний `GroupRoster`, `expected_sender_identity_ed25519` — ідентичність з auth-контексту (опційно) | `Result<RelayCommitInfo, ProtocolError>` |
+| `relay::validate_commit_for_relay_strict(commit_bytes, roster, expected_sender_identity_ed25519)` | `commit_bytes` — сирі байти GroupCommit, `roster` — поточний `GroupRoster`, `expected_sender_identity_ed25519` — ідентичність з auth-контексту (обовʼязково) | `Result<RelayCommitInfo, ProtocolError>` |
 
 Перевіряє: epoch = roster.epoch + 1, committer є членом, `group_id` збігається з roster, є `update_path`, а також Ed25519 підпис комітера. У `RelayCommitInfo`: `committer_leaf_index`, `new_epoch`, `added_identities`, `removed_leaves`.
 
@@ -37,7 +37,7 @@
 
 | Що викликати | Що передавати | Повертає |
 |--------------|---------------|----------|
-| `relay::validate_group_message_for_relay_strict(message_bytes, roster, sender_leaf_index, expected_sender_identity_ed25519)` | `message_bytes` — сирі байти GroupMessage (application content), `roster` — поточний roster групи, `sender_leaf_index` та `expected_sender_identity_ed25519` — з auth-контексту | `Result<(), ProtocolError>` |
+| `relay::validate_group_message_for_relay_strict(message_bytes, roster, sender_leaf_index, expected_sender_identity_ed25519)` | `message_bytes` — сирі байти GroupMessage (application content), `roster` — поточний roster групи, `sender_leaf_index` та `expected_sender_identity_ed25519` — з auth-контексту (обовʼязково) | `Result<(), ProtocolError>` |
 
 Перевіряє: версію протоколу, `group_id` та `epoch` збігаються з roster, контент — application, Ed25519 підпис відправника і (за потреби) binding до очікуваної identity.
 

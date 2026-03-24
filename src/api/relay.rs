@@ -58,7 +58,7 @@ impl GroupRoster {
     }
 }
 
-pub fn validate_commit_for_relay(
+fn validate_commit_for_relay_core(
     commit_bytes: &[u8],
     roster: &GroupRoster,
 ) -> Result<RelayCommitInfo, ProtocolError> {
@@ -167,7 +167,7 @@ pub fn validate_commit_for_relay(
     })
 }
 
-pub fn validate_group_message_for_relay(
+fn validate_group_message_for_relay_core(
     message_bytes: &[u8],
     roster: &GroupRoster,
 ) -> Result<(), ProtocolError> {
@@ -208,9 +208,9 @@ pub fn validate_group_message_for_relay(
 pub fn validate_commit_for_relay_strict(
     commit_bytes: &[u8],
     roster: &GroupRoster,
-    expected_sender_identity_ed25519: Option<&[u8]>,
+    expected_sender_identity_ed25519: &[u8],
 ) -> Result<RelayCommitInfo, ProtocolError> {
-    let info = validate_commit_for_relay(commit_bytes, roster)?;
+    let info = validate_commit_for_relay_core(commit_bytes, roster)?;
     let committer = roster
         .find_member(info.committer_leaf_index)
         .ok_or_else(|| {
@@ -220,9 +220,7 @@ pub fn validate_commit_for_relay_strict(
             ))
         })?;
 
-    if let Some(expected_identity) = expected_sender_identity_ed25519 {
-        bind_sender_identity(committer, expected_identity)?;
-    }
+    bind_sender_identity(committer, expected_sender_identity_ed25519)?;
 
     Ok(info)
 }
@@ -231,34 +229,11 @@ pub fn validate_group_message_for_relay_strict(
     message_bytes: &[u8],
     roster: &GroupRoster,
     sender_leaf_index: u32,
-    expected_sender_identity_ed25519: Option<&[u8]>,
+    expected_sender_identity_ed25519: &[u8],
 ) -> Result<(), ProtocolError> {
-    if message_bytes.len() > MAX_GROUP_MESSAGE_SIZE {
-        return Err(ProtocolError::invalid_input("GroupMessage too large"));
-    }
-
+    validate_group_message_for_relay_core(message_bytes, roster)?;
     let msg = GroupMessage::decode(message_bytes)
         .map_err(|e| ProtocolError::decode(format!("GroupMessage decode: {e}")))?;
-    if msg.version != GROUP_PROTOCOL_VERSION {
-        return Err(ProtocolError::group_protocol(format!(
-            "GroupMessage protocol version mismatch: expected {}, got {}",
-            GROUP_PROTOCOL_VERSION, msg.version
-        )));
-    }
-
-    if msg.group_id != roster.group_id {
-        return Err(ProtocolError::group_protocol(
-            "GroupMessage group_id mismatch",
-        ));
-    }
-
-    if msg.epoch != roster.epoch {
-        return Err(ProtocolError::group_protocol(format!(
-            "GroupMessage epoch mismatch: expected {}, got {}",
-            roster.epoch, msg.epoch
-        )));
-    }
-
     let Some(crate::proto::group_message::Content::Application(app)) = &msg.content else {
         return Err(ProtocolError::group_protocol(
             "Expected application message content",
@@ -271,9 +246,7 @@ pub fn validate_group_message_for_relay_strict(
         ))
     })?;
 
-    if let Some(expected_identity) = expected_sender_identity_ed25519 {
-        bind_sender_identity(sender, expected_identity)?;
-    }
+    bind_sender_identity(sender, expected_sender_identity_ed25519)?;
 
     let mut app_for_verify = app.clone();
     let signature = std::mem::take(&mut app_for_verify.sender_signature);

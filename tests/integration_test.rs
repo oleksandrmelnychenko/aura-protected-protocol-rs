@@ -4914,31 +4914,23 @@ fn relay_validate_commit_for_relay_strict_checks_signature_and_sender_binding() 
         },
     );
 
-    validate_commit_for_relay_strict(
-        &commit_bytes,
-        &roster,
-        Some(&alice.identity_ed25519_public()),
-    )
-    .unwrap();
+    let alice_identity = alice.identity_ed25519_public();
+    validate_commit_for_relay_strict(&commit_bytes, &roster, &alice_identity).unwrap();
 
     let mut tampered = commit_bytes.clone();
     let last = tampered.len() - 1;
     tampered[last] ^= 0x01;
-    assert!(validate_commit_for_relay_strict(&tampered, &roster, None).is_err());
+    assert!(validate_commit_for_relay_strict(&tampered, &roster, &alice_identity).is_err());
 
     let charlie = EcliptixProtocol::new(10).unwrap();
-    assert!(validate_commit_for_relay_strict(
-        &commit_bytes,
-        &roster,
-        Some(&charlie.identity_ed25519_public()),
-    )
-    .is_err());
+    let charlie_identity = charlie.identity_ed25519_public();
+    assert!(validate_commit_for_relay_strict(&commit_bytes, &roster, &charlie_identity).is_err());
 }
 
 #[test]
 fn relay_validate_commit_for_relay_rejects_too_many_proposals_before_signature() {
     use ecliptix_protocol::api::relay::{
-        validate_commit_for_relay, GroupMemberRecord, GroupRoster,
+        validate_commit_for_relay_strict, GroupMemberRecord, GroupRoster,
     };
     use ecliptix_protocol::proto::{GroupCommit, GroupProposal};
     use prost::Message;
@@ -4974,7 +4966,8 @@ fn relay_validate_commit_for_relay_rejects_too_many_proposals_before_signature()
     let mut oversized = Vec::new();
     commit.encode(&mut oversized).unwrap();
 
-    let result = validate_commit_for_relay(&oversized, &roster);
+    let alice_identity = alice.identity_ed25519_public();
+    let result = validate_commit_for_relay_strict(&oversized, &roster, &alice_identity);
     assert!(result.is_err());
     let err = result.err().unwrap().to_string();
     assert!(
@@ -4986,7 +4979,7 @@ fn relay_validate_commit_for_relay_rejects_too_many_proposals_before_signature()
 #[test]
 fn relay_validate_commit_for_relay_rejects_invalid_add_key_package() {
     use ecliptix_protocol::api::relay::{
-        validate_commit_for_relay, GroupMemberRecord, GroupRoster,
+        validate_commit_for_relay_strict, GroupMemberRecord, GroupRoster,
     };
     use ecliptix_protocol::proto::{group_proposal, GroupCommit};
     use prost::Message;
@@ -5022,7 +5015,8 @@ fn relay_validate_commit_for_relay_rejects_invalid_add_key_package() {
     let mut tampered = Vec::new();
     commit.encode(&mut tampered).unwrap();
 
-    let result = validate_commit_for_relay(&tampered, &roster);
+    let alice_identity = alice.identity_ed25519_public();
+    let result = validate_commit_for_relay_strict(&tampered, &roster, &alice_identity);
     assert!(result.is_err());
 }
 
@@ -5051,13 +5045,8 @@ fn relay_validate_group_message_for_relay_strict_checks_signature_and_sender_bin
         },
     );
 
-    validate_group_message_for_relay_strict(
-        &msg_bytes,
-        &roster,
-        0,
-        Some(&alice.identity_ed25519_public()),
-    )
-    .unwrap();
+    let alice_identity = alice.identity_ed25519_public();
+    validate_group_message_for_relay_strict(&msg_bytes, &roster, 0, &alice_identity).unwrap();
 
     let mut tampered = GroupMessage::decode(msg_bytes.as_slice()).unwrap();
     match tampered.content.as_mut() {
@@ -5068,16 +5057,14 @@ fn relay_validate_group_message_for_relay_strict_checks_signature_and_sender_bin
     }
     let mut tampered_bytes = Vec::new();
     tampered.encode(&mut tampered_bytes).unwrap();
-    assert!(validate_group_message_for_relay_strict(&tampered_bytes, &roster, 0, None).is_err());
+    assert!(
+        validate_group_message_for_relay_strict(&tampered_bytes, &roster, 0, &alice_identity)
+            .is_err()
+    );
 
     let bob = EcliptixProtocol::new(10).unwrap();
-    assert!(validate_group_message_for_relay_strict(
-        &msg_bytes,
-        &roster,
-        0,
-        Some(&bob.identity_ed25519_public()),
-    )
-    .is_err());
+    let bob_identity = bob.identity_ed25519_public();
+    assert!(validate_group_message_for_relay_strict(&msg_bytes, &roster, 0, &bob_identity).is_err());
 }
 
 #[test]

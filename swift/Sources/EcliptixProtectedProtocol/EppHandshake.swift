@@ -97,9 +97,8 @@ public final class EppHandshakeInitiator {
     /// After this call succeeds, the initiator is consumed and the returned session
     /// is ready for encrypting and decrypting messages.
     ///
-    /// Call `peerIdentity()` and optionally `identityBindingHash()` on the
-    /// returned session before trusting it, if your application pins or verifies
-    /// peers out of band.
+    /// For production flows, prefer `finishVerifyingPeer(...)` to avoid accepting
+    /// a session without explicit peer identity verification.
     ///
     /// - Parameter handshakeAck: The handshake-ack payload received from the responder.
     /// - Returns: The established `EppSession`.
@@ -237,9 +236,8 @@ public final class EppHandshakeResponder {
     /// After this call succeeds, the responder is consumed and the returned session
     /// is ready for encrypting and decrypting messages.
     ///
-    /// Call `peerIdentity()` and optionally `identityBindingHash()` on the
-    /// returned session before trusting it, if your application pins or verifies
-    /// peers out of band.
+    /// For production flows, prefer `finishVerifyingPeer(...)` to avoid accepting
+    /// a session without explicit peer identity verification.
     ///
     /// - Returns: The established `EppSession`.
     /// - Throws: `EppError.objectDisposed` if the responder has been destroyed,

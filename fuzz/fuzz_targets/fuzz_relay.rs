@@ -24,8 +24,13 @@ fuzz_target!(|data: &[u8]| {
         },
     );
 
-    let _ = relay::validate_commit_for_relay(data, &roster);
-    let _ = relay::validate_group_message_for_relay(data, &roster);
+    let _ = relay::validate_commit_for_relay_strict(data, &roster, &roster.members[0].identity_ed25519_public);
+    let _ = relay::validate_group_message_for_relay_strict(
+        data,
+        &roster,
+        0,
+        &roster.members[0].identity_ed25519_public,
+    );
     let _ = relay::validate_key_package_for_storage(data);
     let _ = relay::extract_welcome_target(data);
     let _ = relay::validate_crypto_envelope(data);

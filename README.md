@@ -355,8 +355,15 @@ let bob = try EppIdentity.create()
 let bobBundle = try bob.createPrekeyBundle()
 let (initiator, handshakeInit) = try EppHandshakeInitiator.start(identity: alice, peerPrekeyBundle: bobBundle)
 let (responder, handshakeAck) = try EppHandshakeResponder.start(identity: bob, localPrekeyBundle: bobBundle, handshakeInit: handshakeInit)
-let aliceSession = try initiator.finish(handshakeAck: handshakeAck)
-let bobSession = try responder.finish()
+let aliceSession = try initiator.finishVerifyingPeer(
+    handshakeAck: handshakeAck,
+    expectedPeerEd25519PublicKey: bob.ed25519PublicKey,
+    expectedPeerX25519PublicKey: bob.x25519PublicKey
+)
+let bobSession = try responder.finishVerifyingPeer(
+    expectedPeerEd25519PublicKey: alice.ed25519PublicKey,
+    expectedPeerX25519PublicKey: alice.x25519PublicKey
+)
 
 // Encrypt / Decrypt
 let ciphertext = try aliceSession.encrypt(plaintext: "Hello".data(using: .utf8)!)
