@@ -347,7 +347,7 @@ const unsafe fn group_ref_or_none<'a>(
 
 #[no_mangle]
 pub extern "C" fn epp_version() -> *const c_char {
-    static VERSION: &[u8] = b"1.0.0\0";
+    static VERSION: &[u8] = b"1.1.1\0";
     VERSION.as_ptr().cast::<c_char>()
 }
 
