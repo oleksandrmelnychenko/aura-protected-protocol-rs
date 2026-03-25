@@ -19,10 +19,10 @@ use key_ratchet::MediaKeyRatchet;
 use media_crypto::MediaCrypto;
 use replay_window::ReplayWindow;
 
-#[allow(deprecated)]
 pub use call_key_exchange::{
-    callee_accept, caller_finish, caller_finish_with_context, caller_init, rekey_complete,
-    rekey_initiate, CallAcceptOutput, CallInitOutput, CallKeyMaterial as VoipKeyMaterial,
+    callee_accept_with_context, caller_finish_with_context, caller_init_with_context,
+    rekey_complete, rekey_initiate, CallAcceptOutput, CallInitAuthContext, CallInitOutput,
+    CallKeyMaterial as VoipKeyMaterial,
 };
 
 type HmacSha256 = Hmac<Sha256>;
@@ -596,6 +596,11 @@ impl VoipSession {
         let state_bytes = crate::crypto::AesGcm::decrypt(state_key, nonce, ct, &[])?;
         let state = crate::proto::VoipSessionState::decode(state_bytes.as_slice())
             .map_err(|e| ProtocolError::decode(format!("VoipSessionState decode: {e}")))?;
+        if state.external_counter != stored_counter {
+            return Err(ProtocolError::voip_call(
+                "sealed state external counter mismatch",
+            ));
+        }
 
         if state.call_id.len() != CALL_ID_BYTES {
             return Err(ProtocolError::voip_call("invalid call_id in sealed state"));
@@ -857,12 +862,11 @@ impl VoipSession {
             signature: init_output.signature.clone(),
             key_confirmation_mac: init_output.key_confirmation_mac.clone(),
         };
-        inner.pending_rekey = Some(init_output);
-
         let mut buf = Vec::new();
         proto
             .encode(&mut buf)
             .map_err(|e| ProtocolError::encode(format!("CallRekey encode: {e}")))?;
+        inner.pending_rekey = Some(init_output);
         Ok(buf)
     }
 
@@ -993,6 +997,11 @@ impl VoipSession {
             key_confirmation_mac: ack_mac,
         };
 
+        let mut buf = Vec::new();
+        proto
+            .encode(&mut buf)
+            .map_err(|e| ProtocolError::encode(format!("CallRekeyAck encode: {e}")))?;
+
         inner
             .send_ratchet
             .reset(new_keys.media_key_send, new_keys.nonce_prefix_send);
@@ -1008,11 +1017,6 @@ impl VoipSession {
         if let Some(handler) = &inner.event_handler {
             handler.on_rekey_completed(&inner.call_id, inner.ratchet_generation);
         }
-
-        let mut buf = Vec::new();
-        proto
-            .encode(&mut buf)
-            .map_err(|e| ProtocolError::encode(format!("CallRekeyAck encode: {e}")))?;
         Ok(buf)
     }
 

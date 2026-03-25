@@ -1843,7 +1843,7 @@ impl Session {
             ));
         }
 
-        let recv_chain_pre = if is_old_epoch {
+        let mut recv_chain_pre = if is_old_epoch {
             None
         } else {
             inner
@@ -1886,13 +1886,7 @@ impl Session {
             );
 
         let padded_plaintext = match decrypt_result {
-            Ok(pt) => {
-                CryptoInterop::secure_wipe(&mut message_key);
-                if let Some((mut saved_key, _)) = recv_chain_pre {
-                    CryptoInterop::secure_wipe(&mut saved_key);
-                }
-                pt
-            }
+            Ok(pt) => pt,
             Err(e) => {
                 if ratchet_snapshot.is_some() {
                     CryptoInterop::secure_wipe(&mut message_key);
@@ -1901,7 +1895,7 @@ impl Session {
                     inner
                         .skipped_message_keys
                         .insert((envelope_epoch, metadata.message_index), message_key);
-                } else if let Some((saved_key, saved_index)) = recv_chain_pre {
+                } else if let Some((saved_key, saved_index)) = recv_chain_pre.take() {
                     let epoch = inner.state.recv_ratchet_epoch;
                     if metadata.message_index < saved_index {
                         inner
@@ -1930,7 +1924,51 @@ impl Session {
                 return Err(e);
             }
         };
-        let plaintext = MessagePadding::unpad(&padded_plaintext)?;
+        let plaintext = match MessagePadding::unpad(&padded_plaintext) {
+            Ok(plaintext) => {
+                CryptoInterop::secure_wipe(&mut message_key);
+                if let Some((mut saved_key, _)) = recv_chain_pre.take() {
+                    CryptoInterop::secure_wipe(&mut saved_key);
+                }
+                plaintext
+            }
+            Err(e) => {
+                if ratchet_snapshot.is_some() {
+                    CryptoInterop::secure_wipe(&mut message_key);
+                    rollback_ratchet(&mut inner, ratchet_snapshot.take());
+                } else if is_old_epoch {
+                    inner
+                        .skipped_message_keys
+                        .insert((envelope_epoch, metadata.message_index), message_key);
+                } else if let Some((saved_key, saved_index)) = recv_chain_pre.take() {
+                    let epoch = inner.state.recv_ratchet_epoch;
+                    if metadata.message_index < saved_index {
+                        inner
+                            .skipped_message_keys
+                            .insert((epoch, metadata.message_index), message_key);
+                    } else {
+                        CryptoInterop::secure_wipe(&mut message_key);
+                        for idx in saved_index..metadata.message_index {
+                            if let Some(mut key) = inner.skipped_message_keys.remove(&(epoch, idx))
+                            {
+                                CryptoInterop::secure_wipe(&mut key);
+                            }
+                        }
+                    }
+                    if let Some(rc) = inner.state.recv_chain.as_mut() {
+                        CryptoInterop::secure_wipe(&mut rc.chain_key);
+                        rc.chain_key = saved_key;
+                        rc.message_index = saved_index;
+                    } else {
+                        let mut sk = saved_key;
+                        CryptoInterop::secure_wipe(&mut sk);
+                    }
+                } else {
+                    CryptoInterop::secure_wipe(&mut message_key);
+                }
+                return Err(e);
+            }
+        };
 
         inner.seen_payload_nonces.insert(nonce_key);
 
@@ -2051,9 +2089,7 @@ impl Session {
                 let mut buf = Vec::new();
                 let enc2 = copy.encode(&mut buf);
                 wipe_export_copy(&mut copy);
-                enc2.map_err(|e| {
-                    ProtocolError::encode(format!("Failed to serialize state: {e}"))
-                })?;
+                enc2.map_err(|e| ProtocolError::encode(format!("Failed to serialize state: {e}")))?;
                 buf
             };
 
@@ -2097,9 +2133,9 @@ impl Session {
             };
 
             let mut output = Vec::new();
-            sealed
-                .encode(&mut output)
-                .map_err(|e| ProtocolError::encode(format!("Failed to serialize sealed state: {e}")))?;
+            sealed.encode(&mut output).map_err(|e| {
+                ProtocolError::encode(format!("Failed to serialize sealed state: {e}"))
+            })?;
             Ok(output)
         })();
 

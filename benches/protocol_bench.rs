@@ -850,7 +850,8 @@ fn create_voip_session_pair() -> (
     ecliptix_protocol::protocol::voip::VoipSession,
 ) {
     use ecliptix_protocol::protocol::voip::{
-        callee_accept, caller_finish, caller_init, CallRole, VoipSession,
+        callee_accept_with_context, caller_finish_with_context, caller_init_with_context,
+        CallInitAuthContext, CallRole, VoipSession,
     };
 
     let alice = IdentityKeys::create(1).unwrap();
@@ -866,10 +867,23 @@ fn create_voip_session_pair() -> (
     let bob_kyber_pub = bob.get_kyber_public();
     let bob_kyber_sec = bob.clone_kyber_secret_key().unwrap();
 
-    let init_output = caller_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub).unwrap();
+    let auth_context = CallInitAuthContext {
+        version: 1,
+        media_type: 1,
+        ratchet_interval_frames: 512,
+        pq_rekey_interval_secs: 60,
+        shield_mode: false,
+    };
+    let init_output = caller_init_with_context(
+        &alice_ed_secret,
+        &alice_ed_public,
+        &bob_kyber_pub,
+        &auth_context,
+    )
+    .unwrap();
     let call_id = init_output.call_id.clone();
 
-    let accept_output = callee_accept(
+    let accept_output = callee_accept_with_context(
         &bob_ed_secret,
         &bob_ed_public,
         &bob_kyber_sec,
@@ -880,11 +894,11 @@ fn create_voip_session_pair() -> (
         &init_output.identity_ed25519_public,
         &init_output.signature,
         &init_output.key_confirmation_mac,
-        false,
+        &auth_context,
     )
     .unwrap();
 
-    let alice_keys = caller_finish(
+    let alice_keys = caller_finish_with_context(
         &init_output,
         &alice_kyber_sec,
         &call_id,
@@ -893,7 +907,7 @@ fn create_voip_session_pair() -> (
         &accept_output.identity_ed25519_public,
         &accept_output.signature,
         &accept_output.key_confirmation_mac,
-        false,
+        &auth_context,
     )
     .unwrap();
 

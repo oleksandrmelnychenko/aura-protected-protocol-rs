@@ -171,6 +171,11 @@ pub fn process_welcome(
     let mut group_info = GroupInfo::decode(group_info_bytes.as_slice())
         .map_err(|e| ProtocolError::decode(format!("GroupInfo decode: {e}")))?;
     CryptoInterop::secure_wipe(&mut group_info_bytes);
+    if group_info.group_id != welcome.group_id {
+        return Err(ProtocolError::welcome_error(
+            "Welcome group_id mismatch between envelope and group_info",
+        ));
+    }
 
     let mut tree = RatchetTree::from_proto(&group_info.tree_nodes, my_leaf_idx)?;
     for tn in &mut group_info.tree_nodes {

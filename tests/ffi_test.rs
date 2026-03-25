@@ -1457,8 +1457,8 @@ fn ffi_group_external_join_roundtrip() {
         let mut group_handle: *mut EppGroupSessionHandle = ptr::null_mut();
         let cred = b"alice";
         let policy = EppGroupSecurityPolicy {
-            max_messages_per_epoch: 0,
-            max_skipped_keys_per_sender: 0,
+            max_messages_per_epoch: 1000,
+            max_skipped_keys_per_sender: 4,
             block_external_join: 0,
             enhanced_key_schedule: 0,
             mandatory_franking: 0,

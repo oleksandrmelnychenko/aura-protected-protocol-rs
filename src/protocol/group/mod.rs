@@ -37,6 +37,7 @@ pub use sender_key::{SenderKeyChain, SenderKeyStore};
 pub use tree::RatchetTree;
 
 const REPLAY_WINDOW_WORDS: usize = 16;
+#[allow(clippy::cast_possible_truncation)]
 const REPLAY_WINDOW_BITS: u32 = (REPLAY_WINDOW_WORDS as u32) * 64;
 const REPLAY_WINDOW_ENCODED_PREFIX: [u8; 4] = [0xFF, b'R', b'W', 1];
 
@@ -58,7 +59,7 @@ impl Default for SenderReplayWindow {
 }
 
 impl SenderReplayWindow {
-    fn is_duplicate_or_too_old(&self, generation: u32) -> bool {
+    const fn is_duplicate_or_too_old(&self, generation: u32) -> bool {
         if !self.initialized {
             return false;
         }
@@ -131,7 +132,7 @@ impl SenderReplayWindow {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct GroupSecurityPolicy {
     pub max_messages_per_epoch: u32,
     pub max_skipped_keys_per_sender: u32,
@@ -170,7 +171,9 @@ impl GroupSecurityPolicy {
 
     fn from_proto_bytes(bytes: &[u8]) -> Result<Self, ProtocolError> {
         if bytes.is_empty() {
-            return Ok(Self::default());
+            return Err(ProtocolError::invalid_input(
+                "Missing group security policy bytes",
+            ));
         }
         let proto = ProtoGroupSecurityPolicy::decode(bytes)
             .map_err(|e| ProtocolError::decode(format!("GroupSecurityPolicy decode: {e}")))?;
@@ -223,6 +226,12 @@ impl GroupSecurityPolicy {
             )));
         }
         Ok(())
+    }
+}
+
+impl Default for GroupSecurityPolicy {
+    fn default() -> Self {
+        Self::shield()
     }
 }
 
@@ -581,7 +590,7 @@ impl GroupSession {
     }
 
     pub fn create(identity: &IdentityKeys, credential: Vec<u8>) -> Result<Self, ProtocolError> {
-        Self::create_with_policy(identity, credential, GroupSecurityPolicy::default())
+        Self::create_with_policy(identity, credential, GroupSecurityPolicy::shield())
     }
 
     pub fn create_with_policy(

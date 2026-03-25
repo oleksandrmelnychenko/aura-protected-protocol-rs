@@ -5,7 +5,8 @@ use ecliptix_protocol::core::errors::ProtocolError;
 use ecliptix_protocol::crypto::{CryptoInterop, SecureMemoryHandle};
 use ecliptix_protocol::identity::IdentityKeys;
 use ecliptix_protocol::protocol::voip::call_key_exchange::{
-    callee_accept, caller_finish, caller_init,
+    callee_accept_with_context, caller_finish_with_context, caller_init_with_context,
+    CallAcceptOutput, CallInitAuthContext, CallInitOutput, CallKeyMaterial,
 };
 use ecliptix_protocol::protocol::voip::frame::{build_frame_aad, FrameHeader};
 use ecliptix_protocol::protocol::voip::key_ratchet::MediaKeyRatchet;
@@ -21,6 +22,97 @@ fn init() {
 
 fn id() -> IdentityKeys {
     IdentityKeys::create(1).unwrap()
+}
+
+fn default_call_context(shield_mode: bool) -> CallInitAuthContext {
+    CallInitAuthContext {
+        version: VOIP_PROTOCOL_VERSION,
+        media_type: 1,
+        ratchet_interval_frames: DEFAULT_RATCHET_INTERVAL_FRAMES,
+        pq_rekey_interval_secs: DEFAULT_PQ_REKEY_INTERVAL_SECS,
+        shield_mode,
+    }
+}
+
+fn caller_init(
+    identity_ed25519_secret: &[u8],
+    identity_ed25519_public: &[u8],
+    peer_kyber_public: &[u8],
+) -> Result<CallInitOutput, ProtocolError> {
+    caller_init_with_context(
+        identity_ed25519_secret,
+        identity_ed25519_public,
+        peer_kyber_public,
+        &default_call_context(false),
+    )
+}
+
+fn caller_init_for_shield(
+    identity_ed25519_secret: &[u8],
+    identity_ed25519_public: &[u8],
+    peer_kyber_public: &[u8],
+    shield_mode: bool,
+) -> Result<CallInitOutput, ProtocolError> {
+    caller_init_with_context(
+        identity_ed25519_secret,
+        identity_ed25519_public,
+        peer_kyber_public,
+        &default_call_context(shield_mode),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn callee_accept(
+    identity_ed25519_secret: &[u8],
+    identity_ed25519_public: &[u8],
+    identity_kyber_secret: &SecureMemoryHandle,
+    peer_kyber_public: &[u8],
+    call_id: &[u8],
+    peer_eph_x25519_public: &[u8],
+    peer_kyber_ct: &[u8],
+    peer_ed25519_public: &[u8],
+    peer_signature: &[u8],
+    peer_key_confirm_mac: &[u8],
+    shield_mode: bool,
+) -> Result<CallAcceptOutput, ProtocolError> {
+    callee_accept_with_context(
+        identity_ed25519_secret,
+        identity_ed25519_public,
+        identity_kyber_secret,
+        peer_kyber_public,
+        call_id,
+        peer_eph_x25519_public,
+        peer_kyber_ct,
+        peer_ed25519_public,
+        peer_signature,
+        peer_key_confirm_mac,
+        &default_call_context(shield_mode),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn caller_finish(
+    init_output: &CallInitOutput,
+    identity_kyber_secret: &SecureMemoryHandle,
+    call_id: &[u8],
+    peer_eph_x25519_public: &[u8],
+    peer_kyber_ct: &[u8],
+    peer_ed25519_public: &[u8],
+    peer_signature: &[u8],
+    peer_key_confirm_mac: &[u8],
+    shield_mode: bool,
+) -> Result<CallKeyMaterial, ProtocolError> {
+    caller_finish_with_context(
+        init_output,
+        identity_kyber_secret,
+        call_id,
+        peer_eph_x25519_public,
+        peer_kyber_ct,
+        peer_ed25519_public,
+        peer_signature,
+        peer_key_confirm_mac,
+        &default_call_context(shield_mode),
+    )
 }
 
 fn pair(shield: bool) -> (VoipSession, VoipSession) {
@@ -39,7 +131,7 @@ fn pair_with_interval(shield: bool, ratchet_interval_frames: u32) -> (VoipSessio
     let b_kp = b.get_kyber_public();
     let b_ks = b.clone_kyber_secret_key().unwrap();
 
-    let init_out = caller_init(&a_es, &a_ep, &b_kp).unwrap();
+    let init_out = caller_init_for_shield(&a_es, &a_ep, &b_kp, shield).unwrap();
     let cid = init_out.call_id.clone();
     let acc = callee_accept(
         &b_es,

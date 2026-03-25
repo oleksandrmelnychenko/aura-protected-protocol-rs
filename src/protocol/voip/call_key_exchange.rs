@@ -106,21 +106,12 @@ fn append_call_init_auth_context(message: &mut Vec<u8>, context: &CallInitAuthCo
     message.push(u8::from(context.shield_mode));
 }
 
-fn sign_call_material(
-    ed25519_secret: &[u8],
-    call_id: &[u8],
-    eph_x25519_public: &[u8],
-    kyber_ct: &[u8],
-) -> Result<Vec<u8>, ProtocolError> {
-    sign_call_material_with_context(ed25519_secret, call_id, eph_x25519_public, kyber_ct, None)
-}
-
 fn sign_call_material_with_context(
     ed25519_secret: &[u8],
     call_id: &[u8],
     eph_x25519_public: &[u8],
     kyber_ct: &[u8],
-    context: Option<&CallInitAuthContext>,
+    context: &CallInitAuthContext,
 ) -> Result<Vec<u8>, ProtocolError> {
     if ed25519_secret.len() != ED25519_SECRET_KEY_BYTES {
         return Err(ProtocolError::voip_call("invalid Ed25519 secret key size"));
@@ -131,33 +122,13 @@ fn sign_call_material_with_context(
     let signing_key = SigningKey::from_keypair_bytes(&key_bytes)
         .map_err(|_| ProtocolError::voip_call("invalid Ed25519 keypair bytes"))?;
 
-    let mut message = Vec::with_capacity(
-        call_id.len() + eph_x25519_public.len() + kyber_ct.len() + context.map_or(0, |_| 17),
-    );
+    let mut message =
+        Vec::with_capacity(call_id.len() + eph_x25519_public.len() + kyber_ct.len() + 17);
     append_call_material_message(&mut message, call_id, eph_x25519_public, kyber_ct);
-    if let Some(context) = context {
-        append_call_init_auth_context(&mut message, context);
-    }
+    append_call_init_auth_context(&mut message, context);
 
     let sig = signing_key.sign(&message);
     Ok(sig.to_bytes().to_vec())
-}
-
-fn verify_call_signature(
-    ed25519_public: &[u8],
-    call_id: &[u8],
-    eph_x25519_public: &[u8],
-    kyber_ct: &[u8],
-    signature: &[u8],
-) -> Result<(), ProtocolError> {
-    verify_call_signature_with_context(
-        ed25519_public,
-        call_id,
-        eph_x25519_public,
-        kyber_ct,
-        signature,
-        None,
-    )
 }
 
 fn verify_call_signature_with_context(
@@ -166,7 +137,7 @@ fn verify_call_signature_with_context(
     eph_x25519_public: &[u8],
     kyber_ct: &[u8],
     signature: &[u8],
-    context: Option<&CallInitAuthContext>,
+    context: &CallInitAuthContext,
 ) -> Result<(), ProtocolError> {
     if ed25519_public.len() != ED25519_PUBLIC_KEY_BYTES {
         return Err(ProtocolError::voip_call("invalid Ed25519 public key size"));
@@ -186,38 +157,25 @@ fn verify_call_signature_with_context(
         .map_err(|_| ProtocolError::voip_call("signature conversion failed"))?;
     let sig = Signature::from_bytes(&sig_bytes);
 
-    let mut message = Vec::with_capacity(
-        call_id.len() + eph_x25519_public.len() + kyber_ct.len() + context.map_or(0, |_| 17),
-    );
+    let mut message =
+        Vec::with_capacity(call_id.len() + eph_x25519_public.len() + kyber_ct.len() + 17);
     append_call_material_message(&mut message, call_id, eph_x25519_public, kyber_ct);
-    if let Some(context) = context {
-        append_call_init_auth_context(&mut message, context);
-    }
+    append_call_init_auth_context(&mut message, context);
 
     verifying_key
         .verify_strict(&message, &sig)
         .map_err(|_| ProtocolError::voip_call("call signature verification failed"))
 }
 
-fn compute_key_confirm_mac(
-    root_secret: &[u8],
-    info: &[u8],
-    call_id: &[u8],
-) -> Result<Vec<u8>, ProtocolError> {
-    compute_key_confirm_mac_with_context(root_secret, info, call_id, None)
-}
-
 fn compute_key_confirm_mac_with_context(
     root_secret: &[u8],
     info: &[u8],
     call_id: &[u8],
-    context: Option<&CallInitAuthContext>,
+    context: &CallInitAuthContext,
 ) -> Result<Vec<u8>, ProtocolError> {
-    let mut mac_context = Vec::with_capacity(call_id.len() + context.map_or(0, |_| 17));
+    let mut mac_context = Vec::with_capacity(call_id.len() + 17);
     mac_context.extend_from_slice(call_id);
-    if let Some(context) = context {
-        append_call_init_auth_context(&mut mac_context, context);
-    }
+    append_call_init_auth_context(&mut mac_context, context);
 
     let mac_key = HkdfSha256::derive_key_bytes(root_secret, HMAC_BYTES, &mac_context, info)?;
     let mut mac = HmacSha256::new_from_slice(&mac_key)
@@ -262,7 +220,7 @@ pub fn caller_init_with_context(
         &call_id,
         &eph_public_bytes,
         &kyber_ct,
-        Some(auth_context),
+        auth_context,
     )?;
 
     let kyber_ss_bytes = kyber_ss
@@ -272,7 +230,7 @@ pub fn caller_init_with_context(
         &kyber_ss_bytes,
         VOIP_KEY_CONFIRM_CALLER_INFO,
         &call_id,
-        Some(auth_context),
+        auth_context,
     )?;
 
     Ok(CallInitOutput {
@@ -477,55 +435,6 @@ fn derive_call_keys(
     })
 }
 
-#[deprecated(
-    note = "Use caller_init_with_context to bind call policy/auth context into signature and MAC."
-)]
-pub fn caller_init(
-    identity_ed25519_secret: &[u8],
-    identity_ed25519_public: &[u8],
-    peer_kyber_public: &[u8],
-) -> Result<CallInitOutput, ProtocolError> {
-    let call_id = CryptoInterop::get_random_bytes(CALL_ID_BYTES);
-
-    let eph_secret = StaticSecret::random_from_rng(rand_core::OsRng);
-    let eph_public = X25519PublicKey::from(&eph_secret);
-    let eph_public_bytes = eph_public.to_bytes().to_vec();
-    let eph_secret_bytes = eph_secret.to_bytes();
-
-    let mut eph_handle = SecureMemoryHandle::allocate(X25519_PRIVATE_KEY_BYTES)
-        .map_err(ProtocolError::from_crypto)?;
-    eph_handle
-        .write(&eph_secret_bytes)
-        .map_err(ProtocolError::from_crypto)?;
-
-    let (kyber_ct, kyber_ss) =
-        KyberInterop::encapsulate(peer_kyber_public).map_err(ProtocolError::from_crypto)?;
-
-    let signature = sign_call_material(
-        identity_ed25519_secret,
-        &call_id,
-        &eph_public_bytes,
-        &kyber_ct,
-    )?;
-
-    let kyber_ss_bytes = kyber_ss
-        .read_bytes(KYBER_SHARED_SECRET_BYTES)
-        .map_err(ProtocolError::from_crypto)?;
-    let mac = compute_key_confirm_mac(&kyber_ss_bytes, VOIP_KEY_CONFIRM_CALLER_INFO, &call_id)?;
-
-    Ok(CallInitOutput {
-        call_id,
-        ephemeral_x25519_public: eph_public_bytes,
-        kyber_ciphertext: kyber_ct,
-        identity_ed25519_public: identity_ed25519_public.to_vec(),
-        signature,
-        key_confirmation_mac: mac,
-        ephemeral_x25519_private: eph_handle,
-        kyber_shared_secret: kyber_ss,
-        classical_shared_secret: Zeroizing::new(Vec::new()),
-    })
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn callee_accept_with_context(
     identity_ed25519_secret: &[u8],
@@ -550,7 +459,7 @@ pub fn callee_accept_with_context(
         peer_eph_x25519_public,
         peer_kyber_ct,
         peer_signature,
-        Some(auth_context),
+        auth_context,
     )?;
 
     let caller_kyber_ss = KyberInterop::decapsulate(peer_kyber_ct, identity_kyber_secret)
@@ -563,7 +472,7 @@ pub fn callee_accept_with_context(
         &caller_kyber_ss_bytes,
         VOIP_KEY_CONFIRM_CALLER_INFO,
         call_id,
-        Some(auth_context),
+        auth_context,
     )?;
     if !CryptoInterop::constant_time_equals(peer_key_confirm_mac, &expected_mac).unwrap_or(false) {
         return Err(ProtocolError::voip_call(
@@ -604,14 +513,14 @@ pub fn callee_accept_with_context(
         call_id,
         &eph_public_bytes,
         &callee_kyber_ct,
-        Some(auth_context),
+        auth_context,
     )?;
 
     let mac = compute_key_confirm_mac_with_context(
         &root_secret,
         VOIP_KEY_CONFIRM_CALLEE_INFO,
         call_id,
-        Some(auth_context),
+        auth_context,
     )?;
 
     let key_material = derive_call_keys(&root_secret, call_id, false, auth_context.shield_mode)?;
@@ -627,130 +536,6 @@ pub fn callee_accept_with_context(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[deprecated(
-    note = "Use callee_accept_with_context to enforce auth-context binding for call setup."
-)]
-pub fn callee_accept(
-    identity_ed25519_secret: &[u8],
-    identity_ed25519_public: &[u8],
-    identity_kyber_secret: &SecureMemoryHandle,
-    peer_kyber_public: &[u8],
-    call_id: &[u8],
-    peer_eph_x25519_public: &[u8],
-    peer_kyber_ct: &[u8],
-    peer_ed25519_public: &[u8],
-    peer_signature: &[u8],
-    peer_key_confirm_mac: &[u8],
-    shield_mode: bool,
-) -> Result<CallAcceptOutput, ProtocolError> {
-    if call_id.len() != CALL_ID_BYTES {
-        return Err(ProtocolError::voip_call("invalid call_id size"));
-    }
-
-    verify_call_signature(
-        peer_ed25519_public,
-        call_id,
-        peer_eph_x25519_public,
-        peer_kyber_ct,
-        peer_signature,
-    )?;
-
-    let caller_kyber_ss = KyberInterop::decapsulate(peer_kyber_ct, identity_kyber_secret)
-        .map_err(ProtocolError::from_crypto)?;
-
-    let caller_kyber_ss_bytes = caller_kyber_ss
-        .read_bytes(KYBER_SHARED_SECRET_BYTES)
-        .map_err(ProtocolError::from_crypto)?;
-    let expected_mac = compute_key_confirm_mac(
-        &caller_kyber_ss_bytes,
-        VOIP_KEY_CONFIRM_CALLER_INFO,
-        call_id,
-    )?;
-    if !CryptoInterop::constant_time_equals(peer_key_confirm_mac, &expected_mac).unwrap_or(false) {
-        return Err(ProtocolError::voip_call(
-            "caller key confirmation MAC mismatch",
-        ));
-    }
-
-    let eph_secret = StaticSecret::random_from_rng(rand_core::OsRng);
-    let eph_public = X25519PublicKey::from(&eph_secret);
-    let eph_public_bytes = eph_public.to_bytes().to_vec();
-
-    let classical_ss = compute_dh(
-        &eph_secret.to_bytes(),
-        peer_eph_x25519_public,
-        "callee_eph × caller_eph",
-    )?;
-
-    let (callee_kyber_ct, callee_kyber_ss) =
-        KyberInterop::encapsulate(peer_kyber_public).map_err(ProtocolError::from_crypto)?;
-
-    let callee_kyber_ss_bytes = callee_kyber_ss
-        .read_bytes(KYBER_SHARED_SECRET_BYTES)
-        .map_err(ProtocolError::from_crypto)?;
-    let mut combined_pq = Vec::with_capacity(KYBER_SHARED_SECRET_BYTES * 2);
-    combined_pq.extend_from_slice(&caller_kyber_ss_bytes);
-    combined_pq.extend_from_slice(&callee_kyber_ss_bytes);
-
-    let root_secret = KyberInterop::combine_hybrid_secrets(
-        &classical_ss,
-        &combined_pq,
-        ROOT_KEY_BYTES,
-        VOIP_ROOT_SECRET_INFO,
-    )?;
-    CryptoInterop::secure_wipe(&mut combined_pq);
-
-    let signature = sign_call_material(
-        identity_ed25519_secret,
-        call_id,
-        &eph_public_bytes,
-        &callee_kyber_ct,
-    )?;
-
-    let mac = compute_key_confirm_mac(&root_secret, VOIP_KEY_CONFIRM_CALLEE_INFO, call_id)?;
-
-    let key_material = derive_call_keys(&root_secret, call_id, false, shield_mode)?;
-
-    Ok(CallAcceptOutput {
-        ephemeral_x25519_public: eph_public_bytes,
-        kyber_ciphertext: callee_kyber_ct,
-        identity_ed25519_public: identity_ed25519_public.to_vec(),
-        signature,
-        key_confirmation_mac: mac,
-        key_material,
-    })
-}
-
-#[allow(clippy::too_many_arguments)]
-#[deprecated(
-    note = "Use caller_finish_with_context to enforce auth-context binding for call setup."
-)]
-pub fn caller_finish(
-    init_output: &CallInitOutput,
-    identity_kyber_secret: &SecureMemoryHandle,
-    call_id: &[u8],
-    peer_eph_x25519_public: &[u8],
-    peer_kyber_ct: &[u8],
-    peer_ed25519_public: &[u8],
-    peer_signature: &[u8],
-    peer_key_confirm_mac: &[u8],
-    shield_mode: bool,
-) -> Result<CallKeyMaterial, ProtocolError> {
-    caller_finish_internal(
-        init_output,
-        identity_kyber_secret,
-        call_id,
-        peer_eph_x25519_public,
-        peer_kyber_ct,
-        peer_ed25519_public,
-        peer_signature,
-        peer_key_confirm_mac,
-        shield_mode,
-        None,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
 pub fn caller_finish_with_context(
     init_output: &CallInitOutput,
     identity_kyber_secret: &SecureMemoryHandle,
@@ -761,33 +546,6 @@ pub fn caller_finish_with_context(
     peer_signature: &[u8],
     peer_key_confirm_mac: &[u8],
     auth_context: &CallInitAuthContext,
-) -> Result<CallKeyMaterial, ProtocolError> {
-    caller_finish_internal(
-        init_output,
-        identity_kyber_secret,
-        call_id,
-        peer_eph_x25519_public,
-        peer_kyber_ct,
-        peer_ed25519_public,
-        peer_signature,
-        peer_key_confirm_mac,
-        auth_context.shield_mode,
-        Some(auth_context),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn caller_finish_internal(
-    init_output: &CallInitOutput,
-    identity_kyber_secret: &SecureMemoryHandle,
-    call_id: &[u8],
-    peer_eph_x25519_public: &[u8],
-    peer_kyber_ct: &[u8],
-    peer_ed25519_public: &[u8],
-    peer_signature: &[u8],
-    peer_key_confirm_mac: &[u8],
-    shield_mode: bool,
-    auth_context: Option<&CallInitAuthContext>,
 ) -> Result<CallKeyMaterial, ProtocolError> {
     if call_id.len() != CALL_ID_BYTES {
         return Err(ProtocolError::voip_call("invalid call_id size"));
@@ -846,7 +604,7 @@ fn caller_finish_internal(
         ));
     }
 
-    derive_call_keys(&root_secret, call_id, true, shield_mode)
+    derive_call_keys(&root_secret, call_id, true, auth_context.shield_mode)
 }
 
 pub fn rekey_initiate(

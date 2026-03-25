@@ -4845,7 +4845,7 @@ impl IProtocolEventHandler for CFfiSessionEventHandler {
                     session_id.as_ptr(),
                     session_id.len(),
                     self.callbacks.user_data,
-                )
+                );
             };
         }
     }
@@ -4958,7 +4958,7 @@ impl IGroupEventHandler for CFfiGroupEventHandler {
                     identity_ed25519.as_ptr(),
                     identity_ed25519.len(),
                     self.callbacks.user_data,
-                )
+                );
             };
         }
     }
@@ -4989,7 +4989,7 @@ impl IGroupEventHandler for CFfiGroupEventHandler {
                     new_group_id.len(),
                     new_version,
                     self.callbacks.user_data,
-                )
+                );
             };
         }
     }

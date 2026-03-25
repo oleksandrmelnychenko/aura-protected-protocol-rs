@@ -16,8 +16,8 @@ fn init() {
 
 const fn permissive_group_policy() -> GroupSecurityPolicy {
     GroupSecurityPolicy {
-        max_messages_per_epoch: 0,
-        max_skipped_keys_per_sender: 0,
+        max_messages_per_epoch: 1_000,
+        max_skipped_keys_per_sender: 4,
         block_external_join: false,
         enhanced_key_schedule: false,
         mandatory_franking: false,
@@ -842,7 +842,7 @@ fn shield_policy_bound_in_context_hash() {
     let default_policy = default_session.security_policy().unwrap();
     let shield_policy = shield_session.security_policy().unwrap();
 
-    assert_ne!(default_policy.policy_bytes(), shield_policy.policy_bytes());
+    assert_eq!(default_policy.policy_bytes(), shield_policy.policy_bytes());
 }
 
 #[test]
@@ -925,17 +925,17 @@ fn shield_mandatory_franking() {
 }
 
 #[test]
-fn default_policy_unchanged() {
+fn default_policy_is_shielded() {
     init();
     let proto = EcliptixProtocol::new(0).unwrap();
     let session = proto.create_group(b"cred".to_vec()).unwrap();
-    assert!(!session.is_shielded().unwrap());
+    assert!(session.is_shielded().unwrap());
 
     let policy = session.security_policy().unwrap();
-    assert_eq!(policy.max_messages_per_epoch, 0);
-    assert!(!policy.enhanced_key_schedule);
-    assert!(!policy.mandatory_franking);
-    assert!(!policy.block_external_join);
+    assert_eq!(policy.max_messages_per_epoch, 1_000);
+    assert!(policy.enhanced_key_schedule);
+    assert!(policy.mandatory_franking);
+    assert!(policy.block_external_join);
 }
 
 #[test]

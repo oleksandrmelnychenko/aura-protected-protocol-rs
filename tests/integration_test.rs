@@ -69,7 +69,7 @@ fn create_two_member_group() -> (GroupSession, GroupSession) {
     )
 }
 
-fn small_rotation_policy() -> ecliptix_protocol::protocol::group::GroupSecurityPolicy {
+const fn small_rotation_policy() -> ecliptix_protocol::protocol::group::GroupSecurityPolicy {
     let mut policy = ecliptix_protocol::protocol::group::GroupSecurityPolicy::shield();
     policy.max_messages_per_epoch =
         ecliptix_protocol::core::constants::SHIELD_MIN_MESSAGES_PER_EPOCH;
@@ -138,6 +138,56 @@ fn authorize_and_join_external(
         credential.to_vec(),
     )
     .unwrap()
+}
+
+#[test]
+fn group_create_defaults_to_shield_policy() {
+    init();
+    let identity = IdentityKeys::create(5).unwrap();
+    let session = GroupSession::create(&identity, b"owner".to_vec()).unwrap();
+    let policy = session.security_policy().unwrap();
+    assert!(policy.is_shielded());
+    assert!(policy.block_external_join);
+    assert!(policy.enhanced_key_schedule);
+    assert!(policy.mandatory_franking);
+}
+
+#[test]
+fn group_external_join_missing_policy_bytes_rejected() {
+    init();
+    let owner = IdentityKeys::create(10).unwrap();
+    let owner_session = create_external_joinable_group(&owner, b"owner");
+    let joiner = IdentityKeys::create(10).unwrap();
+    let authorization = owner_session
+        .authorize_external_join(
+            &joiner.get_identity_ed25519_public(),
+            &joiner.get_identity_x25519_public(),
+            b"joiner",
+        )
+        .unwrap();
+
+    let mut public_state = ecliptix_protocol::proto::GroupPublicState::decode(
+        owner_session.export_public_state().unwrap().as_slice(),
+    )
+    .unwrap();
+    public_state.security_policy.clear();
+    let mut tampered_public_state = Vec::new();
+    public_state.encode(&mut tampered_public_state).unwrap();
+
+    let result = GroupSession::from_external_join(
+        &tampered_public_state,
+        &authorization,
+        &joiner,
+        b"joiner".to_vec(),
+    );
+    let Err(err) = result else {
+        panic!("Expected missing policy bytes to be rejected");
+    };
+    let err = err.to_string();
+    assert!(
+        err.contains("Missing group security policy bytes"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
@@ -488,10 +538,16 @@ fn count_local_opks(ik: &IdentityKeys) -> usize {
 
 fn encode_varint(mut value: u64, out: &mut Vec<u8>) {
     while value >= 0x80 {
-        out.push(((value as u8) & 0x7f) | 0x80);
+        let Ok(byte) = u8::try_from(value & 0x7f) else {
+            return;
+        };
+        out.push(byte | 0x80);
         value >>= 7;
     }
-    out.push(value as u8);
+    let Ok(byte) = u8::try_from(value) else {
+        return;
+    };
+    out.push(byte);
 }
 
 fn encode_uint32_field(field_number: u32, value: u32, out: &mut Vec<u8>) {
@@ -9754,6 +9810,101 @@ fn group_external_join_committer_leaf_mismatch_rejected() {
     assert!(
         result.is_err(),
         "External join with mismatched committer_leaf_index must be rejected"
+    );
+}
+
+#[test]
+fn group_commit_group_id_mismatch_rejected() {
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let alice_session = create_external_joinable_group(&alice_id, b"alice");
+    let joiner_id = IdentityKeys::create(20).unwrap();
+    let (_joiner_session, ext_commit_bytes) =
+        authorize_and_join_external(&alice_session, &joiner_id, b"joiner");
+
+    let mut commit =
+        ecliptix_protocol::proto::GroupCommit::decode(ext_commit_bytes.as_slice()).unwrap();
+    commit.group_id = vec![0x44; 32];
+    commit.committer_signature.clear();
+    let sk = joiner_id.get_identity_ed25519_private_key_copy().unwrap();
+    let sk_arr: [u8; 64] = sk.as_slice().try_into().unwrap();
+    let signing_key = ed25519_dalek::SigningKey::from_keypair_bytes(&sk_arr).unwrap();
+    let mut commit_for_sig = Vec::new();
+    commit.encode(&mut commit_for_sig).unwrap();
+    use ed25519_dalek::Signer;
+    commit.committer_signature = signing_key.sign(&commit_for_sig).to_bytes().to_vec();
+    let mut tampered = Vec::new();
+    commit.encode(&mut tampered).unwrap();
+
+    let result = alice_session.process_commit(&tampered);
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("group_id"),
+        "Error should mention group_id mismatch: {err}"
+    );
+}
+
+#[test]
+fn group_reinit_with_add_proposal_rejected() {
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let bob_id = IdentityKeys::create(10).unwrap();
+    let alice_session = GroupSession::create_with_policy(
+        &alice_id,
+        b"alice".to_vec(),
+        ecliptix_protocol::protocol::group::GroupSecurityPolicy::shield(),
+    )
+    .unwrap();
+    let (bob_kp, bob_x25519_priv, bob_kyber_sec) =
+        group::key_package::create_key_package(&bob_id, b"bob".to_vec()).unwrap();
+    let (_commit, welcome) = alice_session.add_member(&bob_kp).unwrap();
+    let bob_session = GroupSession::from_welcome(
+        &welcome,
+        bob_x25519_priv,
+        bob_kyber_sec,
+        &bob_id.get_identity_ed25519_public(),
+        &bob_id.get_identity_x25519_public(),
+        bob_id.get_identity_ed25519_private_key_copy().unwrap(),
+    )
+    .unwrap();
+
+    let reinit_commit_bytes = alice_session
+        .create_reinit_commit(vec![0xAB; 32], 1)
+        .unwrap();
+    let mut commit =
+        ecliptix_protocol::proto::GroupCommit::decode(reinit_commit_bytes.as_slice()).unwrap();
+    let extra_id = IdentityKeys::create(10).unwrap();
+    let (extra_kp, _, _) =
+        group::key_package::create_key_package(&extra_id, b"extra".to_vec()).unwrap();
+    commit
+        .proposals
+        .push(ecliptix_protocol::proto::GroupProposal {
+            proposal: Some(ecliptix_protocol::proto::group_proposal::Proposal::Add(
+                ecliptix_protocol::proto::GroupAddProposal {
+                    key_package: Some(extra_kp),
+                },
+            )),
+        });
+    commit.committer_signature.clear();
+    let sk = alice_id.get_identity_ed25519_private_key_copy().unwrap();
+    let sk_arr: [u8; 64] = sk.as_slice().try_into().unwrap();
+    let signing_key = ed25519_dalek::SigningKey::from_keypair_bytes(&sk_arr).unwrap();
+    let mut commit_for_sig = Vec::new();
+    commit.encode(&mut commit_for_sig).unwrap();
+    use ed25519_dalek::Signer;
+    commit.committer_signature = signing_key.sign(&commit_for_sig).to_bytes().to_vec();
+    let mut tampered = Vec::new();
+    commit.encode(&mut tampered).unwrap();
+
+    let result = bob_session.process_commit(&tampered);
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("ReInit commit must not contain other proposal types"),
+        "unexpected error: {err}"
     );
 }
 

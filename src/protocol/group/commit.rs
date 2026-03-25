@@ -190,6 +190,11 @@ pub fn process_commit(
             expected_epoch, commit.epoch
         )));
     }
+    if commit.group_id != group_id {
+        return Err(ProtocolError::group_protocol(
+            "Commit group_id does not match current group",
+        ));
+    }
 
     let is_external_join = commit.proposals.iter().any(|p| {
         matches!(

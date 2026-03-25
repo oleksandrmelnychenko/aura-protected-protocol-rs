@@ -326,8 +326,7 @@ pub fn apply_commit_to_roster(
     for &leaf_idx in &info.removed_leaves {
         if updated_roster.find_member(leaf_idx).is_none() {
             return Err(ProtocolError::group_membership(format!(
-                "Removed leaf {} is not present in roster",
-                leaf_idx
+                "Removed leaf {leaf_idx} is not present in roster"
             )));
         }
         updated_roster.members.retain(|m| m.leaf_index != leaf_idx);
@@ -351,8 +350,7 @@ pub fn apply_commit_to_roster(
     };
     if projected_member_count > MAX_GROUP_MEMBERS {
         return Err(ProtocolError::group_membership(format!(
-            "Updated roster would exceed max members: {} > {}",
-            projected_member_count, MAX_GROUP_MEMBERS
+            "Updated roster would exceed max members: {projected_member_count} > {MAX_GROUP_MEMBERS}"
         )));
     }
 

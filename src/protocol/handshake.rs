@@ -680,6 +680,7 @@ pub trait HandshakeInitReplayGuard: Send + Sync {
     fn release(&self, init_fingerprint: &[u8]) -> Result<(), ProtocolError>;
 }
 
+#[allow(clippy::struct_excessive_bools)]
 struct HandshakeInitReplayReservation<'a> {
     identity_keys: &'a IdentityKeys,
     replay_guard: Option<&'a dyn HandshakeInitReplayGuard>,
@@ -696,16 +697,17 @@ impl<'a> HandshakeInitReplayReservation<'a> {
         fingerprint: Vec<u8>,
         replay_guard: Option<&'a dyn HandshakeInitReplayGuard>,
     ) -> Result<Self, ProtocolError> {
-        let mut remote_reserved = false;
-        if let Some(replay_guard) = replay_guard {
+        let remote_reserved = if let Some(replay_guard) = replay_guard {
             let is_fresh = replay_guard.reserve(&fingerprint)?;
             if !is_fresh {
                 return Err(ProtocolError::replay_attack(
                     "Replay attack detected: duplicate HandshakeInit",
                 ));
             }
-            remote_reserved = true;
-        }
+            true
+        } else {
+            false
+        };
         let is_fresh = identity_keys.reserve_handshake_init_fingerprint(&fingerprint)?;
         if !is_fresh {
             if remote_reserved {

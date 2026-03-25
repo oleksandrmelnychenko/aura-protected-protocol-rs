@@ -6,10 +6,21 @@ use ecliptix_protocol::crypto::CryptoInterop;
 use ecliptix_protocol::identity::IdentityKeys;
 use ecliptix_protocol::proto::{CallRekey, CallRekeyAck};
 use ecliptix_protocol::protocol::voip::call_key_exchange::{
-    callee_accept, caller_finish, caller_init, sign_rekey_material,
+    callee_accept_with_context, caller_finish_with_context, caller_init_with_context,
+    sign_rekey_material, CallInitAuthContext,
 };
 use ecliptix_protocol::protocol::voip::{CallRole, VoipSession};
 use prost::Message;
+
+fn default_call_context() -> CallInitAuthContext {
+    CallInitAuthContext {
+        version: VOIP_PROTOCOL_VERSION,
+        media_type: 1,
+        ratchet_interval_frames: DEFAULT_RATCHET_INTERVAL_FRAMES,
+        pq_rekey_interval_secs: DEFAULT_PQ_REKEY_INTERVAL_SECS,
+        shield_mode: false,
+    }
+}
 
 fn setup_voip_pair(
 ) -> Result<(IdentityKeys, IdentityKeys, VoipSession, VoipSession), ecliptix_protocol::core::errors::ProtocolError>
@@ -27,10 +38,16 @@ fn setup_voip_pair(
     let bob_kyber_pub = bob.get_kyber_public();
     let bob_kyber_sec = bob.clone_kyber_secret_key()?;
 
-    let init_output = caller_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub)?;
+    let auth_context = default_call_context();
+    let init_output = caller_init_with_context(
+        &alice_ed_secret,
+        &alice_ed_public,
+        &bob_kyber_pub,
+        &auth_context,
+    )?;
     let call_id = init_output.call_id.clone();
 
-    let accept_output = callee_accept(
+    let accept_output = callee_accept_with_context(
         &bob_ed_secret,
         &bob_ed_public,
         &bob_kyber_sec,
@@ -41,10 +58,10 @@ fn setup_voip_pair(
         &init_output.identity_ed25519_public,
         &init_output.signature,
         &init_output.key_confirmation_mac,
-        false,
+        &auth_context,
     )?;
 
-    let alice_keys = caller_finish(
+    let alice_keys = caller_finish_with_context(
         &init_output,
         &alice_kyber_sec,
         &call_id,
@@ -53,7 +70,7 @@ fn setup_voip_pair(
         &accept_output.identity_ed25519_public,
         &accept_output.signature,
         &accept_output.key_confirmation_mac,
-        false,
+        &auth_context,
     )?;
 
     let alice_session = VoipSession::from_key_material(

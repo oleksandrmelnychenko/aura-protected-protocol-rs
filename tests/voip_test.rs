@@ -10,15 +10,15 @@ use ecliptix_protocol::crypto::{AesGcm, CryptoInterop, HkdfSha256, SecureMemoryH
 use ecliptix_protocol::identity::IdentityKeys;
 use ecliptix_protocol::proto::{CallRekey, CallRekeyAck, PreKeyBundle, VoipSessionState};
 use ecliptix_protocol::protocol::voip::call_key_exchange::{
-    callee_accept, callee_accept_with_context, caller_finish, caller_finish_with_context,
-    caller_init, caller_init_with_context, CallInitAuthContext,
+    callee_accept_with_context, caller_finish_with_context, caller_init_with_context,
+    CallInitAuthContext,
 };
 use ecliptix_protocol::protocol::voip::frame::{build_frame_aad, FrameHeader};
 use ecliptix_protocol::protocol::voip::key_ratchet::MediaKeyRatchet;
 use ecliptix_protocol::protocol::voip::media_crypto::MediaCrypto;
 use ecliptix_protocol::protocol::voip::{CallRole, CallState, VoipSession};
-use prost::Message;
 use hmac::Mac;
+use prost::Message;
 
 fn init() {
     let _ = CryptoInterop::initialize();
@@ -320,6 +320,87 @@ fn create_identity() -> IdentityKeys {
     IdentityKeys::create(5).unwrap()
 }
 
+fn default_call_context(shield_mode: bool) -> CallInitAuthContext {
+    CallInitAuthContext {
+        version: VOIP_PROTOCOL_VERSION,
+        media_type: 1,
+        ratchet_interval_frames: DEFAULT_RATCHET_INTERVAL_FRAMES,
+        pq_rekey_interval_secs: DEFAULT_PQ_REKEY_INTERVAL_SECS,
+        shield_mode,
+    }
+}
+
+fn call_init(
+    identity_ed25519_secret: &[u8],
+    identity_ed25519_public: &[u8],
+    peer_kyber_public: &[u8],
+    shield_mode: bool,
+) -> Result<ecliptix_protocol::protocol::voip::call_key_exchange::CallInitOutput, ProtocolError> {
+    let auth_context = default_call_context(shield_mode);
+    caller_init_with_context(
+        identity_ed25519_secret,
+        identity_ed25519_public,
+        peer_kyber_public,
+        &auth_context,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn call_accept(
+    identity_ed25519_secret: &[u8],
+    identity_ed25519_public: &[u8],
+    identity_kyber_secret: &SecureMemoryHandle,
+    peer_kyber_public: &[u8],
+    call_id: &[u8],
+    peer_eph_x25519_public: &[u8],
+    peer_kyber_ct: &[u8],
+    peer_ed25519_public: &[u8],
+    peer_signature: &[u8],
+    peer_key_confirm_mac: &[u8],
+    shield_mode: bool,
+) -> Result<ecliptix_protocol::protocol::voip::call_key_exchange::CallAcceptOutput, ProtocolError> {
+    let auth_context = default_call_context(shield_mode);
+    callee_accept_with_context(
+        identity_ed25519_secret,
+        identity_ed25519_public,
+        identity_kyber_secret,
+        peer_kyber_public,
+        call_id,
+        peer_eph_x25519_public,
+        peer_kyber_ct,
+        peer_ed25519_public,
+        peer_signature,
+        peer_key_confirm_mac,
+        &auth_context,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn call_finish(
+    init_output: &ecliptix_protocol::protocol::voip::call_key_exchange::CallInitOutput,
+    identity_kyber_secret: &SecureMemoryHandle,
+    call_id: &[u8],
+    peer_eph_x25519_public: &[u8],
+    peer_kyber_ct: &[u8],
+    peer_ed25519_public: &[u8],
+    peer_signature: &[u8],
+    peer_key_confirm_mac: &[u8],
+    shield_mode: bool,
+) -> Result<ecliptix_protocol::protocol::voip::call_key_exchange::CallKeyMaterial, ProtocolError> {
+    let auth_context = default_call_context(shield_mode);
+    caller_finish_with_context(
+        init_output,
+        identity_kyber_secret,
+        call_id,
+        peer_eph_x25519_public,
+        peer_kyber_ct,
+        peer_ed25519_public,
+        peer_signature,
+        peer_key_confirm_mac,
+        &auth_context,
+    )
+}
+
 #[test]
 fn call_key_exchange_caller_init_produces_valid_output() {
     init();
@@ -330,7 +411,7 @@ fn call_key_exchange_caller_init_produces_valid_output() {
     let ed_public = alice.get_identity_ed25519_public();
     let bob_kyber_pub = bob.get_kyber_public();
 
-    let output = caller_init(&ed_secret, &ed_public, &bob_kyber_pub).unwrap();
+    let output = call_init(&ed_secret, &ed_public, &bob_kyber_pub, false).unwrap();
 
     assert_eq!(
         output.ephemeral_x25519_public.len(),
@@ -362,11 +443,11 @@ fn call_key_exchange_full_handshake_normal_mode() {
     let bob_kyber_sec = bob.clone_kyber_secret_key().unwrap();
 
     // Step 1: Alice (caller) initiates
-    let init_output = caller_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub).unwrap();
+    let init_output = call_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub, false).unwrap();
     let call_id = init_output.call_id.clone();
 
     // Step 2: Bob (callee) accepts
-    let accept_output = callee_accept(
+    let accept_output = call_accept(
         &bob_ed_secret,
         &bob_ed_public,
         &bob_kyber_sec,
@@ -382,7 +463,7 @@ fn call_key_exchange_full_handshake_normal_mode() {
     .unwrap();
 
     // Step 3: Alice finishes handshake
-    let alice_keys = caller_finish(
+    let alice_keys = call_finish(
         &init_output,
         &alice_kyber_sec,
         &call_id,
@@ -451,10 +532,10 @@ fn call_key_exchange_full_handshake_shield_mode() {
     let bob_kyber_pub = bob.get_kyber_public();
     let bob_kyber_sec = bob.clone_kyber_secret_key().unwrap();
 
-    let init_output = caller_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub).unwrap();
+    let init_output = call_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub, true).unwrap();
     let call_id = init_output.call_id.clone();
 
-    let accept_output = callee_accept(
+    let accept_output = call_accept(
         &bob_ed_secret,
         &bob_ed_public,
         &bob_kyber_sec,
@@ -469,7 +550,7 @@ fn call_key_exchange_full_handshake_shield_mode() {
     )
     .unwrap();
 
-    let alice_keys = caller_finish(
+    let alice_keys = call_finish(
         &init_output,
         &alice_kyber_sec,
         &call_id,
@@ -512,10 +593,10 @@ fn call_key_exchange_shield_produces_different_keys_than_normal() {
     let bob_kyber_sec = bob.clone_kyber_secret_key().unwrap();
 
     // Normal mode handshake
-    let init1 = caller_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub).unwrap();
+    let init1 = call_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub, false).unwrap();
     let call_id = init1.call_id.clone();
 
-    let accept_normal = callee_accept(
+    let accept_normal = call_accept(
         &bob_ed_secret,
         &bob_ed_public,
         &bob_kyber_sec,
@@ -530,7 +611,7 @@ fn call_key_exchange_shield_produces_different_keys_than_normal() {
     )
     .unwrap();
 
-    let normal_keys = caller_finish(
+    let normal_keys = call_finish(
         &init1,
         &alice_kyber_sec,
         &call_id,
@@ -568,13 +649,13 @@ fn call_key_exchange_wrong_signature_rejected() {
     let bob_kyber_pub = bob.get_kyber_public();
     let bob_kyber_sec = bob.clone_kyber_secret_key().unwrap();
 
-    let init_output = caller_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub).unwrap();
+    let init_output = call_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub, false).unwrap();
     let call_id = init_output.call_id.clone();
 
     // Eve forges a signature
     let eve_ed_public = eve.get_identity_ed25519_public();
     // Use eve's public key but alice's ciphertext — signature won't verify
-    let result = callee_accept(
+    let result = call_accept(
         &bob_ed_secret,
         &bob_ed_public,
         &bob_kyber_sec,
@@ -605,11 +686,11 @@ fn call_key_exchange_wrong_mac_rejected() {
     let bob_kyber_pub = bob.get_kyber_public();
     let bob_kyber_sec = bob.clone_kyber_secret_key().unwrap();
 
-    let init_output = caller_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub).unwrap();
+    let init_output = call_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub, false).unwrap();
     let call_id = init_output.call_id.clone();
 
     let bad_mac = vec![0xFFu8; HMAC_BYTES];
-    let result = callee_accept(
+    let result = call_accept(
         &bob_ed_secret,
         &bob_ed_public,
         &bob_kyber_sec,
@@ -757,10 +838,10 @@ fn call_key_exchange_invalid_call_id_size_rejected() {
     let bob_kyber_pub = bob.get_kyber_public();
     let bob_kyber_sec = bob.clone_kyber_secret_key().unwrap();
 
-    let init_output = caller_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub).unwrap();
+    let init_output = call_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub, false).unwrap();
 
     let bad_call_id = vec![0u8; 16]; // wrong size (should be 32)
-    let result = callee_accept(
+    let result = call_accept(
         &bob_ed_secret,
         &bob_ed_public,
         &bob_kyber_sec,
@@ -798,10 +879,11 @@ fn setup_voip_session_pair_with_params(
     let bob_kyber_pub = bob.get_kyber_public();
     let bob_kyber_sec = bob.clone_kyber_secret_key().unwrap();
 
-    let init_output = caller_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub).unwrap();
+    let init_output =
+        call_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub, shield).unwrap();
     let call_id = init_output.call_id.clone();
 
-    let accept_output = callee_accept(
+    let accept_output = call_accept(
         &bob_ed_secret,
         &bob_ed_public,
         &bob_kyber_sec,
@@ -816,7 +898,7 @@ fn setup_voip_session_pair_with_params(
     )
     .unwrap();
 
-    let alice_keys = caller_finish(
+    let alice_keys = call_finish(
         &init_output,
         &alice_kyber_sec,
         &call_id,
@@ -872,10 +954,11 @@ fn setup_voip_session_pair_with_identities(
     let bob_kyber_pub = bob.get_kyber_public();
     let bob_kyber_sec = bob.clone_kyber_secret_key().unwrap();
 
-    let init_output = caller_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub).unwrap();
+    let init_output =
+        call_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub, shield).unwrap();
     let call_id = init_output.call_id.clone();
 
-    let accept_output = callee_accept(
+    let accept_output = call_accept(
         &bob_ed_secret,
         &bob_ed_public,
         &bob_kyber_sec,
@@ -890,7 +973,7 @@ fn setup_voip_session_pair_with_identities(
     )
     .unwrap();
 
-    let alice_keys = caller_finish(
+    let alice_keys = call_finish(
         &init_output,
         &alice_kyber_sec,
         &call_id,
@@ -1388,7 +1471,7 @@ fn api_voip_caller_init_protobuf_roundtrip() {
     let alice_ed_public = alice.get_identity_ed25519_public();
     let bob_kyber_pub = bob.get_kyber_public();
 
-    let init_output = caller_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub).unwrap();
+    let init_output = call_init(&alice_ed_secret, &alice_ed_public, &bob_kyber_pub, false).unwrap();
 
     // Build the protobuf manually and verify roundtrip
     let call_id = init_output.call_id.clone();
@@ -2056,6 +2139,50 @@ fn voip_sealed_state_missing_replay_bitmap_rejected_when_high_water_nonzero() {
 
     let mut forged = Vec::new();
     forged.extend_from_slice(&external_counter.to_le_bytes());
+    forged.extend_from_slice(nonce);
+    forged.extend_from_slice(&hmac_tag);
+    forged.extend_from_slice(&modified_ct);
+
+    let result = VoipSession::from_sealed_state(&forged, &key, 0);
+    assert!(result.is_err());
+}
+
+#[test]
+fn voip_sealed_state_header_body_counter_mismatch_rejected() {
+    init();
+    let (alice, _bob) = setup_voip_session_pair(false);
+
+    let key = CryptoInterop::get_random_bytes(AES_KEY_BYTES);
+    let sealed = alice.export_sealed_state(&key, 11).unwrap();
+
+    let nonce_offset = 8;
+    let mac_offset = nonce_offset + AES_GCM_NONCE_BYTES;
+    let ct_offset = mac_offset + HMAC_BYTES;
+    let stored_counter = u64::from_le_bytes(sealed[0..8].try_into().unwrap());
+    let nonce = &sealed[nonce_offset..mac_offset];
+    let ciphertext = &sealed[ct_offset..];
+
+    let state_bytes = AesGcm::decrypt(&key, nonce, ciphertext, &[]).unwrap();
+    let mut state = VoipSessionState::decode(state_bytes.as_slice()).unwrap();
+    state.external_counter = stored_counter + 1;
+    let mut modified_state = Vec::new();
+    state.encode(&mut modified_state).unwrap();
+    let modified_ct = AesGcm::encrypt(&key, nonce, &modified_state, &[]).unwrap();
+
+    let hmac_key = HkdfSha256::derive_key_bytes(
+        &key,
+        HMAC_BYTES,
+        &stored_counter.to_le_bytes(),
+        b"Ecliptix-VoIP-StateHMAC",
+    )
+    .unwrap();
+    let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(&hmac_key).unwrap();
+    mac.update(&modified_ct);
+    mac.update(nonce);
+    let hmac_tag = mac.finalize().into_bytes();
+
+    let mut forged = Vec::new();
+    forged.extend_from_slice(&stored_counter.to_le_bytes());
     forged.extend_from_slice(nonce);
     forged.extend_from_slice(&hmac_tag);
     forged.extend_from_slice(&modified_ct);

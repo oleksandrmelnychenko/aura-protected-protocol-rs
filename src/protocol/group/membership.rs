@@ -25,6 +25,7 @@ pub fn validate_proposals(
 
     let mut removed_leaves = HashSet::new();
     let mut added_identity_keys: HashSet<Vec<u8>> = HashSet::new();
+    let mut reinit_count = 0usize;
 
     for proposal in proposals {
         match &proposal.proposal {
@@ -101,6 +102,7 @@ pub fn validate_proposals(
                 }
             }
             Some(crate::proto::group_proposal::Proposal::ReInit(reinit)) => {
+                reinit_count += 1;
                 if reinit.new_group_id.len() != GROUP_ID_BYTES {
                     return Err(ProtocolError::group_membership(format!(
                         "ReInit: new_group_id must be {} bytes, got {}",
@@ -113,6 +115,16 @@ pub fn validate_proposals(
                 return Err(ProtocolError::group_membership("Empty proposal"));
             }
         }
+    }
+    if reinit_count > 1 {
+        return Err(ProtocolError::group_membership(
+            "ReInit proposal must appear at most once",
+        ));
+    }
+    if reinit_count == 1 && proposals.len() != 1 {
+        return Err(ProtocolError::group_membership(
+            "ReInit commit must not contain other proposal types",
+        ));
     }
 
     Ok(())
