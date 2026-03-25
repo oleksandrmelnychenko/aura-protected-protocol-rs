@@ -69,6 +69,55 @@ fn create_two_member_group() -> (GroupSession, GroupSession) {
     )
 }
 
+fn small_rotation_policy() -> ecliptix_protocol::protocol::group::GroupSecurityPolicy {
+    let mut policy = ecliptix_protocol::protocol::group::GroupSecurityPolicy::shield();
+    policy.max_messages_per_epoch =
+        ecliptix_protocol::core::constants::SHIELD_MIN_MESSAGES_PER_EPOCH;
+    policy
+}
+
+fn run_group_longevity_simulation(
+    years: u32,
+    days_per_year: u32,
+    messages_per_day: u32,
+    max_messages_per_epoch: u32,
+) -> (u64, u64, u64) {
+    let mut policy = ecliptix_protocol::protocol::group::GroupSecurityPolicy::shield();
+    policy.max_messages_per_epoch = max_messages_per_epoch;
+    let (alice, bob) = create_two_member_group_with_policy(policy);
+
+    let mut delivered = 0u64;
+    let mut rotations = 0u64;
+    let total_days = years * days_per_year;
+
+    for day in 0..total_days {
+        for m in 0..messages_per_day {
+            let mut msg = Vec::with_capacity(8);
+            msg.extend_from_slice(&day.to_le_bytes());
+            msg.extend_from_slice(&m.to_le_bytes());
+            let ct = alice.encrypt(&msg).unwrap();
+            let result = bob.decrypt(&ct).unwrap();
+            assert_eq!(result.plaintext, msg);
+            delivered += 1;
+
+            if alice.should_rotate_epoch().unwrap() {
+                let rotate_commit = alice.rotate_epoch_if_needed().unwrap();
+                let Some(rotate_commit) = rotate_commit else {
+                    panic!("rotation was expected");
+                };
+                bob.process_commit(&rotate_commit).unwrap();
+                rotations += 1;
+            }
+        }
+    }
+
+    let alice_epoch = alice.epoch().unwrap();
+    let bob_epoch = bob.epoch().unwrap();
+    assert_eq!(alice_epoch, bob_epoch);
+
+    (delivered, rotations, alice_epoch)
+}
+
 fn authorize_and_join_external(
     owner: &ecliptix_protocol::protocol::group::GroupSession,
     joiner: &IdentityKeys,
@@ -4479,6 +4528,425 @@ fn group_session_multiple_updates() {
 }
 
 #[test]
+fn group_session_epoch_messages_remaining_decrements_on_encrypt() {
+    init();
+
+    let identity = IdentityKeys::create(0).unwrap();
+    let session = GroupSession::create(&identity, b"alice".to_vec()).unwrap();
+
+    let before = session.epoch_messages_remaining().unwrap();
+    session.encrypt(b"msg-1").unwrap();
+    session.encrypt(b"msg-2").unwrap();
+    session.encrypt(b"msg-3").unwrap();
+    let after = session.epoch_messages_remaining().unwrap();
+
+    assert_eq!(before.saturating_sub(after), 3);
+}
+
+#[test]
+fn group_session_should_rotate_epoch_with_threshold_behavior() {
+    init();
+
+    let identity = IdentityKeys::create(0).unwrap();
+    let session = GroupSession::create(&identity, b"alice".to_vec()).unwrap();
+
+    assert!(session.should_rotate_epoch_with_threshold(100).unwrap());
+    assert!(!session.should_rotate_epoch_with_threshold(1).unwrap());
+    assert!(session.should_rotate_epoch_with_threshold(0).is_err());
+    assert!(session.should_rotate_epoch_with_threshold(101).is_err());
+}
+
+#[test]
+fn group_session_should_rotate_threshold_uses_ceil_rounding() {
+    init();
+
+    let identity = IdentityKeys::create(0).unwrap();
+    let session =
+        GroupSession::create_with_policy(&identity, b"alice".to_vec(), small_rotation_policy())
+            .unwrap();
+
+    for _ in 0..7 {
+        session.encrypt(b"m").unwrap();
+    }
+    assert!(!session.should_rotate_epoch_with_threshold(11).unwrap());
+
+    session.encrypt(b"m").unwrap();
+    assert!(session.should_rotate_epoch_with_threshold(11).unwrap());
+}
+
+#[test]
+fn group_session_rotate_epoch_if_needed_returns_none_when_not_needed() {
+    init();
+
+    let identity = IdentityKeys::create(0).unwrap();
+    let session =
+        GroupSession::create_with_policy(&identity, b"alice".to_vec(), small_rotation_policy())
+            .unwrap();
+
+    session.encrypt(b"first").unwrap();
+    assert!(session.rotate_epoch_if_needed().unwrap().is_none());
+    assert_eq!(session.epoch().unwrap(), 0);
+}
+
+#[test]
+fn group_session_rotate_epoch_if_needed_returns_commit_and_resets_budget() {
+    init();
+
+    let identity = IdentityKeys::create(0).unwrap();
+    let session =
+        GroupSession::create_with_policy(&identity, b"alice".to_vec(), small_rotation_policy())
+            .unwrap();
+
+    for _ in 0..9 {
+        session.encrypt(b"x").unwrap();
+    }
+    assert!(session.should_rotate_epoch().unwrap());
+
+    let commit = session.rotate_epoch_if_needed().unwrap();
+    assert!(commit.is_some());
+    assert_eq!(session.epoch().unwrap(), 1);
+    assert_eq!(
+        session.epoch_messages_remaining().unwrap(),
+        ecliptix_protocol::core::constants::SHIELD_MIN_MESSAGES_PER_EPOCH
+    );
+}
+
+#[test]
+fn group_session_rotate_epoch_commit_can_be_processed_by_peer() {
+    init();
+
+    let (alice, bob) = create_two_member_group_with_policy(small_rotation_policy());
+    for _ in 0..9 {
+        let ct = alice.encrypt(b"warmup").unwrap();
+        let _ = bob.decrypt(&ct).unwrap();
+    }
+
+    let rotate_commit = alice.rotate_epoch_if_needed().unwrap().unwrap();
+    bob.process_commit(&rotate_commit).unwrap();
+
+    assert_eq!(alice.epoch().unwrap(), 2);
+    assert_eq!(bob.epoch().unwrap(), 2);
+}
+
+#[test]
+fn group_api_rotation_helpers_follow_policy_threshold() {
+    init();
+
+    let proto = EcliptixProtocol::new(0).unwrap();
+    let session = proto
+        .create_group_with_policy(b"alice-cred".to_vec(), small_rotation_policy())
+        .unwrap();
+
+    assert!(!session.should_rotate_epoch().unwrap());
+    for _ in 0..8 {
+        session.encrypt(b"m").unwrap();
+    }
+    assert!(!session.should_rotate_epoch().unwrap());
+    session.encrypt(b"m").unwrap();
+    assert!(session.should_rotate_epoch().unwrap());
+}
+
+#[test]
+fn group_api_rotate_epoch_if_needed_advances_epoch() {
+    init();
+
+    let proto = EcliptixProtocol::new(0).unwrap();
+    let session = proto
+        .create_group_with_policy(b"alice-cred".to_vec(), small_rotation_policy())
+        .unwrap();
+
+    for _ in 0..9 {
+        session.encrypt(b"m").unwrap();
+    }
+
+    let commit = session.rotate_epoch_if_needed().unwrap();
+    assert!(commit.is_some());
+    assert_eq!(session.epoch().unwrap(), 1);
+    assert_eq!(
+        session.epoch_messages_remaining().unwrap(),
+        ecliptix_protocol::core::constants::SHIELD_MIN_MESSAGES_PER_EPOCH
+    );
+}
+
+#[test]
+fn group_api_rotate_commit_can_be_applied_on_joined_member() {
+    init();
+
+    let alice = EcliptixProtocol::new(10).unwrap();
+    let bob = EcliptixProtocol::new(10).unwrap();
+
+    let alice_group = alice
+        .create_group_with_policy(b"alice".to_vec(), small_rotation_policy())
+        .unwrap();
+    let (bob_kp, bob_x25519_priv, bob_kyber_sec) =
+        bob.generate_key_package(b"bob".to_vec()).unwrap();
+    let (_add_commit, welcome) = alice_group.add_member(&bob_kp).unwrap();
+
+    let bob_group = bob
+        .join_group(&welcome, bob_x25519_priv, bob_kyber_sec)
+        .unwrap();
+
+    for _ in 0..9 {
+        let ct = alice_group.encrypt(b"m").unwrap();
+        let _ = bob_group.decrypt(&ct).unwrap();
+    }
+
+    let rotate_commit = alice_group.rotate_epoch_if_needed().unwrap().unwrap();
+    bob_group.process_commit(&rotate_commit).unwrap();
+
+    assert_eq!(alice_group.epoch().unwrap(), 2);
+    assert_eq!(bob_group.epoch().unwrap(), 2);
+}
+
+#[test]
+fn group_api_rotate_epoch_if_needed_is_idempotent_immediately_after_rotation() {
+    init();
+
+    let proto = EcliptixProtocol::new(0).unwrap();
+    let session = proto
+        .create_group_with_policy(b"alice-cred".to_vec(), small_rotation_policy())
+        .unwrap();
+
+    for _ in 0..9 {
+        session.encrypt(b"m").unwrap();
+    }
+
+    let first = session.rotate_epoch_if_needed().unwrap();
+    assert!(first.is_some());
+
+    let second = session.rotate_epoch_if_needed().unwrap();
+    assert!(second.is_none());
+    assert_eq!(session.epoch().unwrap(), 1);
+}
+
+#[test]
+fn group_session_encrypt_with_auto_rotate_returns_none_before_threshold() {
+    init();
+
+    let (alice, bob) = create_two_member_group_with_policy(small_rotation_policy());
+    let (rotate_commit, ct) = alice.encrypt_with_auto_rotate(b"hello").unwrap();
+    assert!(rotate_commit.is_none());
+
+    let result = bob.decrypt(&ct).unwrap();
+    assert_eq!(result.plaintext, b"hello");
+}
+
+#[test]
+fn group_session_encrypt_with_auto_rotate_returns_commit_near_exhaustion() {
+    init();
+
+    let (alice, bob) = create_two_member_group_with_policy(small_rotation_policy());
+    for _ in 0..9 {
+        let ct = alice.encrypt(b"warmup").unwrap();
+        let _ = bob.decrypt(&ct).unwrap();
+    }
+
+    let (rotate_commit, ct) = alice.encrypt_with_auto_rotate(b"post-rotate").unwrap();
+    let Some(rotate_commit) = rotate_commit else {
+        panic!("rotation commit expected");
+    };
+
+    assert!(bob.decrypt(&ct).is_err());
+    bob.process_commit(&rotate_commit).unwrap();
+    let result = bob.decrypt(&ct).unwrap();
+    assert_eq!(result.plaintext, b"post-rotate");
+    assert_eq!(alice.epoch().unwrap(), bob.epoch().unwrap());
+}
+
+#[test]
+fn group_api_encrypt_with_auto_rotate_flow() {
+    init();
+
+    let alice = EcliptixProtocol::new(10).unwrap();
+    let bob = EcliptixProtocol::new(10).unwrap();
+
+    let alice_group = alice
+        .create_group_with_policy(b"alice".to_vec(), small_rotation_policy())
+        .unwrap();
+    let (bob_kp, bob_x25519_priv, bob_kyber_sec) =
+        bob.generate_key_package(b"bob".to_vec()).unwrap();
+    let (_add_commit, welcome) = alice_group.add_member(&bob_kp).unwrap();
+    let bob_group = bob
+        .join_group(&welcome, bob_x25519_priv, bob_kyber_sec)
+        .unwrap();
+
+    for _ in 0..9 {
+        let ct = alice_group.encrypt(b"warmup").unwrap();
+        let _ = bob_group.decrypt(&ct).unwrap();
+    }
+
+    let (rotate_commit, ct) = alice_group.encrypt_with_auto_rotate(b"api-rotate").unwrap();
+    let Some(rotate_commit) = rotate_commit else {
+        panic!("rotation commit expected");
+    };
+    bob_group.process_commit(&rotate_commit).unwrap();
+
+    let result = bob_group.decrypt(&ct).unwrap();
+    assert_eq!(result.plaintext, b"api-rotate");
+}
+
+#[test]
+fn group_session_stress_many_auto_rotations_keep_peers_in_sync() {
+    init();
+
+    const ROTATION_CYCLES: usize = 20;
+    let (alice, bob) = create_two_member_group_with_policy(small_rotation_policy());
+
+    for _ in 0..ROTATION_CYCLES {
+        for _ in 0..9 {
+            let ct = alice.encrypt(b"long-run").unwrap();
+            let result = bob.decrypt(&ct).unwrap();
+            assert_eq!(result.plaintext, b"long-run");
+        }
+        let rotate_commit = alice.rotate_epoch_if_needed().unwrap().unwrap();
+        bob.process_commit(&rotate_commit).unwrap();
+    }
+
+    assert_eq!(alice.epoch().unwrap(), 1 + ROTATION_CYCLES as u64);
+    assert_eq!(bob.epoch().unwrap(), 1 + ROTATION_CYCLES as u64);
+}
+
+#[test]
+fn group_api_stress_many_auto_rotations_single_member() {
+    init();
+
+    const ROTATION_CYCLES: usize = 30;
+    let proto = EcliptixProtocol::new(0).unwrap();
+    let session = proto
+        .create_group_with_policy(b"alice-cred".to_vec(), small_rotation_policy())
+        .unwrap();
+
+    for _ in 0..ROTATION_CYCLES {
+        for _ in 0..9 {
+            let ct = session.encrypt(b"single-member").unwrap();
+            assert!(!ct.is_empty());
+        }
+        let commit = session.rotate_epoch_if_needed().unwrap();
+        assert!(commit.is_some());
+    }
+
+    assert_eq!(session.epoch().unwrap(), ROTATION_CYCLES as u64);
+}
+
+#[test]
+fn group_api_stress_rotations_with_periodic_sealed_state_roundtrip() {
+    use ecliptix_protocol::api::EcliptixGroupSession;
+
+    init();
+
+    const ROTATION_CYCLES: usize = 12;
+    let alice_proto = EcliptixProtocol::new(10).unwrap();
+    let bob_proto = EcliptixProtocol::new(10).unwrap();
+
+    let alice_ed25519_secret = alice_proto.get_identity_ed25519_private_key_copy().unwrap();
+    let bob_ed25519_secret = bob_proto.get_identity_ed25519_private_key_copy().unwrap();
+
+    let mut alice_group = alice_proto
+        .create_group_with_policy(b"alice".to_vec(), small_rotation_policy())
+        .unwrap();
+    let (bob_kp, bob_x25519_priv, bob_kyber_sec) =
+        bob_proto.generate_key_package(b"bob".to_vec()).unwrap();
+    let (_add_commit, welcome) = alice_group.add_member(&bob_kp).unwrap();
+    let mut bob_group = bob_proto
+        .join_group(&welcome, bob_x25519_priv, bob_kyber_sec)
+        .unwrap();
+
+    let state_key = vec![0x5Au8; 32];
+    let mut alice_external_counter = 1u64;
+    let mut bob_external_counter = 1u64;
+
+    for cycle in 1..=ROTATION_CYCLES {
+        for _ in 0..9 {
+            let ct = alice_group.encrypt(b"durable").unwrap();
+            let result = bob_group.decrypt(&ct).unwrap();
+            assert_eq!(result.plaintext, b"durable");
+        }
+
+        let rotate_commit = alice_group.rotate_epoch_if_needed().unwrap().unwrap();
+        bob_group.process_commit(&rotate_commit).unwrap();
+
+        if cycle % 3 == 0 {
+            let alice_epoch_before = alice_group.epoch().unwrap();
+            let sealed_alice = alice_group
+                .serialize(&state_key, alice_external_counter)
+                .unwrap();
+            let (restored_alice, restored_counter) = EcliptixGroupSession::deserialize(
+                &sealed_alice,
+                &state_key,
+                alice_ed25519_secret.clone(),
+                alice_external_counter.saturating_sub(1),
+            )
+            .unwrap();
+            assert_eq!(restored_counter, alice_external_counter);
+            assert_eq!(restored_alice.epoch().unwrap(), alice_epoch_before);
+            alice_group = restored_alice;
+            alice_external_counter += 1;
+
+            let bob_epoch_before = bob_group.epoch().unwrap();
+            let sealed_bob = bob_group
+                .serialize(&state_key, bob_external_counter)
+                .unwrap();
+            let (restored_bob, restored_counter) = EcliptixGroupSession::deserialize(
+                &sealed_bob,
+                &state_key,
+                bob_ed25519_secret.clone(),
+                bob_external_counter.saturating_sub(1),
+            )
+            .unwrap();
+            assert_eq!(restored_counter, bob_external_counter);
+            assert_eq!(restored_bob.epoch().unwrap(), bob_epoch_before);
+            bob_group = restored_bob;
+            bob_external_counter += 1;
+        }
+    }
+
+    assert_eq!(alice_group.epoch().unwrap(), 13);
+    assert_eq!(bob_group.epoch().unwrap(), 13);
+}
+
+#[test]
+fn group_session_ten_plus_years_daily_traffic_auto_rotation() {
+    init();
+
+    let (delivered, rotations, _epoch) = run_group_longevity_simulation(11, 365, 1, 1_000);
+    assert_eq!(delivered, 11u64 * 365);
+    assert!(rotations >= 4);
+}
+
+#[test]
+#[ignore = "long-running longevity load test"]
+fn group_session_ten_plus_years_ten_messages_per_day_auto_rotation() {
+    init();
+
+    let (delivered, rotations, epoch) = run_group_longevity_simulation(11, 365, 10, 1_000);
+    assert_eq!(delivered, 11u64 * 365 * 10);
+    assert!(rotations >= 40);
+    assert!(epoch >= 41);
+}
+
+#[test]
+#[ignore = "very long-running longevity load test"]
+fn group_session_ten_plus_years_fifty_messages_per_day_auto_rotation() {
+    init();
+
+    let (delivered, rotations, epoch) = run_group_longevity_simulation(11, 365, 50, 2_000);
+    assert_eq!(delivered, 11u64 * 365 * 50);
+    assert!(rotations >= 100);
+    assert!(epoch >= 101);
+}
+
+#[test]
+#[ignore = "extremely long-running longevity load test"]
+fn group_session_ten_plus_years_hundred_messages_per_day_auto_rotation() {
+    init();
+
+    let (delivered, rotations, epoch) = run_group_longevity_simulation(11, 365, 100, 5_000);
+    assert_eq!(delivered, 11u64 * 365 * 100);
+    assert!(rotations >= 80);
+    assert!(epoch >= 81);
+}
+
+#[test]
 fn group_treekem_encrypt_decrypt_path_secret_roundtrip() {
     init();
 
@@ -5064,7 +5532,9 @@ fn relay_validate_group_message_for_relay_strict_checks_signature_and_sender_bin
 
     let bob = EcliptixProtocol::new(10).unwrap();
     let bob_identity = bob.identity_ed25519_public();
-    assert!(validate_group_message_for_relay_strict(&msg_bytes, &roster, 0, &bob_identity).is_err());
+    assert!(
+        validate_group_message_for_relay_strict(&msg_bytes, &roster, 0, &bob_identity).is_err()
+    );
 }
 
 #[test]
@@ -9167,6 +9637,92 @@ fn group_external_join_with_extra_add_rejected() {
         err_msg.contains("exactly 1 Add"),
         "Error should mention Add count: {err_msg}"
     );
+}
+
+#[test]
+fn group_external_join_with_psk_rejected() {
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let alice_session = create_external_joinable_group(&alice_id, b"alice");
+    let joiner_id = IdentityKeys::create(20).unwrap();
+    let (_joiner_session, ext_commit_bytes) =
+        authorize_and_join_external(&alice_session, &joiner_id, b"joiner");
+
+    let mut commit =
+        ecliptix_protocol::proto::GroupCommit::decode(ext_commit_bytes.as_slice()).unwrap();
+    commit
+        .proposals
+        .push(ecliptix_protocol::proto::GroupProposal {
+            proposal: Some(ecliptix_protocol::proto::group_proposal::Proposal::Psk(
+                ecliptix_protocol::proto::GroupPskProposal {
+                    psk_id: b"psk-1".to_vec(),
+                    psk_nonce: vec![0x42; 32],
+                },
+            )),
+        });
+
+    commit.committer_signature.clear();
+    let sk = joiner_id.get_identity_ed25519_private_key_copy().unwrap();
+    let sk_arr: [u8; 64] = sk.as_slice().try_into().unwrap();
+    let signing_key = ed25519_dalek::SigningKey::from_keypair_bytes(&sk_arr).unwrap();
+    let mut commit_for_sig = Vec::new();
+    commit.encode(&mut commit_for_sig).unwrap();
+    use ed25519_dalek::Signer;
+    commit.committer_signature = signing_key.sign(&commit_for_sig).to_bytes().to_vec();
+
+    let mut tampered = Vec::new();
+    commit.encode(&mut tampered).unwrap();
+    let result = alice_session.process_commit(&tampered);
+    assert!(
+        result.is_err(),
+        "External join with PSK proposal must be rejected"
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("PSK"), "Error should mention PSK: {err}");
+}
+
+#[test]
+fn group_external_join_with_reinit_rejected() {
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let alice_session = create_external_joinable_group(&alice_id, b"alice");
+    let joiner_id = IdentityKeys::create(20).unwrap();
+    let (_joiner_session, ext_commit_bytes) =
+        authorize_and_join_external(&alice_session, &joiner_id, b"joiner");
+
+    let mut commit =
+        ecliptix_protocol::proto::GroupCommit::decode(ext_commit_bytes.as_slice()).unwrap();
+    commit
+        .proposals
+        .push(ecliptix_protocol::proto::GroupProposal {
+            proposal: Some(ecliptix_protocol::proto::group_proposal::Proposal::ReInit(
+                ecliptix_protocol::proto::GroupReInitProposal {
+                    new_group_id: vec![0xAB; 32],
+                    new_version: 1,
+                },
+            )),
+        });
+
+    commit.committer_signature.clear();
+    let sk = joiner_id.get_identity_ed25519_private_key_copy().unwrap();
+    let sk_arr: [u8; 64] = sk.as_slice().try_into().unwrap();
+    let signing_key = ed25519_dalek::SigningKey::from_keypair_bytes(&sk_arr).unwrap();
+    let mut commit_for_sig = Vec::new();
+    commit.encode(&mut commit_for_sig).unwrap();
+    use ed25519_dalek::Signer;
+    commit.committer_signature = signing_key.sign(&commit_for_sig).to_bytes().to_vec();
+
+    let mut tampered = Vec::new();
+    commit.encode(&mut tampered).unwrap();
+    let result = alice_session.process_commit(&tampered);
+    assert!(
+        result.is_err(),
+        "External join with ReInit proposal must be rejected"
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("ReInit"), "Error should mention ReInit: {err}");
 }
 
 #[test]

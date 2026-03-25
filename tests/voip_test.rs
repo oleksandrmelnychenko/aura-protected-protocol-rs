@@ -6,18 +6,19 @@
 use ecliptix_protocol::api::EcliptixProtocol;
 use ecliptix_protocol::core::constants::*;
 use ecliptix_protocol::core::errors::ProtocolError;
-use ecliptix_protocol::crypto::{CryptoInterop, SecureMemoryHandle};
+use ecliptix_protocol::crypto::{AesGcm, CryptoInterop, HkdfSha256, SecureMemoryHandle};
 use ecliptix_protocol::identity::IdentityKeys;
-use ecliptix_protocol::proto::{CallRekey, CallRekeyAck, PreKeyBundle};
+use ecliptix_protocol::proto::{CallRekey, CallRekeyAck, PreKeyBundle, VoipSessionState};
 use ecliptix_protocol::protocol::voip::call_key_exchange::{
-    callee_accept, callee_accept_with_context, caller_finish, caller_finish_with_context, caller_init,
-    caller_init_with_context, CallInitAuthContext,
+    callee_accept, callee_accept_with_context, caller_finish, caller_finish_with_context,
+    caller_init, caller_init_with_context, CallInitAuthContext,
 };
 use ecliptix_protocol::protocol::voip::frame::{build_frame_aad, FrameHeader};
 use ecliptix_protocol::protocol::voip::key_ratchet::MediaKeyRatchet;
 use ecliptix_protocol::protocol::voip::media_crypto::MediaCrypto;
 use ecliptix_protocol::protocol::voip::{CallRole, CallState, VoipSession};
 use prost::Message;
+use hmac::Mac;
 
 fn init() {
     let _ = CryptoInterop::initialize();
@@ -950,6 +951,22 @@ fn voip_session_encrypt_decrypt_single_frame() {
 }
 
 #[test]
+fn voip_session_encrypt_rejects_header_ssrc_mismatch() {
+    init();
+    let (alice, _bob) = setup_voip_session_pair(false);
+
+    let header = FrameHeader {
+        payload_type: 111,
+        ssrc: alice.ssrc().wrapping_add(1),
+        timestamp: 160,
+        sequence_number: 1,
+    };
+
+    let result = alice.encrypt_frame(&header, b"opus encoded audio frame");
+    assert!(result.is_err());
+}
+
+#[test]
 fn voip_session_bidirectional_communication() {
     init();
     let (alice, bob) = setup_voip_session_pair(false);
@@ -1350,7 +1367,10 @@ fn voip_rekey_ack_short_ephemeral_key_rejected_without_panic() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         alice.process_rekey_ack(&tampered_ack, &bob_ed_public, &alice_kyber_secret)
     }));
-    assert!(result.is_ok(), "process_rekey_ack panicked on malformed key");
+    assert!(
+        result.is_ok(),
+        "process_rekey_ack panicked on malformed key"
+    );
     assert!(result.unwrap().is_err());
 }
 
@@ -1971,6 +1991,77 @@ fn voip_sealed_state_tampered_rejected() {
     sealed[last] ^= 0xFF;
 
     assert!(VoipSession::from_sealed_state(&sealed, &key, 0).is_err());
+}
+
+#[test]
+fn voip_sealed_state_missing_replay_bitmap_rejected_when_high_water_nonzero() {
+    init();
+    let (alice, bob) = setup_voip_session_pair(false);
+
+    let first = bob
+        .encrypt_frame(
+            &FrameHeader {
+                payload_type: 111,
+                ssrc: bob.ssrc(),
+                timestamp: 160,
+                sequence_number: 1,
+            },
+            b"b1",
+        )
+        .unwrap();
+    alice.decrypt_frame(&first).unwrap();
+    let second = bob
+        .encrypt_frame(
+            &FrameHeader {
+                payload_type: 111,
+                ssrc: bob.ssrc(),
+                timestamp: 320,
+                sequence_number: 2,
+            },
+            b"b2",
+        )
+        .unwrap();
+    alice.decrypt_frame(&second).unwrap();
+
+    let key = CryptoInterop::get_random_bytes(AES_KEY_BYTES);
+    let sealed = alice.export_sealed_state(&key, 3).unwrap();
+
+    let nonce_offset = 8;
+    let mac_offset = nonce_offset + AES_GCM_NONCE_BYTES;
+    let ct_offset = mac_offset + HMAC_BYTES;
+    let external_counter = u64::from_le_bytes(sealed[0..8].try_into().unwrap());
+    let nonce = &sealed[nonce_offset..mac_offset];
+    let ciphertext = &sealed[ct_offset..];
+
+    let state_bytes = AesGcm::decrypt(&key, nonce, ciphertext, &[]).unwrap();
+    let mut state = VoipSessionState::decode(state_bytes.as_slice()).unwrap();
+    assert!(state.replay_high_water > 0);
+    state.replay_bitmap.clear();
+
+    let mut modified_state = Vec::new();
+    state.encode(&mut modified_state).unwrap();
+    let modified_ct = AesGcm::encrypt(&key, nonce, &modified_state, &[]).unwrap();
+
+    let hmac_key = HkdfSha256::derive_key_bytes(
+        &key,
+        HMAC_BYTES,
+        &external_counter.to_le_bytes(),
+        b"Ecliptix-VoIP-StateHMAC",
+    )
+    .unwrap();
+    let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(&hmac_key).unwrap();
+    mac.update(&modified_ct);
+    mac.update(nonce);
+    let hmac_tag = mac.finalize().into_bytes();
+
+    let mut forged = Vec::new();
+    forged.extend_from_slice(&external_counter.to_le_bytes());
+    forged.extend_from_slice(nonce);
+    forged.extend_from_slice(&hmac_tag);
+    forged.extend_from_slice(&modified_ct);
+
+    let result = VoipSession::from_sealed_state(&forged, &key, 0);
+    assert!(result.is_err());
 }
 
 // ════════════════════════════════════════════════════════════════════

@@ -864,12 +864,35 @@ impl EcliptixGroupSession {
         self.0.update()
     }
 
+    pub fn epoch_messages_remaining(&self) -> Result<u32, ProtocolError> {
+        self.0.epoch_messages_remaining()
+    }
+
+    pub fn should_rotate_epoch(&self) -> Result<bool, ProtocolError> {
+        self.0.should_rotate_epoch()
+    }
+
+    pub fn should_rotate_epoch_with_threshold(&self, percent: u32) -> Result<bool, ProtocolError> {
+        self.0.should_rotate_epoch_with_threshold(percent)
+    }
+
+    pub fn rotate_epoch_if_needed(&self) -> Result<Option<Vec<u8>>, ProtocolError> {
+        self.0.rotate_epoch_if_needed()
+    }
+
     pub fn process_commit(&self, commit_bytes: &[u8]) -> Result<(), ProtocolError> {
         self.0.process_commit(commit_bytes)
     }
 
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, ProtocolError> {
         self.0.encrypt(plaintext)
+    }
+
+    pub fn encrypt_with_auto_rotate(
+        &self,
+        plaintext: &[u8],
+    ) -> Result<(Option<Vec<u8>>, Vec<u8>), ProtocolError> {
+        self.0.encrypt_with_auto_rotate(plaintext)
     }
 
     pub fn decrypt(

@@ -22,10 +22,11 @@ use std::os::raw::{c_char, c_void};
 use std::sync::Arc;
 
 use crate::core::constants::{
-    AES_GCM_NONCE_BYTES, AES_KEY_BYTES, DEFAULT_ONE_TIME_KEY_COUNT, ED25519_PUBLIC_KEY_BYTES,
-    HMAC_BYTES, KYBER_PUBLIC_KEY_BYTES, MAX_BUFFER_SIZE, MAX_ENVELOPE_MESSAGE_SIZE,
-    MAX_GROUP_MESSAGE_SIZE, MAX_HANDSHAKE_MESSAGE_SIZE, MESSAGE_ID_BYTES, PROTOCOL_VERSION,
-    PSK_BYTES, ROOT_KEY_BYTES, X25519_PUBLIC_KEY_BYTES,
+    AES_GCM_NONCE_BYTES, AES_KEY_BYTES, CALL_ID_BYTES, DEFAULT_ONE_TIME_KEY_COUNT,
+    ED25519_PUBLIC_KEY_BYTES, HMAC_BYTES, KYBER_PUBLIC_KEY_BYTES, MAX_BUFFER_SIZE,
+    MAX_ENVELOPE_MESSAGE_SIZE, MAX_GROUP_MESSAGE_SIZE, MAX_HANDSHAKE_MESSAGE_SIZE,
+    MAX_VOIP_ENCRYPTED_HEADER_SIZE, MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE, MAX_VOIP_SIGNAL_MESSAGE_SIZE,
+    MESSAGE_ID_BYTES, PROTOCOL_VERSION, PSK_BYTES, ROOT_KEY_BYTES, X25519_PUBLIC_KEY_BYTES,
 };
 use crate::core::errors::ProtocolError;
 use crate::crypto::SecureMemoryHandle;
@@ -4204,20 +4205,21 @@ pub unsafe extern "C" fn epp_voip_call_init_complete(
             pq_rekey_interval_secs: initiator.pq_rekey_interval_secs,
             shield_mode: initiator.shield_mode,
         };
-        let key_material = match crate::protocol::voip::call_key_exchange::caller_finish_with_context(
-            &init_output,
-            &kyber_secret,
-            &initiator.call_id,
-            &accept.ephemeral_x25519_public,
-            &accept.kyber_ciphertext,
-            &accept.identity_ed25519_public,
-            &accept.signature,
-            &accept.key_confirmation_mac,
-            &auth_context,
-        ) {
-            Ok(v) => v,
-            Err(e) => return write_protocol_error(out_error, &e),
-        };
+        let key_material =
+            match crate::protocol::voip::call_key_exchange::caller_finish_with_context(
+                &init_output,
+                &kyber_secret,
+                &initiator.call_id,
+                &accept.ephemeral_x25519_public,
+                &accept.kyber_ciphertext,
+                &accept.identity_ed25519_public,
+                &accept.signature,
+                &accept.key_confirmation_mac,
+                &auth_context,
+            ) {
+                Ok(v) => v,
+                Err(e) => return write_protocol_error(out_error, &e),
+            };
 
         let session = match crate::protocol::voip::VoipSession::from_key_material(
             initiator.call_id.clone(),

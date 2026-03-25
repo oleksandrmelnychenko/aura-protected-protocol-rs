@@ -1777,35 +1777,67 @@ impl Session {
         let metadata_bytes = match metadata_result {
             Ok(bytes) => bytes,
             Err(e) => {
-                rollback_ratchet(&mut inner, ratchet_snapshot);
+                rollback_ratchet(&mut inner, ratchet_snapshot.take());
                 return Err(e);
             }
         };
 
-        let metadata = EnvelopeMetadata::decode(metadata_bytes.as_slice())
-            .map_err(|e| ProtocolError::decode(format!("Failed to parse metadata: {e}")))?;
+        let metadata = match EnvelopeMetadata::decode(metadata_bytes.as_slice()) {
+            Ok(metadata) => metadata,
+            Err(e) => {
+                if ratchet_snapshot.is_some() {
+                    rollback_ratchet(&mut inner, ratchet_snapshot.take());
+                }
+                return Err(ProtocolError::decode(format!(
+                    "Failed to parse metadata: {e}"
+                )));
+            }
+        };
 
         if metadata.payload_nonce.len() != AES_GCM_NONCE_BYTES {
+            if ratchet_snapshot.is_some() {
+                rollback_ratchet(&mut inner, ratchet_snapshot.take());
+            }
             return Err(ProtocolError::invalid_input("Invalid payload nonce size"));
         }
         if metadata.message_index > MAX_MESSAGE_INDEX {
+            if ratchet_snapshot.is_some() {
+                rollback_ratchet(&mut inner, ratchet_snapshot.take());
+            }
             return Err(ProtocolError::invalid_input(
                 "Message index exceeds maximum",
             ));
         }
         if metadata.message_index >= max {
+            if ratchet_snapshot.is_some() {
+                rollback_ratchet(&mut inner, ratchet_snapshot.take());
+            }
             return Err(ProtocolError::invalid_input(
                 "Message index exceeds per-chain limit",
             ));
         }
 
-        let nonce_index = extract_nonce_index(&metadata.payload_nonce)?;
+        let nonce_index = match extract_nonce_index(&metadata.payload_nonce) {
+            Ok(nonce_index) => nonce_index,
+            Err(e) => {
+                if ratchet_snapshot.is_some() {
+                    rollback_ratchet(&mut inner, ratchet_snapshot.take());
+                }
+                return Err(e);
+            }
+        };
         if u64::from(nonce_index) != metadata.message_index {
+            if ratchet_snapshot.is_some() {
+                rollback_ratchet(&mut inner, ratchet_snapshot.take());
+            }
             return Err(ProtocolError::invalid_input("Nonce index mismatch"));
         }
 
         let nonce_key = metadata.payload_nonce.clone();
         if inner.seen_payload_nonces.contains(&nonce_key) {
+            if ratchet_snapshot.is_some() {
+                rollback_ratchet(&mut inner, ratchet_snapshot.take());
+            }
             return Err(ProtocolError::replay_attack(
                 "Replay attack detected: payload nonce reused",
             ));
@@ -1830,7 +1862,15 @@ impl Session {
                 },
             )?
         } else {
-            Self::get_recv_message_key(&mut inner, metadata.message_index)?
+            match Self::get_recv_message_key(&mut inner, metadata.message_index) {
+                Ok(message_key) => message_key,
+                Err(e) => {
+                    if ratchet_snapshot.is_some() {
+                        rollback_ratchet(&mut inner, ratchet_snapshot.take());
+                    }
+                    return Err(e);
+                }
+            }
         };
 
         let decrypt_result =
@@ -1856,7 +1896,7 @@ impl Session {
             Err(e) => {
                 if ratchet_snapshot.is_some() {
                     CryptoInterop::secure_wipe(&mut message_key);
-                    rollback_ratchet(&mut inner, ratchet_snapshot);
+                    rollback_ratchet(&mut inner, ratchet_snapshot.take());
                 } else if is_old_epoch {
                     inner
                         .skipped_message_keys
@@ -1903,7 +1943,9 @@ impl Session {
             inner.state.send_ratchet_pending = true;
         }
 
-        if let Some((mut state, _, mut kyber_sk, mut dh_sk, mut skipped, _, _)) = ratchet_snapshot {
+        if let Some((mut state, _, mut kyber_sk, mut dh_sk, mut skipped, _, _)) =
+            ratchet_snapshot.take()
+        {
             CryptoInterop::secure_wipe(&mut kyber_sk);
             CryptoInterop::secure_wipe(&mut dh_sk);
             wipe_protocol_state_keys(&mut state);
@@ -1938,6 +1980,7 @@ impl Session {
         if inner.state.state_counter == u64::MAX {
             return Err(ProtocolError::invalid_state("State counter overflow"));
         }
+        let previous_gen = inner.state.state_counter;
         let next_gen = inner.state.state_counter + 1;
         let mut copy = inner.state.clone();
         if let Some(sc) = copy.send_chain.as_mut() {
@@ -1989,72 +2032,90 @@ impl Session {
         inner.state.state_counter = next_gen;
         drop(inner);
 
-        let mut plaintext_state = {
-            copy.state_hmac.clear();
-            let mut tmp = Vec::new();
-            let enc1 = copy.encode(&mut tmp);
-            if enc1.is_err() {
+        let export_result = (|| -> Result<Vec<u8>, ProtocolError> {
+            let mut plaintext_state = {
+                copy.state_hmac.clear();
+                let mut tmp = Vec::new();
+                let enc1 = copy.encode(&mut tmp);
+                if enc1.is_err() {
+                    wipe_export_copy(&mut copy);
+                }
+                enc1.map_err(|e| ProtocolError::encode(format!("Failed to serialize state: {e}")))?;
+
+                let hmac_result = compute_state_hmac(&copy.root_key, &tmp);
+                if hmac_result.is_err() {
+                    wipe_export_copy(&mut copy);
+                }
+                copy.state_hmac = hmac_result?;
+
+                let mut buf = Vec::new();
+                let enc2 = copy.encode(&mut buf);
                 wipe_export_copy(&mut copy);
-            }
-            enc1.map_err(|e| ProtocolError::encode(format!("Failed to serialize state: {e}")))?;
+                enc2.map_err(|e| {
+                    ProtocolError::encode(format!("Failed to serialize state: {e}"))
+                })?;
+                buf
+            };
 
-            let hmac_result = compute_state_hmac(&copy.root_key, &tmp);
-            if hmac_result.is_err() {
-                wipe_export_copy(&mut copy);
-            }
-            copy.state_hmac = hmac_result?;
+            let kek_handle = key_provider.get_state_encryption_key()?;
+            let mut kek_bytes = kek_handle
+                .read_bytes(AES_KEY_BYTES)
+                .map_err(ProtocolError::from_crypto)?;
 
-            let mut buf = Vec::new();
-            let enc2 = copy.encode(&mut buf);
-            wipe_export_copy(&mut copy);
-            enc2.map_err(|e| ProtocolError::encode(format!("Failed to serialize state: {e}")))?;
-            buf
-        };
+            let mut dek = CryptoInterop::get_random_bytes(AES_KEY_BYTES);
+            let dek_nonce = CryptoInterop::get_random_bytes(AES_GCM_NONCE_BYTES);
+            let state_nonce = CryptoInterop::get_random_bytes(AES_GCM_NONCE_BYTES);
 
-        let kek_handle = key_provider.get_state_encryption_key()?;
-        let mut kek_bytes = kek_handle
-            .read_bytes(AES_KEY_BYTES)
-            .map_err(ProtocolError::from_crypto)?;
+            const SEALED_STATE_VERSION: u8 = 1;
+            let mut dek_aad = Vec::with_capacity(9);
+            dek_aad.push(SEALED_STATE_VERSION);
+            dek_aad.extend_from_slice(&external_counter.to_le_bytes());
+            let encrypt_dek = AesGcm::encrypt(&kek_bytes, &dek_nonce, &dek, &dek_aad);
+            CryptoInterop::secure_wipe(&mut kek_bytes);
+            let encrypt_dek = encrypt_dek.inspect_err(|_e| {
+                CryptoInterop::secure_wipe(&mut dek);
+                CryptoInterop::secure_wipe(&mut plaintext_state);
+            })?;
 
-        let mut dek = CryptoInterop::get_random_bytes(AES_KEY_BYTES);
-        let dek_nonce = CryptoInterop::get_random_bytes(AES_GCM_NONCE_BYTES);
-        let state_nonce = CryptoInterop::get_random_bytes(AES_GCM_NONCE_BYTES);
+            let mut state_aad = Vec::with_capacity(1 + dek_nonce.len() + encrypt_dek.len());
+            state_aad.push(SEALED_STATE_VERSION);
+            state_aad.extend_from_slice(&dek_nonce);
+            state_aad.extend_from_slice(&encrypt_dek);
 
-        const SEALED_STATE_VERSION: u8 = 1;
-        let mut dek_aad = Vec::with_capacity(9);
-        dek_aad.push(SEALED_STATE_VERSION);
-        dek_aad.extend_from_slice(&external_counter.to_le_bytes());
-        let encrypt_dek = AesGcm::encrypt(&kek_bytes, &dek_nonce, &dek, &dek_aad);
-        CryptoInterop::secure_wipe(&mut kek_bytes);
-        let encrypt_dek = encrypt_dek.inspect_err(|_e| {
+            let encrypt_state = AesGcm::encrypt(&dek, &state_nonce, &plaintext_state, &state_aad);
             CryptoInterop::secure_wipe(&mut dek);
             CryptoInterop::secure_wipe(&mut plaintext_state);
-        })?;
+            let encrypt_state = encrypt_state?;
 
-        let mut state_aad = Vec::with_capacity(1 + dek_nonce.len() + encrypt_dek.len());
-        state_aad.push(SEALED_STATE_VERSION);
-        state_aad.extend_from_slice(&dek_nonce);
-        state_aad.extend_from_slice(&encrypt_dek);
+            let sealed = SealedState {
+                version: u32::from(SEALED_STATE_VERSION),
+                dek_nonce,
+                state_nonce,
+                encrypted_dek: encrypt_dek,
+                encrypted_state: encrypt_state,
+                external_counter,
+            };
 
-        let encrypt_state = AesGcm::encrypt(&dek, &state_nonce, &plaintext_state, &state_aad);
-        CryptoInterop::secure_wipe(&mut dek);
-        CryptoInterop::secure_wipe(&mut plaintext_state);
-        let encrypt_state = encrypt_state?;
+            let mut output = Vec::new();
+            sealed
+                .encode(&mut output)
+                .map_err(|e| ProtocolError::encode(format!("Failed to serialize sealed state: {e}")))?;
+            Ok(output)
+        })();
 
-        let sealed = SealedState {
-            version: u32::from(SEALED_STATE_VERSION),
-            dek_nonce,
-            state_nonce,
-            encrypted_dek: encrypt_dek,
-            encrypted_state: encrypt_state,
-            external_counter,
-        };
-
-        let mut output = Vec::new();
-        sealed
-            .encode(&mut output)
-            .map_err(|e| ProtocolError::encode(format!("Failed to serialize sealed state: {e}")))?;
-        Ok(output)
+        match export_result {
+            Ok(output) => Ok(output),
+            Err(e) => {
+                let mut inner = self
+                    .inner
+                    .lock()
+                    .map_err(|_| ProtocolError::invalid_state("Session lock poisoned"))?;
+                if inner.state.state_counter == next_gen {
+                    inner.state.state_counter = previous_gen;
+                }
+                Err(e)
+            }
+        }
     }
 
     pub fn from_sealed_state(

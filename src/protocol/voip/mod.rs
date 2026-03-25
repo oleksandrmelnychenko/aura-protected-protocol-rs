@@ -197,6 +197,11 @@ impl VoipSession {
         if inner.state != CallState::Active {
             return Err(ProtocolError::voip_call("call is not active"));
         }
+        if header.ssrc != inner.ssrc {
+            return Err(ProtocolError::voip_media(
+                "frame header ssrc does not match active call ssrc",
+            ));
+        }
         if inner.send_frame_counter > MAX_FRAME_COUNTER {
             return Err(ProtocolError::voip_media("send frame counter exhausted"));
         }
@@ -330,6 +335,11 @@ impl VoipSession {
         )?;
 
         let header = FrameHeader::deserialize(&header_bytes)?;
+        if header.ssrc != encrypted.ssrc {
+            return Err(ProtocolError::voip_media(
+                "frame header ssrc mismatch with encrypted envelope ssrc",
+            ));
+        }
 
         inner.recv_ratchet.commit_snapshot(snapshot)?;
         inner.replay_window.mark(encrypted.frame_counter);
@@ -648,11 +658,12 @@ impl VoipSession {
         };
 
         let replay_window = if state.replay_bitmap.is_empty() {
-            let mut replay_window = ReplayWindow::new();
             if state.replay_high_water > 0 {
-                replay_window.mark(state.replay_high_water);
+                return Err(ProtocolError::voip_call(
+                    "sealed state replay bitmap missing for non-zero replay window",
+                ));
             }
-            replay_window
+            ReplayWindow::new()
         } else {
             let mut replay_words = ReplayWindow::new().bitmap_words();
             let expected_len = replay_words.len() * std::mem::size_of::<u64>();

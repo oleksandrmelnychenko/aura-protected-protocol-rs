@@ -346,7 +346,9 @@ pub fn compute_message_id(
     h.finalize().to_vec()
 }
 
-fn encode_replay_windows_for_state(replay_windows: &BTreeMap<u32, SenderReplayWindow>) -> Vec<Vec<u8>> {
+fn encode_replay_windows_for_state(
+    replay_windows: &BTreeMap<u32, SenderReplayWindow>,
+) -> Vec<Vec<u8>> {
     let mut encoded = Vec::with_capacity(replay_windows.len());
     for (leaf_index, window) in replay_windows {
         if !window.initialized {
@@ -526,6 +528,58 @@ fn is_all_zero(bytes: &[u8]) -> bool {
 }
 
 impl GroupSession {
+    fn compute_rotation_threshold(max_messages: u32, percent: u32) -> Result<u32, ProtocolError> {
+        if percent == 0 || percent > 100 {
+            return Err(ProtocolError::invalid_input(
+                "Rotation threshold percent must be in 1..=100",
+            ));
+        }
+        let threshold_u64 = (u64::from(max_messages) * u64::from(percent)).div_ceil(100);
+        u32::try_from(threshold_u64)
+            .map_err(|_| ProtocolError::invalid_state("Rotation threshold overflow"))
+    }
+
+    pub fn epoch_messages_remaining(&self) -> Result<u32, ProtocolError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| ProtocolError::invalid_state("GroupSession lock poisoned"))?;
+        let policy_max = inner.security_policy.effective_max_messages_per_epoch();
+        let generation = inner
+            .sender_store
+            .get_chain(inner.my_leaf_idx)
+            .ok_or_else(|| ProtocolError::invalid_state("Missing local sender key chain"))?
+            .generation();
+        Ok(policy_max.saturating_sub(generation))
+    }
+
+    pub fn should_rotate_epoch_with_threshold(&self, percent: u32) -> Result<bool, ProtocolError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| ProtocolError::invalid_state("GroupSession lock poisoned"))?;
+        let policy_max = inner.security_policy.effective_max_messages_per_epoch();
+        let threshold = Self::compute_rotation_threshold(policy_max, percent)?;
+        let generation = inner
+            .sender_store
+            .get_chain(inner.my_leaf_idx)
+            .ok_or_else(|| ProtocolError::invalid_state("Missing local sender key chain"))?
+            .generation();
+        let remaining = policy_max.saturating_sub(generation);
+        Ok(remaining <= threshold)
+    }
+
+    pub fn should_rotate_epoch(&self) -> Result<bool, ProtocolError> {
+        self.should_rotate_epoch_with_threshold(SENDER_KEY_EXHAUSTION_WARNING_PERCENT)
+    }
+
+    pub fn rotate_epoch_if_needed(&self) -> Result<Option<Vec<u8>>, ProtocolError> {
+        if !self.should_rotate_epoch()? {
+            return Ok(None);
+        }
+        self.update().map(Some)
+    }
+
     pub fn create(identity: &IdentityKeys, credential: Vec<u8>) -> Result<Self, ProtocolError> {
         Self::create_with_policy(identity, credential, GroupSecurityPolicy::default())
     }
@@ -1820,6 +1874,15 @@ impl GroupSession {
         self.encrypt_internal(plaintext, &MessagePolicy::default(), None)
     }
 
+    pub fn encrypt_with_auto_rotate(
+        &self,
+        plaintext: &[u8],
+    ) -> Result<(Option<Vec<u8>>, Vec<u8>), ProtocolError> {
+        let rotation_commit = self.rotate_epoch_if_needed()?;
+        let ciphertext = self.encrypt(plaintext)?;
+        Ok((rotation_commit, ciphertext))
+    }
+
     pub fn encrypt_sealed(&self, plaintext: &[u8], hint: &[u8]) -> Result<Vec<u8>, ProtocolError> {
         self.encrypt_internal(
             hint,
@@ -2419,9 +2482,8 @@ impl GroupSession {
         let sender_store =
             SenderKeyStore::from_chains(chains, security_policy.effective_max_skipped_per_sender());
 
-        let replay_windows = decode_replay_windows_from_state(std::mem::take(
-            &mut state.seen_message_ids,
-        ))?;
+        let replay_windows =
+            decode_replay_windows_from_state(std::mem::take(&mut state.seen_message_ids))?;
 
         let (_ext_priv, ext_x25519_pub, _ext_kyber_sec, ext_kyber_pub) =
             GroupKeySchedule::derive_external_keypairs(&epoch_keys.init_secret)?;

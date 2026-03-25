@@ -493,7 +493,21 @@ fn validate_external_join_structure(proposals: &[GroupProposal]) -> Result<(), P
                     "External join commit must not contain Update proposals",
                 ));
             }
-            _ => {}
+            Some(crate::proto::group_proposal::Proposal::Psk(_)) => {
+                return Err(ProtocolError::group_protocol(
+                    "External join commit must not contain PSK proposals",
+                ));
+            }
+            Some(crate::proto::group_proposal::Proposal::ReInit(_)) => {
+                return Err(ProtocolError::group_protocol(
+                    "External join commit must not contain ReInit proposals",
+                ));
+            }
+            None => {
+                return Err(ProtocolError::group_protocol(
+                    "External join commit must not contain empty proposals",
+                ));
+            }
         }
     }
 
