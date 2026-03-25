@@ -16,6 +16,8 @@ Sealed session state is bound to an **external monotonic counter** in AAD. The *
 2. Persist the last accepted counter and pass it as `min_external_counter` when calling `from_sealed_state`.
 3. After a successful import, persist the sealed blob’s `external_counter` (e.g. via `sealed_state_external_counter`) for the next import check.
 
+Import is accepted only when `sealed_counter > min_external_counter` (strictly greater; equality is rejected as rollback) across session/group/VoIP sealed-state paths.
+
 If the application does not enforce this, an attacker could replace the current state with an older sealed snapshot; the HMAC is valid for that snapshot, so the protocol alone cannot distinguish it. See `export_sealed_state` / `from_sealed_state` doc comments in `src/protocol/session.rs`.
 
 ### Disappearing messages (TTL)

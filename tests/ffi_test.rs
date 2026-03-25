@@ -553,7 +553,7 @@ mod ffi {
                     sealed_buf.length,
                     state_key.as_ptr(),
                     state_key.len(),
-                    7,
+                    6,
                     &mut restored_alice_h,
                     &mut err
                 ),
@@ -901,6 +901,28 @@ mod ffi {
         assert_eq!(code, EppErrorCode::EppSuccess);
         assert_eq!(out_counter, 1);
 
+        let mut tampered =
+            unsafe { std::slice::from_raw_parts(sealed_buf.data, sealed_buf.length) }.to_vec();
+        let tampered_last = tampered.len() - 1;
+        tampered[tampered_last] ^= 0x55;
+        let mut failed_counter: u64 = 777;
+        let mut failed_session_h: *mut EppSessionHandle = ptr::null_mut();
+        let code = unsafe {
+            epp_session_deserialize_sealed(
+                tampered.as_ptr(),
+                tampered.len(),
+                seal_key.as_ptr(),
+                seal_key.len(),
+                0,
+                &mut failed_counter,
+                &mut failed_session_h,
+                &mut err,
+            )
+        };
+        assert_ne!(code, EppErrorCode::EppSuccess);
+        assert_eq!(failed_counter, 777);
+        assert!(failed_session_h.is_null());
+
         let mut enc_buf2 = EppBuffer {
             data: ptr::null_mut(),
             length: 0,
@@ -951,6 +973,67 @@ mod ffi {
             epp_session_destroy(&mut bob_session_h2);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn ffi_group_deserialize_does_not_overwrite_counter_on_failure() {
+        init_lib();
+
+        let mut identity_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut err = null_error();
+        let code = unsafe { epp_identity_create(&mut identity_h, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let mut group_h: *mut EppGroupSessionHandle = ptr::null_mut();
+        let code = unsafe { epp_group_create(identity_h, ptr::null(), 0, &mut group_h, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let seal_key = [0xCDu8; 32];
+        let mut sealed_buf = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        let code = unsafe {
+            epp_group_serialize(
+                group_h,
+                seal_key.as_ptr(),
+                seal_key.len(),
+                1,
+                &mut sealed_buf,
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let mut tampered =
+            unsafe { std::slice::from_raw_parts(sealed_buf.data, sealed_buf.length) }.to_vec();
+        let tampered_last = tampered.len() - 1;
+        tampered[tampered_last] ^= 0x33;
+
+        let mut out_counter = 999u64;
+        let mut restored_group_h: *mut EppGroupSessionHandle = ptr::null_mut();
+        let code = unsafe {
+            epp_group_deserialize(
+                tampered.as_ptr(),
+                tampered.len(),
+                seal_key.as_ptr(),
+                seal_key.len(),
+                0,
+                &mut out_counter,
+                identity_h,
+                &mut restored_group_h,
+                &mut err,
+            )
+        };
+        assert_ne!(code, EppErrorCode::EppSuccess);
+        assert_eq!(out_counter, 999);
+        assert!(restored_group_h.is_null());
+
+        unsafe {
+            epp_buffer_release(&mut sealed_buf);
+            epp_group_destroy(&mut group_h);
+            epp_identity_destroy(&mut identity_h);
         }
     }
 

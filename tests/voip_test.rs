@@ -1596,7 +1596,7 @@ fn api_voip_rekey_and_restore_via_public_api() {
     let state_key = CryptoInterop::get_random_bytes(AES_KEY_BYTES);
     let sealed = alice_session.export_sealed_state(&state_key, 9).unwrap();
     let (restored_alice, external_counter) =
-        alice.import_call_state(&sealed, &state_key, 9).unwrap();
+        alice.import_call_state(&sealed, &state_key, 8).unwrap();
     assert_eq!(external_counter, 9);
 
     let encrypted = bob_session
@@ -1604,6 +1604,27 @@ fn api_voip_rekey_and_restore_via_public_api() {
         .unwrap();
     let decrypted = restored_alice.decrypt_frame(&encrypted).unwrap();
     assert_eq!(decrypted.payload, b"post-restore");
+}
+
+#[test]
+fn api_voip_import_call_state_equal_counter_rejected() {
+    init();
+
+    let alice = EcliptixProtocol::new(1).unwrap();
+    let bob = EcliptixProtocol::new(1).unwrap();
+
+    let alice_bundle = alice.pre_key_bundle().unwrap();
+    let bob_bundle = bob.pre_key_bundle().unwrap();
+    let (alice_kyber, _) = extract_voip_peer_material(&alice_bundle);
+    let (bob_kyber, _) = extract_voip_peer_material(&bob_bundle);
+
+    let (initiator, call_init) = alice.initiate_call(&bob_kyber, false, 512, 60).unwrap();
+    let (_bob_session, call_accept) = bob.accept_call(&call_init, &alice_kyber).unwrap();
+    let alice_session = alice.complete_call(initiator, &call_accept).unwrap();
+
+    let state_key = CryptoInterop::get_random_bytes(AES_KEY_BYTES);
+    let sealed = alice_session.export_sealed_state(&state_key, 9).unwrap();
+    assert!(alice.import_call_state(&sealed, &state_key, 9).is_err());
 }
 
 #[test]
@@ -1637,6 +1658,7 @@ use ecliptix_protocol::api::relay::{
     VoipCallStore,
 };
 use ecliptix_protocol::proto::{VoipEnvelope, VoipSignalType};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 struct InMemoryCallStore {
     calls: std::sync::Mutex<Vec<ActiveCall>>,
@@ -1674,6 +1696,107 @@ impl VoipCallStore for InMemoryCallStore {
     fn remove_call(&self, call_id: &[u8]) -> Result<(), ProtocolError> {
         self.calls.lock().unwrap().retain(|c| c.call_id != call_id);
         Ok(())
+    }
+
+    fn compare_exchange_call(
+        &self,
+        current: Option<&ActiveCall>,
+        next: Option<&ActiveCall>,
+    ) -> Result<bool, ProtocolError> {
+        let Some(call_id) = next
+            .map(|call| call.call_id.as_slice())
+            .or_else(|| current.map(|call| call.call_id.as_slice()))
+        else {
+            return Err(ProtocolError::invalid_input(
+                "compare_exchange_call requires current or next state",
+            ));
+        };
+
+        if let (Some(expected), Some(replacement)) = (current, next) {
+            if expected.call_id != replacement.call_id {
+                return Err(ProtocolError::invalid_input(
+                    "compare_exchange_call call_id mismatch",
+                ));
+            }
+        }
+
+        let mut calls = self.calls.lock().unwrap();
+        let pos = calls.iter().position(|existing| existing.call_id == call_id);
+        match (current, next, pos) {
+            (None, Some(replacement), None) => {
+                calls.push(replacement.clone());
+                Ok(true)
+            }
+            (None, Some(_), Some(_)) => Ok(false),
+            (Some(_), None, None) | (Some(_), Some(_), None) => Ok(false),
+            (Some(expected), None, Some(idx)) => {
+                if calls[idx] != *expected {
+                    return Ok(false);
+                }
+                calls.remove(idx);
+                Ok(true)
+            }
+            (Some(expected), Some(replacement), Some(idx)) => {
+                if calls[idx] != *expected {
+                    return Ok(false);
+                }
+                calls[idx] = replacement.clone();
+                Ok(true)
+            }
+            (None, None, _) => Err(ProtocolError::invalid_input(
+                "compare_exchange_call requires current or next state",
+            )),
+        }
+    }
+}
+
+struct CompareExchangeOnlyCallStore {
+    inner: InMemoryCallStore,
+    fail_first_update: AtomicBool,
+}
+
+impl CompareExchangeOnlyCallStore {
+    fn new(fail_first_update: bool) -> Self {
+        Self {
+            inner: InMemoryCallStore::new(),
+            fail_first_update: AtomicBool::new(fail_first_update),
+        }
+    }
+
+    fn seed_call(&self, call: ActiveCall) {
+        self.inner.calls.lock().unwrap().push(call);
+    }
+}
+
+impl VoipCallStore for CompareExchangeOnlyCallStore {
+    fn register_call(&self, _call: &ActiveCall) -> Result<(), ProtocolError> {
+        panic!("process_voip_signal must use compare_exchange_call for inserts");
+    }
+
+    fn find_call(&self, call_id: &[u8]) -> Result<Option<ActiveCall>, ProtocolError> {
+        self.inner.find_call(call_id)
+    }
+
+    fn update_call(&self, _call: &ActiveCall) -> Result<(), ProtocolError> {
+        panic!("process_voip_signal must use compare_exchange_call for updates");
+    }
+
+    fn remove_call(&self, _call_id: &[u8]) -> Result<(), ProtocolError> {
+        panic!("process_voip_signal must use compare_exchange_call for removals");
+    }
+
+    fn compare_exchange_call(
+        &self,
+        current: Option<&ActiveCall>,
+        next: Option<&ActiveCall>,
+    ) -> Result<bool, ProtocolError> {
+        if current.is_some()
+            && next.is_some()
+            && self.fail_first_update.swap(false, Ordering::SeqCst)
+        {
+            return Ok(false);
+        }
+        self.inner.compare_exchange_call(current, next)
     }
 }
 
@@ -2005,7 +2128,7 @@ fn voip_sealed_state_restore_continues_communication_and_preserves_replay_window
 
     let state_key = CryptoInterop::get_random_bytes(AES_KEY_BYTES);
     let sealed = alice.export_sealed_state(&state_key, 7).unwrap();
-    let restored_alice = VoipSession::from_sealed_state(&sealed, &state_key, 7).unwrap();
+    let restored_alice = VoipSession::from_sealed_state(&sealed, &state_key, 6).unwrap();
 
     assert!(restored_alice
         .decrypt_frame(&replayed_after_restore)
@@ -2049,6 +2172,17 @@ fn voip_sealed_state_rollback_rejected() {
     let sealed = alice.export_sealed_state(&state_key, 5).unwrap();
 
     assert!(VoipSession::from_sealed_state(&sealed, &state_key, 10).is_err());
+}
+
+#[test]
+fn voip_sealed_state_equal_counter_rejected() {
+    init();
+    let (alice, _bob) = setup_voip_session_pair(false);
+
+    let state_key = CryptoInterop::get_random_bytes(AES_KEY_BYTES);
+    let sealed = alice.export_sealed_state(&state_key, 5).unwrap();
+
+    assert!(VoipSession::from_sealed_state(&sealed, &state_key, 5).is_err());
 }
 
 #[test]
@@ -2216,6 +2350,24 @@ fn relay_lifecycle_init_registers_and_forwards() {
 }
 
 #[test]
+fn relay_lifecycle_init_uses_atomic_compare_exchange_insert() {
+    init();
+    let store = CompareExchangeOnlyCallStore::new(false);
+    let envelope = VoipEnvelope {
+        sender_device_id: vec![1, 2, 3, 4],
+        recipient_device_id: vec![5, 6, 7, 8],
+        signal_type: VoipSignalType::VoipSignalCallInit as i32,
+        call_id: CryptoInterop::get_random_bytes(CALL_ID_BYTES),
+        encrypted_payload: vec![0xAA; 100],
+        timestamp: 0,
+    };
+
+    let action = process_voip_signal(&envelope, &store, 1000).unwrap();
+    assert_eq!(action.target_device_id(), &[5, 6, 7, 8]);
+    assert!(store.find_call(&envelope.call_id).unwrap().is_some());
+}
+
+#[test]
 fn relay_lifecycle_accept_forwards_to_caller() {
     init();
     let store = InMemoryCallStore::new();
@@ -2239,6 +2391,36 @@ fn relay_lifecycle_accept_forwards_to_caller() {
     };
     let action = process_voip_signal(&envelope, &store, 1001).unwrap();
     assert_eq!(action.target_device_id(), &[1, 2, 3, 4]);
+}
+
+#[test]
+fn relay_lifecycle_accept_retries_on_compare_exchange_conflict() {
+    init();
+    let store = CompareExchangeOnlyCallStore::new(true);
+    let call_id = CryptoInterop::get_random_bytes(CALL_ID_BYTES);
+    store.seed_call(ActiveCall::new(
+        call_id.clone(),
+        vec![1, 2, 3, 4],
+        vec![5, 6, 7, 8],
+        1000,
+    ));
+
+    let envelope = VoipEnvelope {
+        sender_device_id: vec![5, 6, 7, 8],
+        recipient_device_id: vec![1, 2, 3, 4],
+        signal_type: VoipSignalType::VoipSignalCallAccept as i32,
+        call_id: call_id.clone(),
+        encrypted_payload: vec![0xBB; 100],
+        timestamp: 0,
+    };
+
+    let action = process_voip_signal(&envelope, &store, 1001).unwrap();
+    assert_eq!(action.target_device_id(), &[1, 2, 3, 4]);
+    let stored = store.find_call(&call_id).unwrap().unwrap();
+    assert_eq!(
+        stored.state,
+        ecliptix_protocol::api::relay::CallLifecycleState::Active
+    );
 }
 
 #[test]

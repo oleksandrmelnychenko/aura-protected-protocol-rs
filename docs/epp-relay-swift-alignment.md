@@ -92,6 +92,7 @@ Shield mode є властивістю групової сесії та roster/po
 - state transitions валідні,
 - адресація peer не підміняється,
 - прострочені/неконсистентні сигнали не форвардяться.
+- `VoipCallStore` робить atomic compare-exchange per `call_id`, щоб lifecycle не роз'їжджався між конкурентними relay workers / instances.
 
 ## 7) Release sync checklist (short)
 
@@ -101,4 +102,5 @@ Shield mode є властивістю групової сесії та roster/po
 - Swift guide і FFI guide описують `external_counter` invariant;
 - relay integration не оминає strict validation виклики;
 - handshake replay/OPK invariant не порушено.
+- для VoIP relay у multi-instance режимі є пер-`call_id` атомарність у store (lock/CAS/transaction).
 

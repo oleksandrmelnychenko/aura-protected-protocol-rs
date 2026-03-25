@@ -129,6 +129,11 @@
 - блокує replay/invalid sequencing для rekey/rekey-ack;
 - дропає прострочені дзвінки за timeout/lifetime policy.
 
+Важливо для конкурентності:
+
+- `process_voip_signal` покладається на atomic `VoipCallStore::compare_exchange_call(...)` для insert/update/remove per `call_id`;
+- store має гарантувати цей CAS на рівні shared persistence (row lock / conditional update / transaction), і для single-instance, і для multi-instance deployment.
+
 Практично: для VoIP ingress спочатку викликайте `validate_voip_envelope`, потім `process_voip_signal`, і лише після успіху форвардьте payload цільовому пристрою.
 
 ## Зберігання подій (PendingEventStore)

@@ -85,6 +85,11 @@ Swift-обгортка:
 | `session.serialize(key: Data, externalCounter: UInt64)` | `key` — 32 байти, `externalCounter` — зростаюче число | `Data` — sealed state |
 | `EppSession.deserialize(sealedState: Data, key: Data, minExternalCounter: UInt64)` | `sealedState`, `key`, `minExternalCounter` | `(session: EppSession, externalCounter: UInt64)` |
 
+Правила anti-rollback:
+
+- імпорт вважається валідним лише якщо `sealed_counter > minExternalCounter` (рівність відхиляється);
+- для C FFI `out_external_counter` використовувати тільки коли код повернення `EPP_SUCCESS`.
+
 **Що передавати на Relay/сервер:** Клієнт може надсилати зашифрований envelope як є (binary). Сервер лише пересилає байти; дешифрування робить одержувач на своїй сесії.
 
 ## Hardening limits (Swift/FFI)

@@ -650,7 +650,7 @@ pub enum CallLifecycleState {
     Ended,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveCall {
     pub call_id: Vec<u8>,
     pub caller_device_id: Vec<u8>,
@@ -719,7 +719,22 @@ pub trait VoipCallStore: Send + Sync {
     fn find_call(&self, call_id: &[u8]) -> Result<Option<ActiveCall>, ProtocolError>;
     fn update_call(&self, call: &ActiveCall) -> Result<(), ProtocolError>;
     fn remove_call(&self, call_id: &[u8]) -> Result<(), ProtocolError>;
+
+    /// Atomically replace `current` with `next` for a single call lifecycle record.
+    ///
+    /// Required semantics:
+    /// - `(None, Some(call))` inserts `call` only if no record with `call.call_id` exists.
+    /// - `(Some(call), Some(next))` updates only if the stored record still equals `call`.
+    /// - `(Some(call), None)` removes only if the stored record still equals `call`.
+    /// - Return `Ok(false)` on compare-and-swap mismatch without mutating store state.
+    fn compare_exchange_call(
+        &self,
+        current: Option<&ActiveCall>,
+        next: Option<&ActiveCall>,
+    ) -> Result<bool, ProtocolError>;
 }
+
+const MAX_VOIP_CALL_COMPARE_EXCHANGE_RETRIES: usize = 8;
 
 pub fn validate_call_init_for_relay(envelope: &VoipEnvelope) -> Result<(), ProtocolError> {
     if envelope.signal_type != VoipSignalType::VoipSignalCallInit as i32 {
@@ -763,137 +778,159 @@ pub fn process_voip_signal(
 
     if sig == VoipSignalType::VoipSignalCallInit as i32 {
         validate_call_init_for_relay(envelope)?;
-        if store.find_call(&envelope.call_id)?.is_some() {
-            return Err(ProtocolError::voip_call("call_id already exists"));
-        }
-
         let new_call = ActiveCall::new(
             envelope.call_id.clone(),
             envelope.sender_device_id.clone(),
             envelope.recipient_device_id.clone(),
             server_timestamp,
         );
-        store.register_call(&new_call)?;
+        if !store.compare_exchange_call(None, Some(&new_call))? {
+            return Err(ProtocolError::voip_call("call_id already exists"));
+        }
         return Ok(VoipRelayAction::Forward(
             envelope.recipient_device_id.clone(),
         ));
     }
 
-    let mut call = validate_call_signal_for_relay(envelope, store)?;
-    if call.is_expired(server_timestamp) {
-        store.remove_call(&call.call_id)?;
-        return Err(ProtocolError::voip_call("call expired on relay"));
-    }
+    for _ in 0..MAX_VOIP_CALL_COMPARE_EXCHANGE_RETRIES {
+        let mut call = validate_call_signal_for_relay(envelope, store)?;
+        if call.is_expired(server_timestamp) {
+            if store.compare_exchange_call(Some(&call), None)? {
+                return Err(ProtocolError::voip_call("call expired on relay"));
+            }
+            continue;
+        }
 
-    if sig == VoipSignalType::VoipSignalCallAccept as i32 {
-        if envelope.sender_device_id != call.callee_device_id {
-            return Err(ProtocolError::voip_call("only callee can accept"));
+        if sig == VoipSignalType::VoipSignalCallAccept as i32 {
+            if envelope.sender_device_id != call.callee_device_id {
+                return Err(ProtocolError::voip_call("only callee can accept"));
+            }
+            if call.state != CallLifecycleState::Initiated {
+                return Err(ProtocolError::voip_call(
+                    "call accept is only valid for initiated calls",
+                ));
+            }
+            let target = call.caller_device_id.clone();
+            let current = call.clone();
+            call.state = CallLifecycleState::Active;
+            call.pending_rekey_from = None;
+            call.touch(server_timestamp);
+            if store.compare_exchange_call(Some(&current), Some(&call))? {
+                return Ok(VoipRelayAction::Forward(target));
+            }
+            continue;
         }
-        if call.state != CallLifecycleState::Initiated {
-            return Err(ProtocolError::voip_call(
-                "call accept is only valid for initiated calls",
-            ));
-        }
-        call.state = CallLifecycleState::Active;
-        call.pending_rekey_from = None;
-        call.touch(server_timestamp);
-        store.update_call(&call)?;
-        return Ok(VoipRelayAction::Forward(call.caller_device_id));
-    }
 
-    if sig == VoipSignalType::VoipSignalCallReject as i32 {
-        if envelope.sender_device_id != call.callee_device_id {
-            return Err(ProtocolError::voip_call("only callee can reject"));
+        if sig == VoipSignalType::VoipSignalCallReject as i32 {
+            if envelope.sender_device_id != call.callee_device_id {
+                return Err(ProtocolError::voip_call("only callee can reject"));
+            }
+            if call.state != CallLifecycleState::Initiated {
+                return Err(ProtocolError::voip_call(
+                    "call reject is only valid for initiated calls",
+                ));
+            }
+            let target = call.caller_device_id.clone();
+            if store.compare_exchange_call(Some(&call), None)? {
+                return Ok(VoipRelayAction::ForwardAndRemove(target));
+            }
+            continue;
         }
-        if call.state != CallLifecycleState::Initiated {
-            return Err(ProtocolError::voip_call(
-                "call reject is only valid for initiated calls",
-            ));
-        }
-        store.remove_call(&call.call_id)?;
-        return Ok(VoipRelayAction::ForwardAndRemove(call.caller_device_id));
-    }
 
-    if sig == VoipSignalType::VoipSignalCallEnd as i32 {
+        if sig == VoipSignalType::VoipSignalCallEnd as i32 {
+            if call.state == CallLifecycleState::Ended {
+                return Err(ProtocolError::voip_call("call already ended"));
+            }
+            let target = if envelope.sender_device_id == call.caller_device_id {
+                call.callee_device_id.clone()
+            } else {
+                call.caller_device_id.clone()
+            };
+            if store.compare_exchange_call(Some(&call), None)? {
+                return Ok(VoipRelayAction::ForwardAndRemove(target));
+            }
+            continue;
+        }
+
+        if sig == VoipSignalType::VoipSignalRekey as i32
+            || sig == VoipSignalType::VoipSignalRekeyAck as i32
+        {
+            let target = if envelope.sender_device_id == call.caller_device_id {
+                call.callee_device_id.clone()
+            } else {
+                call.caller_device_id.clone()
+            };
+
+            if sig == VoipSignalType::VoipSignalRekey as i32 {
+                if call.state != CallLifecycleState::Active {
+                    return Err(ProtocolError::voip_call(
+                        "rekey is only valid for active calls",
+                    ));
+                }
+                let current = call.clone();
+                call.state = CallLifecycleState::Rekeying;
+                call.pending_rekey_from = Some(envelope.sender_device_id.clone());
+                call.touch(server_timestamp);
+                if store.compare_exchange_call(Some(&current), Some(&call))? {
+                    return Ok(VoipRelayAction::Forward(target));
+                }
+                continue;
+            }
+
+            if call.state != CallLifecycleState::Rekeying {
+                return Err(ProtocolError::voip_call(
+                    "rekey ack is only valid during rekeying",
+                ));
+            }
+            let pending_rekey_from = call.pending_rekey_from.clone().ok_or_else(|| {
+                ProtocolError::voip_call("missing pending rekey initiator for rekey ack")
+            })?;
+            if envelope.sender_device_id == pending_rekey_from {
+                return Err(ProtocolError::voip_call(
+                    "rekey ack must come from the non-initiating peer",
+                ));
+            }
+            if envelope.recipient_device_id != pending_rekey_from {
+                return Err(ProtocolError::voip_call(
+                    "rekey ack recipient does not match pending rekey initiator",
+                ));
+            }
+            let current = call.clone();
+            call.state = CallLifecycleState::Active;
+            call.rekey_generation = call
+                .rekey_generation
+                .checked_add(1)
+                .ok_or_else(|| ProtocolError::voip_call("relay rekey generation overflow"))?;
+            call.pending_rekey_from = None;
+            call.touch(server_timestamp);
+            if store.compare_exchange_call(Some(&current), Some(&call))? {
+                return Ok(VoipRelayAction::Forward(target));
+            }
+            continue;
+        }
+
+        if sig == VoipSignalType::VoipSignalCallAccept as i32
+            && call.state == CallLifecycleState::Ended
+        {
+            return Err(ProtocolError::voip_call("cannot accept an ended call"));
+        }
+
+        if sig == VoipSignalType::VoipSignalCallReject as i32
+            && call.state == CallLifecycleState::Ended
+        {
+            return Err(ProtocolError::voip_call("cannot reject an ended call"));
+        }
+
         if call.state == CallLifecycleState::Ended {
             return Err(ProtocolError::voip_call("call already ended"));
         }
-        call.state = CallLifecycleState::Ended;
-        store.remove_call(&call.call_id)?;
-        let target = if envelope.sender_device_id == call.caller_device_id {
-            call.callee_device_id
-        } else {
-            call.caller_device_id
-        };
-        return Ok(VoipRelayAction::ForwardAndRemove(target));
+
+        return Err(ProtocolError::voip_call("unknown VoIP signal type"));
     }
 
-    if sig == VoipSignalType::VoipSignalRekey as i32
-        || sig == VoipSignalType::VoipSignalRekeyAck as i32
-    {
-        let target = if envelope.sender_device_id == call.caller_device_id {
-            call.callee_device_id.clone()
-        } else {
-            call.caller_device_id.clone()
-        };
-
-        if sig == VoipSignalType::VoipSignalRekey as i32 {
-            if call.state != CallLifecycleState::Active {
-                return Err(ProtocolError::voip_call(
-                    "rekey is only valid for active calls",
-                ));
-            }
-            call.state = CallLifecycleState::Rekeying;
-            call.pending_rekey_from = Some(envelope.sender_device_id.clone());
-            call.touch(server_timestamp);
-            store.update_call(&call)?;
-            return Ok(VoipRelayAction::Forward(target));
-        }
-
-        if call.state != CallLifecycleState::Rekeying {
-            return Err(ProtocolError::voip_call(
-                "rekey ack is only valid during rekeying",
-            ));
-        }
-        let pending_rekey_from = call.pending_rekey_from.clone().ok_or_else(|| {
-            ProtocolError::voip_call("missing pending rekey initiator for rekey ack")
-        })?;
-        if envelope.sender_device_id == pending_rekey_from {
-            return Err(ProtocolError::voip_call(
-                "rekey ack must come from the non-initiating peer",
-            ));
-        }
-        if envelope.recipient_device_id != pending_rekey_from {
-            return Err(ProtocolError::voip_call(
-                "rekey ack recipient does not match pending rekey initiator",
-            ));
-        }
-        call.state = CallLifecycleState::Active;
-        call.rekey_generation = call
-            .rekey_generation
-            .checked_add(1)
-            .ok_or_else(|| ProtocolError::voip_call("relay rekey generation overflow"))?;
-        call.pending_rekey_from = None;
-        call.touch(server_timestamp);
-        store.update_call(&call)?;
-        return Ok(VoipRelayAction::Forward(target));
-    }
-
-    if sig == VoipSignalType::VoipSignalCallAccept as i32 && call.state == CallLifecycleState::Ended
-    {
-        return Err(ProtocolError::voip_call("cannot accept an ended call"));
-    }
-
-    if sig == VoipSignalType::VoipSignalCallReject as i32 && call.state == CallLifecycleState::Ended
-    {
-        return Err(ProtocolError::voip_call("cannot reject an ended call"));
-    }
-
-    if call.state == CallLifecycleState::Ended {
-        return Err(ProtocolError::voip_call("call already ended"));
-    }
-
-    Err(ProtocolError::voip_call("unknown VoIP signal type"))
+    Err(ProtocolError::invalid_state(
+        "VoIP call state changed concurrently; retry signal",
+    ))
 }
 
 #[derive(Debug)]

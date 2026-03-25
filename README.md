@@ -421,7 +421,7 @@ All relay functions are in `ecliptix_protocol::api::relay`:
 - `apply_commit_to_roster()` — update group membership
 - `extract_welcome_target()` — find welcome recipient
 - `commit_recipients()` / `message_recipients()` / `crypto_envelope_recipients()` — delivery targets
-- `validate_voip_envelope()` / `process_voip_signal()` — VoIP relay validation and call-state-safe routing
+- `validate_voip_envelope()` / `process_voip_signal()` — VoIP relay validation and call-state-safe routing via atomic `VoipCallStore::compare_exchange_call()`
 - `PendingEventStore` trait — event persistence (store/fetch/ack by device_id)
 
 See [docs/relay-server.md](docs/relay-server.md) for full guide.

@@ -678,8 +678,9 @@ EppErrorCode epp_session_deserialize_sealed(
 
 Відновлює сесію із sealed state.
 
-- Якщо counter у blob < `min_external_counter` → `EPP_ERROR_REPLAY_ATTACK`
-- Зберегти `*out_external_counter` для наступного `min_external_counter`
+- Якщо counter у blob `<= min_external_counter` → `EPP_ERROR_REPLAY_ATTACK`
+- `*out_external_counter` валідний тільки при `EPP_SUCCESS` (на помилці не використовувати/не persist-ити)
+- Після успішного імпорту зберегти `*out_external_counter` для наступного `min_external_counter`
 
 ---
 
@@ -1427,6 +1428,8 @@ EppErrorCode epp_group_deserialize(
 ```
 
 Відновлює групову сесію. `identity_handle` потрібен для Ed25519 private key.
+
+- `*out_external_counter` валідний тільки при `EPP_SUCCESS` (на помилці не використовувати/не persist-ити)
 
 ### `epp_group_export_public_state`
 

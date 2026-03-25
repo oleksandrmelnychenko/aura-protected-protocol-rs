@@ -2358,7 +2358,6 @@ pub unsafe extern "C" fn epp_group_deserialize(
             Ok(c) => c,
             Err(e) => return write_protocol_error(out_error, &e),
         };
-        *out_external_counter = external_counter;
 
         let identity = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
@@ -2376,6 +2375,7 @@ pub unsafe extern "C" fn epp_group_deserialize(
             min_external_counter,
         ) {
             Ok(session) => {
+                *out_external_counter = external_counter;
                 *out_handle = Box::into_raw(Box::new(EppGroupSessionHandle(Some(session))));
                 EppErrorCode::EppSuccess
             }
@@ -2798,7 +2798,6 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed(
             Ok(c) => c,
             Err(e) => return write_protocol_error(out_error, &e),
         };
-        *out_external_counter = external_counter;
         let mut smh = match SecureMemoryHandle::allocate(AES_KEY_BYTES) {
             Ok(h) => h,
             Err(e) => {
@@ -2822,6 +2821,7 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed(
         let provider = FfiStateKeyProvider { handle: smh };
         match Session::from_sealed_state(state_slice, &provider, min_external_counter) {
             Ok(session) => {
+                *out_external_counter = external_counter;
                 *out_handle = Box::into_raw(Box::new(EppSessionHandle(Some(session))));
                 EppErrorCode::EppSuccess
             }
