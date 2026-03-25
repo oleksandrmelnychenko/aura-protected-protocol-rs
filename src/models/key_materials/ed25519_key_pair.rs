@@ -8,7 +8,7 @@ use crate::core::constants::{
 };
 use crate::core::errors::{CryptoError, ProtocolError};
 use crate::crypto::{CryptoInterop, SecureMemoryHandle};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 
 pub struct Ed25519KeyPair {
     private_key: SecureMemoryHandle,
@@ -97,7 +97,7 @@ impl Ed25519KeyPair {
             .try_into()
             .map_err(|_| ProtocolError::peer_pub_key("Invalid Ed25519 signature size"))?;
         let sig = Signature::from_bytes(&sig_array);
-        vk.verify(message, &sig)
+        vk.verify_strict(message, &sig)
             .map_err(|_| ProtocolError::peer_pub_key("Ed25519 signature verification failed"))
     }
 }

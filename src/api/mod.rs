@@ -8,7 +8,8 @@ use zeroize::Zeroizing;
 
 use crate::core::constants::{
     AES_GCM_NONCE_BYTES, AES_GCM_TAG_BYTES, DEFAULT_MESSAGES_PER_CHAIN, MAX_BUFFER_SIZE,
-    MAX_ENVELOPE_MESSAGE_SIZE, MAX_VOIP_SIGNAL_MESSAGE_SIZE, OPAQUE_ROOT_INFO,
+    MAX_ENVELOPE_MESSAGE_SIZE, MAX_HANDSHAKE_MESSAGE_SIZE, MAX_VOIP_SIGNAL_MESSAGE_SIZE,
+    OPAQUE_ROOT_INFO,
     OPAQUE_SESSION_KEY_BYTES, PROTOCOL_VERSION,
 };
 use crate::core::errors::ProtocolError;
@@ -17,7 +18,7 @@ use crate::identity::IdentityKeys;
 use crate::interfaces::StaticStateKeyProvider;
 use crate::proto::{GroupKeyPackage, OneTimePreKey, PreKeyBundle, SecureEnvelope};
 use crate::protocol::group::{self, GroupSecurityPolicy, GroupSession};
-use crate::protocol::{HandshakeInitiator, HandshakeResponder, Session};
+use crate::protocol::{HandshakeInitReplayGuard, HandshakeInitiator, HandshakeResponder, Session};
 
 pub struct DecryptResult {
     pub plaintext: Vec<u8>,
@@ -50,6 +51,9 @@ impl EcliptixSession {
     }
 
     pub fn decrypt(&mut self, envelope_bytes: &[u8]) -> Result<DecryptResult, ProtocolError> {
+        if envelope_bytes.len() > MAX_ENVELOPE_MESSAGE_SIZE {
+            return Err(ProtocolError::invalid_input("SecureEnvelope too large"));
+        }
         let envelope = SecureEnvelope::decode(envelope_bytes)
             .map_err(|e| ProtocolError::decode(format!("Failed to decode SecureEnvelope: {e}")))?;
         let result = self.0.decrypt(&envelope)?;
@@ -210,6 +214,9 @@ impl EcliptixProtocol {
         &mut self,
         peer_bundle_bytes: &[u8],
     ) -> Result<(EcliptixInitiator, Vec<u8>), ProtocolError> {
+        if peer_bundle_bytes.len() > MAX_HANDSHAKE_MESSAGE_SIZE {
+            return Err(ProtocolError::invalid_input("PreKeyBundle too large"));
+        }
         let peer_bundle = PreKeyBundle::decode(peer_bundle_bytes).map_err(|e| {
             ProtocolError::decode(format!("Failed to decode peer PreKeyBundle: {e}"))
         })?;
@@ -225,16 +232,25 @@ impl EcliptixProtocol {
         &mut self,
         init_bytes: &[u8],
     ) -> Result<(EcliptixResponder, Vec<u8>), ProtocolError> {
+        self.accept_session_with_replay_guard(init_bytes, None)
+    }
+
+    pub fn accept_session_with_replay_guard(
+        &mut self,
+        init_bytes: &[u8],
+        replay_guard: Option<&dyn HandshakeInitReplayGuard>,
+    ) -> Result<(EcliptixResponder, Vec<u8>), ProtocolError> {
         let local_bundle_bytes = self.pre_key_bundle()?;
         let local_bundle = PreKeyBundle::decode(local_bundle_bytes.as_slice()).map_err(|e| {
             ProtocolError::decode(format!("Failed to decode local PreKeyBundle: {e}"))
         })?;
 
-        let responder = HandshakeResponder::process(
+        let responder = HandshakeResponder::process_with_replay_guard(
             &mut self.identity,
             &local_bundle,
             init_bytes,
             self.max_messages,
+            replay_guard,
         )?;
         let ack_bytes = responder.encoded_ack().to_vec();
 

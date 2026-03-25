@@ -223,6 +223,12 @@ pub(crate) fn validate_bundle(bundle: &PreKeyBundle) -> Result<(), ProtocolError
     DhValidator::validate_x25519_public_key(&bundle.identity_x25519_public)?;
     DhValidator::validate_x25519_public_key(&bundle.signed_pre_key_public)?;
 
+    if bundle.one_time_pre_keys.len() > MAX_ONE_TIME_PRE_KEYS_PER_BUNDLE {
+        return Err(ProtocolError::invalid_input(
+            "PreKeyBundle has too many one-time pre-keys",
+        ));
+    }
+
     for opk in &bundle.one_time_pre_keys {
         if opk.public_key.len() != X25519_PUBLIC_KEY_BYTES {
             return Err(ProtocolError::invalid_input(

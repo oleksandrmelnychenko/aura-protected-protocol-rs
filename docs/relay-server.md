@@ -141,6 +141,19 @@
 | `fetch_events(device_id, after_event_id, max_events)` | device_id, курсор, ліміт | Отримати наступні події для цього пристрою |
 | `ack_events(device_id, event_ids)` | device_id, список event_id | Підтвердити доставку; повертає кількість підтверджених |
 
+## DoS hardening (операційно)
+
+Рекомендовано застосовувати transport limits ще до protobuf decode:
+
+- обмеження HTTP body / WS frame для envelope, commit, key package;
+- ранній reject на ingress з кодом policy violation (напр. HTTP `413 Payload Too Large`);
+- rate limits + backpressure для маршрутів prekey upload/replenish.
+
+Для узгодженості з протоколом:
+
+- oversized input має завершуватися fast-fail без подальшої обробки;
+- логи повинні містити лише тип/розмір/джерело події, без чутливого payload.
+
 **`StoredPendingEvent`** — тип події:
 
 | Поле | Тип | Опис |

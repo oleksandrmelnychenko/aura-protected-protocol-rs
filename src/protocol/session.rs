@@ -1104,14 +1104,33 @@ impl Session {
 
         let current_index = recv_chain.message_index;
         let epoch = inner.state.recv_ratchet_epoch;
+        let max_messages = u64::from(inner.state.max_messages_per_chain);
+        if max_messages == 0 || max_messages > MAX_MESSAGES_PER_CHAIN as u64 {
+            return Err(ProtocolError::invalid_state(
+                "Invalid max messages per chain",
+            ));
+        }
+        if previous_chain_length > max_messages {
+            return Err(ProtocolError::invalid_input(
+                "Previous chain length exceeds per-chain limit",
+            ));
+        }
 
         if current_index >= previous_chain_length {
             return Ok(());
         }
 
-        #[allow(clippy::cast_possible_truncation)]
-        let count_to_skip = (previous_chain_length - current_index) as usize;
-        if inner.skipped_message_keys.len() + count_to_skip > MAX_SKIPPED_MESSAGE_KEYS {
+        let Some(span) = previous_chain_length.checked_sub(current_index) else {
+            return Err(ProtocolError::invalid_input(
+                "Invalid previous chain length",
+            ));
+        };
+        let count_to_skip = usize::try_from(span)
+            .map_err(|_| ProtocolError::invalid_state("Previous chain length span too large"))?;
+        let Some(new_len) = inner.skipped_message_keys.len().checked_add(count_to_skip) else {
+            return Err(ProtocolError::invalid_state("Message key cache overflow"));
+        };
+        if new_len > MAX_SKIPPED_MESSAGE_KEYS {
             return Err(ProtocolError::invalid_state("Message key cache overflow"));
         }
 
@@ -1534,6 +1553,9 @@ impl Session {
             return Err(ProtocolError::invalid_state(
                 "Send metadata key not initialized",
             ));
+        }
+        if payload.len() > MAX_BUFFER_SIZE {
+            return Err(ProtocolError::invalid_input("Payload too large"));
         }
 
         let mut envelope = SecureEnvelope {

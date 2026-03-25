@@ -87,6 +87,22 @@ Swift-обгортка:
 
 **Що передавати на Relay/сервер:** Клієнт може надсилати зашифрований envelope як є (binary). Сервер лише пересилає байти; дешифрування робить одержувач на своїй сесії.
 
+## Hardening limits (Swift/FFI)
+
+FFI API у Swift не розширювався: нових функцій не потрібно підключати.
+
+Оновилась поведінка існуючих викликів — вони суворіше відхиляють oversized input:
+
+- `session.encrypt(...)` — payload size policy enforced.
+- `session.decrypt(...)` — envelope size policy enforced до decode.
+- handshake/bundle paths — stricter size and validation guardrails.
+
+Що робити в Swift-клієнті:
+
+1. Додати preflight size checks перед викликами (особливо для вкладень/великих payload).
+2. Мапити size-violations (`EPP_ERROR_INVALID_INPUT`) у окремий UX/classified error (`payload_too_large`, `envelope_too_large`), без retry-loop.
+3. В telemetry логувати тільки код/тип помилки та розмір payload, але не самі дані.
+
 ## Групова сесія (C FFI)
 
 Групові функції наразі доступні лише через C FFI. Типи: `EppGroupSessionHandle`, `EppKeyPackageSecretsHandle`.

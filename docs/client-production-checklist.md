@@ -70,6 +70,14 @@
   - session expired
   - group reinit pending
   - external join not authorized
+  - payload/envelope exceeds protocol limit (`invalid_input` policy rejection)
+
+## DoS / Size Guardrails
+
+- Дублювати протокольні ліміти на рівні UI/API клієнта (preflight checks до викликів протоколу).
+- Не дозволяти необмежені вкладення в один encrypted payload; використовувати chunking/attachment transport.
+- Вважати oversize rejection очікуваним security outcome, а не "тимчасовою" помилкою.
+- Для retry-механізмів додати правило: `invalid_input` через розмір не retry-ити без зміни payload.
 
 ## App Testing
 

@@ -196,7 +196,6 @@ fn ed25519_verify(
         .try_into()
         .map_err(|_| ProtocolError::invalid_input("Invalid Ed25519 signature size"))?;
     let sig = ed25519_dalek::Signature::from_bytes(&sig_array);
-    use ed25519_dalek::Verifier;
-    vk.verify(message, &sig)
+    vk.verify_strict(message, &sig)
         .map_err(|_| ProtocolError::peer_pub_key("Ed25519 signature verification failed"))
 }

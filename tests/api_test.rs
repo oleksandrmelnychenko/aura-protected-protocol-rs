@@ -2,8 +2,15 @@
 // SPDX-License-Identifier: MIT
 
 use ecliptix_protocol::api::{EcliptixGroupSession, EcliptixProtocol};
+use ecliptix_protocol::core::constants::{
+    HMAC_BYTES, MAX_BUFFER_SIZE, MAX_ENVELOPE_MESSAGE_SIZE, MAX_INFLIGHT_HANDSHAKE_INITS,
+    MAX_ONE_TIME_PRE_KEYS_PER_BUNDLE, MAX_PROTOBUF_MESSAGE_SIZE,
+};
 use ecliptix_protocol::crypto::CryptoInterop;
+use ecliptix_protocol::identity::IdentityKeys;
+use ecliptix_protocol::proto::{OneTimePreKey, PreKeyBundle};
 use ecliptix_protocol::protocol::GroupSecurityPolicy;
+use prost::Message;
 use std::sync::Once;
 
 static INIT_ONCE: Once = Once::new();
@@ -213,6 +220,119 @@ fn api_p2p_accept_session_with_invalid_init_fails() {
     let mut bob = EcliptixProtocol::new(5).unwrap();
     let result = bob.accept_session(b"garbage");
     assert!(result.is_err());
+}
+
+#[test]
+fn api_p2p_decrypt_with_oversized_envelope_fails() {
+    init();
+    let mut alice = EcliptixProtocol::new(5).unwrap();
+    let mut bob = EcliptixProtocol::new(5).unwrap();
+    let bob_bundle = bob.pre_key_bundle().unwrap();
+    let (initiator, init_msg) = alice.begin_session(&bob_bundle).unwrap();
+    let (responder, ack_msg) = bob.accept_session(&init_msg).unwrap();
+    let _alice_session = initiator.complete(&ack_msg).unwrap();
+    let mut bob_session = responder.complete().unwrap();
+
+    let oversized = vec![0u8; MAX_ENVELOPE_MESSAGE_SIZE + 1];
+    let result = bob_session.decrypt(&oversized);
+    assert!(result.is_err());
+}
+
+#[test]
+fn api_p2p_encrypt_with_oversized_plaintext_fails() {
+    init();
+    let mut alice = EcliptixProtocol::new(5).unwrap();
+    let mut bob = EcliptixProtocol::new(5).unwrap();
+    let bob_bundle = bob.pre_key_bundle().unwrap();
+    let (initiator, init_msg) = alice.begin_session(&bob_bundle).unwrap();
+    let (_responder, ack_msg) = bob.accept_session(&init_msg).unwrap();
+    let mut alice_session = initiator.complete(&ack_msg).unwrap();
+
+    let oversized = vec![0u8; MAX_BUFFER_SIZE + 1];
+    let result = alice_session.encrypt(&oversized, 0, 1, None);
+    assert!(result.is_err());
+}
+
+#[test]
+fn api_p2p_begin_session_with_oversized_bundle_fails() {
+    init();
+    let mut alice = EcliptixProtocol::new(5).unwrap();
+    let oversized = vec![0u8; MAX_PROTOBUF_MESSAGE_SIZE + 1];
+    let result = alice.begin_session(&oversized);
+    assert!(result.is_err());
+}
+
+#[test]
+fn api_p2p_begin_session_rejects_bundle_with_too_many_opks() {
+    init();
+    let mut alice = EcliptixProtocol::new(5).unwrap();
+    let bob = EcliptixProtocol::new(5).unwrap();
+    let bundle_bytes = bob.pre_key_bundle().unwrap();
+    let mut bundle = PreKeyBundle::decode(bundle_bytes.as_slice()).unwrap();
+
+    let mut opks = Vec::new();
+    for i in 0..(MAX_ONE_TIME_PRE_KEYS_PER_BUNDLE + 1) {
+        opks.push(OneTimePreKey {
+            one_time_pre_key_id: i as u32 + 1,
+            public_key: bundle.signed_pre_key_public.clone(),
+        });
+    }
+    bundle.one_time_pre_keys = opks;
+
+    let mut encoded = Vec::new();
+    bundle.encode(&mut encoded).unwrap();
+    let result = alice.begin_session(&encoded);
+    assert!(result.is_err());
+}
+
+#[test]
+fn identity_reserve_handshake_init_fingerprint_respects_inflight_limit() {
+    init();
+    let id = IdentityKeys::create(1).unwrap();
+    for i in 0..MAX_INFLIGHT_HANDSHAKE_INITS {
+        let mut fp = vec![0u8; HMAC_BYTES];
+        fp[..8].copy_from_slice(&(i as u64).to_le_bytes());
+        let accepted = id.reserve_handshake_init_fingerprint(&fp).unwrap();
+        assert!(accepted);
+    }
+    let mut overflow_fp = vec![0u8; HMAC_BYTES];
+    overflow_fp[..8].copy_from_slice(&(MAX_INFLIGHT_HANDSHAKE_INITS as u64).to_le_bytes());
+    let result = id.reserve_handshake_init_fingerprint(&overflow_fp);
+    assert!(result.is_err());
+}
+
+#[test]
+fn identity_reserve_handshake_init_duplicate_returns_false() {
+    init();
+    let id = IdentityKeys::create(1).unwrap();
+    let fp = vec![0xAB; HMAC_BYTES];
+    let first = id.reserve_handshake_init_fingerprint(&fp).unwrap();
+    let second = id.reserve_handshake_init_fingerprint(&fp).unwrap();
+    assert!(first);
+    assert!(!second);
+}
+
+#[test]
+fn identity_reserve_handshake_init_release_restores_capacity() {
+    init();
+    let id = IdentityKeys::create(1).unwrap();
+    for i in 0..MAX_INFLIGHT_HANDSHAKE_INITS {
+        let mut fp = vec![0u8; HMAC_BYTES];
+        fp[..8].copy_from_slice(&(i as u64).to_le_bytes());
+        let accepted = id.reserve_handshake_init_fingerprint(&fp).unwrap();
+        assert!(accepted);
+    }
+
+    let mut released_fp = vec![0u8; HMAC_BYTES];
+    released_fp[..8].copy_from_slice(&0u64.to_le_bytes());
+    id.release_handshake_init_fingerprint(&released_fp);
+
+    let mut replacement_fp = vec![0u8; HMAC_BYTES];
+    replacement_fp[..8].copy_from_slice(&(u64::MAX - 1).to_le_bytes());
+    let accepted = id
+        .reserve_handshake_init_fingerprint(&replacement_fp)
+        .unwrap();
+    assert!(accepted);
 }
 
 #[test]

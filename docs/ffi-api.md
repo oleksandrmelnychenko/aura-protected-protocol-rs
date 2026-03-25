@@ -147,6 +147,22 @@ epp_secure_wipe
 
 При збірці з `EPP_SERVER_BUILD` handshake initiator функції та тип `EppHandshakeInitiatorHandle` не компілюються. Сервер приймає з'єднання через responder.
 
+## Hardening update (limits)
+
+FFI surface не змінювався: нових FFI функцій не додано і сигнатури не змінено.
+
+Зміни в поведінці стосуються stricter validation у вже існуючих викликах:
+
+- більшість вхідних буферів мають жорсткі розмірні ліміти;
+- перевищення ліміту повертає `EPP_ERROR_INVALID_INPUT`;
+- у handshake path додано додаткові захисти від resource amplification на рівні protocol validation.
+
+Практичні дії для інтегратора:
+
+1. На клієнті перевіряти розміри payload локально до FFI-виклику (`encrypt/decrypt/handshake`), щоб уникати зайвих алокацій.
+2. На сервері ставити transport-level body limits (HTTP/WebSocket frame caps) не вище протокольних.
+3. Якщо отримали `EPP_ERROR_INVALID_INPUT` через розмір, трактувати як policy rejection (не як retryable transport failure).
+
 ## Зміст
 
 - [Типи та структури](#типи-та-структури)

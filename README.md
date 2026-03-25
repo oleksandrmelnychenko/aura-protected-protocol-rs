@@ -101,6 +101,17 @@ let policy = group.security_policy();
 | Metadata privacy | Envelope metadata encrypted with rotating per-epoch key |
 | State integrity | HMAC-SHA256 anti-rollback over serialized state |
 | Nonce-misuse resistance | AES-256-GCM-SIV degrades gracefully on nonce reuse |
+| DoS guardrails | Hard limits on protobuf/envelope/plaintext sizes + handshake cache/bundle caps |
+
+**Operational hardening limits (current defaults):**
+
+- `MAX_PROTOBUF_MESSAGE_SIZE`: 1 MiB
+- `MAX_ENVELOPE_MESSAGE_SIZE`: 1 MiB
+- `MAX_BUFFER_SIZE`: 10 MiB
+- `MAX_ONE_TIME_PRE_KEYS_PER_BUNDLE`: 4096
+- `MAX_INFLIGHT_HANDSHAKE_INITS`: 4096
+
+For deployment guidance, see `SECURITY.md`, `docs/client-production-checklist.md`, and `docs/server-production-checklist.md`.
 
 ### Group Protocol Properties
 

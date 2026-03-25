@@ -38,3 +38,19 @@ Post-compromise security is triggered on **direction change** (and when the mess
 ### Padding and traffic analysis
 
 Payloads are padded to **64-byte blocks** (ISO/IEC 7816-4 style). Ciphertext length therefore reveals plaintext length up to a 64-byte granularity (e.g. short text vs file vs image, or language-length distributions). Stronger traffic-analysis resistance would require fixed-size cells or padding to a large fixed maximum, at a bandwidth/storage cost the protocol does not impose by default.
+
+### Resource-exhaustion / DoS hardening limits
+
+The library applies explicit size and cache caps to reduce CPU/memory amplification from untrusted input:
+
+- `MAX_PROTOBUF_MESSAGE_SIZE` (1 MiB): hard cap for protobuf blobs such as `PreKeyBundle` and sealed state payloads.
+- `MAX_ENVELOPE_MESSAGE_SIZE` (1 MiB): hard cap for encrypted envelope payloads before decode.
+- `MAX_BUFFER_SIZE` (10 MiB): cap for large plaintext buffers (e.g. session encrypt path).
+- `MAX_ONE_TIME_PRE_KEYS_PER_BUNDLE` (4096): cap on OPK count validated in a single `PreKeyBundle`.
+- `MAX_INFLIGHT_HANDSHAKE_INITS` (4096): cap for uncommitted handshake replay reservations.
+- FFI paths may apply additional API-level caps for specific call sites (for example, handshake message size guards), so effective limits are endpoint-dependent.
+
+Notes for integrators:
+
+1. Multiple limits are cumulative. A value accepted by one limit can still be rejected by another (for example, OPK count may be under `MAX_ONE_TIME_PRE_KEYS_PER_BUNDLE` while total encoded protobuf size exceeds `MAX_PROTOBUF_MESSAGE_SIZE`).
+2. These limits harden the protocol layer but do not replace edge protections. Production services should still enforce transport-level body limits, timeouts, and rate limiting.

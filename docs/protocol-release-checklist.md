@@ -38,6 +38,12 @@
 - FFI contracts змінені
 - частина legacy/stale audit artifacts видалена
 
+Для hardening-релізів окремо зазначити:
+
+- які саме protocol size/count limits додані або змінені;
+- чи є зміни FFI surface (нові функції / змінені сигнатури) або лише behavioral hardening;
+- які нові rejection paths з'явились (`invalid_input`, `invalid_state`) і як інтеграторам їх обробляти.
+
 Окремо варто дати migration notes для:
 
 - Rust інтеграторів
@@ -80,6 +86,7 @@
 - чи не залишився legacy permissive path
 - чи немає checked-in stale PoC/docs, які суперечать поточному коду
 - чи backend/client docs не ведуть інтеграторів у небезпечний flow
+- чи FFI/Swift docs описують нову поведінку без зміни API surface (якщо surface не змінювався)
 
 ## 8. CI / Reproducibility
 

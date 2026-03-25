@@ -1,45 +1,58 @@
 # Ecliptix Protected Protocol v1.0.1
 
-## Summary
+## Security Hardening Update
 
-- hardened the core protocol defaults and removed implicit legacy permissive paths
-- added mandatory authorization for external group join flows
-- bound handshake identity material more strictly to close misbinding risk
-- enforced group franking policy on receive path, not only sender path
-- aligned Rust, C FFI, and Swift wrappers around the same security model
-- improved Swift session verification UX with peer identity, binding hash, and verified handshake helpers
-- removed stale audit PoCs and dead key-abstraction code
+This patch release focuses on resource-exhaustion and input-validation hardening.
 
-## Swift Package Manager
+- Added strict bounds for protocol parsing and encryption inputs (protobuf, envelopes, plaintext buffers).
+- Added explicit caps for `PreKeyBundle` one-time pre-key count and in-flight handshake init reservations.
+- Standardized Ed25519 verification to strict mode in critical verification paths.
+- Removed a redundant relay decode step for group-message validation.
+- Expanded regression coverage for size/count limits and validation behavior.
 
-```swift
-.binaryTarget(
-    name: "EcliptixProtectedProtocolBinary",
-    url: "https://github.com/oleksandrmelnychenko/ecliptix-protected-protocol-rs/releases/download/v1.0.1/ecliptix-protected-protocol.xcframework.zip",
-    checksum: "7d5f43bd4eb899d0837d34754d727db48d2fe52ebe2e2c57071c3097775ace85"
-)
-```
+## Limits Added/Enforced
 
-## Release Artifacts
+- `MAX_PROTOBUF_MESSAGE_SIZE`: 1 MiB
+- `MAX_ENVELOPE_MESSAGE_SIZE`: 1 MiB
+- `MAX_BUFFER_SIZE`: 10 MiB
+- `MAX_ONE_TIME_PRE_KEYS_PER_BUNDLE`: 4096
+- `MAX_INFLIGHT_HANDSHAKE_INITS`: 4096
 
-- archive: `dist/apple/ecliptix-protected-protocol.xcframework.zip`
-- sha256: `7d5f43bd4eb899d0837d34754d727db48d2fe52ebe2e2c57071c3097775ace85`
+Important: limits are cumulative. Input can pass one limit and still be rejected by another.
 
-## Notable Breaking Changes
+## FFI Impact
 
-- default group creation now uses a hardened shielded posture
-- external join now requires an explicit authorization artifact
-- Swift and FFI consumers should verify peers via identity APIs instead of trusting handshake completion alone
-- group decrypt FFI result now exposes sealed/franking payload details directly
+No new FFI APIs were introduced in this release.
 
-## Verification Performed
+- C FFI function surface is unchanged (no signature changes).
+- Swift wrapper surface is unchanged.
+- Behavior is stricter: oversized inputs are rejected earlier by existing calls.
 
-- `cargo fmt`
-- `cargo clippy --all-targets --all-features -- -D warnings`
-- `cargo test --all-features`
-- local Apple release staticlibs built for:
-  - `aarch64-apple-darwin`
-  - `aarch64-apple-ios`
-  - `aarch64-apple-ios-sim`
-  - `x86_64-apple-ios`
-- local XCFramework archive and checksum generated from the same build flow as CI
+## Migration Notes
+
+### Rust Integrators
+
+- Treat size-related rejects as policy outcomes, not transient transport errors.
+- Keep edge limits (HTTP/WebSocket/frame caps) at or below protocol limits.
+- Do not retry the same oversized payload unchanged.
+
+### C FFI Integrators
+
+- Add preflight size checks before calling encrypt/decrypt/handshake functions.
+- Handle `EPP_ERROR_INVALID_INPUT` as non-retryable unless payload is reduced/fixed.
+- Preserve existing memory-management flow (`epp_buffer_release`, `epp_error_free`).
+
+### Swift Integrators
+
+- Add app-side payload size guards before FFI call sites.
+- Map invalid-input size rejects to dedicated app errors (`payload_too_large`, `envelope_too_large`).
+- Keep telemetry metadata-only (error code/type/size), without logging sensitive payload content.
+
+## Operator Actions
+
+Before production rollout:
+
+1. Enable transport-level request/frame size limits.
+2. Enable rate limiting and backpressure for prekey upload/replenish endpoints.
+3. Confirm oversized payload paths fail fast and are covered by integration tests.
+4. Verify client/server docs are aligned with these hard limits.

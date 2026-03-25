@@ -563,6 +563,11 @@ impl IdentityKeys {
         {
             return Ok(false);
         }
+        if inner.inflight_handshake_init_hashes.len() >= MAX_INFLIGHT_HANDSHAKE_INITS {
+            return Err(ProtocolError::invalid_state(
+                "Too many inflight HandshakeInit reservations",
+            ));
+        }
 
         inner
             .inflight_handshake_init_hashes

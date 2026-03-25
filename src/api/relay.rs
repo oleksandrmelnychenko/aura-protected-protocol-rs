@@ -170,7 +170,7 @@ fn validate_commit_for_relay_core(
 fn validate_group_message_for_relay_core(
     message_bytes: &[u8],
     roster: &GroupRoster,
-) -> Result<(), ProtocolError> {
+) -> Result<GroupMessage, ProtocolError> {
     if message_bytes.len() > MAX_GROUP_MESSAGE_SIZE {
         return Err(ProtocolError::invalid_input("GroupMessage too large"));
     }
@@ -198,7 +198,7 @@ fn validate_group_message_for_relay_core(
     }
 
     match &msg.content {
-        Some(crate::proto::group_message::Content::Application(_)) => Ok(()),
+        Some(crate::proto::group_message::Content::Application(_)) => Ok(msg),
         _ => Err(ProtocolError::group_protocol(
             "Expected application message content",
         )),
@@ -231,9 +231,7 @@ pub fn validate_group_message_for_relay_strict(
     sender_leaf_index: u32,
     expected_sender_identity_ed25519: &[u8],
 ) -> Result<(), ProtocolError> {
-    validate_group_message_for_relay_core(message_bytes, roster)?;
-    let msg = GroupMessage::decode(message_bytes)
-        .map_err(|e| ProtocolError::decode(format!("GroupMessage decode: {e}")))?;
+    let msg = validate_group_message_for_relay_core(message_bytes, roster)?;
     let Some(crate::proto::group_message::Content::Application(app)) = &msg.content else {
         return Err(ProtocolError::group_protocol(
             "Expected application message content",
@@ -501,8 +499,7 @@ fn verify_ed25519_message(
         .try_into()
         .map_err(|_| ProtocolError::invalid_input("Invalid Ed25519 signature size"))?;
     let sig = ed25519_dalek::Signature::from_bytes(&sig_array);
-    use ed25519_dalek::Verifier;
-    vk.verify(message, &sig)
+    vk.verify_strict(message, &sig)
         .map_err(|_| ProtocolError::group_protocol(context))
 }
 

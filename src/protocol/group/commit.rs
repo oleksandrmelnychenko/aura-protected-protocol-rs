@@ -653,7 +653,6 @@ fn ed25519_verify_message(
         .try_into()
         .map_err(|_| ProtocolError::invalid_input("Invalid Ed25519 signature size"))?;
     let sig = ed25519_dalek::Signature::from_bytes(&sig_array);
-    use ed25519_dalek::Verifier;
-    vk.verify(message, &sig)
+    vk.verify_strict(message, &sig)
         .map_err(|_| ProtocolError::group_protocol(context))
 }

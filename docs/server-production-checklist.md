@@ -25,6 +25,7 @@
 - На ingress перевіряти, що payload type відповідає очікуваному endpoint flow.
 - Для key packages використовувати повноцінну криптографічну валідацію, а не лише shape check.
 - Не приймати “майже схожі” blobs тільки тому, що вони добре декодуються.
+- На ingress застосовувати body/frame limits не вище protocol hard limits, щоб не витрачати ресурси до валідації.
 
 ## Storage
 
@@ -60,6 +61,7 @@
   - authz
   - rate limiting
   - abuse monitoring
+  - request size limits (HTTP/WebSocket/gRPC)
 - Особливо важливо для:
   - prekey upload/replenish
   - welcome delivery
@@ -84,6 +86,7 @@
   - external join authorization path
   - duplicate event ack path
 - Додати tests для malformed input і policy rejection.
+- Додати tests для oversized payload/envelope/bundle та підтвердити fast reject без деградації.
 
 ## Minimum Server Gate
 
