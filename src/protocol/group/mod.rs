@@ -10,7 +10,7 @@ pub mod tree;
 pub mod tree_kem;
 pub mod welcome;
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::BTreeMap;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -36,7 +36,100 @@ pub use key_schedule::{EpochKeys, GroupKeySchedule};
 pub use sender_key::{SenderKeyChain, SenderKeyStore};
 pub use tree::RatchetTree;
 
-const MAX_SEEN_GROUP_MESSAGE_IDS: usize = 4096;
+const REPLAY_WINDOW_WORDS: usize = 16;
+const REPLAY_WINDOW_BITS: u32 = (REPLAY_WINDOW_WORDS as u32) * 64;
+const REPLAY_WINDOW_ENCODED_PREFIX: [u8; 4] = [0xFF, b'R', b'W', 1];
+
+#[derive(Clone)]
+struct SenderReplayWindow {
+    high_water: u32,
+    bitmap: [u64; REPLAY_WINDOW_WORDS],
+    initialized: bool,
+}
+
+impl Default for SenderReplayWindow {
+    fn default() -> Self {
+        Self {
+            high_water: 0,
+            bitmap: [0; REPLAY_WINDOW_WORDS],
+            initialized: false,
+        }
+    }
+}
+
+impl SenderReplayWindow {
+    fn is_duplicate_or_too_old(&self, generation: u32) -> bool {
+        if !self.initialized {
+            return false;
+        }
+        if generation > self.high_water {
+            return false;
+        }
+        let delta = self.high_water - generation;
+        if delta >= REPLAY_WINDOW_BITS {
+            return true;
+        }
+        let idx = delta as usize;
+        let word = idx / 64;
+        let bit = idx % 64;
+        (self.bitmap[word] & (1u64 << bit)) != 0
+    }
+
+    fn mark_seen(&mut self, generation: u32) {
+        if !self.initialized {
+            self.initialized = true;
+            self.high_water = generation;
+            self.bitmap = [0; REPLAY_WINDOW_WORDS];
+            self.bitmap[0] |= 1;
+            return;
+        }
+
+        if generation > self.high_water {
+            let shift = generation - self.high_water;
+            self.shift_window(shift);
+            self.high_water = generation;
+            self.bitmap[0] |= 1;
+            return;
+        }
+
+        let delta = self.high_water - generation;
+        if delta >= REPLAY_WINDOW_BITS {
+            return;
+        }
+        let idx = delta as usize;
+        let word = idx / 64;
+        let bit = idx % 64;
+        self.bitmap[word] |= 1u64 << bit;
+    }
+
+    fn shift_window(&mut self, shift: u32) {
+        if shift >= REPLAY_WINDOW_BITS {
+            self.bitmap = [0; REPLAY_WINDOW_WORDS];
+            return;
+        }
+
+        let shift_usize = shift as usize;
+        let word_shift = shift_usize / 64;
+        let bit_shift = shift_usize % 64;
+
+        if word_shift > 0 {
+            for i in (word_shift..REPLAY_WINDOW_WORDS).rev() {
+                self.bitmap[i] = self.bitmap[i - word_shift];
+            }
+            for word in self.bitmap.iter_mut().take(word_shift) {
+                *word = 0;
+            }
+        }
+
+        if bit_shift > 0 {
+            for i in (1..REPLAY_WINDOW_WORDS).rev() {
+                self.bitmap[i] =
+                    (self.bitmap[i] << bit_shift) | (self.bitmap[i - 1] >> (64 - bit_shift));
+            }
+            self.bitmap[0] <<= bit_shift;
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct GroupSecurityPolicy {
@@ -154,8 +247,7 @@ struct GroupSessionInner {
     my_identity_ed25519_public: Vec<u8>,
     my_identity_x25519_public: Vec<u8>,
     my_ed25519_secret: SecureMemoryHandle,
-    seen_message_ids: HashSet<Vec<u8>>,
-    seen_message_ids_order: VecDeque<Vec<u8>>,
+    replay_windows: BTreeMap<u32, SenderReplayWindow>,
     external_x25519_public: Vec<u8>,
     external_kyber_public: Vec<u8>,
     psk_resolver: Option<Box<dyn PskResolver>>,
@@ -254,12 +346,71 @@ pub fn compute_message_id(
     h.finalize().to_vec()
 }
 
-fn build_replay_message_id(payload_nonce: &[u8], sender_leaf_index: u32, generation: u32) -> Vec<u8> {
-    let mut msg_id = Vec::with_capacity(payload_nonce.len() + 8);
-    msg_id.extend_from_slice(payload_nonce);
-    msg_id.extend_from_slice(&sender_leaf_index.to_le_bytes());
-    msg_id.extend_from_slice(&generation.to_le_bytes());
-    msg_id
+fn encode_replay_windows_for_state(replay_windows: &BTreeMap<u32, SenderReplayWindow>) -> Vec<Vec<u8>> {
+    let mut encoded = Vec::with_capacity(replay_windows.len());
+    for (leaf_index, window) in replay_windows {
+        if !window.initialized {
+            continue;
+        }
+        let mut entry =
+            Vec::with_capacity(REPLAY_WINDOW_ENCODED_PREFIX.len() + 8 + (REPLAY_WINDOW_WORDS * 8));
+        entry.extend_from_slice(&REPLAY_WINDOW_ENCODED_PREFIX);
+        entry.extend_from_slice(&leaf_index.to_le_bytes());
+        entry.extend_from_slice(&window.high_water.to_le_bytes());
+        for word in &window.bitmap {
+            entry.extend_from_slice(&word.to_le_bytes());
+        }
+        encoded.push(entry);
+    }
+    encoded
+}
+
+fn decode_replay_windows_from_state(
+    entries: Vec<Vec<u8>>,
+) -> Result<BTreeMap<u32, SenderReplayWindow>, ProtocolError> {
+    let expected_len = REPLAY_WINDOW_ENCODED_PREFIX.len() + 8 + (REPLAY_WINDOW_WORDS * 8);
+    let mut windows = BTreeMap::new();
+    for entry in entries {
+        if entry.len() != expected_len {
+            continue;
+        }
+        if entry[..REPLAY_WINDOW_ENCODED_PREFIX.len()] != REPLAY_WINDOW_ENCODED_PREFIX {
+            continue;
+        }
+        let mut off = REPLAY_WINDOW_ENCODED_PREFIX.len();
+        let leaf_index = u32::from_le_bytes(
+            entry[off..off + 4]
+                .try_into()
+                .map_err(|_| ProtocolError::group_protocol("Replay window parse failed"))?,
+        );
+        off += 4;
+        let high_water = u32::from_le_bytes(
+            entry[off..off + 4]
+                .try_into()
+                .map_err(|_| ProtocolError::group_protocol("Replay window parse failed"))?,
+        );
+        off += 4;
+        let mut bitmap = [0u64; REPLAY_WINDOW_WORDS];
+        for word in &mut bitmap {
+            *word = u64::from_le_bytes(
+                entry[off..off + 8]
+                    .try_into()
+                    .map_err(|_| ProtocolError::group_protocol("Replay window parse failed"))?,
+            );
+            off += 8;
+        }
+
+        let initialized = bitmap.iter().any(|word| *word != 0);
+        windows.insert(
+            leaf_index,
+            SenderReplayWindow {
+                high_water,
+                bitmap,
+                initialized,
+            },
+        );
+    }
+    Ok(windows)
 }
 
 pub struct MessagePolicy {
@@ -446,8 +597,7 @@ impl GroupSession {
                 my_identity_ed25519_public: kp.identity_ed25519_public,
                 my_identity_x25519_public: kp.identity_x25519_public,
                 my_ed25519_secret: ed25519_secret,
-                seen_message_ids: HashSet::new(),
-                seen_message_ids_order: VecDeque::new(),
+                replay_windows: BTreeMap::new(),
                 external_x25519_public: ext_x25519_pub,
                 external_kyber_public: ext_kyber_pub,
                 psk_resolver: None,
@@ -519,8 +669,7 @@ impl GroupSession {
                 my_identity_ed25519_public: identity_ed25519.to_vec(),
                 my_identity_x25519_public: identity_x25519.to_vec(),
                 my_ed25519_secret: ed25519_secret,
-                seen_message_ids: HashSet::new(),
-                seen_message_ids_order: VecDeque::new(),
+                replay_windows: BTreeMap::new(),
                 external_x25519_public: ext_x25519_pub,
                 external_kyber_public: ext_kyber_pub,
                 psk_resolver: None,
@@ -631,8 +780,7 @@ impl GroupSession {
         inner.epoch_keys = commit_output.epoch_keys;
         inner.sender_store = commit_output.new_sender_store;
         inner.group_context_hash = commit_output.group_context_hash;
-        inner.seen_message_ids.clear();
-        inner.seen_message_ids_order.clear();
+        inner.replay_windows.clear();
 
         let (_ext_priv, ext_x25519_pub, _ext_kyber_sec, ext_kyber_pub) =
             GroupKeySchedule::derive_external_keypairs(&inner.init_secret)?;
@@ -700,8 +848,7 @@ impl GroupSession {
         inner.epoch_keys = commit_output.epoch_keys;
         inner.sender_store = commit_output.new_sender_store;
         inner.group_context_hash = commit_output.group_context_hash;
-        inner.seen_message_ids.clear();
-        inner.seen_message_ids_order.clear();
+        inner.replay_windows.clear();
 
         let (_ext_priv, ext_x25519_pub, _ext_kyber_sec, ext_kyber_pub) =
             GroupKeySchedule::derive_external_keypairs(&inner.init_secret)?;
@@ -756,8 +903,7 @@ impl GroupSession {
         inner.epoch_keys = commit_output.epoch_keys;
         inner.sender_store = commit_output.new_sender_store;
         inner.group_context_hash = commit_output.group_context_hash;
-        inner.seen_message_ids.clear();
-        inner.seen_message_ids_order.clear();
+        inner.replay_windows.clear();
 
         let (_ext_priv, ext_x25519_pub, _ext_kyber_sec, ext_kyber_pub) =
             GroupKeySchedule::derive_external_keypairs(&inner.init_secret)?;
@@ -837,8 +983,7 @@ impl GroupSession {
         inner.epoch_keys = commit_output.epoch_keys;
         inner.sender_store = commit_output.new_sender_store;
         inner.group_context_hash = commit_output.group_context_hash;
-        inner.seen_message_ids.clear();
-        inner.seen_message_ids_order.clear();
+        inner.replay_windows.clear();
         inner.pending_reinit = Some(ReInitInfo {
             new_group_id: commit_output
                 .commit
@@ -923,8 +1068,7 @@ impl GroupSession {
         inner.epoch_keys = epoch_keys;
         inner.sender_store = processed.new_sender_store;
         inner.group_context_hash = processed.group_context_hash;
-        inner.seen_message_ids.clear();
-        inner.seen_message_ids_order.clear();
+        inner.replay_windows.clear();
         inner.last_sent_message_hash = vec![0u8; SHA256_HASH_BYTES];
 
         let (_ext_priv, ext_x25519_pub, _ext_kyber_sec, ext_kyber_pub) =
@@ -1206,8 +1350,7 @@ impl GroupSession {
                 my_identity_ed25519_public: kp.identity_ed25519_public,
                 my_identity_x25519_public: kp.identity_x25519_public,
                 my_ed25519_secret: ed25519_secret,
-                seen_message_ids: HashSet::new(),
-                seen_message_ids_order: VecDeque::new(),
+                replay_windows: BTreeMap::new(),
                 external_x25519_public: ext_x25519_pub,
                 external_kyber_public: ext_kyber_pub,
                 psk_resolver: None,
@@ -1860,12 +2003,14 @@ impl GroupSession {
             &signature_input,
         )?;
 
-        let msg_id = build_replay_message_id(
-            &app_msg.payload_nonce,
-            sender_data.sender_leaf_index,
-            sender_data.generation,
-        );
-        if inner.seen_message_ids.contains(&msg_id) {
+        let replay_rejected = {
+            let replay = inner
+                .replay_windows
+                .entry(sender_data.sender_leaf_index)
+                .or_default();
+            replay.is_duplicate_or_too_old(sender_data.generation)
+        };
+        if replay_rejected {
             return Err(ProtocolError::replay_attack("Duplicate group message"));
         }
 
@@ -1918,14 +2063,11 @@ impl GroupSession {
             CryptoInterop::secure_wipe(&mut seal_key);
         }
 
-        inner.seen_message_ids.insert(msg_id.clone());
-        inner.seen_message_ids_order.push_back(msg_id);
-
-        while inner.seen_message_ids.len() > MAX_SEEN_GROUP_MESSAGE_IDS {
-            if let Some(oldest) = inner.seen_message_ids_order.pop_front() {
-                inner.seen_message_ids.remove(&oldest);
-            }
-        }
+        inner
+            .replay_windows
+            .entry(sender_data.sender_leaf_index)
+            .or_default()
+            .mark_seen(sender_data.generation);
 
         let message_id = compute_message_id(
             &inner.group_id,
@@ -2078,7 +2220,7 @@ impl GroupSession {
             my_identity_ed25519_public: inner.my_identity_ed25519_public.clone(),
             my_identity_x25519_public: inner.my_identity_x25519_public.clone(),
             group_context_hash: inner.group_context_hash.clone(),
-            seen_message_ids: inner.seen_message_ids.iter().cloned().collect(),
+            seen_message_ids: encode_replay_windows_for_state(&inner.replay_windows),
             state_hmac: vec![],
             state_counter: 0,
             nonce_counter: 0,
@@ -2277,9 +2419,9 @@ impl GroupSession {
         let sender_store =
             SenderKeyStore::from_chains(chains, security_policy.effective_max_skipped_per_sender());
 
-        let seen_ids = std::mem::take(&mut state.seen_message_ids);
-        let seen_set: HashSet<Vec<u8>> = seen_ids.iter().cloned().collect();
-        let seen_order: VecDeque<Vec<u8>> = seen_ids.into_iter().collect();
+        let replay_windows = decode_replay_windows_from_state(std::mem::take(
+            &mut state.seen_message_ids,
+        ))?;
 
         let (_ext_priv, ext_x25519_pub, _ext_kyber_sec, ext_kyber_pub) =
             GroupKeySchedule::derive_external_keypairs(&epoch_keys.init_secret)?;
@@ -2299,8 +2441,7 @@ impl GroupSession {
                 my_identity_ed25519_public: std::mem::take(&mut state.my_identity_ed25519_public),
                 my_identity_x25519_public: std::mem::take(&mut state.my_identity_x25519_public),
                 my_ed25519_secret: ed25519_secret,
-                seen_message_ids: seen_set,
-                seen_message_ids_order: seen_order,
+                replay_windows,
                 external_x25519_public: ext_x25519_pub,
                 external_kyber_public: ext_kyber_pub,
                 psk_resolver: None,
@@ -2349,13 +2490,37 @@ impl GroupSession {
 
 #[cfg(test)]
 mod tests {
-    use super::build_replay_message_id;
+    use super::{
+        decode_replay_windows_from_state, encode_replay_windows_for_state, SenderReplayWindow,
+    };
+    use std::collections::BTreeMap;
 
     #[test]
-    fn replay_message_id_differs_for_different_senders() {
-        let nonce = vec![1u8; 12];
-        let id_a = build_replay_message_id(&nonce, 10, 7);
-        let id_b = build_replay_message_id(&nonce, 11, 7);
-        assert_ne!(id_a, id_b);
+    fn replay_window_marks_duplicates_and_old_entries() {
+        let mut window = SenderReplayWindow::default();
+        assert!(!window.is_duplicate_or_too_old(10));
+        window.mark_seen(10);
+        assert!(window.is_duplicate_or_too_old(10));
+        assert!(!window.is_duplicate_or_too_old(9));
+        window.mark_seen(9);
+        assert!(window.is_duplicate_or_too_old(9));
+        window.mark_seen(3000);
+        assert!(window.is_duplicate_or_too_old(10));
+    }
+
+    #[test]
+    fn replay_windows_roundtrip_in_state_entries() {
+        let mut windows = BTreeMap::new();
+        let mut window = SenderReplayWindow::default();
+        window.mark_seen(42);
+        window.mark_seen(41);
+        windows.insert(7, window);
+
+        let encoded = encode_replay_windows_for_state(&windows);
+        let decoded = decode_replay_windows_from_state(encoded).unwrap();
+        let restored = decoded.get(&7).unwrap();
+        assert!(restored.is_duplicate_or_too_old(42));
+        assert!(restored.is_duplicate_or_too_old(41));
+        assert!(!restored.is_duplicate_or_too_old(43));
     }
 }
