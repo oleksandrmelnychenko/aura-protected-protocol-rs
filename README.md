@@ -102,6 +102,7 @@ let policy = group.security_policy();
 | State integrity | HMAC-SHA256 anti-rollback over serialized state |
 | Nonce-misuse resistance | AES-256-GCM-SIV degrades gracefully on nonce reuse |
 | DoS guardrails | Hard limits on protobuf/envelope/plaintext sizes + handshake cache/bundle caps |
+| Media attachments | Envelope encryption for large files; relay/storage sees ciphertext only |
 
 **Operational hardening limits (current defaults):**
 
@@ -286,6 +287,7 @@ src/
   identity/       Key generation, bundle creation, SPK signatures
   models/         Key material types (Ed25519, X25519, OPK)
   protocol/
+    attachment.rs  Attachment manifest + chunk crypto validation
     handshake.rs  Hybrid X3DH handshake
     session.rs    Hybrid Double Ratchet session
     group/        MLS-inspired group messaging protocol
@@ -317,6 +319,7 @@ formal/
   proverif/       ProVerif model (4/6 queries)
 docs/
   security-proof.tex       Game-based proofs (6 theorems, 8 lemmas)
+  attachment-flow.md       Attachment encryption and transport contract
   features/
     sealed-messages.md       Sealed messages design doc
     disappearing-messages.md Disappearing messages design doc

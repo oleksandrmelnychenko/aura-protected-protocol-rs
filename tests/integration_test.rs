@@ -7564,7 +7564,7 @@ fn group_sealed_disappearing_frankable() {
         content_type: ContentType::SealedDisappearing,
         ttl_seconds: 3600,
         frankable: true,
-        referenced_message_id: Vec::new(),
+        ..MessagePolicy::default()
     };
     let ct = alice.encrypt_with_policy(plaintext, &policy).unwrap();
     let result = bob.decrypt(&ct).unwrap();
@@ -8018,7 +8018,7 @@ fn group_frankable_disappearing_combined() {
         content_type: ContentType::Disappearing,
         ttl_seconds: 3600,
         frankable: true,
-        referenced_message_id: Vec::new(),
+        ..MessagePolicy::default()
     };
     let ct = alice
         .encrypt_with_policy(b"ephemeral proof", &policy)
@@ -10215,4 +10215,251 @@ fn gateway_flow_full_ios_simulation() {
         "Full iOS simulation: bundle_hash={bundle_hash}, bundle_len={}",
         cached_bundle_bytes.len()
     );
+}
+
+#[test]
+fn group_role_set_get_roundtrip() {
+    init();
+    let (alice, _bob) = create_two_member_group();
+
+    assert_eq!(alice.get_member_role(0).unwrap(), 0);
+    assert!(!alice.is_admin(0).unwrap());
+
+    alice.set_member_role(0, 2).unwrap();
+    assert_eq!(alice.get_member_role(0).unwrap(), 2);
+    assert!(alice.is_admin(0).unwrap());
+
+    alice.set_member_role(0, 1).unwrap();
+    assert_eq!(alice.get_member_role(0).unwrap(), 1);
+    assert!(!alice.is_admin(0).unwrap());
+}
+
+#[test]
+fn group_encrypt_decrypt_reaction() {
+    init();
+    let (alice, bob) = create_two_member_group();
+
+    let msg_id = vec![0xAA_u8; 32];
+    let ct = alice.encrypt_reaction(&msg_id, "\u{1F44D}", false).unwrap();
+    let result = bob.decrypt(&ct).unwrap();
+
+    assert_eq!(
+        result.content_type,
+        ecliptix_protocol::protocol::group::ContentType::Reaction
+    );
+    let reaction = ecliptix_protocol::proto::GroupReaction::decode(result.plaintext.as_slice()).unwrap();
+    assert_eq!(reaction.message_id, msg_id);
+    assert_eq!(reaction.emoji, "\u{1F44D}");
+    assert!(!reaction.remove);
+}
+
+#[test]
+fn group_encrypt_decrypt_read_receipt() {
+    init();
+    let (alice, bob) = create_two_member_group();
+
+    let ids: Vec<Vec<u8>> = (0..3).map(|i| vec![i; 32]).collect();
+    let ts = 1700000000_u64;
+    let ct = alice.encrypt_read_receipt(&ids, ts).unwrap();
+    let result = bob.decrypt(&ct).unwrap();
+
+    assert_eq!(
+        result.content_type,
+        ecliptix_protocol::protocol::group::ContentType::ReadReceipt
+    );
+    let receipt =
+        ecliptix_protocol::proto::GroupReadReceipt::decode(result.plaintext.as_slice()).unwrap();
+    assert_eq!(receipt.message_ids.len(), 3);
+    assert_eq!(receipt.timestamp, ts);
+}
+
+#[test]
+fn group_encrypt_decrypt_typing() {
+    init();
+    let (alice, bob) = create_two_member_group();
+
+    let ct = alice.encrypt_typing(true).unwrap();
+    let result = bob.decrypt(&ct).unwrap();
+
+    assert_eq!(
+        result.content_type,
+        ecliptix_protocol::protocol::group::ContentType::Typing
+    );
+    let indicator =
+        ecliptix_protocol::proto::GroupTypingIndicator::decode(result.plaintext.as_slice()).unwrap();
+    assert!(indicator.is_typing);
+}
+
+#[test]
+fn group_mentions_in_message() {
+    init();
+    use ecliptix_protocol::protocol::group::{ContentType, MessagePolicy, ReplyContext};
+
+    let (alice, bob) = create_two_member_group();
+
+    let policy = MessagePolicy {
+        content_type: ContentType::Normal,
+        mentions: vec![(1, 0, 4), (0, 10, 5)],
+        reply_context: Some(ReplyContext {
+            reply_to_message_id: vec![0xBB_u8; 32],
+            thread_root_id: Some(vec![0xCC_u8; 32]),
+            depth: Some(3),
+        }),
+        ..MessagePolicy::default()
+    };
+
+    let ct = alice.encrypt_with_policy(b"hey @bob @alice", &policy).unwrap();
+    let result = bob.decrypt(&ct).unwrap();
+
+    assert_eq!(result.mentions.len(), 2);
+    assert_eq!(result.mentions[0], (1, 0, 4));
+    assert_eq!(result.mentions[1], (0, 10, 5));
+
+    let rc = result.reply_context.as_ref().unwrap();
+    assert_eq!(rc.reply_to_message_id, vec![0xBB_u8; 32]);
+    assert_eq!(rc.thread_root_id.as_ref().unwrap(), &vec![0xCC_u8; 32]);
+    assert_eq!(rc.depth, Some(3));
+}
+
+#[test]
+fn session_metadata_roundtrip() {
+    init();
+    let mut alice = IdentityKeys::create(5).unwrap();
+    let mut bob = IdentityKeys::create(5).unwrap();
+    let bob_bundle = PreKeyBundle::decode(build_proto_bundle(&bob).as_slice()).unwrap();
+    let initiator = HandshakeInitiator::start(&mut alice, &bob_bundle, 1000).unwrap();
+    let init_bytes = initiator.encoded_message().to_vec();
+    let responder = HandshakeResponder::process(&mut bob, &bob_bundle, &init_bytes, 1000).unwrap();
+    let ack_bytes = responder.encoded_ack().to_vec();
+    let bob_session = responder.finish().unwrap();
+    let alice_session = initiator.finish(&ack_bytes).unwrap();
+
+    let meta_before = alice_session.get_metadata().unwrap();
+    assert_eq!(meta_before.total_messages_sent, 0);
+    assert_eq!(meta_before.total_messages_received, 0);
+    assert!(meta_before.is_initiator);
+
+    for i in 0..3u32 {
+        let env = alice_session.encrypt(b"ping", 0, i, None).unwrap();
+        bob_session.decrypt(&env).unwrap();
+    }
+
+    let alice_meta = alice_session.get_metadata().unwrap();
+    assert_eq!(alice_meta.total_messages_sent, 3);
+    assert_eq!(alice_meta.total_messages_received, 0);
+    assert!(alice_meta.last_activity_unix.is_some());
+
+    let bob_meta = bob_session.get_metadata().unwrap();
+    assert_eq!(bob_meta.total_messages_sent, 0);
+    assert_eq!(bob_meta.total_messages_received, 3);
+    assert!(bob_meta.last_activity_unix.is_some());
+    assert!(!bob_meta.is_initiator);
+}
+
+#[test]
+fn session_expiry_immediate() {
+    init();
+    let mut alice = IdentityKeys::create(5).unwrap();
+    let mut bob = IdentityKeys::create(5).unwrap();
+    let bob_bundle = PreKeyBundle::decode(build_proto_bundle(&bob).as_slice()).unwrap();
+    let initiator = HandshakeInitiator::start(&mut alice, &bob_bundle, 1000).unwrap();
+    let init_bytes = initiator.encoded_message().to_vec();
+    let responder = HandshakeResponder::process(&mut bob, &bob_bundle, &init_bytes, 1000).unwrap();
+    let ack_bytes = responder.encoded_ack().to_vec();
+    let bob_session = responder.finish().unwrap();
+    let alice_session = initiator.finish(&ack_bytes).unwrap();
+
+    assert!(!alice_session.is_expired().unwrap());
+
+    alice_session.set_session_ttl(Some(3600)).unwrap();
+    assert!(!alice_session.is_expired().unwrap());
+
+    alice_session.set_session_ttl(Some(60)).unwrap();
+    assert!(!alice_session.is_expired().unwrap());
+
+    let env = alice_session.encrypt(b"hello", 0, 1, None).unwrap();
+    bob_session.decrypt(&env).unwrap();
+}
+
+#[test]
+fn session_ttl_validation() {
+    init();
+    let mut alice = IdentityKeys::create(5).unwrap();
+    let mut bob = IdentityKeys::create(5).unwrap();
+    let bob_bundle = PreKeyBundle::decode(build_proto_bundle(&bob).as_slice()).unwrap();
+    let initiator = HandshakeInitiator::start(&mut alice, &bob_bundle, 1000).unwrap();
+    let init_bytes = initiator.encoded_message().to_vec();
+    let responder = HandshakeResponder::process(&mut bob, &bob_bundle, &init_bytes, 1000).unwrap();
+    let ack_bytes = responder.encoded_ack().to_vec();
+    let _bob_session = responder.finish().unwrap();
+    let alice_session = initiator.finish(&ack_bytes).unwrap();
+
+    assert!(alice_session.set_session_ttl(Some(1)).is_err());
+    assert!(alice_session.set_session_ttl(Some(400 * 24 * 3600)).is_err());
+    assert!(alice_session.set_session_ttl(Some(60)).is_ok());
+    assert!(alice_session.set_session_ttl(None).is_ok());
+}
+
+#[test]
+fn session_device_id_roundtrip() {
+    init();
+    let mut alice = IdentityKeys::create(5).unwrap();
+    let mut bob = IdentityKeys::create(5).unwrap();
+    let bob_bundle = PreKeyBundle::decode(build_proto_bundle(&bob).as_slice()).unwrap();
+    let initiator = HandshakeInitiator::start(&mut alice, &bob_bundle, 1000).unwrap();
+    let init_bytes = initiator.encoded_message().to_vec();
+    let responder = HandshakeResponder::process(&mut bob, &bob_bundle, &init_bytes, 1000).unwrap();
+    let ack_bytes = responder.encoded_ack().to_vec();
+    let _bob_session = responder.finish().unwrap();
+    let alice_session = initiator.finish(&ack_bytes).unwrap();
+
+    assert!(alice_session.get_device_id().unwrap().is_none());
+
+    let device_id = [0xABu8; 32];
+    alice_session.set_device_id(&device_id).unwrap();
+    let retrieved = alice_session.get_device_id().unwrap().unwrap();
+    assert_eq!(retrieved, device_id.to_vec());
+
+    let bad_id = [0u8; 16];
+    assert!(alice_session.set_device_id(&bad_id).is_err());
+
+    let meta = alice_session.get_metadata().unwrap();
+    assert_eq!(meta.device_id, Some(device_id.to_vec()));
+}
+
+#[test]
+fn session_activity_tracking_counters() {
+    init();
+    let mut alice = IdentityKeys::create(5).unwrap();
+    let mut bob = IdentityKeys::create(5).unwrap();
+    let bob_bundle = PreKeyBundle::decode(build_proto_bundle(&bob).as_slice()).unwrap();
+    let initiator = HandshakeInitiator::start(&mut alice, &bob_bundle, 1000).unwrap();
+    let init_bytes = initiator.encoded_message().to_vec();
+    let responder = HandshakeResponder::process(&mut bob, &bob_bundle, &init_bytes, 1000).unwrap();
+    let ack_bytes = responder.encoded_ack().to_vec();
+    let bob_session = responder.finish().unwrap();
+    let alice_session = initiator.finish(&ack_bytes).unwrap();
+
+    for i in 0..5u32 {
+        let env = alice_session.encrypt(b"msg", 0, i, None).unwrap();
+        bob_session.decrypt(&env).unwrap();
+    }
+    for i in 0..3u32 {
+        let env = bob_session.encrypt(b"reply", 0, 100 + i, None).unwrap();
+        alice_session.decrypt(&env).unwrap();
+    }
+
+    let a = alice_session.get_metadata().unwrap();
+    assert_eq!(a.total_messages_sent, 5);
+    assert_eq!(a.total_messages_received, 3);
+    assert!(a.last_activity_unix.is_some());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    assert!(now - a.last_activity_unix.unwrap() < 5);
+
+    let b = bob_session.get_metadata().unwrap();
+    assert_eq!(b.total_messages_sent, 3);
+    assert_eq!(b.total_messages_received, 5);
 }

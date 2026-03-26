@@ -1488,6 +1488,7 @@ fn api_voip_caller_init_protobuf_roundtrip() {
         ratchet_interval_frames: 512,
         pq_rekey_interval_secs: 60,
         shield_mode: false,
+        screen_share: None,
     };
 
     let mut buf = Vec::new();

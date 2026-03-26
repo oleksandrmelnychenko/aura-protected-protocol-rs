@@ -108,6 +108,25 @@ FFI API у Swift не розширювався: нових функцій не �
 2. Мапити size-violations (`EPP_ERROR_INVALID_INPUT`) у окремий UX/classified error (`payload_too_large`, `envelope_too_large`), без retry-loop.
 3. В telemetry логувати тільки код/тип помилки та розмір payload, але не самі дані.
 
+## Attachments / Media (через C FFI)
+
+Attachment/media path реалізований як FFI crypto/validation ядро. Transport/upload/download не входять у бібліотеку.
+
+Рекомендований flow:
+
+1. `epp_attachment_generate_id` + `epp_attachment_generate_file_key`
+2. Для кожного чанка: `epp_attachment_encrypt_chunk`
+3. Після шифрування файлу: `epp_attachment_manifest_create`
+4. На прийомі: `epp_attachment_manifest_validate` + `epp_attachment_chunk_validate`
+5. Для контенту: `epp_attachment_decrypt_chunk`
+
+Практично:
+
+- `encrypted_file_key` в manifest має приходити з chat channel (1:1/group), а не у відкритому вигляді;
+- optional `collage_index` у manifest використовуйте для порядку вкладень у collage Threads;
+- великі файли не передавати через `session.encrypt(...)` payload напряму;
+- на помилках validate/decrypt не робити blind retry без зміни вхідних даних.
+
 ## Групова сесія (C FFI)
 
 Групові функції наразі доступні лише через C FFI. Типи: `EppGroupSessionHandle`, `EppKeyPackageSecretsHandle`.

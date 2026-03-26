@@ -11,6 +11,7 @@ fn main() -> Result<()> {
         "proto/protocol/handshake.proto",
         "proto/protocol/envelope.proto",
         "proto/protocol/sealed_state.proto",
+        "proto/protocol/attachment.proto",
         "proto/protocol/error.proto",
         "proto/protocol/group.proto",
         "proto/protocol/voip.proto",

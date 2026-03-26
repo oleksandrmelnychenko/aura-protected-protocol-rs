@@ -210,6 +210,9 @@ enum GroupContentType {
   GROUP_CONTENT_SEALED_DISAPPEARING = 3;
   GROUP_CONTENT_EDIT = 4;
   GROUP_CONTENT_DELETE = 5;
+  GROUP_CONTENT_REACTION = 6;
+  GROUP_CONTENT_READ_RECEIPT = 7;
+  GROUP_CONTENT_TYPING = 8;
 }
 
 message GroupMessagePolicy {
@@ -226,8 +229,10 @@ message GroupPlaintext {
   bytes franking_key = 3;            // 32 bytes random, present if frankable
   bytes sealed_content = 4;          // AES-256-GCM-SIV(seal_key, actual_content), present if sealed
   bytes sealed_nonce = 5;            // 12 bytes, present if sealed
-  bytes prev_message_hash = 6;       // SHA-256 of previous message in sender's transcript chain
-  bytes referenced_message_id = 7;  // 32-byte computed ID of the target message (present for EDIT/DELETE)
+  bytes prev_message_hash = 6;
+  bytes referenced_message_id = 7;
+  repeated GroupMention mentions = 8;
+  optional GroupReplyContext reply_context = 9;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -268,8 +273,9 @@ message GroupProtocolState {
 
   google.protobuf.Timestamp created_at = 27;
 
-  // Shield Mode security policy (immutable after group creation)
   bytes security_policy = 28;
+
+  map<uint32, int32> member_roles = 30;
 }
 
 message GroupMemberSenderChain {
@@ -290,6 +296,39 @@ message SealedGroupState {
 // ─────────────────────────────────────────────────────────────────────────────
 // Shield Mode: immutable security policy set at group creation
 // ─────────────────────────────────────────────────────────────────────────────
+
+enum GroupMemberRole {
+  GROUP_ROLE_MEMBER = 0;
+  GROUP_ROLE_MODERATOR = 1;
+  GROUP_ROLE_ADMIN = 2;
+}
+
+message GroupReaction {
+  bytes message_id = 1;
+  string emoji = 2;
+  bool remove = 3;
+}
+
+message GroupReadReceipt {
+  repeated bytes message_ids = 1;
+  uint64 timestamp = 2;
+}
+
+message GroupTypingIndicator {
+  bool is_typing = 1;
+}
+
+message GroupMention {
+  uint32 leaf_index = 1;
+  uint32 offset = 2;
+  uint32 length = 3;
+}
+
+message GroupReplyContext {
+  bytes reply_to_message_id = 1;
+  optional bytes thread_root_id = 2;
+  optional uint32 depth = 3;
+}
 
 message GroupSecurityPolicy {
   uint32 max_messages_per_epoch = 1;      // 0 = use default (100,000)

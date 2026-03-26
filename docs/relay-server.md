@@ -146,6 +146,23 @@
 | `fetch_events(device_id, after_event_id, max_events)` | device_id, курсор, ліміт | Отримати наступні події для цього пристрою |
 | `ack_events(device_id, event_ids)` | device_id, список event_id | Підтвердити доставку; повертає кількість підтверджених |
 
+## Attachments / Media via FFI
+
+Для фото/відео/файлів relay не повинен розшифровувати вміст.
+
+Рекомендований контракт:
+
+- manifest перевіряти через `epp_attachment_manifest_validate(...)`;
+- кожен encrypted chunk перевіряти через `epp_attachment_chunk_validate(...)`;
+- файл/чанки зберігати як opaque ciphertext blobs.
+
+Зона відповідальності transport шару:
+
+- authz доступу до manifest/chunks;
+- rate limits / quota / max file size;
+- порядок і дедублікація chunk upload;
+- retry/pause/resume semantics.
+
 ## DoS hardening (операційно)
 
 Рекомендовано застосовувати transport limits ще до protobuf decode:

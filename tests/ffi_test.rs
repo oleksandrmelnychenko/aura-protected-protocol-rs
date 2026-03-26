@@ -11,7 +11,7 @@ fn init() {
 
 mod ffi {
     use ecliptix_protocol::ffi::api::*;
-    use ecliptix_protocol::proto::CallAccept;
+    use ecliptix_protocol::proto::{AttachmentManifest, CallAccept};
     use prost::Message;
     use std::ptr;
 
@@ -1090,6 +1090,342 @@ mod ffi {
         unsafe {
             epp_buffer_release(&mut shares_buf);
             epp_buffer_release(&mut secret_buf);
+        }
+    }
+
+    #[test]
+    fn ffi_attachment_encrypt_decrypt_roundtrip() {
+        init_lib();
+        let mut err = null_error();
+
+        let mut attachment_id = null_buffer();
+        let mut file_key = null_buffer();
+        let mut nonce = null_buffer();
+        let mut ciphertext = null_buffer();
+        let mut plaintext_out = null_buffer();
+        let mut manifest = null_buffer();
+
+        let code = unsafe { epp_attachment_generate_id(&mut attachment_id, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        assert_eq!(attachment_id.length, 32);
+
+        let code = unsafe { epp_attachment_generate_file_key(&mut file_key, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        assert_eq!(file_key.length, 32);
+
+        let mime = "image/jpeg";
+        let chunk_plaintext = b"attachment-chunk-1";
+        let total_size = chunk_plaintext.len() as u64;
+        let chunk_size = 1024u32;
+        let chunk_count = 1u32;
+        let file_hash = [7u8; 32];
+        let wrapped_file_key = [9u8; 48];
+
+        let code = unsafe {
+            epp_attachment_encrypt_chunk(
+                file_key.data.cast_const(),
+                file_key.length,
+                attachment_id.data.cast_const(),
+                attachment_id.length,
+                mime.as_ptr().cast(),
+                mime.len(),
+                total_size,
+                chunk_size,
+                0,
+                chunk_count,
+                chunk_plaintext.as_ptr(),
+                chunk_plaintext.len(),
+                &mut nonce,
+                &mut ciphertext,
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        assert_eq!(nonce.length, 12);
+        assert!(ciphertext.length >= chunk_plaintext.len() + 16);
+
+        let code = unsafe {
+            epp_attachment_manifest_create(
+                attachment_id.data.cast_const(),
+                attachment_id.length,
+                mime.as_ptr().cast(),
+                mime.len(),
+                total_size,
+                chunk_size,
+                chunk_count,
+                file_hash.as_ptr(),
+                file_hash.len(),
+                wrapped_file_key.as_ptr(),
+                wrapped_file_key.len(),
+                &mut manifest,
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let code = unsafe { epp_attachment_manifest_validate(manifest.data, manifest.length, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let code = unsafe {
+            epp_attachment_chunk_validate(
+                manifest.data,
+                manifest.length,
+                0,
+                nonce.data.cast_const(),
+                nonce.length,
+                ciphertext.data.cast_const(),
+                ciphertext.length,
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let code = unsafe {
+            epp_attachment_decrypt_chunk(
+                file_key.data.cast_const(),
+                file_key.length,
+                attachment_id.data.cast_const(),
+                attachment_id.length,
+                mime.as_ptr().cast(),
+                mime.len(),
+                total_size,
+                chunk_size,
+                0,
+                chunk_count,
+                nonce.data.cast_const(),
+                nonce.length,
+                ciphertext.data.cast_const(),
+                ciphertext.length,
+                &mut plaintext_out,
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        let decrypted = unsafe { std::slice::from_raw_parts(plaintext_out.data, plaintext_out.length) };
+        assert_eq!(decrypted, chunk_plaintext);
+
+        unsafe {
+            epp_buffer_release(&mut attachment_id);
+            epp_buffer_release(&mut file_key);
+            epp_buffer_release(&mut nonce);
+            epp_buffer_release(&mut ciphertext);
+            epp_buffer_release(&mut plaintext_out);
+            epp_buffer_release(&mut manifest);
+        }
+    }
+
+    #[test]
+    fn ffi_attachment_manifest_validate_rejects_tampered_scheme() {
+        init_lib();
+        let mut err = null_error();
+
+        let mut attachment_id = null_buffer();
+        let code = unsafe { epp_attachment_generate_id(&mut attachment_id, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let mime = "image/jpeg";
+        let total_size = 512u64;
+        let chunk_size = 512u32;
+        let chunk_count = 1u32;
+        let file_hash = [1u8; 32];
+        let wrapped_file_key = [2u8; 48];
+        let mut manifest_buf = null_buffer();
+
+        let code = unsafe {
+            epp_attachment_manifest_create(
+                attachment_id.data.cast_const(),
+                attachment_id.length,
+                mime.as_ptr().cast(),
+                mime.len(),
+                total_size,
+                chunk_size,
+                chunk_count,
+                file_hash.as_ptr(),
+                file_hash.len(),
+                wrapped_file_key.as_ptr(),
+                wrapped_file_key.len(),
+                &mut manifest_buf,
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let manifest_bytes =
+            unsafe { std::slice::from_raw_parts(manifest_buf.data, manifest_buf.length) };
+        let mut manifest = AttachmentManifest::decode(manifest_bytes).expect("decode manifest");
+        manifest.encryption_scheme = "AES-128-GCM".to_string();
+        let mut tampered = Vec::new();
+        manifest.encode(&mut tampered).expect("encode manifest");
+
+        let code =
+            unsafe { epp_attachment_manifest_validate(tampered.as_ptr(), tampered.len(), &mut err) };
+        assert_eq!(code, EppErrorCode::EppErrorInvalidInput);
+
+        unsafe {
+            epp_buffer_release(&mut attachment_id);
+            epp_buffer_release(&mut manifest_buf);
+        }
+    }
+
+    #[test]
+    fn ffi_attachment_chunk_validate_rejects_out_of_range_chunk_index() {
+        init_lib();
+        let mut err = null_error();
+
+        let mut attachment_id = null_buffer();
+        let mut file_key = null_buffer();
+        let mut nonce = null_buffer();
+        let mut ciphertext = null_buffer();
+        let mut manifest = null_buffer();
+
+        let code = unsafe { epp_attachment_generate_id(&mut attachment_id, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        let code = unsafe { epp_attachment_generate_file_key(&mut file_key, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let mime = "image/jpeg";
+        let chunk_plaintext = b"attachment-chunk-1";
+        let total_size = chunk_plaintext.len() as u64;
+        let chunk_size = 1024u32;
+        let chunk_count = 1u32;
+        let file_hash = [7u8; 32];
+        let wrapped_file_key = [9u8; 48];
+
+        let code = unsafe {
+            epp_attachment_encrypt_chunk(
+                file_key.data.cast_const(),
+                file_key.length,
+                attachment_id.data.cast_const(),
+                attachment_id.length,
+                mime.as_ptr().cast(),
+                mime.len(),
+                total_size,
+                chunk_size,
+                0,
+                chunk_count,
+                chunk_plaintext.as_ptr(),
+                chunk_plaintext.len(),
+                &mut nonce,
+                &mut ciphertext,
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let code = unsafe {
+            epp_attachment_manifest_create(
+                attachment_id.data.cast_const(),
+                attachment_id.length,
+                mime.as_ptr().cast(),
+                mime.len(),
+                total_size,
+                chunk_size,
+                chunk_count,
+                file_hash.as_ptr(),
+                file_hash.len(),
+                wrapped_file_key.as_ptr(),
+                wrapped_file_key.len(),
+                &mut manifest,
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let code = unsafe {
+            epp_attachment_chunk_validate(
+                manifest.data,
+                manifest.length,
+                1,
+                nonce.data.cast_const(),
+                nonce.length,
+                ciphertext.data.cast_const(),
+                ciphertext.length,
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppErrorInvalidInput);
+
+        unsafe {
+            epp_buffer_release(&mut attachment_id);
+            epp_buffer_release(&mut file_key);
+            epp_buffer_release(&mut nonce);
+            epp_buffer_release(&mut ciphertext);
+            epp_buffer_release(&mut manifest);
+        }
+    }
+
+    #[test]
+    fn ffi_attachment_decrypt_rejects_mismatched_context() {
+        init_lib();
+        let mut err = null_error();
+
+        let mut attachment_id = null_buffer();
+        let mut file_key = null_buffer();
+        let mut nonce = null_buffer();
+        let mut ciphertext = null_buffer();
+        let mut plaintext_out = null_buffer();
+
+        let code = unsafe { epp_attachment_generate_id(&mut attachment_id, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        let code = unsafe { epp_attachment_generate_file_key(&mut file_key, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let mime = "image/jpeg";
+        let wrong_mime = "image/png";
+        let chunk_plaintext = b"attachment-chunk-1";
+        let total_size = chunk_plaintext.len() as u64;
+        let chunk_size = 1024u32;
+        let chunk_count = 1u32;
+
+        let code = unsafe {
+            epp_attachment_encrypt_chunk(
+                file_key.data.cast_const(),
+                file_key.length,
+                attachment_id.data.cast_const(),
+                attachment_id.length,
+                mime.as_ptr().cast(),
+                mime.len(),
+                total_size,
+                chunk_size,
+                0,
+                chunk_count,
+                chunk_plaintext.as_ptr(),
+                chunk_plaintext.len(),
+                &mut nonce,
+                &mut ciphertext,
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let code = unsafe {
+            epp_attachment_decrypt_chunk(
+                file_key.data.cast_const(),
+                file_key.length,
+                attachment_id.data.cast_const(),
+                attachment_id.length,
+                wrong_mime.as_ptr().cast(),
+                wrong_mime.len(),
+                total_size,
+                chunk_size,
+                0,
+                chunk_count,
+                nonce.data.cast_const(),
+                nonce.length,
+                ciphertext.data.cast_const(),
+                ciphertext.length,
+                &mut plaintext_out,
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppErrorGeneric);
+
+        unsafe {
+            epp_buffer_release(&mut attachment_id);
+            epp_buffer_release(&mut file_key);
+            epp_buffer_release(&mut nonce);
+            epp_buffer_release(&mut ciphertext);
+            epp_buffer_release(&mut plaintext_out);
         }
     }
 
@@ -2500,5 +2836,1520 @@ fn ffi_session_ratchet_stalling_warning_fires() {
         epp_session_destroy(&mut bob_s);
         epp_identity_destroy(&mut alice_h);
         epp_identity_destroy(&mut bob_h);
+    }
+}
+
+// ── Attachment v2 tests ──
+
+mod attachment_v2 {
+    use ecliptix_protocol::ffi::api::*;
+    use ecliptix_protocol::proto::{
+        AttachmentManifest, AttachmentReference, CollageManifest, ContactCard, ContentPolicy,
+        InlineAttachment, LinkPreview, LocationAttachment, VoiceMessageMeta,
+    };
+    use prost::Message;
+    use std::ptr;
+
+    fn init_v2() {
+        ecliptix_protocol::crypto::CryptoInterop::initialize().expect("crypto init");
+    }
+
+    const fn null_error() -> EppError {
+        EppError { code: EppErrorCode::EppSuccess, message: ptr::null_mut() }
+    }
+
+    const fn null_buffer() -> EppBuffer {
+        EppBuffer { data: ptr::null_mut(), length: 0 }
+    }
+
+    #[test]
+    fn thumbnail_roundtrip() {
+        init_v2();
+        let mut err = null_error();
+        let mut attachment_id = null_buffer();
+        let mut file_key = null_buffer();
+        unsafe { epp_attachment_generate_id(&mut attachment_id, &mut err) };
+        unsafe { epp_attachment_generate_file_key(&mut file_key, &mut err) };
+
+        let thumb_mime = "image/jpeg";
+        let thumb_data = vec![0xFFu8; 1024];
+        let mut nonce = null_buffer();
+        let mut ct = null_buffer();
+        let mut pt = null_buffer();
+
+        let code = unsafe {
+            epp_attachment_encrypt_thumbnail(
+                file_key.data, file_key.length,
+                attachment_id.data, attachment_id.length,
+                thumb_mime.as_ptr().cast(), thumb_mime.len(),
+                thumb_data.as_ptr(), thumb_data.len(),
+                &mut nonce, &mut ct, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        assert_eq!(nonce.length, 12);
+        assert_eq!(ct.length, thumb_data.len() + 16);
+
+        let code = unsafe {
+            epp_attachment_decrypt_thumbnail(
+                file_key.data, file_key.length,
+                attachment_id.data, attachment_id.length,
+                thumb_mime.as_ptr().cast(), thumb_mime.len(),
+                nonce.data, nonce.length,
+                ct.data, ct.length,
+                &mut pt, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        let decrypted = unsafe { std::slice::from_raw_parts(pt.data, pt.length) };
+        assert_eq!(decrypted, &thumb_data[..]);
+
+        unsafe {
+            epp_buffer_release(&mut attachment_id);
+            epp_buffer_release(&mut file_key);
+            epp_buffer_release(&mut nonce);
+            epp_buffer_release(&mut ct);
+            epp_buffer_release(&mut pt);
+        }
+    }
+
+    #[test]
+    fn thumbnail_rejects_oversized() {
+        init_v2();
+        let mut err = null_error();
+        let mut attachment_id = null_buffer();
+        let mut file_key = null_buffer();
+        unsafe { epp_attachment_generate_id(&mut attachment_id, &mut err) };
+        unsafe { epp_attachment_generate_file_key(&mut file_key, &mut err) };
+
+        let thumb_mime = "image/png";
+        let oversized = vec![0u8; 65 * 1024];
+        let mut nonce = null_buffer();
+        let mut ct = null_buffer();
+
+        let code = unsafe {
+            epp_attachment_encrypt_thumbnail(
+                file_key.data, file_key.length,
+                attachment_id.data, attachment_id.length,
+                thumb_mime.as_ptr().cast(), thumb_mime.len(),
+                oversized.as_ptr(), oversized.len(),
+                &mut nonce, &mut ct, &mut err,
+            )
+        };
+        assert_ne!(code, EppErrorCode::EppSuccess);
+
+        unsafe {
+            epp_buffer_release(&mut attachment_id);
+            epp_buffer_release(&mut file_key);
+        }
+    }
+
+    #[test]
+    fn ttl_validation() {
+        init_v2();
+        let mut err = null_error();
+
+        assert_eq!(unsafe { epp_attachment_validate_ttl(3600, &mut err) }, EppErrorCode::EppSuccess);
+        assert_ne!(unsafe { epp_attachment_validate_ttl(10, &mut err) }, EppErrorCode::EppSuccess);
+        assert_ne!(unsafe { epp_attachment_validate_ttl(31 * 24 * 3600, &mut err) }, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn expiry_check() {
+        assert!(epp_attachment_is_expired(999_000, 500, 1_000_000));
+        assert!(!epp_attachment_is_expired(999_000, 2000, 1_000_000));
+        assert!(epp_attachment_is_expired(999_000, 1000, 1_000_000));
+    }
+
+    #[test]
+    fn progress_roundtrip() {
+        init_v2();
+        let mut err = null_error();
+        let mut attachment_id = null_buffer();
+        unsafe { epp_attachment_generate_id(&mut attachment_id, &mut err) };
+
+        let mut progress = null_buffer();
+        let code = unsafe {
+            epp_attachment_progress_create(attachment_id.data, attachment_id.length, 5, &mut progress, &mut err)
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let mut updated = null_buffer();
+        let code = unsafe {
+            epp_attachment_progress_mark_completed(progress.data, progress.length, 0, 1024, 100, &mut updated, &mut err)
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let mut updated2 = null_buffer();
+        let code = unsafe {
+            epp_attachment_progress_mark_completed(updated.data, updated.length, 2, 2048, 200, &mut updated2, &mut err)
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let mut remaining = null_buffer();
+        let mut remaining_count = 0u32;
+        let code = unsafe {
+            epp_attachment_progress_get_remaining(updated2.data, updated2.length, &mut remaining, &mut remaining_count, &mut err)
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        assert_eq!(remaining_count, 3);
+
+        assert!(!unsafe { epp_attachment_progress_is_complete(updated2.data, updated2.length) });
+
+        unsafe {
+            epp_buffer_release(&mut attachment_id);
+            epp_buffer_release(&mut progress);
+            epp_buffer_release(&mut updated);
+            epp_buffer_release(&mut updated2);
+            epp_buffer_release(&mut remaining);
+        }
+    }
+
+    #[test]
+    fn collage_create_validate() {
+        init_v2();
+        let mut err = null_error();
+
+        let mut manifests_raw = Vec::new();
+        for i in 0u32..3 {
+            let mut aid = null_buffer();
+            let mut fk = null_buffer();
+            unsafe { epp_attachment_generate_id(&mut aid, &mut err) };
+            unsafe { epp_attachment_generate_file_key(&mut fk, &mut err) };
+
+            let manifest = AttachmentManifest {
+                version: 1,
+                attachment_id: unsafe { std::slice::from_raw_parts(aid.data, aid.length) }.to_vec(),
+                mime_type: "image/jpeg".to_string(),
+                total_size: 1024, chunk_size: 1024, chunk_count: 1,
+                file_sha256: vec![7u8; 32],
+                encrypted_file_key: vec![9u8; 48],
+                encryption_scheme: "AES-256-GCM-SIV".to_string(),
+                collage_index: Some(i),
+                encrypted_thumbnail: None, thumbnail_nonce: None,
+                thumbnail_mime_type: None, thumbnail_size: None,
+                ttl_seconds: None, created_at_unix: None,
+                original_filename: None, media_width: None,
+                media_height: None, duration_ms: None,
+                alt_text: None, content_policy: None, voice_meta: None,
+            };
+            let mut buf = Vec::new();
+            manifest.encode(&mut buf).unwrap();
+            manifests_raw.push(buf);
+            unsafe { epp_buffer_release(&mut aid); epp_buffer_release(&mut fk); }
+        }
+
+        let ptrs: Vec<*const u8> = manifests_raw.iter().map(|b| b.as_ptr()).collect();
+        let lens: Vec<usize> = manifests_raw.iter().map(|b| b.len()).collect();
+        let mut collage = null_buffer();
+        let code = unsafe { epp_attachment_collage_create(ptrs.as_ptr(), lens.as_ptr(), 3, &mut collage, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let code = unsafe { epp_attachment_collage_validate(collage.data, collage.length, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        unsafe { epp_buffer_release(&mut collage) };
+    }
+
+    #[test]
+    fn streaming_roundtrip() {
+        init_v2();
+        let mut err = null_error();
+        let mut attachment_id = null_buffer();
+        let mut file_key = null_buffer();
+        unsafe { epp_attachment_generate_id(&mut attachment_id, &mut err) };
+        unsafe { epp_attachment_generate_file_key(&mut file_key, &mut err) };
+
+        let mime = "application/octet-stream";
+        let chunk_size = 64u32;
+        let data = vec![0xABu8; 150];
+        let chunk_count = 3u32;
+        let total_size = data.len() as u64;
+
+        let mut enc_handle: *mut EppStreamingEncryptorHandle = ptr::null_mut();
+        let code = unsafe {
+            epp_attachment_streaming_encryptor_create(
+                file_key.data, file_key.length,
+                attachment_id.data, attachment_id.length,
+                mime.as_ptr().cast(), mime.len(),
+                total_size, chunk_size, chunk_count,
+                &mut enc_handle, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let mut all_chunks_buf = null_buffer();
+        let mut chunk_count_out = 0u32;
+        let code = unsafe {
+            epp_attachment_streaming_encryptor_write(
+                enc_handle, data.as_ptr(), data.len(),
+                &mut all_chunks_buf, &mut chunk_count_out, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        assert_eq!(chunk_count_out, 2);
+
+        let mut last_chunk = null_buffer();
+        let mut has_last = 0u8;
+        let code = unsafe {
+            epp_attachment_streaming_encryptor_finish(enc_handle, &mut last_chunk, &mut has_last, &mut err)
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        assert_eq!(has_last, 1);
+        unsafe { epp_attachment_streaming_encryptor_destroy(enc_handle) };
+
+        let mut dec_handle: *mut EppStreamingDecryptorHandle = ptr::null_mut();
+        let code = unsafe {
+            epp_attachment_streaming_decryptor_create(
+                file_key.data, file_key.length,
+                attachment_id.data, attachment_id.length,
+                mime.as_ptr().cast(), mime.len(),
+                total_size, chunk_size, chunk_count,
+                &mut dec_handle, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        fn parse_and_decrypt(
+            dec_handle: *mut EppStreamingDecryptorHandle,
+            buf_data: &[u8],
+            count: usize,
+            err: &mut EppError,
+        ) -> Vec<u8> {
+            let mut result = Vec::new();
+            let mut offset = 0usize;
+            for _ in 0..count {
+                let ci = u32::from_le_bytes(buf_data[offset..offset + 4].try_into().unwrap());
+                offset += 4;
+                let nlen = u32::from_le_bytes(buf_data[offset..offset + 4].try_into().unwrap()) as usize;
+                offset += 4;
+                let nonce_s = &buf_data[offset..offset + nlen];
+                offset += nlen;
+                let ctlen = u32::from_le_bytes(buf_data[offset..offset + 4].try_into().unwrap()) as usize;
+                offset += 4;
+                let ct_s = &buf_data[offset..offset + ctlen];
+                offset += ctlen;
+
+                let mut pt = EppBuffer { data: ptr::null_mut(), length: 0 };
+                let code = unsafe {
+                    epp_attachment_streaming_decryptor_write(
+                        dec_handle, ci, nonce_s.as_ptr(), nonce_s.len(),
+                        ct_s.as_ptr(), ct_s.len(), &mut pt, err,
+                    )
+                };
+                assert_eq!(code, EppErrorCode::EppSuccess);
+                result.extend_from_slice(unsafe { std::slice::from_raw_parts(pt.data, pt.length) });
+                unsafe { epp_buffer_release(&mut pt) };
+            }
+            result
+        }
+
+        let chunks_data = unsafe { std::slice::from_raw_parts(all_chunks_buf.data, all_chunks_buf.length) };
+        let mut reassembled = parse_and_decrypt(dec_handle, chunks_data, 2, &mut err);
+
+        let last_data = unsafe { std::slice::from_raw_parts(last_chunk.data, last_chunk.length) };
+        reassembled.extend(parse_and_decrypt(dec_handle, last_data, 1, &mut err));
+
+        assert!(unsafe { epp_attachment_streaming_decryptor_is_complete(dec_handle) });
+        assert_eq!(reassembled, data);
+
+        unsafe {
+            epp_attachment_streaming_decryptor_destroy(dec_handle);
+            epp_buffer_release(&mut all_chunks_buf);
+            epp_buffer_release(&mut last_chunk);
+            epp_buffer_release(&mut attachment_id);
+            epp_buffer_release(&mut file_key);
+        }
+    }
+
+    #[test]
+    fn manifest_v2_with_thumbnail_and_ttl() {
+        init_v2();
+        let mut err = null_error();
+        let mut attachment_id = null_buffer();
+        let mut file_key = null_buffer();
+        unsafe { epp_attachment_generate_id(&mut attachment_id, &mut err) };
+        unsafe { epp_attachment_generate_file_key(&mut file_key, &mut err) };
+
+        let thumb_mime = "image/jpeg";
+        let thumb_data = vec![0xCCu8; 512];
+        let mut thumb_nonce = null_buffer();
+        let mut thumb_ct = null_buffer();
+        let code = unsafe {
+            epp_attachment_encrypt_thumbnail(
+                file_key.data, file_key.length,
+                attachment_id.data, attachment_id.length,
+                thumb_mime.as_ptr().cast(), thumb_mime.len(),
+                thumb_data.as_ptr(), thumb_data.len(),
+                &mut thumb_nonce, &mut thumb_ct, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let mime = "video/mp4";
+        let file_hash = [3u8; 32];
+        let wrapped_key = [5u8; 48];
+        let mut manifest = null_buffer();
+        let code = unsafe {
+            epp_attachment_manifest_create_v2(
+                attachment_id.data, attachment_id.length,
+                mime.as_ptr().cast(), mime.len(),
+                4096, 1024, 4,
+                file_hash.as_ptr(), file_hash.len(),
+                wrapped_key.as_ptr(), wrapped_key.len(),
+                -1,
+                thumb_ct.data, thumb_ct.length,
+                thumb_nonce.data, thumb_nonce.length,
+                thumb_mime.as_ptr().cast(), thumb_mime.len(),
+                thumb_data.len() as u32,
+                86400, 1700000000,
+                &mut manifest, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let code = unsafe { epp_attachment_manifest_validate(manifest.data, manifest.length, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        unsafe {
+            epp_buffer_release(&mut attachment_id);
+            epp_buffer_release(&mut file_key);
+            epp_buffer_release(&mut thumb_nonce);
+            epp_buffer_release(&mut thumb_ct);
+            epp_buffer_release(&mut manifest);
+        }
+    }
+
+    #[test]
+    fn manifest_rejects_partial_thumbnail_fields() {
+        init_v2();
+        let mut err = null_error();
+
+        let manifest = AttachmentManifest {
+            version: 1,
+            attachment_id: vec![1u8; 32],
+            mime_type: "image/png".to_string(),
+            total_size: 100, chunk_size: 100, chunk_count: 1,
+            file_sha256: vec![2u8; 32],
+            encrypted_file_key: vec![3u8; 48],
+            encryption_scheme: "AES-256-GCM-SIV".to_string(),
+            collage_index: None,
+            encrypted_thumbnail: Some(vec![0u8; 32]),
+            thumbnail_nonce: None,
+            thumbnail_mime_type: None,
+            thumbnail_size: None,
+            ttl_seconds: None, created_at_unix: None,
+            original_filename: None, media_width: None,
+            media_height: None, duration_ms: None,
+            alt_text: None, content_policy: None, voice_meta: None,
+        };
+        let mut buf = Vec::new();
+        manifest.encode(&mut buf).unwrap();
+
+        let code = unsafe { epp_attachment_manifest_validate(buf.as_ptr(), buf.len(), &mut err) };
+        assert_ne!(code, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn file_key_encrypt_decrypt_with_session() {
+        init_v2();
+        let mut err = null_error();
+        let config = EppSessionConfig { max_messages_per_chain: 1000 };
+
+        let mut alice_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut bob_h: *mut EppIdentityHandle = ptr::null_mut();
+        unsafe {
+            epp_identity_create(&mut alice_h, &mut err);
+            epp_identity_create(&mut bob_h, &mut err);
+        }
+
+        let mut bob_bundle = null_buffer();
+        unsafe { epp_prekey_bundle_create(bob_h, &mut bob_bundle, &mut err) };
+
+        let mut init_h: *mut EppHandshakeInitiatorHandle = ptr::null_mut();
+        let mut init_msg = null_buffer();
+        let code = unsafe {
+            epp_handshake_initiator_start(
+                alice_h, bob_bundle.data, bob_bundle.length,
+                &config, &mut init_h, &mut init_msg, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let mut resp_h: *mut EppHandshakeResponderHandle = ptr::null_mut();
+        let mut ack_msg = null_buffer();
+        let code = unsafe {
+            epp_handshake_responder_start(
+                bob_h, bob_bundle.data, bob_bundle.length,
+                init_msg.data, init_msg.length,
+                &config, &mut resp_h, &mut ack_msg, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let mut bob_s: *mut EppSessionHandle = ptr::null_mut();
+        let mut alice_s: *mut EppSessionHandle = ptr::null_mut();
+        unsafe {
+            epp_handshake_responder_finish(resp_h, &mut bob_s, &mut err);
+            epp_handshake_initiator_finish(init_h, ack_msg.data, ack_msg.length, &mut alice_s, &mut err);
+        }
+        assert!(!alice_s.is_null());
+        assert!(!bob_s.is_null());
+
+        let mut attachment_id = null_buffer();
+        let mut file_key = null_buffer();
+        unsafe { epp_attachment_generate_id(&mut attachment_id, &mut err) };
+        unsafe { epp_attachment_generate_file_key(&mut file_key, &mut err) };
+
+        let mut encrypted_fk = null_buffer();
+        let code = unsafe {
+            epp_attachment_encrypt_file_key(
+                alice_s, file_key.data, file_key.length,
+                attachment_id.data, attachment_id.length,
+                &mut encrypted_fk, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        assert!(encrypted_fk.length > 0);
+
+        let mut decrypted_fk = null_buffer();
+        let code = unsafe {
+            epp_attachment_decrypt_file_key(
+                bob_s, encrypted_fk.data, encrypted_fk.length,
+                attachment_id.data, attachment_id.length,
+                &mut decrypted_fk, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        assert_eq!(decrypted_fk.length, 32);
+
+        let original = unsafe { std::slice::from_raw_parts(file_key.data, file_key.length) };
+        let decrypted = unsafe { std::slice::from_raw_parts(decrypted_fk.data, decrypted_fk.length) };
+        assert_eq!(original, decrypted);
+
+        unsafe {
+            epp_buffer_release(&mut bob_bundle);
+            epp_buffer_release(&mut init_msg);
+            epp_buffer_release(&mut ack_msg);
+            epp_buffer_release(&mut attachment_id);
+            epp_buffer_release(&mut file_key);
+            epp_buffer_release(&mut encrypted_fk);
+            epp_buffer_release(&mut decrypted_fk);
+            epp_session_destroy(&mut alice_s);
+            epp_session_destroy(&mut bob_s);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn filename_valid() {
+        init_v2();
+        let mut err = null_error();
+        let name = "photo.jpg";
+        let code = unsafe { epp_attachment_validate_filename(name.as_ptr(), name.len(), &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn filename_rejects_empty() {
+        init_v2();
+        let mut err = null_error();
+        let name = "";
+        let code = unsafe { epp_attachment_validate_filename(name.as_ptr(), name.len(), &mut err) };
+        assert_ne!(code, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn filename_rejects_traversal() {
+        init_v2();
+        let mut err = null_error();
+        let name = "../etc/passwd";
+        let code = unsafe { epp_attachment_validate_filename(name.as_ptr(), name.len(), &mut err) };
+        assert_ne!(code, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn filename_rejects_control_chars() {
+        init_v2();
+        let mut err = null_error();
+        let name = "\x01bad";
+        let code = unsafe { epp_attachment_validate_filename(name.as_ptr(), name.len(), &mut err) };
+        assert_ne!(code, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn filename_rejects_windows_reserved() {
+        init_v2();
+        let mut err = null_error();
+        let name = "CON";
+        let code = unsafe { epp_attachment_validate_filename(name.as_ptr(), name.len(), &mut err) };
+        assert_ne!(code, EppErrorCode::EppSuccess);
+
+        let name2 = "con.txt";
+        let code2 = unsafe { epp_attachment_validate_filename(name2.as_ptr(), name2.len(), &mut err) };
+        assert_ne!(code2, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn sanitize_basic() {
+        init_v2();
+        let mut err = null_error();
+        let name = "../bad/file\x00.txt";
+        let mut out = null_buffer();
+        let code = unsafe { epp_attachment_sanitize_filename(name.as_ptr(), name.len(), &mut out, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        let sanitized = unsafe { std::slice::from_raw_parts(out.data, out.length) };
+        let s = std::str::from_utf8(sanitized).unwrap();
+        assert!(!s.contains('/'));
+        assert!(!s.contains('\\'));
+        assert!(!s.contains(".."));
+        assert!(!s.contains('\0'));
+        assert!(!s.is_empty());
+        unsafe { epp_buffer_release(&mut out) };
+    }
+
+    #[test]
+    fn magic_jpeg_valid() {
+        init_v2();
+        let mut err = null_error();
+        let header = [0xFFu8, 0xD8, 0xFF, 0xE0];
+        let mime = "image/jpeg";
+        let code = unsafe {
+            epp_attachment_validate_magic_bytes(
+                header.as_ptr(), header.len(),
+                mime.as_ptr(), mime.len(),
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn magic_png_valid() {
+        init_v2();
+        let mut err = null_error();
+        let header = [0x89u8, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        let mime = "image/png";
+        let code = unsafe {
+            epp_attachment_validate_magic_bytes(
+                header.as_ptr(), header.len(),
+                mime.as_ptr(), mime.len(),
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn magic_mismatch() {
+        init_v2();
+        let mut err = null_error();
+        let header = [0xFFu8, 0xD8, 0xFF, 0xE0];
+        let mime = "image/png";
+        let code = unsafe {
+            epp_attachment_validate_magic_bytes(
+                header.as_ptr(), header.len(),
+                mime.as_ptr(), mime.len(),
+                &mut err,
+            )
+        };
+        assert_ne!(code, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn magic_unknown_passes() {
+        init_v2();
+        let mut err = null_error();
+        let header = [0x00u8; 16];
+        let mime = "application/x-custom";
+        let code = unsafe {
+            epp_attachment_validate_magic_bytes(
+                header.as_ptr(), header.len(),
+                mime.as_ptr(), mime.len(),
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn detect_jpeg() {
+        init_v2();
+        let mut err = null_error();
+        let header = [0xFFu8, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01];
+        let mut out = null_buffer();
+        let code = unsafe {
+            epp_attachment_detect_mime(header.as_ptr(), header.len(), &mut out, &mut err)
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        let mime = unsafe { std::slice::from_raw_parts(out.data, out.length) };
+        assert_eq!(std::str::from_utf8(mime).unwrap(), "image/jpeg");
+        unsafe { epp_buffer_release(&mut out) };
+    }
+
+    #[test]
+    fn detect_unknown() {
+        init_v2();
+        let mut err = null_error();
+        let header = [0x01u8, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C];
+        let mut out = null_buffer();
+        let code = unsafe {
+            epp_attachment_detect_mime(header.as_ptr(), header.len(), &mut out, &mut err)
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        assert_eq!(out.length, 0);
+        unsafe { epp_buffer_release(&mut out) };
+    }
+
+    #[test]
+    fn manifest_view_once_requires_ttl() {
+        init_v2();
+        let mut err = null_error();
+        let manifest = AttachmentManifest {
+            version: 1,
+            attachment_id: vec![1u8; 32],
+            mime_type: "image/jpeg".to_string(),
+            total_size: 100, chunk_size: 100, chunk_count: 1,
+            file_sha256: vec![2u8; 32],
+            encrypted_file_key: vec![3u8; 48],
+            encryption_scheme: "AES-256-GCM-SIV".to_string(),
+            collage_index: None,
+            encrypted_thumbnail: None, thumbnail_nonce: None,
+            thumbnail_mime_type: None, thumbnail_size: None,
+            ttl_seconds: None, created_at_unix: None,
+            original_filename: None, media_width: None,
+            media_height: None, duration_ms: None,
+            alt_text: None,
+            content_policy: Some(ContentPolicy {
+                view_once: true,
+                no_forward: false,
+                no_save: false,
+            }),
+            voice_meta: None,
+        };
+        let mut buf = Vec::new();
+        manifest.encode(&mut buf).unwrap();
+        let code = unsafe { epp_attachment_manifest_validate(buf.as_ptr(), buf.len(), &mut err) };
+        assert_ne!(code, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn manifest_view_once_with_ttl() {
+        init_v2();
+        let mut err = null_error();
+        let manifest = AttachmentManifest {
+            version: 1,
+            attachment_id: vec![1u8; 32],
+            mime_type: "image/jpeg".to_string(),
+            total_size: 100, chunk_size: 100, chunk_count: 1,
+            file_sha256: vec![2u8; 32],
+            encrypted_file_key: vec![3u8; 48],
+            encryption_scheme: "AES-256-GCM-SIV".to_string(),
+            collage_index: None,
+            encrypted_thumbnail: None, thumbnail_nonce: None,
+            thumbnail_mime_type: None, thumbnail_size: None,
+            ttl_seconds: Some(3600), created_at_unix: Some(1700000000),
+            original_filename: None, media_width: None,
+            media_height: None, duration_ms: None,
+            alt_text: None,
+            content_policy: Some(ContentPolicy {
+                view_once: true,
+                no_forward: false,
+                no_save: false,
+            }),
+            voice_meta: None,
+        };
+        let mut buf = Vec::new();
+        manifest.encode(&mut buf).unwrap();
+        let code = unsafe { epp_attachment_manifest_validate(buf.as_ptr(), buf.len(), &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn collage_with_metadata() {
+        init_v2();
+        let mut err = null_error();
+
+        let mut manifests_raw = Vec::new();
+        for i in 0u32..2 {
+            let mut aid = null_buffer();
+            let mut fk = null_buffer();
+            unsafe { epp_attachment_generate_id(&mut aid, &mut err) };
+            unsafe { epp_attachment_generate_file_key(&mut fk, &mut err) };
+
+            let manifest = AttachmentManifest {
+                version: 1,
+                attachment_id: unsafe { std::slice::from_raw_parts(aid.data, aid.length) }.to_vec(),
+                mime_type: "image/jpeg".to_string(),
+                total_size: 1024, chunk_size: 1024, chunk_count: 1,
+                file_sha256: vec![7u8; 32],
+                encrypted_file_key: vec![9u8; 48],
+                encryption_scheme: "AES-256-GCM-SIV".to_string(),
+                collage_index: Some(i),
+                encrypted_thumbnail: None, thumbnail_nonce: None,
+                thumbnail_mime_type: None, thumbnail_size: None,
+                ttl_seconds: None, created_at_unix: None,
+                original_filename: None, media_width: None,
+                media_height: None, duration_ms: None,
+                alt_text: None, content_policy: None, voice_meta: None,
+            };
+            let mut buf = Vec::new();
+            manifest.encode(&mut buf).unwrap();
+            manifests_raw.push(buf);
+            unsafe { epp_buffer_release(&mut aid); epp_buffer_release(&mut fk); }
+        }
+
+        let ptrs: Vec<*const u8> = manifests_raw.iter().map(|b| b.as_ptr()).collect();
+        let lens: Vec<usize> = manifests_raw.iter().map(|b| b.len()).collect();
+        let name = "My Album";
+        let desc = "Vacation photos";
+        let mut collage = null_buffer();
+        let code = unsafe {
+            epp_attachment_collage_create_with_metadata(
+                ptrs.as_ptr(), lens.as_ptr(), 2,
+                name.as_ptr(), name.len(),
+                desc.as_ptr(), desc.len(),
+                0,
+                &mut collage, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let code = unsafe { epp_attachment_collage_validate(collage.data, collage.length, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let collage_bytes = unsafe { std::slice::from_raw_parts(collage.data, collage.length) };
+        let parsed = CollageManifest::decode(collage_bytes).unwrap();
+        assert_eq!(parsed.name.as_deref(), Some("My Album"));
+        assert_eq!(parsed.description.as_deref(), Some("Vacation photos"));
+        assert_eq!(parsed.layout, Some(0));
+
+        unsafe { epp_buffer_release(&mut collage) };
+    }
+
+    #[test]
+    fn collage_name_too_long() {
+        init_v2();
+        let mut err = null_error();
+
+        let mut manifests_raw = Vec::new();
+        let mut aid = null_buffer();
+        let mut fk = null_buffer();
+        unsafe { epp_attachment_generate_id(&mut aid, &mut err) };
+        unsafe { epp_attachment_generate_file_key(&mut fk, &mut err) };
+        let manifest = AttachmentManifest {
+            version: 1,
+            attachment_id: unsafe { std::slice::from_raw_parts(aid.data, aid.length) }.to_vec(),
+            mime_type: "image/jpeg".to_string(),
+            total_size: 1024, chunk_size: 1024, chunk_count: 1,
+            file_sha256: vec![7u8; 32],
+            encrypted_file_key: vec![9u8; 48],
+            encryption_scheme: "AES-256-GCM-SIV".to_string(),
+            collage_index: Some(0),
+            encrypted_thumbnail: None, thumbnail_nonce: None,
+            thumbnail_mime_type: None, thumbnail_size: None,
+            ttl_seconds: None, created_at_unix: None,
+            original_filename: None, media_width: None,
+            media_height: None, duration_ms: None,
+            alt_text: None, content_policy: None, voice_meta: None,
+        };
+        let mut buf = Vec::new();
+        manifest.encode(&mut buf).unwrap();
+        manifests_raw.push(buf);
+        unsafe { epp_buffer_release(&mut aid); epp_buffer_release(&mut fk); }
+
+        let ptrs: Vec<*const u8> = manifests_raw.iter().map(|b| b.as_ptr()).collect();
+        let lens: Vec<usize> = manifests_raw.iter().map(|b| b.len()).collect();
+        let long_name = "A".repeat(256);
+        let mut collage = null_buffer();
+        let code = unsafe {
+            epp_attachment_collage_create_with_metadata(
+                ptrs.as_ptr(), lens.as_ptr(), 1,
+                long_name.as_ptr(), long_name.len(),
+                ptr::null(), 0,
+                -1,
+                &mut collage, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let code = unsafe { epp_attachment_collage_validate(collage.data, collage.length, &mut err) };
+        assert_ne!(code, EppErrorCode::EppSuccess);
+
+        unsafe { epp_buffer_release(&mut collage) };
+    }
+
+    #[test]
+    fn manifest_with_file_identity() {
+        init_v2();
+        let mut err = null_error();
+        let manifest = AttachmentManifest {
+            version: 1,
+            attachment_id: vec![1u8; 32],
+            mime_type: "video/mp4".to_string(),
+            total_size: 2048, chunk_size: 1024, chunk_count: 2,
+            file_sha256: vec![2u8; 32],
+            encrypted_file_key: vec![3u8; 48],
+            encryption_scheme: "AES-256-GCM-SIV".to_string(),
+            collage_index: None,
+            encrypted_thumbnail: None, thumbnail_nonce: None,
+            thumbnail_mime_type: None, thumbnail_size: None,
+            ttl_seconds: None, created_at_unix: None,
+            original_filename: Some("holiday.mp4".to_string()),
+            media_width: Some(1920),
+            media_height: Some(1080),
+            duration_ms: Some(60000),
+            alt_text: Some("A holiday video".to_string()),
+            content_policy: None,
+            voice_meta: None,
+        };
+        let mut buf = Vec::new();
+        manifest.encode(&mut buf).unwrap();
+        let code = unsafe { epp_attachment_manifest_validate(buf.as_ptr(), buf.len(), &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn inline_attachment_roundtrip() {
+        init_v2();
+        let mut err = null_error();
+        let mut out = null_buffer();
+        let aid = vec![1u8; 32];
+        let mime = "text/plain";
+        let data = vec![0xABu8; 128];
+
+        let code = unsafe {
+            epp_attachment_inline_create(
+                aid.as_ptr(), aid.len(),
+                mime.as_ptr(), mime.len(),
+                data.as_ptr(), data.len(),
+                ptr::null(), 0,
+                0, 0, 0, 0,
+                &mut out, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        assert!(out.length > 0);
+
+        let code = unsafe {
+            epp_attachment_inline_validate(out.data, out.length, &mut err)
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        unsafe { epp_buffer_release(&mut out) };
+    }
+
+    #[test]
+    fn attachment_reference_roundtrip() {
+        init_v2();
+        let mut err = null_error();
+        let mut out = null_buffer();
+        let aid = vec![2u8; 32];
+        let smid = vec![3u8; 32];
+
+        let code = unsafe {
+            epp_attachment_reference_create(
+                aid.as_ptr(), aid.len(),
+                0,
+                smid.as_ptr(), smid.len(),
+                &mut out, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let code = unsafe {
+            epp_attachment_reference_validate(out.data, out.length, &mut err)
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        unsafe { epp_buffer_release(&mut out) };
+    }
+
+    #[test]
+    fn voice_meta_roundtrip() {
+        init_v2();
+        let mut err = null_error();
+        let mut out = null_buffer();
+        let waveform: Vec<f32> = vec![0.0, 0.25, 0.5, 0.75, 1.0];
+
+        let code = unsafe {
+            epp_attachment_voice_meta_create(
+                waveform.as_ptr(), waveform.len(),
+                ptr::null(), 0,
+                1.0, 1,
+                0,
+                &mut out, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let code = unsafe {
+            epp_attachment_voice_meta_validate(out.data, out.length, &mut err)
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        unsafe { epp_buffer_release(&mut out) };
+    }
+
+    #[test]
+    fn voice_meta_rejects_bad_sample() {
+        init_v2();
+        let mut err = null_error();
+        let bad = VoiceMessageMeta {
+            waveform_samples: vec![0.5, 1.5],
+            transcript: None,
+            playback_speed_hint: None,
+            is_listened: false,
+        };
+        let mut buf = Vec::new();
+        bad.encode(&mut buf).unwrap();
+        let code = unsafe {
+            epp_attachment_voice_meta_validate(buf.as_ptr(), buf.len(), &mut err)
+        };
+        assert_ne!(code, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn location_roundtrip() {
+        init_v2();
+        let mut err = null_error();
+        let mut out = null_buffer();
+
+        let code = unsafe {
+            epp_attachment_location_create(
+                48.8566, 2.3522,
+                10.0, 1,
+                ptr::null(), 0,
+                0, 0,
+                &mut out, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let code = unsafe {
+            epp_attachment_location_validate(out.data, out.length, &mut err)
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        unsafe { epp_buffer_release(&mut out) };
+    }
+
+    #[test]
+    fn location_rejects_bad_lat() {
+        init_v2();
+        let mut err = null_error();
+        let bad = LocationAttachment {
+            latitude: 91.0,
+            longitude: 0.0,
+            accuracy_meters: None,
+            label: None,
+            timestamp_unix: None,
+        };
+        let mut buf = Vec::new();
+        bad.encode(&mut buf).unwrap();
+        let code = unsafe {
+            epp_attachment_location_validate(buf.as_ptr(), buf.len(), &mut err)
+        };
+        assert_ne!(code, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn contact_card_roundtrip() {
+        init_v2();
+        let mut err = null_error();
+        let mut out = null_buffer();
+        let name = "Alice";
+
+        let code = unsafe {
+            epp_attachment_contact_card_create(
+                name.as_ptr(), name.len(),
+                ptr::null(), 0,
+                ptr::null(), 0,
+                ptr::null(), 0,
+                ptr::null(), 0,
+                &mut out, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let code = unsafe {
+            epp_attachment_contact_card_validate(out.data, out.length, &mut err)
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        unsafe { epp_buffer_release(&mut out) };
+    }
+
+    #[test]
+    fn contact_card_rejects_empty_name() {
+        init_v2();
+        let mut err = null_error();
+        let bad = ContactCard {
+            display_name: String::new(),
+            phone: None,
+            email: None,
+            avatar_data: None,
+            organization: None,
+        };
+        let mut buf = Vec::new();
+        bad.encode(&mut buf).unwrap();
+        let code = unsafe {
+            epp_attachment_contact_card_validate(buf.as_ptr(), buf.len(), &mut err)
+        };
+        assert_ne!(code, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn link_preview_roundtrip() {
+        init_v2();
+        let mut err = null_error();
+        let mut out = null_buffer();
+        let url = "https://example.com";
+
+        let code = unsafe {
+            epp_attachment_link_preview_create(
+                url.as_ptr(), url.len(),
+                ptr::null(), 0,
+                ptr::null(), 0,
+                ptr::null(), 0,
+                ptr::null(), 0,
+                ptr::null(), 0,
+                &mut out, &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let code = unsafe {
+            epp_attachment_link_preview_validate(out.data, out.length, &mut err)
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        unsafe { epp_buffer_release(&mut out) };
+    }
+
+    #[test]
+    fn link_preview_rejects_empty_url() {
+        init_v2();
+        let mut err = null_error();
+        let bad = LinkPreview {
+            url: String::new(),
+            title: None,
+            description: None,
+            preview_image: None,
+            preview_image_mime: None,
+            domain: None,
+        };
+        let mut buf = Vec::new();
+        bad.encode(&mut buf).unwrap();
+        let code = unsafe {
+            epp_attachment_link_preview_validate(buf.as_ptr(), buf.len(), &mut err)
+        };
+        assert_ne!(code, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn manifest_with_voice_meta() {
+        init_v2();
+        let mut err = null_error();
+        let manifest = AttachmentManifest {
+            version: 1,
+            attachment_id: vec![1u8; 32],
+            mime_type: "audio/ogg".to_string(),
+            total_size: 2048, chunk_size: 1024, chunk_count: 2,
+            file_sha256: vec![2u8; 32],
+            encrypted_file_key: vec![3u8; 48],
+            encryption_scheme: "AES-256-GCM-SIV".to_string(),
+            collage_index: None,
+            encrypted_thumbnail: None, thumbnail_nonce: None,
+            thumbnail_mime_type: None, thumbnail_size: None,
+            ttl_seconds: None, created_at_unix: None,
+            original_filename: None, media_width: None,
+            media_height: None, duration_ms: Some(5000),
+            alt_text: None, content_policy: None,
+            voice_meta: Some(VoiceMessageMeta {
+                waveform_samples: vec![0.0, 0.5, 1.0, 0.5, 0.0],
+                transcript: Some("Hello world".to_string()),
+                playback_speed_hint: Some(1.5),
+                is_listened: false,
+            }),
+        };
+        let mut buf = Vec::new();
+        manifest.encode(&mut buf).unwrap();
+        let code = unsafe { epp_attachment_manifest_validate(buf.as_ptr(), buf.len(), &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+    }
+}
+
+mod voip_improvements {
+    use ecliptix_protocol::ffi::api::*;
+    use std::ptr;
+
+    const fn null_error() -> EppError {
+        EppError {
+            code: EppErrorCode::EppSuccess,
+            message: ptr::null_mut(),
+        }
+    }
+
+    const fn null_buffer() -> EppBuffer {
+        EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        }
+    }
+
+    const fn null_encrypted_frame() -> EppEncryptedFrame {
+        EppEncryptedFrame {
+            call_id: null_buffer(),
+            ssrc: 0,
+            frame_counter: 0,
+            ratchet_generation: 0,
+            encrypted_payload: null_buffer(),
+            nonce: null_buffer(),
+            encrypted_header: null_buffer(),
+        }
+    }
+
+    const fn null_decrypted_frame() -> EppDecryptedFrame {
+        EppDecryptedFrame {
+            payload: null_buffer(),
+            payload_type: 0,
+            ssrc: 0,
+            timestamp: 0,
+            sequence_number: 0,
+            frame_counter: 0,
+            ratchet_generation: 0,
+        }
+    }
+
+    fn init_lib() {
+        epp_init();
+    }
+
+    fn setup_voip_session_pair() -> (
+        *mut EppIdentityHandle,
+        *mut EppIdentityHandle,
+        *mut EppVoipSessionHandle,
+        *mut EppVoipSessionHandle,
+        *mut EppVoipCallInitiatorHandle,
+        EppBuffer,
+        EppBuffer,
+    ) {
+        let mut alice_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut bob_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut err = null_error();
+        unsafe {
+            epp_identity_create(&mut alice_h, &mut err);
+            epp_identity_create(&mut bob_h, &mut err);
+        }
+
+        let mut alice_kyber = vec![0u8; 1184];
+        let mut bob_kyber = vec![0u8; 1184];
+        unsafe {
+            epp_identity_get_kyber_public(
+                alice_h,
+                alice_kyber.as_mut_ptr(),
+                alice_kyber.len(),
+                &mut err,
+            );
+            epp_identity_get_kyber_public(
+                bob_h,
+                bob_kyber.as_mut_ptr(),
+                bob_kyber.len(),
+                &mut err,
+            );
+        }
+
+        let mut init_buf = null_buffer();
+        let mut init_h: *mut EppVoipCallInitiatorHandle = ptr::null_mut();
+        let mut accept_buf = null_buffer();
+        let mut alice_session_h: *mut EppVoipSessionHandle = ptr::null_mut();
+        let mut bob_session_h: *mut EppVoipSessionHandle = ptr::null_mut();
+
+        unsafe {
+            assert_eq!(
+                epp_voip_call_init_start(
+                    alice_h,
+                    bob_kyber.as_ptr(),
+                    bob_kyber.len(),
+                    0,
+                    512,
+                    60,
+                    &mut init_buf,
+                    &mut init_h,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_voip_accept_call(
+                    bob_h,
+                    init_buf.data,
+                    init_buf.length,
+                    alice_kyber.as_ptr(),
+                    alice_kyber.len(),
+                    &mut accept_buf,
+                    &mut bob_session_h,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_voip_call_init_complete(
+                    init_h,
+                    alice_h,
+                    accept_buf.data,
+                    accept_buf.length,
+                    &mut alice_session_h,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+        }
+
+        (
+            alice_h,
+            bob_h,
+            alice_session_h,
+            bob_session_h,
+            init_h,
+            init_buf,
+            accept_buf,
+        )
+    }
+
+    #[test]
+    fn ffi_voip_screen_share_meta_set_get_clear() {
+        init_lib();
+        let (
+            mut alice_h,
+            mut bob_h,
+            alice_session_h,
+            bob_session_h,
+            init_h,
+            mut init_buf,
+            mut accept_buf,
+        ) = setup_voip_session_pair();
+
+        let mut err = null_error();
+        let codec = b"H264";
+
+        unsafe {
+            let code = epp_voip_set_screen_share_meta(
+                alice_session_h,
+                1920,
+                1080,
+                30,
+                codec.as_ptr(),
+                codec.len(),
+                &mut err,
+            );
+            assert_eq!(code, EppErrorCode::EppSuccess);
+
+            let mut w: u32 = 0;
+            let mut h: u32 = 0;
+            let mut fr: u32 = 0;
+            let mut hint_buf = null_buffer();
+            let code = epp_voip_get_screen_share_meta(
+                alice_session_h,
+                &mut w,
+                &mut h,
+                &mut fr,
+                &mut hint_buf,
+                &mut err,
+            );
+            assert_eq!(code, EppErrorCode::EppSuccess);
+            assert_eq!(w, 1920);
+            assert_eq!(h, 1080);
+            assert_eq!(fr, 30);
+            assert!(hint_buf.length > 0);
+            let hint_str =
+                std::str::from_utf8(std::slice::from_raw_parts(hint_buf.data, hint_buf.length))
+                    .unwrap();
+            assert_eq!(hint_str, "H264");
+            epp_buffer_release(&mut hint_buf);
+
+            let code = epp_voip_clear_screen_share_meta(alice_session_h, &mut err);
+            assert_eq!(code, EppErrorCode::EppSuccess);
+
+            let mut w2: u32 = 99;
+            let mut h2: u32 = 99;
+            let mut fr2: u32 = 99;
+            let mut hint_buf2 = null_buffer();
+            let code = epp_voip_get_screen_share_meta(
+                alice_session_h,
+                &mut w2,
+                &mut h2,
+                &mut fr2,
+                &mut hint_buf2,
+                &mut err,
+            );
+            assert_eq!(code, EppErrorCode::EppSuccess);
+            assert_eq!(w2, 0);
+            assert_eq!(h2, 0);
+            assert_eq!(fr2, 0);
+            epp_buffer_release(&mut hint_buf2);
+
+            let code = epp_voip_set_screen_share_meta(
+                alice_session_h,
+                0,
+                1080,
+                30,
+                ptr::null(),
+                0,
+                &mut err,
+            );
+            assert_ne!(code, EppErrorCode::EppSuccess);
+
+            epp_buffer_release(&mut init_buf);
+            epp_buffer_release(&mut accept_buf);
+            epp_voip_call_initiator_destroy(init_h);
+            epp_voip_session_destroy(alice_session_h);
+            epp_voip_session_destroy(bob_session_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn ffi_voip_call_statistics_tracking() {
+        init_lib();
+        let (
+            mut alice_h,
+            mut bob_h,
+            alice_session_h,
+            bob_session_h,
+            init_h,
+            mut init_buf,
+            mut accept_buf,
+        ) = setup_voip_session_pair();
+
+        let mut err = null_error();
+        let payload = b"stats-test";
+
+        unsafe {
+            let alice_ssrc = epp_voip_ssrc(alice_session_h, &mut err);
+
+            for i in 0u32..5 {
+                let mut enc = null_encrypted_frame();
+                assert_eq!(
+                    epp_voip_encrypt_frame(
+                        alice_session_h,
+                        111,
+                        alice_ssrc,
+                        160 + i,
+                        1 + (i as u16),
+                        payload.as_ptr(),
+                        payload.len(),
+                        &mut enc,
+                        &mut err
+                    ),
+                    EppErrorCode::EppSuccess
+                );
+
+                let mut dec = null_decrypted_frame();
+                assert_eq!(
+                    epp_voip_decrypt_frame(
+                        bob_session_h,
+                        enc.call_id.data,
+                        enc.call_id.length,
+                        enc.ssrc,
+                        enc.frame_counter,
+                        enc.ratchet_generation,
+                        enc.encrypted_payload.data,
+                        enc.encrypted_payload.length,
+                        enc.nonce.data,
+                        enc.nonce.length,
+                        enc.encrypted_header.data,
+                        enc.encrypted_header.length,
+                        &mut dec,
+                        &mut err
+                    ),
+                    EppErrorCode::EppSuccess
+                );
+
+                epp_buffer_release(&mut enc.call_id);
+                epp_buffer_release(&mut enc.encrypted_payload);
+                epp_buffer_release(&mut enc.nonce);
+                epp_buffer_release(&mut enc.encrypted_header);
+                epp_buffer_release(&mut dec.payload);
+            }
+
+            let mut stats = EppCallStatistics {
+                frames_sent: 0,
+                frames_received: 0,
+                frames_dropped: 0,
+                rekey_count: 0,
+                ratchet_generation: 0,
+                call_duration_secs: 0,
+            };
+            let code =
+                epp_voip_get_call_statistics(alice_session_h, &mut stats, &mut err);
+            assert_eq!(code, EppErrorCode::EppSuccess);
+            assert_eq!(stats.frames_sent, 5);
+            assert_eq!(stats.frames_received, 0);
+
+            let code =
+                epp_voip_get_call_statistics(bob_session_h, &mut stats, &mut err);
+            assert_eq!(code, EppErrorCode::EppSuccess);
+            assert_eq!(stats.frames_sent, 0);
+            assert_eq!(stats.frames_received, 5);
+            assert_eq!(stats.frames_dropped, 0);
+
+            epp_buffer_release(&mut init_buf);
+            epp_buffer_release(&mut accept_buf);
+            epp_voip_call_initiator_destroy(init_h);
+            epp_voip_session_destroy(alice_session_h);
+            epp_voip_session_destroy(bob_session_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn ffi_voip_recording_consent() {
+        init_lib();
+        let (
+            mut alice_h,
+            mut bob_h,
+            alice_session_h,
+            bob_session_h,
+            init_h,
+            mut init_buf,
+            mut accept_buf,
+        ) = setup_voip_session_pair();
+
+        let mut err = null_error();
+
+        unsafe {
+            assert_eq!(epp_voip_get_local_recording_consent(alice_session_h), 0);
+            assert_eq!(epp_voip_get_remote_recording_consent(alice_session_h), 0);
+            assert!(!epp_voip_both_consented_to_recording(alice_session_h));
+
+            assert_eq!(
+                epp_voip_set_recording_consent(alice_session_h, 1, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(epp_voip_get_local_recording_consent(alice_session_h), 1);
+            assert!(!epp_voip_both_consented_to_recording(alice_session_h));
+
+            assert_eq!(
+                epp_voip_set_remote_recording_consent(alice_session_h, 1, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert!(epp_voip_both_consented_to_recording(alice_session_h));
+
+            assert_eq!(
+                epp_voip_set_remote_recording_consent(alice_session_h, 2, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert!(!epp_voip_both_consented_to_recording(alice_session_h));
+            assert_eq!(epp_voip_get_remote_recording_consent(alice_session_h), 2);
+
+            let code = epp_voip_set_recording_consent(alice_session_h, 5, &mut err);
+            assert_ne!(code, EppErrorCode::EppSuccess);
+
+            epp_buffer_release(&mut init_buf);
+            epp_buffer_release(&mut accept_buf);
+            epp_voip_call_initiator_destroy(init_h);
+            epp_voip_session_destroy(alice_session_h);
+            epp_voip_session_destroy(bob_session_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+        }
     }
 }

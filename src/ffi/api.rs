@@ -22,18 +22,27 @@ use std::os::raw::{c_char, c_void};
 use std::sync::Arc;
 
 use crate::core::constants::{
-    AES_GCM_NONCE_BYTES, AES_KEY_BYTES, CALL_ID_BYTES, DEFAULT_ONE_TIME_KEY_COUNT,
-    ED25519_PUBLIC_KEY_BYTES, HMAC_BYTES, KYBER_PUBLIC_KEY_BYTES, MAX_BUFFER_SIZE,
-    MAX_ENVELOPE_MESSAGE_SIZE, MAX_GROUP_MESSAGE_SIZE, MAX_HANDSHAKE_MESSAGE_SIZE,
-    MAX_VOIP_ENCRYPTED_HEADER_SIZE, MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE, MAX_VOIP_SIGNAL_MESSAGE_SIZE,
-    MESSAGE_ID_BYTES, PROTOCOL_VERSION, PSK_BYTES, ROOT_KEY_BYTES, X25519_PUBLIC_KEY_BYTES,
+    AES_GCM_NONCE_BYTES, AES_KEY_BYTES, ATTACHMENT_FILE_KEY_BYTES, ATTACHMENT_HASH_BYTES,
+    ATTACHMENT_ID_BYTES, ATTACHMENT_PROTOCOL_VERSION, CALL_ID_BYTES,
+    DEFAULT_ONE_TIME_KEY_COUNT, ED25519_PUBLIC_KEY_BYTES, HMAC_BYTES,
+    KYBER_PUBLIC_KEY_BYTES, MAX_ATTACHMENT_CHUNK_SIZE, MAX_ATTACHMENT_ENCRYPTED_FILE_KEY_SIZE,
+    MAX_ATTACHMENT_MANIFEST_SIZE, MAX_ATTACHMENT_THUMBNAIL_SIZE, MAX_BUFFER_SIZE,
+    MAX_COLLAGE_MANIFEST_SIZE, MAX_ENVELOPE_MESSAGE_SIZE, MAX_GROUP_MESSAGE_SIZE,
+    MAX_HANDSHAKE_MESSAGE_SIZE, MAX_VOIP_ENCRYPTED_HEADER_SIZE, MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE,
+    DEVICE_ID_BYTES, MAX_VOIP_SIGNAL_MESSAGE_SIZE, MESSAGE_ID_BYTES, PROTOCOL_VERSION, PSK_BYTES,
+    ROOT_KEY_BYTES, X25519_PUBLIC_KEY_BYTES,
 };
 use crate::core::errors::ProtocolError;
 use crate::crypto::SecureMemoryHandle;
 use crate::crypto::{CryptoInterop, KyberInterop};
 use crate::identity::IdentityKeys;
 use crate::interfaces::{IGroupEventHandler, IIdentityEventHandler, IProtocolEventHandler};
-use crate::proto::{OneTimePreKey, PreKeyBundle, SecureEnvelope};
+use crate::proto::{
+    AttachmentManifest, AttachmentReference, ChunkProgress, CollageManifest, ContactCard,
+    ContentPolicy, InlineAttachment, LinkPreview, LocationAttachment, OneTimePreKey, PreKeyBundle,
+    SecureEnvelope, SessionMetadataResponse, VoiceMessageMeta,
+};
+use crate::protocol::attachment::{StreamingDecryptor, StreamingEncryptor};
 use crate::protocol::group::{GroupSecurityPolicy, GroupSession};
 use crate::protocol::{HandshakeInitiator, HandshakeResponder, Session};
 
@@ -104,6 +113,9 @@ pub struct EppHandshakeResponderHandle(pub Option<HandshakeResponder>);
 pub struct EppGroupSessionHandle(pub Option<GroupSession>);
 
 pub struct EppVoipSessionHandle(pub Option<crate::protocol::voip::VoipSession>);
+
+pub struct EppStreamingEncryptorHandle(pub Option<StreamingEncryptor>);
+pub struct EppStreamingDecryptorHandle(pub Option<StreamingDecryptor>);
 
 #[repr(C)]
 pub struct EppEncryptedFrame {
@@ -1453,6 +1465,437 @@ pub unsafe extern "C" fn epp_shamir_reconstruct(
                 write_buffer(out_secret, secret);
                 EppErrorCode::EppSuccess
             }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_generate_id(
+    out_attachment_id: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_attachment_id.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_attachment_id is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        write_buffer(
+            out_attachment_id,
+            crate::protocol::attachment::generate_attachment_id(),
+        );
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_generate_file_key(
+    out_file_key: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_file_key.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_file_key is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        write_buffer(out_file_key, crate::protocol::attachment::generate_file_key());
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_encrypt_chunk(
+    file_key: *const u8,
+    file_key_length: usize,
+    attachment_id: *const u8,
+    attachment_id_length: usize,
+    mime_type: *const c_char,
+    mime_type_length: usize,
+    total_size: u64,
+    chunk_size: u32,
+    chunk_index: u32,
+    chunk_count: u32,
+    plaintext: *const u8,
+    plaintext_length: usize,
+    out_nonce: *mut EppBuffer,
+    out_ciphertext: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if file_key.is_null()
+            || attachment_id.is_null()
+            || mime_type.is_null()
+            || plaintext.is_null()
+            || out_nonce.is_null()
+            || out_ciphertext.is_null()
+        {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if file_key_length != ATTACHMENT_FILE_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Attachment file_key must be 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if attachment_id_length != ATTACHMENT_ID_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Attachment ID must be 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if plaintext_length == 0 || plaintext_length > MAX_ATTACHMENT_CHUNK_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Attachment plaintext chunk size is out of range",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let file_key_slice = std::slice::from_raw_parts(file_key, file_key_length);
+        let attachment_id_slice = std::slice::from_raw_parts(attachment_id, attachment_id_length);
+        let mime_slice = std::slice::from_raw_parts(mime_type.cast::<u8>(), mime_type_length);
+        let Ok(mime_type) = std::str::from_utf8(mime_slice) else {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "mime_type must be valid UTF-8",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        };
+        let plaintext_slice = std::slice::from_raw_parts(plaintext, plaintext_length);
+
+        match crate::protocol::attachment::encrypt_chunk(
+            file_key_slice,
+            attachment_id_slice,
+            mime_type,
+            total_size,
+            chunk_size,
+            chunk_index,
+            chunk_count,
+            plaintext_slice,
+        ) {
+            Ok((nonce, ciphertext)) => {
+                write_buffer(out_nonce, nonce);
+                write_buffer(out_ciphertext, ciphertext);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_decrypt_chunk(
+    file_key: *const u8,
+    file_key_length: usize,
+    attachment_id: *const u8,
+    attachment_id_length: usize,
+    mime_type: *const c_char,
+    mime_type_length: usize,
+    total_size: u64,
+    chunk_size: u32,
+    chunk_index: u32,
+    chunk_count: u32,
+    nonce: *const u8,
+    nonce_length: usize,
+    ciphertext: *const u8,
+    ciphertext_length: usize,
+    out_plaintext: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if file_key.is_null()
+            || attachment_id.is_null()
+            || mime_type.is_null()
+            || nonce.is_null()
+            || ciphertext.is_null()
+            || out_plaintext.is_null()
+        {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if file_key_length != ATTACHMENT_FILE_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Attachment file_key must be 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if attachment_id_length != ATTACHMENT_ID_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Attachment ID must be 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if nonce_length != AES_GCM_NONCE_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Attachment nonce must be 12 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if ciphertext_length == 0 || ciphertext_length > MAX_ATTACHMENT_CHUNK_SIZE + 16 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Attachment ciphertext chunk size is out of range",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let file_key_slice = std::slice::from_raw_parts(file_key, file_key_length);
+        let attachment_id_slice = std::slice::from_raw_parts(attachment_id, attachment_id_length);
+        let mime_slice = std::slice::from_raw_parts(mime_type.cast::<u8>(), mime_type_length);
+        let Ok(mime_type) = std::str::from_utf8(mime_slice) else {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "mime_type must be valid UTF-8",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        };
+        let nonce_slice = std::slice::from_raw_parts(nonce, nonce_length);
+        let ciphertext_slice = std::slice::from_raw_parts(ciphertext, ciphertext_length);
+
+        match crate::protocol::attachment::decrypt_chunk(
+            file_key_slice,
+            attachment_id_slice,
+            mime_type,
+            total_size,
+            chunk_size,
+            chunk_index,
+            chunk_count,
+            nonce_slice,
+            ciphertext_slice,
+        ) {
+            Ok(plaintext) => {
+                write_buffer(out_plaintext, plaintext);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_manifest_create(
+    attachment_id: *const u8,
+    attachment_id_length: usize,
+    mime_type: *const c_char,
+    mime_type_length: usize,
+    total_size: u64,
+    chunk_size: u32,
+    chunk_count: u32,
+    file_sha256: *const u8,
+    file_sha256_length: usize,
+    encrypted_file_key: *const u8,
+    encrypted_file_key_length: usize,
+    out_manifest: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if attachment_id.is_null()
+            || mime_type.is_null()
+            || file_sha256.is_null()
+            || encrypted_file_key.is_null()
+            || out_manifest.is_null()
+        {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if attachment_id_length != ATTACHMENT_ID_BYTES || file_sha256_length != ATTACHMENT_HASH_BYTES
+        {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Attachment ID and file_sha256 must be 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if encrypted_file_key_length == 0
+            || encrypted_file_key_length > MAX_ATTACHMENT_ENCRYPTED_FILE_KEY_SIZE
+        {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "encrypted_file_key size is out of range",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let attachment_id_slice = std::slice::from_raw_parts(attachment_id, attachment_id_length);
+        let mime_slice = std::slice::from_raw_parts(mime_type.cast::<u8>(), mime_type_length);
+        let Ok(mime_type_str) = std::str::from_utf8(mime_slice) else {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "mime_type must be valid UTF-8",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        };
+        let mime_type = mime_type_str.to_owned();
+        let file_sha256_slice = std::slice::from_raw_parts(file_sha256, file_sha256_length);
+        let encrypted_file_key_slice =
+            std::slice::from_raw_parts(encrypted_file_key, encrypted_file_key_length);
+
+        let manifest = AttachmentManifest {
+            version: ATTACHMENT_PROTOCOL_VERSION,
+            attachment_id: attachment_id_slice.to_vec(),
+            mime_type,
+            total_size,
+            chunk_size,
+            chunk_count,
+            file_sha256: file_sha256_slice.to_vec(),
+            encrypted_file_key: encrypted_file_key_slice.to_vec(),
+            encryption_scheme: "AES-256-GCM-SIV".to_owned(),
+            collage_index: None,
+            encrypted_thumbnail: None,
+            thumbnail_nonce: None,
+            thumbnail_mime_type: None,
+            thumbnail_size: None,
+            ttl_seconds: None,
+            created_at_unix: None,
+            original_filename: None,
+            media_width: None,
+            media_height: None,
+            duration_ms: None,
+            alt_text: None,
+            content_policy: None,
+            voice_meta: None,
+        };
+        if let Err(e) = crate::protocol::attachment::validate_manifest(&manifest) {
+            return write_protocol_error(out_error, &e);
+        }
+        let mut bytes = Vec::new();
+        if let Err(e) = manifest.encode(&mut bytes) {
+            return write_protocol_error(
+                out_error,
+                &ProtocolError::encode(format!("AttachmentManifest encode: {e}")),
+            );
+        }
+        write_buffer(out_manifest, bytes);
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_manifest_validate(
+    manifest_bytes: *const u8,
+    manifest_length: usize,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if manifest_bytes.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "manifest_bytes is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if manifest_length == 0 || manifest_length > MAX_ATTACHMENT_MANIFEST_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Attachment manifest size is out of range",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let bytes = std::slice::from_raw_parts(manifest_bytes, manifest_length);
+        let manifest = match AttachmentManifest::decode(bytes) {
+            Ok(v) => v,
+            Err(e) => {
+                return write_protocol_error(
+                    out_error,
+                    &ProtocolError::decode(format!("AttachmentManifest decode: {e}")),
+                )
+            }
+        };
+        match crate::protocol::attachment::validate_manifest(&manifest) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_chunk_validate(
+    manifest_bytes: *const u8,
+    manifest_length: usize,
+    chunk_index: u32,
+    nonce: *const u8,
+    nonce_length: usize,
+    ciphertext: *const u8,
+    ciphertext_length: usize,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if manifest_bytes.is_null() || nonce.is_null() || ciphertext.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if manifest_length == 0 || manifest_length > MAX_ATTACHMENT_MANIFEST_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Attachment manifest size is out of range",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let manifest_slice = std::slice::from_raw_parts(manifest_bytes, manifest_length);
+        let manifest = match AttachmentManifest::decode(manifest_slice) {
+            Ok(v) => v,
+            Err(e) => {
+                return write_protocol_error(
+                    out_error,
+                    &ProtocolError::decode(format!("AttachmentManifest decode: {e}")),
+                )
+            }
+        };
+        let nonce_slice = std::slice::from_raw_parts(nonce, nonce_length);
+        let ciphertext_slice = std::slice::from_raw_parts(ciphertext, ciphertext_length);
+        match crate::protocol::attachment::validate_chunk_shape(
+            &manifest,
+            chunk_index,
+            nonce_slice,
+            ciphertext_slice,
+        ) {
+            Ok(()) => EppErrorCode::EppSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
@@ -3092,6 +3535,8 @@ pub struct EppGroupDecryptResult {
     pub referenced_message_id: EppBuffer,
     pub has_sealed_payload: u8,
     pub has_franking_data: u8,
+    pub mentions_count: u32,
+    pub reply_to_message_id: EppBuffer,
 }
 
 /// # Safety
@@ -3104,6 +3549,7 @@ pub unsafe extern "C" fn epp_group_decrypt_result_free(result: *mut EppGroupDecr
     epp_buffer_release(std::ptr::addr_of_mut!((*result).plaintext));
     epp_buffer_release(std::ptr::addr_of_mut!((*result).message_id));
     epp_buffer_release(std::ptr::addr_of_mut!((*result).referenced_message_id));
+    epp_buffer_release(std::ptr::addr_of_mut!((*result).reply_to_message_id));
 }
 
 /// # Safety
@@ -3158,6 +3604,19 @@ pub unsafe extern "C" fn epp_group_decrypt_ex(
                 );
                 (*out_result).has_sealed_payload = u8::from(r.sealed_payload.is_some());
                 (*out_result).has_franking_data = u8::from(r.franking_data.is_some());
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    (*out_result).mentions_count = r.mentions.len() as u32;
+                }
+                let reply_id = r
+                    .reply_context
+                    .as_ref()
+                    .map(|rc| rc.reply_to_message_id.clone())
+                    .unwrap_or_default();
+                write_buffer(
+                    std::ptr::addr_of_mut!((*out_result).reply_to_message_id),
+                    reply_id,
+                );
                 EppErrorCode::EppSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
@@ -3193,6 +3652,183 @@ pub unsafe extern "C" fn epp_group_compute_message_id(
             crate::protocol::group::compute_message_id(gid, epoch, sender_leaf_index, generation);
         write_buffer(out_message_id, id);
         EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_group_set_member_role(
+    handle: *mut EppGroupSessionHandle,
+    leaf_index: u32,
+    role: i32,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        let session = match require_group_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        match session.set_member_role(leaf_index, role) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_group_get_member_role(
+    handle: *mut EppGroupSessionHandle,
+    leaf_index: u32,
+    out_role: *mut i32,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_role.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_role is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let session = match require_group_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        match session.get_member_role(leaf_index) {
+            Ok(role) => {
+                *out_role = role;
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_group_encrypt_reaction(
+    handle: *mut EppGroupSessionHandle,
+    message_id: *const u8,
+    message_id_length: usize,
+    emoji: *const u8,
+    emoji_length: usize,
+    remove: u8,
+    out_buffer: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if message_id.is_null() || emoji.is_null() || out_buffer.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if message_id_length != MESSAGE_ID_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "message_id must be 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let mid = std::slice::from_raw_parts(message_id, message_id_length);
+        let emoji_bytes = std::slice::from_raw_parts(emoji, emoji_length);
+        let Ok(emoji_str) = std::str::from_utf8(emoji_bytes) else {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "emoji is not valid UTF-8",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        };
+        let session = match require_group_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        match session.encrypt_reaction(mid, emoji_str, remove != 0) {
+            Ok(ct) => {
+                write_buffer(out_buffer, ct);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_group_encrypt_read_receipt(
+    handle: *mut EppGroupSessionHandle,
+    message_ids_flat: *const u8,
+    message_id_count: usize,
+    timestamp: u64,
+    out_buffer: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_buffer.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_buffer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if message_id_count > 0 && message_ids_flat.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "message_ids_flat is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let flat = if message_id_count > 0 {
+            std::slice::from_raw_parts(message_ids_flat, message_id_count * MESSAGE_ID_BYTES)
+        } else {
+            &[]
+        };
+        let ids: Vec<Vec<u8>> = flat.chunks_exact(MESSAGE_ID_BYTES).map(<[u8]>::to_vec).collect();
+        let session = match require_group_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        match session.encrypt_read_receipt(&ids, timestamp) {
+            Ok(ct) => {
+                write_buffer(out_buffer, ct);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_group_encrypt_typing(
+    handle: *mut EppGroupSessionHandle,
+    is_typing: u8,
+    out_buffer: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_buffer.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_buffer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let session = match require_group_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        match session.encrypt_typing(is_typing != 0) {
+            Ok(ct) => {
+                write_buffer(out_buffer, ct);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
     })
 }
 
@@ -3542,6 +4178,7 @@ pub unsafe extern "C" fn epp_voip_accept_call(
             identity_ed25519_public: accept_output.identity_ed25519_public,
             signature: accept_output.signature,
             key_confirmation_mac: accept_output.key_confirmation_mac,
+            screen_share: None,
         };
         let mut buf = Vec::new();
         if let Err(e) = proto.encode(&mut buf) {
@@ -4069,6 +4706,7 @@ pub unsafe extern "C" fn epp_voip_call_init(
             ratchet_interval_frames,
             pq_rekey_interval_secs,
             shield_mode: is_shield,
+            screen_share: None,
         };
         let mut buf = Vec::new();
         if let Err(e) = proto.encode(&mut buf) {
@@ -4521,6 +5159,232 @@ pub unsafe extern "C" fn epp_voip_session_destroy(handle: *mut EppVoipSessionHan
     if !handle.is_null() {
         drop(Box::from_raw(handle));
     }
+}
+
+#[repr(C)]
+pub struct EppCallStatistics {
+    pub frames_sent: u64,
+    pub frames_received: u64,
+    pub frames_dropped: u64,
+    pub rekey_count: u32,
+    pub ratchet_generation: u32,
+    pub call_duration_secs: u64,
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_set_screen_share_meta(
+    handle: *const EppVoipSessionHandle,
+    width: u32,
+    height: u32,
+    frame_rate: u32,
+    codec_hint: *const u8,
+    codec_hint_length: usize,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let hint = if codec_hint.is_null() || codec_hint_length == 0 {
+            None
+        } else {
+            let bytes = std::slice::from_raw_parts(codec_hint, codec_hint_length);
+            if let Ok(s) = std::str::from_utf8(bytes) {
+                Some(s)
+            } else {
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorInvalidInput,
+                    "invalid UTF-8 in codec_hint",
+                );
+                return EppErrorCode::EppErrorInvalidInput;
+            }
+        };
+        match session.set_screen_share_meta(width, height, frame_rate, hint) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_get_screen_share_meta(
+    handle: *const EppVoipSessionHandle,
+    out_width: *mut u32,
+    out_height: *mut u32,
+    out_frame_rate: *mut u32,
+    out_codec_hint: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        match session.get_screen_share_meta() {
+            Ok(Some((w, h, fr, hint))) => {
+                if !out_width.is_null() {
+                    *out_width = w;
+                }
+                if !out_height.is_null() {
+                    *out_height = h;
+                }
+                if !out_frame_rate.is_null() {
+                    *out_frame_rate = fr;
+                }
+                if !out_codec_hint.is_null() {
+                    let hint_bytes = hint.unwrap_or_default().into_bytes();
+                    write_buffer(out_codec_hint, hint_bytes);
+                }
+                EppErrorCode::EppSuccess
+            }
+            Ok(None) => {
+                if !out_width.is_null() {
+                    *out_width = 0;
+                }
+                if !out_height.is_null() {
+                    *out_height = 0;
+                }
+                if !out_frame_rate.is_null() {
+                    *out_frame_rate = 0;
+                }
+                if !out_codec_hint.is_null() {
+                    write_buffer(out_codec_hint, vec![]);
+                }
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_clear_screen_share_meta(
+    handle: *const EppVoipSessionHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        match session.clear_screen_share_meta() {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_get_call_statistics(
+    handle: *const EppVoipSessionHandle,
+    out_stats: *mut EppCallStatistics,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        match session.get_call_statistics() {
+            Ok(stats) => {
+                if !out_stats.is_null() {
+                    *out_stats = EppCallStatistics {
+                        frames_sent: stats.frames_sent,
+                        frames_received: stats.frames_received,
+                        frames_dropped: stats.frames_dropped,
+                        rekey_count: stats.rekey_count,
+                        ratchet_generation: stats.ratchet_generation,
+                        call_duration_secs: stats.call_duration_secs,
+                    };
+                }
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_set_recording_consent(
+    handle: *const EppVoipSessionHandle,
+    consent: i32,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        match session.set_recording_consent(consent) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_get_local_recording_consent(
+    handle: *const EppVoipSessionHandle,
+) -> i32 {
+    ffi_catch_panic_value!(-1, {
+        if handle.is_null() {
+            return -1;
+        }
+        let Some(ref session) = (*handle).0 else {
+            return -1;
+        };
+        session.get_local_recording_consent().unwrap_or(-1)
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_set_remote_recording_consent(
+    handle: *const EppVoipSessionHandle,
+    consent: i32,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        match session.set_remote_recording_consent(consent) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_get_remote_recording_consent(
+    handle: *const EppVoipSessionHandle,
+) -> i32 {
+    ffi_catch_panic_value!(-1, {
+        if handle.is_null() {
+            return -1;
+        }
+        let Some(ref session) = (*handle).0 else {
+            return -1;
+        };
+        session.get_remote_recording_consent().unwrap_or(-1)
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_both_consented_to_recording(
+    handle: *const EppVoipSessionHandle,
+) -> bool {
+    ffi_catch_panic_value!(false, {
+        if handle.is_null() {
+            return false;
+        }
+        let Some(ref session) = (*handle).0 else {
+            return false;
+        };
+        session.both_consented_to_recording().unwrap_or(false)
+    })
 }
 
 // ─── Session identity / ID getters ─────────────────────────────────────────
@@ -5071,5 +5935,1711 @@ pub unsafe extern "C" fn epp_identity_set_event_handler(
         let handler = Arc::new(CFfiIdentityEventHandler { callbacks: cbs });
         identity.set_event_handler(handler);
         EppErrorCode::EppSuccess
+    })
+}
+
+// ── Attachment v2: Thumbnail ──
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_encrypt_thumbnail(
+    file_key: *const u8,
+    file_key_length: usize,
+    attachment_id: *const u8,
+    attachment_id_length: usize,
+    thumbnail_mime_type: *const u8,
+    thumbnail_mime_type_length: usize,
+    thumbnail_plaintext: *const u8,
+    thumbnail_plaintext_length: usize,
+    out_nonce: *mut EppBuffer,
+    out_ciphertext: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if file_key.is_null()
+            || attachment_id.is_null()
+            || thumbnail_mime_type.is_null()
+            || thumbnail_plaintext.is_null()
+            || out_nonce.is_null()
+            || out_ciphertext.is_null()
+        {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if file_key_length != ATTACHMENT_FILE_KEY_BYTES {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "file_key must be 32 bytes");
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if attachment_id_length != ATTACHMENT_ID_BYTES {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "attachment_id must be 32 bytes");
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if thumbnail_plaintext_length == 0 || thumbnail_plaintext_length > MAX_ATTACHMENT_THUMBNAIL_SIZE {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "Thumbnail size is out of range");
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let fk = std::slice::from_raw_parts(file_key, file_key_length);
+        let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
+        let mime_bytes = std::slice::from_raw_parts(thumbnail_mime_type, thumbnail_mime_type_length);
+        let Ok(mime) = std::str::from_utf8(mime_bytes) else {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "Invalid UTF-8 mime_type");
+            return EppErrorCode::EppErrorInvalidInput;
+        };
+        let plaintext = std::slice::from_raw_parts(thumbnail_plaintext, thumbnail_plaintext_length);
+
+        match crate::protocol::attachment::encrypt_thumbnail(fk, aid, mime, plaintext) {
+            Ok((nonce, ct)) => {
+                write_buffer(out_nonce, nonce);
+                write_buffer(out_ciphertext, ct);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_decrypt_thumbnail(
+    file_key: *const u8,
+    file_key_length: usize,
+    attachment_id: *const u8,
+    attachment_id_length: usize,
+    thumbnail_mime_type: *const u8,
+    thumbnail_mime_type_length: usize,
+    nonce: *const u8,
+    nonce_length: usize,
+    ciphertext: *const u8,
+    ciphertext_length: usize,
+    out_plaintext: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if file_key.is_null()
+            || attachment_id.is_null()
+            || thumbnail_mime_type.is_null()
+            || nonce.is_null()
+            || ciphertext.is_null()
+            || out_plaintext.is_null()
+        {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if file_key_length != ATTACHMENT_FILE_KEY_BYTES {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "file_key must be 32 bytes");
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if attachment_id_length != ATTACHMENT_ID_BYTES {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "attachment_id must be 32 bytes");
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if nonce_length != AES_GCM_NONCE_BYTES {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "nonce must be 12 bytes");
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let fk = std::slice::from_raw_parts(file_key, file_key_length);
+        let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
+        let mime_bytes = std::slice::from_raw_parts(thumbnail_mime_type, thumbnail_mime_type_length);
+        let Ok(mime) = std::str::from_utf8(mime_bytes) else {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "Invalid UTF-8 mime_type");
+            return EppErrorCode::EppErrorInvalidInput;
+        };
+        let nonce_slice = std::slice::from_raw_parts(nonce, nonce_length);
+        let ct = std::slice::from_raw_parts(ciphertext, ciphertext_length);
+
+        match crate::protocol::attachment::decrypt_thumbnail(fk, aid, mime, nonce_slice, ct) {
+            Ok(pt) => {
+                write_buffer(out_plaintext, pt);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+// ── Attachment v2: TTL ──
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_validate_ttl(
+    ttl_seconds: u64,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        match crate::protocol::attachment::validate_ttl(ttl_seconds) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => unsafe { write_protocol_error(out_error, &e) },
+        }
+    })
+}
+
+#[no_mangle]
+pub const extern "C" fn epp_attachment_is_expired(
+    created_at_unix: u64,
+    ttl_seconds: u64,
+    now_unix: u64,
+) -> bool {
+    crate::protocol::attachment::is_attachment_expired(created_at_unix, ttl_seconds, now_unix)
+}
+
+// ── Attachment v2: Progress ──
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_progress_create(
+    attachment_id: *const u8,
+    attachment_id_length: usize,
+    chunk_count: u32,
+    out_progress: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if attachment_id.is_null() || out_progress.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if attachment_id_length != ATTACHMENT_ID_BYTES {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "attachment_id must be 32 bytes");
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
+        match crate::protocol::attachment::create_chunk_progress(aid, chunk_count) {
+            Ok(progress) => {
+                let mut buf = Vec::new();
+                if let Err(e) = progress.encode(&mut buf) {
+                    return write_protocol_error(
+                        out_error,
+                        &ProtocolError::encode(format!("ChunkProgress encode: {e}")),
+                    );
+                }
+                write_buffer(out_progress, buf);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_progress_mark_completed(
+    progress_bytes: *const u8,
+    progress_length: usize,
+    chunk_index: u32,
+    bytes_transferred: u64,
+    now_unix: u64,
+    out_updated_progress: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if progress_bytes.is_null() || out_updated_progress.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+
+        let pbytes = std::slice::from_raw_parts(progress_bytes, progress_length);
+        let mut progress = match ChunkProgress::decode(pbytes) {
+            Ok(v) => v,
+            Err(e) => {
+                return write_protocol_error(
+                    out_error,
+                    &ProtocolError::decode(format!("ChunkProgress decode: {e}")),
+                );
+            }
+        };
+
+        if let Err(e) = crate::protocol::attachment::mark_chunk_completed(
+            &mut progress,
+            chunk_index,
+            bytes_transferred,
+            now_unix,
+        ) {
+            return write_protocol_error(out_error, &e);
+        }
+
+        let mut buf = Vec::new();
+        if let Err(e) = progress.encode(&mut buf) {
+            return write_protocol_error(
+                out_error,
+                &ProtocolError::encode(format!("ChunkProgress encode: {e}")),
+            );
+        }
+        write_buffer(out_updated_progress, buf);
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_progress_get_remaining(
+    progress_bytes: *const u8,
+    progress_length: usize,
+    out_remaining: *mut EppBuffer,
+    out_remaining_count: *mut u32,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if progress_bytes.is_null() || out_remaining.is_null() || out_remaining_count.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+
+        let pbytes = std::slice::from_raw_parts(progress_bytes, progress_length);
+        let progress = match ChunkProgress::decode(pbytes) {
+            Ok(v) => v,
+            Err(e) => {
+                return write_protocol_error(
+                    out_error,
+                    &ProtocolError::decode(format!("ChunkProgress decode: {e}")),
+                );
+            }
+        };
+
+        let remaining = crate::protocol::attachment::get_remaining_chunks(&progress);
+        *out_remaining_count = u32::try_from(remaining.len()).unwrap_or(0);
+        let bytes: Vec<u8> = remaining.iter().flat_map(|i| i.to_le_bytes()).collect();
+        write_buffer(out_remaining, bytes);
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_progress_is_complete(
+    progress_bytes: *const u8,
+    progress_length: usize,
+) -> bool {
+    ffi_catch_panic_value!(false, {
+        if progress_bytes.is_null() || progress_length == 0 {
+            return false;
+        }
+        let pbytes = unsafe { std::slice::from_raw_parts(progress_bytes, progress_length) };
+        let Ok(progress) = ChunkProgress::decode(pbytes) else { return false };
+        crate::protocol::attachment::is_transfer_complete(&progress)
+    })
+}
+
+// ── Attachment v2: Collage ──
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_generate_collage_id(
+    out_collage_id: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_collage_id.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "out_collage_id is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        write_buffer(out_collage_id, crate::protocol::attachment::generate_collage_id());
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_collage_create(
+    manifest_array: *const *const u8,
+    manifest_lengths: *const usize,
+    manifest_count: usize,
+    out_collage: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if manifest_array.is_null() || manifest_lengths.is_null() || out_collage.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if manifest_count == 0 {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "manifest_count must be > 0");
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let ptrs = std::slice::from_raw_parts(manifest_array, manifest_count);
+        let lens = std::slice::from_raw_parts(manifest_lengths, manifest_count);
+
+        let mut manifests = Vec::with_capacity(manifest_count);
+        for i in 0..manifest_count {
+            if ptrs[i].is_null() {
+                write_error(out_error, EppErrorCode::EppErrorNullPointer, "manifest pointer is null");
+                return EppErrorCode::EppErrorNullPointer;
+            }
+            let bytes = std::slice::from_raw_parts(ptrs[i], lens[i]);
+            let m = match AttachmentManifest::decode(bytes) {
+                Ok(v) => v,
+                Err(e) => {
+                    return write_protocol_error(
+                        out_error,
+                        &ProtocolError::decode(format!("Manifest decode: {e}")),
+                    );
+                }
+            };
+            manifests.push(m);
+        }
+
+        match crate::protocol::attachment::create_collage_manifest(&manifests) {
+            Ok(collage) => {
+                let mut buf = Vec::new();
+                if let Err(e) = collage.encode(&mut buf) {
+                    return write_protocol_error(
+                        out_error,
+                        &ProtocolError::encode(format!("CollageManifest encode: {e}")),
+                    );
+                }
+                write_buffer(out_collage, buf);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_collage_validate(
+    collage_bytes: *const u8,
+    collage_length: usize,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if collage_bytes.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "collage_bytes is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if collage_length == 0 || collage_length > MAX_COLLAGE_MANIFEST_SIZE {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "Collage size is out of range");
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let bytes = std::slice::from_raw_parts(collage_bytes, collage_length);
+        let collage = match CollageManifest::decode(bytes) {
+            Ok(v) => v,
+            Err(e) => {
+                return write_protocol_error(
+                    out_error,
+                    &ProtocolError::decode(format!("CollageManifest decode: {e}")),
+                );
+            }
+        };
+        match crate::protocol::attachment::validate_collage_manifest(&collage) {
+            Ok(_) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+// ── Attachment v2: Streaming ──
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_streaming_encryptor_create(
+    file_key: *const u8,
+    file_key_length: usize,
+    attachment_id: *const u8,
+    attachment_id_length: usize,
+    mime_type: *const u8,
+    mime_type_length: usize,
+    total_size: u64,
+    chunk_size: u32,
+    chunk_count: u32,
+    out_handle: *mut *mut EppStreamingEncryptorHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if file_key.is_null()
+            || attachment_id.is_null()
+            || mime_type.is_null()
+            || out_handle.is_null()
+        {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+
+        let fk = std::slice::from_raw_parts(file_key, file_key_length).to_vec();
+        let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length).to_vec();
+        let mime_bytes = std::slice::from_raw_parts(mime_type, mime_type_length);
+        let Ok(mime_str) = std::str::from_utf8(mime_bytes) else {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "Invalid UTF-8 mime_type");
+            return EppErrorCode::EppErrorInvalidInput;
+        };
+        let mime = mime_str.to_string();
+
+        match StreamingEncryptor::new(fk, aid, mime, total_size, chunk_size, chunk_count) {
+            Ok(enc) => {
+                let handle = Box::new(EppStreamingEncryptorHandle(Some(enc)));
+                *out_handle = Box::into_raw(handle);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_streaming_encryptor_write(
+    handle: *mut EppStreamingEncryptorHandle,
+    data: *const u8,
+    data_length: usize,
+    out_chunks: *mut EppBuffer,
+    out_chunk_count: *mut u32,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if handle.is_null() || data.is_null() || out_chunks.is_null() || out_chunk_count.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+
+        let Some(enc) = (*handle).0.as_mut() else {
+            write_error(out_error, EppErrorCode::EppErrorObjectDisposed, "Encryptor disposed");
+            return EppErrorCode::EppErrorObjectDisposed;
+        };
+
+        let input = std::slice::from_raw_parts(data, data_length);
+        match enc.write(input) {
+            Ok(chunks) => {
+                *out_chunk_count = u32::try_from(chunks.len()).unwrap_or(0);
+                let serialized = serialize_encrypted_chunks(&chunks);
+                write_buffer(out_chunks, serialized);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_streaming_encryptor_finish(
+    handle: *mut EppStreamingEncryptorHandle,
+    out_chunk: *mut EppBuffer,
+    out_has_chunk: *mut u8,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if handle.is_null() || out_chunk.is_null() || out_has_chunk.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+
+        let Some(enc) = (*handle).0.take() else {
+            write_error(out_error, EppErrorCode::EppErrorObjectDisposed, "Encryptor disposed");
+            return EppErrorCode::EppErrorObjectDisposed;
+        };
+
+        match enc.finish() {
+            Ok(Some(chunk)) => {
+                *out_has_chunk = 1;
+                let serialized = serialize_encrypted_chunks(&[chunk]);
+                write_buffer(out_chunk, serialized);
+                EppErrorCode::EppSuccess
+            }
+            Ok(None) => {
+                *out_has_chunk = 0;
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_streaming_encryptor_destroy(
+    handle: *mut EppStreamingEncryptorHandle,
+) {
+    if !handle.is_null() {
+        drop(Box::from_raw(handle));
+    }
+}
+
+fn serialize_encrypted_chunks(chunks: &[crate::protocol::attachment::EncryptedChunk]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    for c in chunks {
+        buf.extend_from_slice(&c.chunk_index.to_le_bytes());
+        buf.extend_from_slice(&u32::try_from(c.nonce.len()).unwrap_or(0).to_le_bytes());
+        buf.extend_from_slice(&c.nonce);
+        buf.extend_from_slice(&u32::try_from(c.ciphertext.len()).unwrap_or(0).to_le_bytes());
+        buf.extend_from_slice(&c.ciphertext);
+    }
+    buf
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_streaming_decryptor_create(
+    file_key: *const u8,
+    file_key_length: usize,
+    attachment_id: *const u8,
+    attachment_id_length: usize,
+    mime_type: *const u8,
+    mime_type_length: usize,
+    total_size: u64,
+    chunk_size: u32,
+    chunk_count: u32,
+    out_handle: *mut *mut EppStreamingDecryptorHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if file_key.is_null()
+            || attachment_id.is_null()
+            || mime_type.is_null()
+            || out_handle.is_null()
+        {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+
+        let fk = std::slice::from_raw_parts(file_key, file_key_length).to_vec();
+        let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length).to_vec();
+        let mime_bytes = std::slice::from_raw_parts(mime_type, mime_type_length);
+        let Ok(mime_str) = std::str::from_utf8(mime_bytes) else {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "Invalid UTF-8 mime_type");
+            return EppErrorCode::EppErrorInvalidInput;
+        };
+        let mime = mime_str.to_string();
+
+        match StreamingDecryptor::new(fk, aid, mime, total_size, chunk_size, chunk_count) {
+            Ok(dec) => {
+                let handle = Box::new(EppStreamingDecryptorHandle(Some(dec)));
+                *out_handle = Box::into_raw(handle);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_streaming_decryptor_write(
+    handle: *mut EppStreamingDecryptorHandle,
+    chunk_index: u32,
+    nonce: *const u8,
+    nonce_length: usize,
+    ciphertext: *const u8,
+    ciphertext_length: usize,
+    out_plaintext: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if handle.is_null()
+            || nonce.is_null()
+            || ciphertext.is_null()
+            || out_plaintext.is_null()
+        {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+
+        let Some(dec) = (*handle).0.as_mut() else {
+            write_error(out_error, EppErrorCode::EppErrorObjectDisposed, "Decryptor disposed");
+            return EppErrorCode::EppErrorObjectDisposed;
+        };
+
+        let nonce_slice = std::slice::from_raw_parts(nonce, nonce_length);
+        let ct = std::slice::from_raw_parts(ciphertext, ciphertext_length);
+
+        match dec.decrypt_next(chunk_index, nonce_slice, ct) {
+            Ok(pt) => {
+                write_buffer(out_plaintext, pt);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_streaming_decryptor_is_complete(
+    handle: *mut EppStreamingDecryptorHandle,
+) -> bool {
+    ffi_catch_panic_value!(false, {
+        if handle.is_null() {
+            return false;
+        }
+        let dec = unsafe { &*handle };
+        dec.0.as_ref().is_some_and(StreamingDecryptor::is_complete)
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_streaming_decryptor_destroy(
+    handle: *mut EppStreamingDecryptorHandle,
+) {
+    if !handle.is_null() {
+        drop(Box::from_raw(handle));
+    }
+}
+
+// ── Attachment v2: Manifest v2 ──
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_manifest_create_v2(
+    attachment_id: *const u8,
+    attachment_id_length: usize,
+    mime_type: *const u8,
+    mime_type_length: usize,
+    total_size: u64,
+    chunk_size: u32,
+    chunk_count: u32,
+    file_sha256: *const u8,
+    file_sha256_length: usize,
+    encrypted_file_key: *const u8,
+    encrypted_file_key_length: usize,
+    collage_index: i64,
+    thumbnail_ciphertext: *const u8,
+    thumbnail_ciphertext_length: usize,
+    thumbnail_nonce: *const u8,
+    thumbnail_nonce_length: usize,
+    thumbnail_mime_type: *const u8,
+    thumbnail_mime_type_length: usize,
+    thumbnail_original_size: u32,
+    ttl_seconds: u64,
+    created_at_unix: u64,
+    out_manifest: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if attachment_id.is_null()
+            || mime_type.is_null()
+            || file_sha256.is_null()
+            || encrypted_file_key.is_null()
+            || out_manifest.is_null()
+        {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if attachment_id_length != ATTACHMENT_ID_BYTES
+            || file_sha256_length != ATTACHMENT_HASH_BYTES
+        {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "ID and SHA-256 must be 32 bytes");
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if encrypted_file_key_length == 0
+            || encrypted_file_key_length > MAX_ATTACHMENT_ENCRYPTED_FILE_KEY_SIZE
+        {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "encrypted_file_key size is out of range");
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
+        let mime_bytes = std::slice::from_raw_parts(mime_type, mime_type_length);
+        let Ok(mime_s) = std::str::from_utf8(mime_bytes) else {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "Invalid UTF-8 mime_type");
+            return EppErrorCode::EppErrorInvalidInput;
+        };
+        let mime_str = mime_s.to_string();
+        let sha = std::slice::from_raw_parts(file_sha256, file_sha256_length);
+        let efk = std::slice::from_raw_parts(encrypted_file_key, encrypted_file_key_length);
+
+        let has_thumbnail = !thumbnail_ciphertext.is_null() && thumbnail_ciphertext_length > 0;
+        let has_ttl = ttl_seconds > 0;
+
+        let manifest = AttachmentManifest {
+            version: ATTACHMENT_PROTOCOL_VERSION,
+            attachment_id: aid.to_vec(),
+            mime_type: mime_str,
+            total_size,
+            chunk_size,
+            chunk_count,
+            file_sha256: sha.to_vec(),
+            encrypted_file_key: efk.to_vec(),
+            encryption_scheme: "AES-256-GCM-SIV".to_string(),
+            collage_index: if collage_index >= 0 { Some(u32::try_from(collage_index).unwrap_or(0)) } else { None },
+            encrypted_thumbnail: if has_thumbnail {
+                Some(std::slice::from_raw_parts(thumbnail_ciphertext, thumbnail_ciphertext_length).to_vec())
+            } else {
+                None
+            },
+            thumbnail_nonce: if has_thumbnail && !thumbnail_nonce.is_null() {
+                Some(std::slice::from_raw_parts(thumbnail_nonce, thumbnail_nonce_length).to_vec())
+            } else {
+                None
+            },
+            thumbnail_mime_type: if has_thumbnail && !thumbnail_mime_type.is_null() {
+                let tb = std::slice::from_raw_parts(thumbnail_mime_type, thumbnail_mime_type_length);
+                Some(std::str::from_utf8(tb).unwrap_or("image/jpeg").to_string())
+            } else {
+                None
+            },
+            thumbnail_size: if has_thumbnail { Some(thumbnail_original_size) } else { None },
+            ttl_seconds: if has_ttl { Some(ttl_seconds) } else { None },
+            created_at_unix: if has_ttl { Some(created_at_unix) } else { None },
+            original_filename: None,
+            media_width: None,
+            media_height: None,
+            duration_ms: None,
+            alt_text: None,
+            content_policy: None,
+            voice_meta: None,
+        };
+
+        if let Err(e) = crate::protocol::attachment::validate_manifest(&manifest) {
+            return write_protocol_error(out_error, &e);
+        }
+
+        let mut buf = Vec::new();
+        if let Err(e) = manifest.encode(&mut buf) {
+            return write_protocol_error(
+                out_error,
+                &ProtocolError::encode(format!("AttachmentManifest encode: {e}")),
+            );
+        }
+        write_buffer(out_manifest, buf);
+        EppErrorCode::EppSuccess
+    })
+}
+
+// ── Attachment v2: File Key Helper ──
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_encrypt_file_key(
+    handle: *mut EppSessionHandle,
+    file_key: *const u8,
+    file_key_length: usize,
+    attachment_id: *const u8,
+    attachment_id_length: usize,
+    out_encrypted_file_key: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if handle.is_null()
+            || file_key.is_null()
+            || attachment_id.is_null()
+            || out_encrypted_file_key.is_null()
+        {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if file_key_length != ATTACHMENT_FILE_KEY_BYTES {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "file_key must be 32 bytes");
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if attachment_id_length != ATTACHMENT_ID_BYTES {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "attachment_id must be 32 bytes");
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let Some(session) = (*handle).0.as_ref() else {
+            write_error(out_error, EppErrorCode::EppErrorObjectDisposed, "Session disposed");
+            return EppErrorCode::EppErrorObjectDisposed;
+        };
+
+        let fk = std::slice::from_raw_parts(file_key, file_key_length);
+        let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
+
+        match crate::protocol::attachment::encrypt_file_key_for_session(session, fk, aid) {
+            Ok(encrypted) => {
+                write_buffer(out_encrypted_file_key, encrypted);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_decrypt_file_key(
+    handle: *mut EppSessionHandle,
+    encrypted_file_key: *const u8,
+    encrypted_file_key_length: usize,
+    attachment_id: *const u8,
+    attachment_id_length: usize,
+    out_file_key: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if handle.is_null()
+            || encrypted_file_key.is_null()
+            || attachment_id.is_null()
+            || out_file_key.is_null()
+        {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if attachment_id_length != ATTACHMENT_ID_BYTES {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "attachment_id must be 32 bytes");
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let Some(session) = (*handle).0.as_ref() else {
+            write_error(out_error, EppErrorCode::EppErrorObjectDisposed, "Session disposed");
+            return EppErrorCode::EppErrorObjectDisposed;
+        };
+
+        let efk = std::slice::from_raw_parts(encrypted_file_key, encrypted_file_key_length);
+        let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
+
+        match crate::protocol::attachment::decrypt_file_key_from_session(session, efk, aid) {
+            Ok(key) => {
+                write_buffer(out_file_key, key);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_validate_magic_bytes(
+    header: *const u8,
+    header_length: usize,
+    mime_type: *const u8,
+    mime_type_length: usize,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if header.is_null() || mime_type.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let header_slice = std::slice::from_raw_parts(header, header_length);
+        let mime_bytes = std::slice::from_raw_parts(mime_type, mime_type_length);
+        let Ok(mime_str) = std::str::from_utf8(mime_bytes) else {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "mime_type is not valid UTF-8");
+            return EppErrorCode::EppErrorInvalidInput;
+        };
+        match crate::protocol::attachment::validate_magic_bytes(header_slice, mime_str) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_detect_mime(
+    header: *const u8,
+    header_length: usize,
+    out_mime: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if header.is_null() || out_mime.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let header_slice = std::slice::from_raw_parts(header, header_length);
+        let buf = crate::protocol::attachment::detect_mime_from_magic(header_slice)
+            .map_or_else(Vec::new, |mime| mime.as_bytes().to_vec());
+        write_buffer(out_mime, buf);
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_validate_filename(
+    name: *const u8,
+    name_length: usize,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if name.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "name is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let name_bytes = std::slice::from_raw_parts(name, name_length);
+        let Ok(name_str) = std::str::from_utf8(name_bytes) else {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "name is not valid UTF-8");
+            return EppErrorCode::EppErrorInvalidInput;
+        };
+        match crate::protocol::attachment::validate_filename(name_str) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_sanitize_filename(
+    name: *const u8,
+    name_length: usize,
+    out_sanitized: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if name.is_null() || out_sanitized.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let name_bytes = std::slice::from_raw_parts(name, name_length);
+        let Ok(name_str) = std::str::from_utf8(name_bytes) else {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "name is not valid UTF-8");
+            return EppErrorCode::EppErrorInvalidInput;
+        };
+        let sanitized = crate::protocol::attachment::sanitize_filename(name_str);
+        write_buffer(out_sanitized, sanitized.into_bytes());
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_collage_create_with_metadata(
+    manifest_array: *const *const u8,
+    manifest_lengths: *const usize,
+    manifest_count: usize,
+    name: *const u8,
+    name_length: usize,
+    description: *const u8,
+    description_length: usize,
+    layout: i32,
+    out_collage: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if manifest_array.is_null() || manifest_lengths.is_null() || out_collage.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if manifest_count == 0 {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "manifest_count must be > 0");
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let ptrs = std::slice::from_raw_parts(manifest_array, manifest_count);
+        let lens = std::slice::from_raw_parts(manifest_lengths, manifest_count);
+
+        let mut manifests = Vec::with_capacity(manifest_count);
+        for i in 0..manifest_count {
+            if ptrs[i].is_null() {
+                write_error(out_error, EppErrorCode::EppErrorNullPointer, "manifest pointer is null");
+                return EppErrorCode::EppErrorNullPointer;
+            }
+            let bytes = std::slice::from_raw_parts(ptrs[i], lens[i]);
+            let Ok(m) = AttachmentManifest::decode(bytes) else {
+                return write_protocol_error(
+                    out_error,
+                    &ProtocolError::decode("Manifest decode failed".to_string()),
+                );
+            };
+            manifests.push(m);
+        }
+
+        let name_opt = if !name.is_null() && name_length > 0 {
+            let nb = std::slice::from_raw_parts(name, name_length);
+            let Ok(s) = std::str::from_utf8(nb) else {
+                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "name is not valid UTF-8");
+                return EppErrorCode::EppErrorInvalidInput;
+            };
+            Some(s)
+        } else {
+            None
+        };
+        let desc_opt = if !description.is_null() && description_length > 0 {
+            let db = std::slice::from_raw_parts(description, description_length);
+            let Ok(s) = std::str::from_utf8(db) else {
+                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "description is not valid UTF-8");
+                return EppErrorCode::EppErrorInvalidInput;
+            };
+            Some(s)
+        } else {
+            None
+        };
+        let layout_opt = if layout >= 0 { Some(layout) } else { None };
+
+        match crate::protocol::attachment::create_collage_manifest_with_metadata(
+            &manifests, name_opt, desc_opt, layout_opt,
+        ) {
+            Ok(collage) => {
+                let mut buf = Vec::new();
+                if let Err(e) = collage.encode(&mut buf) {
+                    return write_protocol_error(
+                        out_error,
+                        &ProtocolError::encode(format!("CollageManifest encode: {e}")),
+                    );
+                }
+                write_buffer(out_collage, buf);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_inline_validate(
+    bytes: *const u8,
+    length: usize,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if bytes.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "bytes is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let slice = std::slice::from_raw_parts(bytes, length);
+        let Ok(obj) = InlineAttachment::decode(slice) else {
+            return write_protocol_error(
+                out_error,
+                &ProtocolError::decode("InlineAttachment decode failed".to_string()),
+            );
+        };
+        match crate::protocol::attachment::validate_inline_attachment(&obj) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_inline_create(
+    attachment_id: *const u8,
+    attachment_id_length: usize,
+    mime_type: *const u8,
+    mime_type_length: usize,
+    data: *const u8,
+    data_length: usize,
+    original_filename: *const u8,
+    original_filename_length: usize,
+    has_content_policy: u8,
+    view_once: u8,
+    no_forward: u8,
+    no_save: u8,
+    out_buffer: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if attachment_id.is_null() || mime_type.is_null() || data.is_null() || out_buffer.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
+        let mime_bytes = std::slice::from_raw_parts(mime_type, mime_type_length);
+        let Ok(mime_str) = std::str::from_utf8(mime_bytes) else {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "mime_type is not valid UTF-8");
+            return EppErrorCode::EppErrorInvalidInput;
+        };
+        let data_slice = std::slice::from_raw_parts(data, data_length);
+        let filename = if !original_filename.is_null() && original_filename_length > 0 {
+            let fb = std::slice::from_raw_parts(original_filename, original_filename_length);
+            let Ok(fs) = std::str::from_utf8(fb) else {
+                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "filename is not valid UTF-8");
+                return EppErrorCode::EppErrorInvalidInput;
+            };
+            Some(fs.to_string())
+        } else {
+            None
+        };
+        let policy = if has_content_policy != 0 {
+            Some(ContentPolicy {
+                view_once: view_once != 0,
+                no_forward: no_forward != 0,
+                no_save: no_save != 0,
+            })
+        } else {
+            None
+        };
+        match crate::protocol::attachment::create_inline_attachment(
+            aid.to_vec(),
+            mime_str.to_string(),
+            data_slice.to_vec(),
+            filename,
+            policy,
+        ) {
+            Ok(inline) => {
+                let mut buf = Vec::new();
+                if let Err(e) = inline.encode(&mut buf) {
+                    return write_protocol_error(
+                        out_error,
+                        &ProtocolError::encode(format!("InlineAttachment encode: {e}")),
+                    );
+                }
+                write_buffer(out_buffer, buf);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_reference_validate(
+    bytes: *const u8,
+    length: usize,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if bytes.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "bytes is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let slice = std::slice::from_raw_parts(bytes, length);
+        let Ok(obj) = AttachmentReference::decode(slice) else {
+            return write_protocol_error(
+                out_error,
+                &ProtocolError::decode("AttachmentReference decode failed".to_string()),
+            );
+        };
+        match crate::protocol::attachment::validate_attachment_reference(&obj) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_reference_create(
+    attachment_id: *const u8,
+    attachment_id_length: usize,
+    reference_type: i32,
+    source_message_id: *const u8,
+    source_message_id_length: usize,
+    out_buffer: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if attachment_id.is_null() || out_buffer.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
+        let smid = if !source_message_id.is_null() && source_message_id_length > 0 {
+            Some(std::slice::from_raw_parts(source_message_id, source_message_id_length).to_vec())
+        } else {
+            None
+        };
+        match crate::protocol::attachment::create_attachment_reference(
+            aid.to_vec(),
+            reference_type,
+            smid,
+        ) {
+            Ok(reference) => {
+                let mut buf = Vec::new();
+                if let Err(e) = reference.encode(&mut buf) {
+                    return write_protocol_error(
+                        out_error,
+                        &ProtocolError::encode(format!("AttachmentReference encode: {e}")),
+                    );
+                }
+                write_buffer(out_buffer, buf);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_voice_meta_validate(
+    bytes: *const u8,
+    length: usize,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if bytes.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "bytes is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let slice = std::slice::from_raw_parts(bytes, length);
+        let Ok(obj) = VoiceMessageMeta::decode(slice) else {
+            return write_protocol_error(
+                out_error,
+                &ProtocolError::decode("VoiceMessageMeta decode failed".to_string()),
+            );
+        };
+        match crate::protocol::attachment::validate_voice_message_meta(&obj) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_voice_meta_create(
+    waveform_samples: *const f32,
+    waveform_count: usize,
+    transcript: *const u8,
+    transcript_length: usize,
+    playback_speed_hint: f32,
+    has_playback_speed: u8,
+    is_listened: u8,
+    out_buffer: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_buffer.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "out_buffer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let waveform = if !waveform_samples.is_null() && waveform_count > 0 {
+            std::slice::from_raw_parts(waveform_samples, waveform_count).to_vec()
+        } else {
+            Vec::new()
+        };
+        let transcript_opt = if !transcript.is_null() && transcript_length > 0 {
+            let tb = std::slice::from_raw_parts(transcript, transcript_length);
+            let Ok(ts) = std::str::from_utf8(tb) else {
+                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "transcript is not valid UTF-8");
+                return EppErrorCode::EppErrorInvalidInput;
+            };
+            Some(ts.to_string())
+        } else {
+            None
+        };
+        let speed = if has_playback_speed != 0 {
+            Some(playback_speed_hint)
+        } else {
+            None
+        };
+        match crate::protocol::attachment::create_voice_message_meta(
+            waveform,
+            transcript_opt,
+            speed,
+            is_listened != 0,
+        ) {
+            Ok(voice) => {
+                let mut buf = Vec::new();
+                if let Err(e) = voice.encode(&mut buf) {
+                    return write_protocol_error(
+                        out_error,
+                        &ProtocolError::encode(format!("VoiceMessageMeta encode: {e}")),
+                    );
+                }
+                write_buffer(out_buffer, buf);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_location_validate(
+    bytes: *const u8,
+    length: usize,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if bytes.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "bytes is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let slice = std::slice::from_raw_parts(bytes, length);
+        let Ok(obj) = LocationAttachment::decode(slice) else {
+            return write_protocol_error(
+                out_error,
+                &ProtocolError::decode("LocationAttachment decode failed".to_string()),
+            );
+        };
+        match crate::protocol::attachment::validate_location_attachment(&obj) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_location_create(
+    latitude: f64,
+    longitude: f64,
+    accuracy_meters: f64,
+    has_accuracy: u8,
+    label: *const u8,
+    label_length: usize,
+    timestamp_unix: u64,
+    has_timestamp: u8,
+    out_buffer: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_buffer.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "out_buffer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let accuracy = if has_accuracy != 0 { Some(accuracy_meters) } else { None };
+        let label_opt = if !label.is_null() && label_length > 0 {
+            let lb = std::slice::from_raw_parts(label, label_length);
+            let Ok(ls) = std::str::from_utf8(lb) else {
+                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "label is not valid UTF-8");
+                return EppErrorCode::EppErrorInvalidInput;
+            };
+            Some(ls.to_string())
+        } else {
+            None
+        };
+        let ts = if has_timestamp != 0 { Some(timestamp_unix) } else { None };
+        match crate::protocol::attachment::create_location_attachment(
+            latitude, longitude, accuracy, label_opt, ts,
+        ) {
+            Ok(loc) => {
+                let mut buf = Vec::new();
+                if let Err(e) = loc.encode(&mut buf) {
+                    return write_protocol_error(
+                        out_error,
+                        &ProtocolError::encode(format!("LocationAttachment encode: {e}")),
+                    );
+                }
+                write_buffer(out_buffer, buf);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_contact_card_validate(
+    bytes: *const u8,
+    length: usize,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if bytes.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "bytes is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let slice = std::slice::from_raw_parts(bytes, length);
+        let Ok(obj) = ContactCard::decode(slice) else {
+            return write_protocol_error(
+                out_error,
+                &ProtocolError::decode("ContactCard decode failed".to_string()),
+            );
+        };
+        match crate::protocol::attachment::validate_contact_card(&obj) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_contact_card_create(
+    display_name: *const u8,
+    display_name_length: usize,
+    phone: *const u8,
+    phone_length: usize,
+    email: *const u8,
+    email_length: usize,
+    avatar_data: *const u8,
+    avatar_data_length: usize,
+    organization: *const u8,
+    organization_length: usize,
+    out_buffer: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if display_name.is_null() || out_buffer.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let dn_bytes = std::slice::from_raw_parts(display_name, display_name_length);
+        let Ok(dn_str) = std::str::from_utf8(dn_bytes) else {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "display_name is not valid UTF-8");
+            return EppErrorCode::EppErrorInvalidInput;
+        };
+        let phone_opt = if !phone.is_null() && phone_length > 0 {
+            let pb = std::slice::from_raw_parts(phone, phone_length);
+            let Ok(ps) = std::str::from_utf8(pb) else {
+                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "phone is not valid UTF-8");
+                return EppErrorCode::EppErrorInvalidInput;
+            };
+            Some(ps.to_string())
+        } else {
+            None
+        };
+        let email_opt = if !email.is_null() && email_length > 0 {
+            let eb = std::slice::from_raw_parts(email, email_length);
+            let Ok(es) = std::str::from_utf8(eb) else {
+                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "email is not valid UTF-8");
+                return EppErrorCode::EppErrorInvalidInput;
+            };
+            Some(es.to_string())
+        } else {
+            None
+        };
+        let avatar_opt = if !avatar_data.is_null() && avatar_data_length > 0 {
+            Some(std::slice::from_raw_parts(avatar_data, avatar_data_length).to_vec())
+        } else {
+            None
+        };
+        let org_opt = if !organization.is_null() && organization_length > 0 {
+            let ob = std::slice::from_raw_parts(organization, organization_length);
+            let Ok(os) = std::str::from_utf8(ob) else {
+                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "organization is not valid UTF-8");
+                return EppErrorCode::EppErrorInvalidInput;
+            };
+            Some(os.to_string())
+        } else {
+            None
+        };
+        match crate::protocol::attachment::create_contact_card(
+            dn_str.to_string(),
+            phone_opt,
+            email_opt,
+            avatar_opt,
+            org_opt,
+        ) {
+            Ok(card) => {
+                let mut buf = Vec::new();
+                if let Err(e) = card.encode(&mut buf) {
+                    return write_protocol_error(
+                        out_error,
+                        &ProtocolError::encode(format!("ContactCard encode: {e}")),
+                    );
+                }
+                write_buffer(out_buffer, buf);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_link_preview_validate(
+    bytes: *const u8,
+    length: usize,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if bytes.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "bytes is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let slice = std::slice::from_raw_parts(bytes, length);
+        let Ok(obj) = LinkPreview::decode(slice) else {
+            return write_protocol_error(
+                out_error,
+                &ProtocolError::decode("LinkPreview decode failed".to_string()),
+            );
+        };
+        match crate::protocol::attachment::validate_link_preview(&obj) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_attachment_link_preview_create(
+    url: *const u8,
+    url_length: usize,
+    title: *const u8,
+    title_length: usize,
+    description: *const u8,
+    description_length: usize,
+    preview_image: *const u8,
+    preview_image_length: usize,
+    preview_image_mime: *const u8,
+    preview_image_mime_length: usize,
+    domain: *const u8,
+    domain_length: usize,
+    out_buffer: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if url.is_null() || out_buffer.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let url_bytes = std::slice::from_raw_parts(url, url_length);
+        let Ok(url_str) = std::str::from_utf8(url_bytes) else {
+            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "url is not valid UTF-8");
+            return EppErrorCode::EppErrorInvalidInput;
+        };
+        let title_opt = if !title.is_null() && title_length > 0 {
+            let tb = std::slice::from_raw_parts(title, title_length);
+            let Ok(ts) = std::str::from_utf8(tb) else {
+                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "title is not valid UTF-8");
+                return EppErrorCode::EppErrorInvalidInput;
+            };
+            Some(ts.to_string())
+        } else {
+            None
+        };
+        let desc_opt = if !description.is_null() && description_length > 0 {
+            let db = std::slice::from_raw_parts(description, description_length);
+            let Ok(ds) = std::str::from_utf8(db) else {
+                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "description is not valid UTF-8");
+                return EppErrorCode::EppErrorInvalidInput;
+            };
+            Some(ds.to_string())
+        } else {
+            None
+        };
+        let image_opt = if !preview_image.is_null() && preview_image_length > 0 {
+            Some(std::slice::from_raw_parts(preview_image, preview_image_length).to_vec())
+        } else {
+            None
+        };
+        let image_mime_opt = if !preview_image_mime.is_null() && preview_image_mime_length > 0 {
+            let mb = std::slice::from_raw_parts(preview_image_mime, preview_image_mime_length);
+            let Ok(ms) = std::str::from_utf8(mb) else {
+                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "preview_image_mime is not valid UTF-8");
+                return EppErrorCode::EppErrorInvalidInput;
+            };
+            Some(ms.to_string())
+        } else {
+            None
+        };
+        let domain_opt = if !domain.is_null() && domain_length > 0 {
+            let db = std::slice::from_raw_parts(domain, domain_length);
+            let Ok(ds) = std::str::from_utf8(db) else {
+                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "domain is not valid UTF-8");
+                return EppErrorCode::EppErrorInvalidInput;
+            };
+            Some(ds.to_string())
+        } else {
+            None
+        };
+        match crate::protocol::attachment::create_link_preview(
+            url_str.to_string(),
+            title_opt,
+            desc_opt,
+            image_opt,
+            image_mime_opt,
+            domain_opt,
+        ) {
+            Ok(preview) => {
+                let mut buf = Vec::new();
+                if let Err(e) = preview.encode(&mut buf) {
+                    return write_protocol_error(
+                        out_error,
+                        &ProtocolError::encode(format!("LinkPreview encode: {e}")),
+                    );
+                }
+                write_buffer(out_buffer, buf);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_session_get_metadata(
+    handle: *mut EppSessionHandle,
+    out_buffer: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_buffer.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_buffer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let session = match require_session_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let meta = match session.get_metadata() {
+            Ok(m) => m,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        let resp = SessionMetadataResponse {
+            session_id: meta.session_id,
+            is_initiator: meta.is_initiator,
+            send_ratchet_epoch: meta.send_ratchet_epoch,
+            recv_ratchet_epoch: meta.recv_ratchet_epoch,
+            send_message_index: meta.send_message_index,
+            recv_message_index: meta.recv_message_index,
+            nonce_remaining: meta.nonce_remaining,
+            skipped_keys_count: u32::try_from(meta.skipped_keys_count).unwrap_or(u32::MAX),
+            cached_metadata_keys_count: u32::try_from(meta.cached_metadata_keys_count)
+                .unwrap_or(u32::MAX),
+            state_counter: meta.state_counter,
+            total_messages_sent: meta.total_messages_sent,
+            total_messages_received: meta.total_messages_received,
+            device_id: meta.device_id.unwrap_or_default(),
+            session_ttl_seconds: meta.session_ttl_seconds,
+            last_activity_unix: meta.last_activity_unix,
+        };
+        let mut buf = Vec::new();
+        if let Err(e) = resp.encode(&mut buf) {
+            return write_protocol_error(
+                out_error,
+                &ProtocolError::encode(format!("SessionMetadataResponse encode: {e}")),
+            );
+        }
+        write_buffer(out_buffer, buf);
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_session_is_expired(
+    handle: *mut EppSessionHandle,
+) -> bool {
+    ffi_catch_panic_value!(false, {
+        if handle.is_null() {
+            return false;
+        }
+        let Some(session) = (unsafe { (*handle).0.as_ref() }) else {
+            return false;
+        };
+        session.is_expired().unwrap_or(false)
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_session_set_device_id(
+    handle: *mut EppSessionHandle,
+    device_id: *const u8,
+    device_id_length: usize,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        let session = match require_session_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if device_id.is_null() || device_id_length != DEVICE_ID_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "device_id must be non-null and exactly DEVICE_ID_BYTES",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let id_slice = std::slice::from_raw_parts(device_id, device_id_length);
+        match session.set_device_id(id_slice) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_session_get_device_id(
+    handle: *mut EppSessionHandle,
+    out_buffer: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_buffer.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_buffer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let session = match require_session_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        match session.get_device_id() {
+            Ok(Some(id)) => {
+                write_buffer(out_buffer, id);
+                EppErrorCode::EppSuccess
+            }
+            Ok(None) => {
+                write_buffer(out_buffer, Vec::new());
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_session_set_ttl(
+    handle: *mut EppSessionHandle,
+    ttl_seconds: u64,
+    has_ttl: bool,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        let session = match require_session_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let ttl = if has_ttl { Some(ttl_seconds) } else { None };
+        match session.set_session_ttl(ttl) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
     })
 }

@@ -702,10 +702,11 @@ impl EcliptixProtocol {
             identity_ed25519_public: init_output.identity_ed25519_public.clone(),
             signature: init_output.signature.clone(),
             key_confirmation_mac: init_output.key_confirmation_mac.clone(),
-            media_type: 1, // audio
+            media_type: 1,
             ratchet_interval_frames,
             pq_rekey_interval_secs,
             shield_mode,
+            screen_share: None,
         };
 
         let mut buf = Vec::new();
@@ -776,6 +777,7 @@ impl EcliptixProtocol {
             identity_ed25519_public: accept_output.identity_ed25519_public,
             signature: accept_output.signature,
             key_confirmation_mac: accept_output.key_confirmation_mac,
+            screen_share: None,
         };
 
         let mut buf = Vec::new();

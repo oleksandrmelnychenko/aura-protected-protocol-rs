@@ -936,6 +936,407 @@ EPP_API EppErrorCode epp_shamir_reconstruct(
     EppBuffer*      out_secret,
     EppError*       out_error);
 
+EPP_API EppErrorCode epp_attachment_generate_id(
+    EppBuffer* out_attachment_id,
+    EppError*  out_error);
+
+EPP_API EppErrorCode epp_attachment_generate_file_key(
+    EppBuffer* out_file_key,
+    EppError*  out_error);
+
+EPP_API EppErrorCode epp_attachment_encrypt_chunk(
+    const uint8_t* file_key,
+    size_t         file_key_length,
+    const uint8_t* attachment_id,
+    size_t         attachment_id_length,
+    const char*    mime_type,
+    size_t         mime_type_length,
+    uint64_t       total_size,
+    uint32_t       chunk_size,
+    uint32_t       chunk_index,
+    uint32_t       chunk_count,
+    const uint8_t* plaintext,
+    size_t         plaintext_length,
+    EppBuffer*     out_nonce,
+    EppBuffer*     out_ciphertext,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_decrypt_chunk(
+    const uint8_t* file_key,
+    size_t         file_key_length,
+    const uint8_t* attachment_id,
+    size_t         attachment_id_length,
+    const char*    mime_type,
+    size_t         mime_type_length,
+    uint64_t       total_size,
+    uint32_t       chunk_size,
+    uint32_t       chunk_index,
+    uint32_t       chunk_count,
+    const uint8_t* nonce,
+    size_t         nonce_length,
+    const uint8_t* ciphertext,
+    size_t         ciphertext_length,
+    EppBuffer*     out_plaintext,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_manifest_create(
+    const uint8_t* attachment_id,
+    size_t         attachment_id_length,
+    const char*    mime_type,
+    size_t         mime_type_length,
+    uint64_t       total_size,
+    uint32_t       chunk_size,
+    uint32_t       chunk_count,
+    const uint8_t* file_sha256,
+    size_t         file_sha256_length,
+    const uint8_t* encrypted_file_key,
+    size_t         encrypted_file_key_length,
+    EppBuffer*     out_manifest,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_manifest_validate(
+    const uint8_t* manifest_bytes,
+    size_t         manifest_length,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_chunk_validate(
+    const uint8_t* manifest_bytes,
+    size_t         manifest_length,
+    uint32_t       chunk_index,
+    const uint8_t* nonce,
+    size_t         nonce_length,
+    const uint8_t* ciphertext,
+    size_t         ciphertext_length,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_encrypt_thumbnail(
+    const uint8_t* file_key,
+    size_t         file_key_length,
+    const uint8_t* attachment_id,
+    size_t         attachment_id_length,
+    const uint8_t* thumbnail_mime_type,
+    size_t         thumbnail_mime_type_length,
+    const uint8_t* thumbnail_plaintext,
+    size_t         thumbnail_plaintext_length,
+    EppBuffer*     out_nonce,
+    EppBuffer*     out_ciphertext,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_decrypt_thumbnail(
+    const uint8_t* file_key,
+    size_t         file_key_length,
+    const uint8_t* attachment_id,
+    size_t         attachment_id_length,
+    const uint8_t* thumbnail_mime_type,
+    size_t         thumbnail_mime_type_length,
+    const uint8_t* nonce,
+    size_t         nonce_length,
+    const uint8_t* ciphertext,
+    size_t         ciphertext_length,
+    EppBuffer*     out_plaintext,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_validate_ttl(
+    uint64_t  ttl_seconds,
+    EppError* out_error);
+
+EPP_API bool epp_attachment_is_expired(
+    uint64_t created_at_unix,
+    uint64_t ttl_seconds,
+    uint64_t now_unix);
+
+EPP_API EppErrorCode epp_attachment_progress_create(
+    const uint8_t* attachment_id,
+    size_t         attachment_id_length,
+    uint32_t       chunk_count,
+    EppBuffer*     out_progress,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_progress_mark_completed(
+    const uint8_t* progress_bytes,
+    size_t         progress_length,
+    uint32_t       chunk_index,
+    uint64_t       bytes_transferred,
+    uint64_t       now_unix,
+    EppBuffer*     out_updated_progress,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_progress_get_remaining(
+    const uint8_t* progress_bytes,
+    size_t         progress_length,
+    EppBuffer*     out_remaining,
+    uint32_t*      out_remaining_count,
+    EppError*      out_error);
+
+EPP_API bool epp_attachment_progress_is_complete(
+    const uint8_t* progress_bytes,
+    size_t         progress_length);
+
+EPP_API EppErrorCode epp_attachment_generate_collage_id(
+    EppBuffer* out_collage_id,
+    EppError*  out_error);
+
+EPP_API EppErrorCode epp_attachment_collage_create(
+    const uint8_t *const * manifest_array,
+    const size_t*          manifest_lengths,
+    size_t                 manifest_count,
+    EppBuffer*             out_collage,
+    EppError*              out_error);
+
+EPP_API EppErrorCode epp_attachment_collage_validate(
+    const uint8_t* collage_bytes,
+    size_t         collage_length,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_collage_create_with_metadata(
+    const uint8_t *const * manifest_array,
+    const size_t*          manifest_lengths,
+    size_t                 manifest_count,
+    const uint8_t*         name,
+    size_t                 name_length,
+    const uint8_t*         description,
+    size_t                 description_length,
+    int32_t                layout,
+    EppBuffer*             out_collage,
+    EppError*              out_error);
+
+typedef struct EppStreamingEncryptorHandle EppStreamingEncryptorHandle;
+typedef struct EppStreamingDecryptorHandle EppStreamingDecryptorHandle;
+
+EPP_API EppErrorCode epp_attachment_streaming_encryptor_create(
+    const uint8_t*              file_key,
+    size_t                      file_key_length,
+    const uint8_t*              attachment_id,
+    size_t                      attachment_id_length,
+    const uint8_t*              mime_type,
+    size_t                      mime_type_length,
+    uint64_t                    total_size,
+    uint32_t                    chunk_size,
+    uint32_t                    chunk_count,
+    EppStreamingEncryptorHandle** out_handle,
+    EppError*                   out_error);
+
+EPP_API EppErrorCode epp_attachment_streaming_encryptor_write(
+    EppStreamingEncryptorHandle* handle,
+    const uint8_t*               data,
+    size_t                       data_length,
+    EppBuffer*                   out_chunks,
+    uint32_t*                    out_chunk_count,
+    EppError*                    out_error);
+
+EPP_API EppErrorCode epp_attachment_streaming_encryptor_finish(
+    EppStreamingEncryptorHandle* handle,
+    EppBuffer*                   out_chunk,
+    uint8_t*                     out_has_chunk,
+    EppError*                    out_error);
+
+EPP_API void epp_attachment_streaming_encryptor_destroy(
+    EppStreamingEncryptorHandle* handle);
+
+EPP_API EppErrorCode epp_attachment_streaming_decryptor_create(
+    const uint8_t*              file_key,
+    size_t                      file_key_length,
+    const uint8_t*              attachment_id,
+    size_t                      attachment_id_length,
+    const uint8_t*              mime_type,
+    size_t                      mime_type_length,
+    uint64_t                    total_size,
+    uint32_t                    chunk_size,
+    uint32_t                    chunk_count,
+    EppStreamingDecryptorHandle** out_handle,
+    EppError*                   out_error);
+
+EPP_API EppErrorCode epp_attachment_streaming_decryptor_write(
+    EppStreamingDecryptorHandle* handle,
+    uint32_t                     chunk_index,
+    const uint8_t*               nonce,
+    size_t                       nonce_length,
+    const uint8_t*               ciphertext,
+    size_t                       ciphertext_length,
+    EppBuffer*                   out_plaintext,
+    EppError*                    out_error);
+
+EPP_API bool epp_attachment_streaming_decryptor_is_complete(
+    EppStreamingDecryptorHandle* handle);
+
+EPP_API void epp_attachment_streaming_decryptor_destroy(
+    EppStreamingDecryptorHandle* handle);
+
+EPP_API EppErrorCode epp_attachment_manifest_create_v2(
+    const uint8_t* attachment_id,
+    size_t         attachment_id_length,
+    const uint8_t* mime_type,
+    size_t         mime_type_length,
+    uint64_t       total_size,
+    uint32_t       chunk_size,
+    uint32_t       chunk_count,
+    const uint8_t* file_sha256,
+    size_t         file_sha256_length,
+    const uint8_t* encrypted_file_key,
+    size_t         encrypted_file_key_length,
+    int64_t        collage_index,
+    const uint8_t* thumbnail_ciphertext,
+    size_t         thumbnail_ciphertext_length,
+    const uint8_t* thumbnail_nonce,
+    size_t         thumbnail_nonce_length,
+    const uint8_t* thumbnail_mime_type,
+    size_t         thumbnail_mime_type_length,
+    uint32_t       thumbnail_original_size,
+    uint64_t       ttl_seconds,
+    uint64_t       created_at_unix,
+    EppBuffer*     out_manifest,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_encrypt_file_key(
+    EppSessionHandle* handle,
+    const uint8_t*    file_key,
+    size_t            file_key_length,
+    const uint8_t*    attachment_id,
+    size_t            attachment_id_length,
+    EppBuffer*        out_encrypted_file_key,
+    EppError*         out_error);
+
+EPP_API EppErrorCode epp_attachment_decrypt_file_key(
+    EppSessionHandle* handle,
+    const uint8_t*    encrypted_file_key,
+    size_t            encrypted_file_key_length,
+    const uint8_t*    attachment_id,
+    size_t            attachment_id_length,
+    EppBuffer*        out_file_key,
+    EppError*         out_error);
+
+EPP_API EppErrorCode epp_attachment_validate_magic_bytes(
+    const uint8_t* header,
+    size_t         header_length,
+    const uint8_t* mime_type,
+    size_t         mime_type_length,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_detect_mime(
+    const uint8_t* header,
+    size_t         header_length,
+    EppBuffer*     out_mime,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_validate_filename(
+    const uint8_t* name,
+    size_t         name_length,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_sanitize_filename(
+    const uint8_t* name,
+    size_t         name_length,
+    EppBuffer*     out_sanitized,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_inline_validate(
+    const uint8_t* bytes,
+    size_t         length,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_inline_create(
+    const uint8_t* attachment_id,
+    size_t         attachment_id_length,
+    const uint8_t* mime_type,
+    size_t         mime_type_length,
+    const uint8_t* data,
+    size_t         data_length,
+    const uint8_t* original_filename,
+    size_t         original_filename_length,
+    uint8_t        has_content_policy,
+    uint8_t        view_once,
+    uint8_t        no_forward,
+    uint8_t        no_save,
+    EppBuffer*     out_buffer,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_reference_validate(
+    const uint8_t* bytes,
+    size_t         length,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_reference_create(
+    const uint8_t* attachment_id,
+    size_t         attachment_id_length,
+    int32_t        reference_type,
+    const uint8_t* source_message_id,
+    size_t         source_message_id_length,
+    EppBuffer*     out_buffer,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_voice_meta_validate(
+    const uint8_t* bytes,
+    size_t         length,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_voice_meta_create(
+    const float*   waveform_samples,
+    size_t         waveform_count,
+    const uint8_t* transcript,
+    size_t         transcript_length,
+    float          playback_speed_hint,
+    uint8_t        has_playback_speed,
+    uint8_t        is_listened,
+    EppBuffer*     out_buffer,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_location_validate(
+    const uint8_t* bytes,
+    size_t         length,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_location_create(
+    double         latitude,
+    double         longitude,
+    double         accuracy_meters,
+    uint8_t        has_accuracy,
+    const uint8_t* label,
+    size_t         label_length,
+    uint64_t       timestamp_unix,
+    uint8_t        has_timestamp,
+    EppBuffer*     out_buffer,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_contact_card_validate(
+    const uint8_t* bytes,
+    size_t         length,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_contact_card_create(
+    const uint8_t* display_name,
+    size_t         display_name_length,
+    const uint8_t* phone,
+    size_t         phone_length,
+    const uint8_t* email,
+    size_t         email_length,
+    const uint8_t* avatar_data,
+    size_t         avatar_data_length,
+    const uint8_t* organization,
+    size_t         organization_length,
+    EppBuffer*     out_buffer,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_link_preview_validate(
+    const uint8_t* bytes,
+    size_t         length,
+    EppError*      out_error);
+
+EPP_API EppErrorCode epp_attachment_link_preview_create(
+    const uint8_t* url,
+    size_t         url_length,
+    const uint8_t* title,
+    size_t         title_length,
+    const uint8_t* description,
+    size_t         description_length,
+    const uint8_t* preview_image,
+    size_t         preview_image_length,
+    const uint8_t* preview_image_mime,
+    size_t         preview_image_mime_length,
+    const uint8_t* domain,
+    size_t         domain_length,
+    EppBuffer*     out_buffer,
+    EppError*      out_error);
+
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Group session — hybrid PQ TreeKEM (MLS-inspired)

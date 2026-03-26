@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package ecliptix.proto.protocol;
+option csharp_namespace = "Ecliptix.Protobuf.Protocol";
+
+enum CollageLayout {
+  COLLAGE_LAYOUT_GRID = 0;
+  COLLAGE_LAYOUT_CAROUSEL = 1;
+  COLLAGE_LAYOUT_LIST = 2;
+  COLLAGE_LAYOUT_STACK = 3;
+}
+
+enum ReferenceType {
+  REFERENCE_TYPE_REPLY = 0;
+  REFERENCE_TYPE_QUOTE = 1;
+  REFERENCE_TYPE_FORWARD = 2;
+}
+
+message ContentPolicy {
+  bool view_once = 1;
+  bool no_forward = 2;
+  bool no_save = 3;
+}
+
+message VoiceMessageMeta {
+  repeated float waveform_samples = 1;
+  optional string transcript = 2;
+  optional float playback_speed_hint = 3;
+  bool is_listened = 4;
+}
+
+message AttachmentManifest {
+  uint32 version = 1;
+  bytes attachment_id = 2;
+  string mime_type = 3;
+  uint64 total_size = 4;
+  uint32 chunk_size = 5;
+  uint32 chunk_count = 6;
+  bytes file_sha256 = 7;
+  bytes encrypted_file_key = 8;
+  string encryption_scheme = 9;
+  optional uint32 collage_index = 10;
+  optional bytes encrypted_thumbnail = 11;
+  optional bytes thumbnail_nonce = 12;
+  optional string thumbnail_mime_type = 13;
+  optional uint32 thumbnail_size = 14;
+  optional uint64 ttl_seconds = 15;
+  optional uint64 created_at_unix = 16;
+  optional string original_filename = 17;
+  optional uint32 media_width = 18;
+  optional uint32 media_height = 19;
+  optional uint64 duration_ms = 20;
+  optional string alt_text = 21;
+  optional ContentPolicy content_policy = 22;
+  optional VoiceMessageMeta voice_meta = 23;
+}
+
+message CollageManifest {
+  uint32 version = 1;
+  bytes collage_id = 2;
+  repeated bytes manifests = 3;
+  uint32 display_count = 4;
+  optional string name = 5;
+  optional string description = 6;
+  optional CollageLayout layout = 7;
+}
+
+message ChunkProgress {
+  bytes attachment_id = 1;
+  uint32 chunk_count = 2;
+  repeated uint32 completed_chunks = 3;
+  uint64 total_bytes_transferred = 4;
+  uint64 last_updated_unix = 5;
+}
+
+message InlineAttachment {
+  bytes attachment_id = 1;
+  string mime_type = 2;
+  bytes data = 3;
+  optional string original_filename = 4;
+  optional ContentPolicy content_policy = 5;
+}
+
+message AttachmentReference {
+  bytes attachment_id = 1;
+  ReferenceType reference_type = 2;
+  optional bytes source_message_id = 3;
+}
+
+message LocationAttachment {
+  double latitude = 1;
+  double longitude = 2;
+  optional double accuracy_meters = 3;
+  optional string label = 4;
+  optional uint64 timestamp_unix = 5;
+}
+
+message ContactCard {
+  string display_name = 1;
+  optional string phone = 2;
+  optional string email = 3;
+  optional bytes avatar_data = 4;
+  optional string organization = 5;
+}
+
+message LinkPreview {
+  string url = 1;
+  optional string title = 2;
+  optional string description = 3;
+  optional bytes preview_image = 4;
+  optional string preview_image_mime = 5;
+  optional string domain = 6;
+}

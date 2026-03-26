@@ -56,6 +56,30 @@ message ProtocolState {
 
   // Send-side metadata key (rotates independently of recv-side metadata_key field 17)
   bytes send_metadata_key = 56;
+
+  optional bytes device_id = 60;
+  optional uint64 session_ttl_seconds = 61;
+  optional uint64 last_activity_unix = 62;
+  uint64 total_messages_sent = 63;
+  uint64 total_messages_received = 64;
+}
+
+message SessionMetadataResponse {
+  bytes session_id = 1;
+  bool is_initiator = 2;
+  uint64 send_ratchet_epoch = 3;
+  uint64 recv_ratchet_epoch = 4;
+  uint64 send_message_index = 5;
+  uint64 recv_message_index = 6;
+  uint64 nonce_remaining = 7;
+  uint32 skipped_keys_count = 8;
+  uint32 cached_metadata_keys_count = 9;
+  uint64 state_counter = 10;
+  uint64 total_messages_sent = 11;
+  uint64 total_messages_received = 12;
+  bytes device_id = 13;
+  optional uint64 session_ttl_seconds = 14;
+  optional uint64 last_activity_unix = 15;
 }
 
 message ChainState {

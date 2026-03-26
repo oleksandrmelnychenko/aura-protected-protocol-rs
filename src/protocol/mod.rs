@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Oleksandr Melnychenko. All rights reserved.
 // SPDX-License-Identifier: MIT
 
+pub mod attachment;
 pub mod group;
 pub mod handshake;
 pub mod nonce;
@@ -13,5 +14,10 @@ pub use group::{
 };
 pub use handshake::{HandshakeInitReplayGuard, HandshakeInitiator, HandshakeResponder};
 pub use nonce::{NonceGenerator, NonceState};
-pub use session::{DecryptResult, HandshakeState, LocalIdentity, PeerIdentity, Session};
-pub use voip::{CallControlType, CallRole, CallState, IVoipEventHandler, VoipSession};
+pub use session::{
+    DecryptResult, HandshakeState, LocalIdentity, PeerIdentity, Session, SessionMetadata,
+};
+pub use attachment::{EncryptedChunk, StreamingDecryptor, StreamingEncryptor};
+pub use voip::{
+    CallControlType, CallRole, CallState, CallStatistics, IVoipEventHandler, VoipSession,
+};

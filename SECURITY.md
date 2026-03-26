@@ -56,3 +56,18 @@ Notes for integrators:
 
 1. Multiple limits are cumulative. A value accepted by one limit can still be rejected by another (for example, OPK count may be under `MAX_ONE_TIME_PRE_KEYS_PER_BUNDLE` while total encoded protobuf size exceeds `MAX_PROTOBUF_MESSAGE_SIZE`).
 2. These limits harden the protocol layer but do not replace edge protections. Production services should still enforce transport-level body limits, timeouts, and rate limiting.
+
+### Attachments / media encryption model
+
+Large media is expected to use envelope encryption:
+
+1. Generate a per-file DEK (`file_key`).
+2. Encrypt file chunks with AEAD using attachment context-bound AAD.
+3. Deliver only wrapped `encrypted_file_key` through the chat channel.
+4. Relay/storage keeps ciphertext-only blobs and never receives plaintext DEK.
+
+Integrator obligations:
+
+- enforce per-file and per-chunk size limits at transport edge;
+- validate manifest/chunk structure before storage/forwarding;
+- avoid logging plaintext media, file keys, or decrypted thumbnails.

@@ -25,6 +25,9 @@ pub use call_key_exchange::{
     CallKeyMaterial as VoipKeyMaterial,
 };
 
+#[allow(unused_imports)]
+use crate::proto::{CallQualityMetrics, ScreenShareMetadata};
+
 type HmacSha256 = Hmac<Sha256>;
 
 pub trait IVoipEventHandler: Send + Sync {
@@ -79,10 +82,21 @@ pub struct DecryptedFrame {
     pub ratchet_generation: u32,
 }
 
+#[derive(Debug, Clone)]
+pub struct CallStatistics {
+    pub frames_sent: u64,
+    pub frames_received: u64,
+    pub frames_dropped: u64,
+    pub rekey_count: u32,
+    pub ratchet_generation: u32,
+    pub call_duration_secs: u64,
+}
+
 pub struct VoipSession {
     inner: Mutex<VoipSessionInner>,
 }
 
+#[allow(dead_code)]
 struct VoipSessionInner {
     call_id: Vec<u8>,
     role: CallRole,
@@ -106,6 +120,15 @@ struct VoipSessionInner {
     frames_since_ratchet: u32,
     event_handler: Option<Arc<dyn IVoipEventHandler>>,
     pending_rekey: Option<call_key_exchange::CallInitOutput>,
+
+    screen_share_meta: Option<ScreenShareMetadata>,
+    frames_sent: u64,
+    frames_received: u64,
+    frames_dropped: u64,
+    last_metrics_timestamp: u64,
+    local_recording_consent: i32,
+    remote_recording_consent: i32,
+    created_at: std::time::Instant,
 }
 
 impl VoipSession {
@@ -164,6 +187,14 @@ impl VoipSession {
             frames_since_ratchet: 0,
             event_handler: None,
             pending_rekey: None,
+            screen_share_meta: None,
+            frames_sent: 0,
+            frames_received: 0,
+            frames_dropped: 0,
+            last_metrics_timestamp: 0,
+            local_recording_consent: 0,
+            remote_recording_consent: 0,
+            created_at: std::time::Instant::now(),
         };
 
         Ok(Self {
@@ -242,6 +273,7 @@ impl VoipSession {
 
         inner.send_frame_counter += 1;
         inner.frames_since_ratchet += 1;
+        inner.frames_sent += 1;
 
         if inner.send_ratchet.generation() > MAX_RATCHET_GENERATION - 100 {
             if let Some(handler) = &inner.event_handler {
@@ -283,6 +315,7 @@ impl VoipSession {
         }
 
         if !inner.replay_window.check(encrypted.frame_counter) {
+            inner.frames_dropped += 1;
             if let Some(handler) = &inner.event_handler {
                 handler.on_replay_detected(&inner.call_id, encrypted.frame_counter);
             }
@@ -343,6 +376,7 @@ impl VoipSession {
 
         inner.recv_ratchet.commit_snapshot(snapshot)?;
         inner.replay_window.mark(encrypted.frame_counter);
+        inner.frames_received += 1;
 
         Ok(DecryptedFrame {
             header,
@@ -522,6 +556,10 @@ impl VoipSession {
             send_ratchet_generation: send_snapshot.generation,
             recv_ratchet_generation: recv_snapshot.generation,
             replay_bitmap,
+            screen_share_meta: None,
+            local_recording_consent: None,
+            remote_recording_consent: None,
+            total_rekey_count: 0,
         };
 
         let mut state_bytes = Vec::new();
@@ -717,6 +755,14 @@ impl VoipSession {
             frames_since_ratchet: state.frames_since_ratchet,
             event_handler: None,
             pending_rekey: None,
+            screen_share_meta: None,
+            frames_sent: 0,
+            frames_received: 0,
+            frames_dropped: 0,
+            last_metrics_timestamp: 0,
+            local_recording_consent: 0,
+            remote_recording_consent: 0,
+            created_at: std::time::Instant::now(),
         };
 
         Ok(Self {
@@ -1175,4 +1221,151 @@ impl VoipSession {
         }
         Ok(())
     }
+
+    pub fn set_screen_share_meta(
+        &self,
+        width: u32,
+        height: u32,
+        frame_rate: u32,
+        codec_hint: Option<&str>,
+    ) -> Result<(), ProtocolError> {
+        if width == 0 || width > MAX_SCREEN_SHARE_WIDTH {
+            return Err(ProtocolError::InvalidInput("screen share width out of range".into()));
+        }
+        if height == 0 || height > MAX_SCREEN_SHARE_HEIGHT {
+            return Err(ProtocolError::InvalidInput("screen share height out of range".into()));
+        }
+        if frame_rate == 0 || frame_rate > MAX_SCREEN_SHARE_FRAME_RATE {
+            return Err(ProtocolError::InvalidInput("screen share frame_rate out of range".into()));
+        }
+        if let Some(hint) = codec_hint {
+            if hint.len() > MAX_CODEC_HINT_CHARS {
+                return Err(ProtocolError::InvalidInput("codec_hint too long".into()));
+            }
+        }
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        inner.screen_share_meta = Some(ScreenShareMetadata {
+            width,
+            height,
+            frame_rate,
+            codec_hint: codec_hint.map(String::from),
+        });
+        Ok(())
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn get_screen_share_meta(
+        &self,
+    ) -> Result<Option<(u32, u32, u32, Option<String>)>, ProtocolError> {
+        let inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(inner.screen_share_meta.as_ref().map(|m| {
+            (m.width, m.height, m.frame_rate, m.codec_hint.clone())
+        }))
+    }
+
+    pub fn clear_screen_share_meta(&self) -> Result<(), ProtocolError> {
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        inner.screen_share_meta = None;
+        Ok(())
+    }
+
+    pub fn get_call_statistics(&self) -> Result<CallStatistics, ProtocolError> {
+        let inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let elapsed = inner.created_at.elapsed().as_secs();
+        Ok(CallStatistics {
+            frames_sent: inner.frames_sent,
+            frames_received: inner.frames_received,
+            frames_dropped: inner.frames_dropped,
+            rekey_count: inner.ratchet_generation,
+            ratchet_generation: inner.send_ratchet.generation(),
+            call_duration_secs: elapsed,
+        })
+    }
+
+    pub fn set_recording_consent(&self, consent: i32) -> Result<(), ProtocolError> {
+        if !(0..=2).contains(&consent) {
+            return Err(ProtocolError::InvalidInput("recording consent must be 0, 1, or 2".into()));
+        }
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        inner.local_recording_consent = consent;
+        Ok(())
+    }
+
+    pub fn get_local_recording_consent(&self) -> Result<i32, ProtocolError> {
+        let inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(inner.local_recording_consent)
+    }
+
+    pub fn set_remote_recording_consent(&self, consent: i32) -> Result<(), ProtocolError> {
+        if !(0..=2).contains(&consent) {
+            return Err(ProtocolError::InvalidInput("recording consent must be 0, 1, or 2".into()));
+        }
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        inner.remote_recording_consent = consent;
+        Ok(())
+    }
+
+    pub fn get_remote_recording_consent(&self) -> Result<i32, ProtocolError> {
+        let inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(inner.remote_recording_consent)
+    }
+
+    pub fn both_consented_to_recording(&self) -> Result<bool, ProtocolError> {
+        let inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(inner.local_recording_consent == 1 && inner.remote_recording_consent == 1)
+    }
+}
+
+pub fn validate_screen_share_metadata(meta: &ScreenShareMetadata) -> Result<(), ProtocolError> {
+    if meta.width == 0 || meta.width > MAX_SCREEN_SHARE_WIDTH {
+        return Err(ProtocolError::InvalidInput("screen share width out of range".into()));
+    }
+    if meta.height == 0 || meta.height > MAX_SCREEN_SHARE_HEIGHT {
+        return Err(ProtocolError::InvalidInput("screen share height out of range".into()));
+    }
+    if meta.frame_rate == 0 || meta.frame_rate > MAX_SCREEN_SHARE_FRAME_RATE {
+        return Err(ProtocolError::InvalidInput("screen share frame_rate out of range".into()));
+    }
+    if let Some(ref hint) = meta.codec_hint {
+        if hint.len() > MAX_CODEC_HINT_CHARS {
+            return Err(ProtocolError::InvalidInput("codec_hint too long".into()));
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_call_quality_metrics(metrics: &CallQualityMetrics) -> Result<(), ProtocolError> {
+    if let Some(level) = metrics.audio_level {
+        if level > MAX_AUDIO_LEVEL {
+            return Err(ProtocolError::InvalidInput("audio_level exceeds maximum".into()));
+        }
+    }
+    Ok(())
 }

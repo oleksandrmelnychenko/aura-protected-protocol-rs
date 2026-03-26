@@ -22,11 +22,25 @@ Important: limits are cumulative. Input can pass one limit and still be rejected
 
 ## FFI Impact
 
-No new FFI APIs were introduced in this release.
+Attachment/media FFI APIs were introduced in this release:
 
-- C FFI function surface is unchanged (no signature changes).
-- Swift wrapper surface is unchanged.
+- `epp_attachment_generate_id`
+- `epp_attachment_generate_file_key`
+- `epp_attachment_encrypt_chunk`
+- `epp_attachment_decrypt_chunk`
+- `epp_attachment_manifest_create`
+- `epp_attachment_manifest_validate`
+- `epp_attachment_chunk_validate`
+
+Existing C/Swift session/group APIs keep backward-compatible signatures.
 - Behavior is stricter: oversized inputs are rejected earlier by existing calls.
+
+## Attachment Contract (transport out of scope)
+
+- EPP now supports attachment envelope encryption primitives and manifest validation.
+- External transport (gRPC/HTTP/object storage) remains integrator-owned.
+- Relay/storage handles only ciphertext chunks and validated manifests.
+- File key exchange must use existing encrypted chat channel path (wrapped file key), not plaintext side channels.
 
 ## Migration Notes
 

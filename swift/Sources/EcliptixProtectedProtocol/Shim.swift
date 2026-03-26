@@ -1029,3 +1029,495 @@ internal func checkResult(_ code: UInt32, _ nativeError: inout NativeEppError) t
     }
     native_epp_error_free(&nativeError)
 }
+
+// MARK: - Attachment
+
+@_silgen_name("epp_attachment_generate_id")
+internal func native_epp_attachment_generate_id(
+    _ out_attachment_id: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_generate_file_key")
+internal func native_epp_attachment_generate_file_key(
+    _ out_file_key: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_encrypt_chunk")
+internal func native_epp_attachment_encrypt_chunk(
+    _ file_key: UnsafePointer<UInt8>,
+    _ file_key_length: Int,
+    _ attachment_id: UnsafePointer<UInt8>,
+    _ attachment_id_length: Int,
+    _ mime_type: UnsafePointer<CChar>,
+    _ mime_type_length: Int,
+    _ total_size: UInt64,
+    _ chunk_size: UInt32,
+    _ chunk_index: UInt32,
+    _ chunk_count: UInt32,
+    _ plaintext: UnsafePointer<UInt8>,
+    _ plaintext_length: Int,
+    _ out_nonce: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_ciphertext: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_decrypt_chunk")
+internal func native_epp_attachment_decrypt_chunk(
+    _ file_key: UnsafePointer<UInt8>,
+    _ file_key_length: Int,
+    _ attachment_id: UnsafePointer<UInt8>,
+    _ attachment_id_length: Int,
+    _ mime_type: UnsafePointer<CChar>,
+    _ mime_type_length: Int,
+    _ total_size: UInt64,
+    _ chunk_size: UInt32,
+    _ chunk_index: UInt32,
+    _ chunk_count: UInt32,
+    _ nonce: UnsafePointer<UInt8>,
+    _ nonce_length: Int,
+    _ ciphertext: UnsafePointer<UInt8>,
+    _ ciphertext_length: Int,
+    _ out_plaintext: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_manifest_create")
+internal func native_epp_attachment_manifest_create(
+    _ attachment_id: UnsafePointer<UInt8>,
+    _ attachment_id_length: Int,
+    _ mime_type: UnsafePointer<CChar>,
+    _ mime_type_length: Int,
+    _ total_size: UInt64,
+    _ chunk_size: UInt32,
+    _ chunk_count: UInt32,
+    _ file_sha256: UnsafePointer<UInt8>,
+    _ file_sha256_length: Int,
+    _ encrypted_file_key: UnsafePointer<UInt8>,
+    _ encrypted_file_key_length: Int,
+    _ out_manifest: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_manifest_validate")
+internal func native_epp_attachment_manifest_validate(
+    _ manifest_bytes: UnsafePointer<UInt8>,
+    _ manifest_length: Int,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_chunk_validate")
+internal func native_epp_attachment_chunk_validate(
+    _ manifest_bytes: UnsafePointer<UInt8>,
+    _ manifest_length: Int,
+    _ chunk_index: UInt32,
+    _ nonce: UnsafePointer<UInt8>,
+    _ nonce_length: Int,
+    _ ciphertext: UnsafePointer<UInt8>,
+    _ ciphertext_length: Int,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_encrypt_thumbnail")
+internal func native_epp_attachment_encrypt_thumbnail(
+    _ file_key: UnsafePointer<UInt8>,
+    _ file_key_length: Int,
+    _ attachment_id: UnsafePointer<UInt8>,
+    _ attachment_id_length: Int,
+    _ thumbnail_mime_type: UnsafePointer<UInt8>,
+    _ thumbnail_mime_type_length: Int,
+    _ thumbnail_plaintext: UnsafePointer<UInt8>,
+    _ thumbnail_plaintext_length: Int,
+    _ out_nonce: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_ciphertext: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_decrypt_thumbnail")
+internal func native_epp_attachment_decrypt_thumbnail(
+    _ file_key: UnsafePointer<UInt8>,
+    _ file_key_length: Int,
+    _ attachment_id: UnsafePointer<UInt8>,
+    _ attachment_id_length: Int,
+    _ thumbnail_mime_type: UnsafePointer<UInt8>,
+    _ thumbnail_mime_type_length: Int,
+    _ nonce: UnsafePointer<UInt8>,
+    _ nonce_length: Int,
+    _ ciphertext: UnsafePointer<UInt8>,
+    _ ciphertext_length: Int,
+    _ out_plaintext: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_validate_ttl")
+internal func native_epp_attachment_validate_ttl(
+    _ ttl_seconds: UInt64,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_is_expired")
+internal func native_epp_attachment_is_expired(
+    _ created_at_unix: UInt64,
+    _ ttl_seconds: UInt64,
+    _ now_unix: UInt64
+) -> Bool
+
+@_silgen_name("epp_attachment_progress_create")
+internal func native_epp_attachment_progress_create(
+    _ attachment_id: UnsafePointer<UInt8>,
+    _ attachment_id_length: Int,
+    _ chunk_count: UInt32,
+    _ out_progress: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_progress_mark_completed")
+internal func native_epp_attachment_progress_mark_completed(
+    _ progress_bytes: UnsafePointer<UInt8>,
+    _ progress_length: Int,
+    _ chunk_index: UInt32,
+    _ bytes_transferred: UInt64,
+    _ now_unix: UInt64,
+    _ out_updated_progress: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_progress_get_remaining")
+internal func native_epp_attachment_progress_get_remaining(
+    _ progress_bytes: UnsafePointer<UInt8>,
+    _ progress_length: Int,
+    _ out_remaining: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_remaining_count: UnsafeMutablePointer<UInt32>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_progress_is_complete")
+internal func native_epp_attachment_progress_is_complete(
+    _ progress_bytes: UnsafePointer<UInt8>,
+    _ progress_length: Int
+) -> Bool
+
+@_silgen_name("epp_attachment_generate_collage_id")
+internal func native_epp_attachment_generate_collage_id(
+    _ out_collage_id: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_collage_create")
+internal func native_epp_attachment_collage_create(
+    _ manifest_array: UnsafePointer<UnsafePointer<UInt8>?>,
+    _ manifest_lengths: UnsafePointer<Int>,
+    _ manifest_count: Int,
+    _ out_collage: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_collage_validate")
+internal func native_epp_attachment_collage_validate(
+    _ collage_bytes: UnsafePointer<UInt8>,
+    _ collage_length: Int,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_streaming_encryptor_create")
+internal func native_epp_attachment_streaming_encryptor_create(
+    _ file_key: UnsafePointer<UInt8>,
+    _ file_key_length: Int,
+    _ attachment_id: UnsafePointer<UInt8>,
+    _ attachment_id_length: Int,
+    _ mime_type: UnsafePointer<UInt8>,
+    _ mime_type_length: Int,
+    _ total_size: UInt64,
+    _ chunk_size: UInt32,
+    _ chunk_count: UInt32,
+    _ out_handle: UnsafeMutablePointer<UnsafeMutableRawPointer?>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_streaming_encryptor_write")
+internal func native_epp_attachment_streaming_encryptor_write(
+    _ handle: UnsafeMutableRawPointer,
+    _ data: UnsafePointer<UInt8>,
+    _ data_length: Int,
+    _ out_chunks: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_chunk_count: UnsafeMutablePointer<UInt32>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_streaming_encryptor_finish")
+internal func native_epp_attachment_streaming_encryptor_finish(
+    _ handle: UnsafeMutableRawPointer,
+    _ out_chunk: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_has_chunk: UnsafeMutablePointer<UInt8>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_streaming_encryptor_destroy")
+internal func native_epp_attachment_streaming_encryptor_destroy(
+    _ handle: UnsafeMutableRawPointer
+)
+
+@_silgen_name("epp_attachment_streaming_decryptor_create")
+internal func native_epp_attachment_streaming_decryptor_create(
+    _ file_key: UnsafePointer<UInt8>,
+    _ file_key_length: Int,
+    _ attachment_id: UnsafePointer<UInt8>,
+    _ attachment_id_length: Int,
+    _ mime_type: UnsafePointer<UInt8>,
+    _ mime_type_length: Int,
+    _ total_size: UInt64,
+    _ chunk_size: UInt32,
+    _ chunk_count: UInt32,
+    _ out_handle: UnsafeMutablePointer<UnsafeMutableRawPointer?>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_streaming_decryptor_write")
+internal func native_epp_attachment_streaming_decryptor_write(
+    _ handle: UnsafeMutableRawPointer,
+    _ chunk_index: UInt32,
+    _ nonce: UnsafePointer<UInt8>,
+    _ nonce_length: Int,
+    _ ciphertext: UnsafePointer<UInt8>,
+    _ ciphertext_length: Int,
+    _ out_plaintext: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_streaming_decryptor_is_complete")
+internal func native_epp_attachment_streaming_decryptor_is_complete(
+    _ handle: UnsafeMutableRawPointer
+) -> Bool
+
+@_silgen_name("epp_attachment_streaming_decryptor_destroy")
+internal func native_epp_attachment_streaming_decryptor_destroy(
+    _ handle: UnsafeMutableRawPointer
+)
+
+@_silgen_name("epp_attachment_manifest_create_v2")
+internal func native_epp_attachment_manifest_create_v2(
+    _ attachment_id: UnsafePointer<UInt8>,
+    _ attachment_id_length: Int,
+    _ mime_type: UnsafePointer<UInt8>,
+    _ mime_type_length: Int,
+    _ total_size: UInt64,
+    _ chunk_size: UInt32,
+    _ chunk_count: UInt32,
+    _ file_sha256: UnsafePointer<UInt8>,
+    _ file_sha256_length: Int,
+    _ encrypted_file_key: UnsafePointer<UInt8>,
+    _ encrypted_file_key_length: Int,
+    _ collage_index: Int64,
+    _ thumbnail_ciphertext: UnsafePointer<UInt8>?,
+    _ thumbnail_ciphertext_length: Int,
+    _ thumbnail_nonce: UnsafePointer<UInt8>?,
+    _ thumbnail_nonce_length: Int,
+    _ thumbnail_mime_type: UnsafePointer<UInt8>?,
+    _ thumbnail_mime_type_length: Int,
+    _ thumbnail_original_size: UInt32,
+    _ ttl_seconds: UInt64,
+    _ created_at_unix: UInt64,
+    _ out_manifest: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_encrypt_file_key")
+internal func native_epp_attachment_encrypt_file_key(
+    _ handle: UnsafeMutableRawPointer,
+    _ file_key: UnsafePointer<UInt8>,
+    _ file_key_length: Int,
+    _ attachment_id: UnsafePointer<UInt8>,
+    _ attachment_id_length: Int,
+    _ out_encrypted_file_key: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_decrypt_file_key")
+internal func native_epp_attachment_decrypt_file_key(
+    _ handle: UnsafeMutableRawPointer,
+    _ encrypted_file_key: UnsafePointer<UInt8>,
+    _ encrypted_file_key_length: Int,
+    _ attachment_id: UnsafePointer<UInt8>,
+    _ attachment_id_length: Int,
+    _ out_file_key: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_validate_magic_bytes")
+internal func native_epp_attachment_validate_magic_bytes(
+    _ header: UnsafePointer<UInt8>,
+    _ header_length: Int,
+    _ mime_type: UnsafePointer<UInt8>,
+    _ mime_type_length: Int,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_detect_mime")
+internal func native_epp_attachment_detect_mime(
+    _ header: UnsafePointer<UInt8>,
+    _ header_length: Int,
+    _ out_mime: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_validate_filename")
+internal func native_epp_attachment_validate_filename(
+    _ name: UnsafePointer<UInt8>,
+    _ name_length: Int,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_sanitize_filename")
+internal func native_epp_attachment_sanitize_filename(
+    _ name: UnsafePointer<UInt8>,
+    _ name_length: Int,
+    _ out_sanitized: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_collage_create_with_metadata")
+internal func native_epp_attachment_collage_create_with_metadata(
+    _ manifest_array: UnsafePointer<UnsafePointer<UInt8>?>,
+    _ manifest_lengths: UnsafePointer<Int>,
+    _ manifest_count: Int,
+    _ name: UnsafePointer<UInt8>?,
+    _ name_length: Int,
+    _ description: UnsafePointer<UInt8>?,
+    _ description_length: Int,
+    _ layout: Int32,
+    _ out_collage: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_inline_validate")
+internal func native_epp_attachment_inline_validate(
+    _ bytes: UnsafePointer<UInt8>,
+    _ length: Int,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_inline_create")
+internal func native_epp_attachment_inline_create(
+    _ attachment_id: UnsafePointer<UInt8>,
+    _ attachment_id_length: Int,
+    _ mime_type: UnsafePointer<UInt8>,
+    _ mime_type_length: Int,
+    _ data: UnsafePointer<UInt8>,
+    _ data_length: Int,
+    _ original_filename: UnsafePointer<UInt8>?,
+    _ original_filename_length: Int,
+    _ has_content_policy: UInt8,
+    _ view_once: UInt8,
+    _ no_forward: UInt8,
+    _ no_save: UInt8,
+    _ out_buffer: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_reference_validate")
+internal func native_epp_attachment_reference_validate(
+    _ bytes: UnsafePointer<UInt8>,
+    _ length: Int,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_reference_create")
+internal func native_epp_attachment_reference_create(
+    _ attachment_id: UnsafePointer<UInt8>,
+    _ attachment_id_length: Int,
+    _ reference_type: Int32,
+    _ source_message_id: UnsafePointer<UInt8>?,
+    _ source_message_id_length: Int,
+    _ out_buffer: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_voice_meta_validate")
+internal func native_epp_attachment_voice_meta_validate(
+    _ bytes: UnsafePointer<UInt8>,
+    _ length: Int,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_voice_meta_create")
+internal func native_epp_attachment_voice_meta_create(
+    _ waveform_samples: UnsafePointer<Float>?,
+    _ waveform_count: Int,
+    _ transcript: UnsafePointer<UInt8>?,
+    _ transcript_length: Int,
+    _ playback_speed_hint: Float,
+    _ has_playback_speed: UInt8,
+    _ is_listened: UInt8,
+    _ out_buffer: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_location_validate")
+internal func native_epp_attachment_location_validate(
+    _ bytes: UnsafePointer<UInt8>,
+    _ length: Int,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_location_create")
+internal func native_epp_attachment_location_create(
+    _ latitude: Double,
+    _ longitude: Double,
+    _ accuracy_meters: Double,
+    _ has_accuracy: UInt8,
+    _ label: UnsafePointer<UInt8>?,
+    _ label_length: Int,
+    _ timestamp_unix: UInt64,
+    _ has_timestamp: UInt8,
+    _ out_buffer: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_contact_card_validate")
+internal func native_epp_attachment_contact_card_validate(
+    _ bytes: UnsafePointer<UInt8>,
+    _ length: Int,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_contact_card_create")
+internal func native_epp_attachment_contact_card_create(
+    _ display_name: UnsafePointer<UInt8>,
+    _ display_name_length: Int,
+    _ phone: UnsafePointer<UInt8>?,
+    _ phone_length: Int,
+    _ email: UnsafePointer<UInt8>?,
+    _ email_length: Int,
+    _ avatar_data: UnsafePointer<UInt8>?,
+    _ avatar_data_length: Int,
+    _ organization: UnsafePointer<UInt8>?,
+    _ organization_length: Int,
+    _ out_buffer: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_link_preview_validate")
+internal func native_epp_attachment_link_preview_validate(
+    _ bytes: UnsafePointer<UInt8>,
+    _ length: Int,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32
+
+@_silgen_name("epp_attachment_link_preview_create")
+internal func native_epp_attachment_link_preview_create(
+    _ url: UnsafePointer<UInt8>,
+    _ url_length: Int,
+    _ title: UnsafePointer<UInt8>?,
+    _ title_length: Int,
+    _ description: UnsafePointer<UInt8>?,
+    _ description_length: Int,
+    _ preview_image: UnsafePointer<UInt8>?,
+    _ preview_image_length: Int,
+    _ preview_image_mime: UnsafePointer<UInt8>?,
+    _ preview_image_mime_length: Int,
+    _ domain: UnsafePointer<UInt8>?,
+    _ domain_length: Int,
+    _ out_buffer: UnsafeMutablePointer<NativeEppBuffer>,
+    _ out_error: UnsafeMutablePointer<NativeEppError>
+) -> UInt32

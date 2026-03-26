@@ -59,6 +59,14 @@ API розрахований на три ролі:
 | **Shamir SSS** | | | |
 | `epp_shamir_split` | + | + | - | Розщепити секрет |
 | `epp_shamir_reconstruct` | + | + | - | Відновити секрет |
+| **Attachments / Media** | | | |
+| `epp_attachment_generate_id` | + | + | + | Згенерувати attachment ID |
+| `epp_attachment_generate_file_key` | + | + | - | Згенерувати file DEK |
+| `epp_attachment_encrypt_chunk` | + | + | - | Шифрувати chunk |
+| `epp_attachment_decrypt_chunk` | + | + | - | Дешифрувати chunk |
+| `epp_attachment_manifest_create` | + | + | - | Створити AttachmentManifest |
+| `epp_attachment_manifest_validate` | + | + | + | Валідувати AttachmentManifest |
+| `epp_attachment_chunk_validate` | + | + | + | Валідувати encrypted chunk shape |
 | **Group — Key Package** | | | |
 | `epp_group_generate_key_package` | + | + | - | Створити KeyPackage |
 | `epp_group_key_package_secrets_destroy` | + | + | - | Знищити секрети KP |
@@ -149,7 +157,7 @@ epp_secure_wipe
 
 ## Hardening update (limits)
 
-FFI surface не змінювався: нових FFI функцій не додано і сигнатури не змінено.
+FFI surface оновлено: додано attachment/media FFI виклики без зміни існуючих сигнатур session/group/voip API.
 
 Зміни в поведінці стосуються stricter validation у вже існуючих викликах:
 
@@ -177,6 +185,7 @@ FFI surface не змінювався: нових FFI функцій не дод
 - [Session Serialization (sealed)](#session-serialization)
 - [Key Derivation](#key-derivation)
 - [Shamir Secret Sharing](#shamir-secret-sharing)
+- [Attachments / Media](#attachments--media)
 - [Group — Key Package](#group--key-package)
 - [Group — Create / Join](#group--create--join)
 - [Group — Member Management](#group--member-management)
@@ -837,6 +846,137 @@ EppErrorCode epp_shamir_reconstruct(
 ```
 
 Відновлює секрет з >= threshold шарів. Перевіряє HMAC автентичність.
+
+---
+
+## Attachments / Media
+> Ролі: **Client** + **Server** (+ частково **Relay** для stateless validation)
+
+Attachment flow у FFI працює як crypto/validation ядро. Transport (gRPC/HTTP/S3) поза межами бібліотеки.
+
+### `epp_attachment_generate_id`
+
+```c
+EppErrorCode epp_attachment_generate_id(
+    EppBuffer* out_attachment_id,
+    EppError*  out_error
+);
+```
+
+Повертає випадковий 32-байтний `attachment_id`.
+
+### `epp_attachment_generate_file_key`
+
+```c
+EppErrorCode epp_attachment_generate_file_key(
+    EppBuffer* out_file_key,
+    EppError*  out_error
+);
+```
+
+Повертає випадковий 32-байтний `file_key` (DEK) для одного файлу.
+
+### `epp_attachment_encrypt_chunk`
+
+```c
+EppErrorCode epp_attachment_encrypt_chunk(
+    const uint8_t* file_key,
+    size_t         file_key_length,
+    const uint8_t* attachment_id,
+    size_t         attachment_id_length,
+    const char*    mime_type,
+    size_t         mime_type_length,
+    uint64_t       total_size,
+    uint32_t       chunk_size,
+    uint32_t       chunk_index,
+    uint32_t       chunk_count,
+    const uint8_t* plaintext,
+    size_t         plaintext_length,
+    EppBuffer*     out_nonce,
+    EppBuffer*     out_ciphertext,
+    EppError*      out_error
+);
+```
+
+Шифрує один chunk через AES-256-GCM-SIV. Nonce детерміновано виводиться з `(file_key, attachment_id, chunk_index)`.
+
+### `epp_attachment_decrypt_chunk`
+
+```c
+EppErrorCode epp_attachment_decrypt_chunk(
+    const uint8_t* file_key,
+    size_t         file_key_length,
+    const uint8_t* attachment_id,
+    size_t         attachment_id_length,
+    const char*    mime_type,
+    size_t         mime_type_length,
+    uint64_t       total_size,
+    uint32_t       chunk_size,
+    uint32_t       chunk_index,
+    uint32_t       chunk_count,
+    const uint8_t* nonce,
+    size_t         nonce_length,
+    const uint8_t* ciphertext,
+    size_t         ciphertext_length,
+    EppBuffer*     out_plaintext,
+    EppError*      out_error
+);
+```
+
+Дешифрує один chunk. Перевіряє nonce/AAD відповідність контексту manifest.
+
+### `epp_attachment_manifest_create`
+
+```c
+EppErrorCode epp_attachment_manifest_create(
+    const uint8_t* attachment_id,
+    size_t         attachment_id_length,
+    const char*    mime_type,
+    size_t         mime_type_length,
+    uint64_t       total_size,
+    uint32_t       chunk_size,
+    uint32_t       chunk_count,
+    const uint8_t* file_sha256,
+    size_t         file_sha256_length,
+    const uint8_t* encrypted_file_key,
+    size_t         encrypted_file_key_length,
+    EppBuffer*     out_manifest,
+    EppError*      out_error
+);
+```
+
+Створює protobuf `AttachmentManifest` blob для відправки через ваш messaging/transport шар.
+
+У `AttachmentManifest` доступне optional поле `collage_index` для порядку елементів у collage Threads.
+
+### `epp_attachment_manifest_validate`
+
+```c
+EppErrorCode epp_attachment_manifest_validate(
+    const uint8_t* manifest_bytes,
+    size_t         manifest_length,
+    EppError*      out_error
+);
+```
+
+Decode + strict validate `AttachmentManifest`.
+
+### `epp_attachment_chunk_validate`
+
+```c
+EppErrorCode epp_attachment_chunk_validate(
+    const uint8_t* manifest_bytes,
+    size_t         manifest_length,
+    uint32_t       chunk_index,
+    const uint8_t* nonce,
+    size_t         nonce_length,
+    const uint8_t* ciphertext,
+    size_t         ciphertext_length,
+    EppError*      out_error
+);
+```
+
+Stateless валідація форми encrypted chunk (розмір/index/nonce) без дешифрування.
 
 ---
 

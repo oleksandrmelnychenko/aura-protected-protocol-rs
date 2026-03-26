@@ -70,6 +70,24 @@ impl Drop for LocalIdentity {
     }
 }
 
+pub struct SessionMetadata {
+    pub session_id: Vec<u8>,
+    pub is_initiator: bool,
+    pub send_ratchet_epoch: u64,
+    pub recv_ratchet_epoch: u64,
+    pub send_message_index: u64,
+    pub recv_message_index: u64,
+    pub nonce_remaining: u64,
+    pub skipped_keys_count: usize,
+    pub cached_metadata_keys_count: usize,
+    pub state_counter: u64,
+    pub total_messages_sent: u64,
+    pub total_messages_received: u64,
+    pub device_id: Option<Vec<u8>>,
+    pub session_ttl_seconds: Option<u64>,
+    pub last_activity_unix: Option<u64>,
+}
+
 fn derive_key_bytes(
     ikm: &[u8],
     out_len: usize,
@@ -277,6 +295,29 @@ fn timestamp_now() -> Result<Timestamp, ProtocolError> {
     Ok(Timestamp { seconds, nanos: 0 })
 }
 
+fn check_inner_expired(state: &ProtocolState) -> bool {
+    let Some(ttl) = state.session_ttl_seconds else {
+        return false;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    if let Some(last) = state.last_activity_unix {
+        if now.saturating_sub(last) > ttl {
+            return true;
+        }
+    }
+    if let Some(created) = &state.created_at {
+        #[allow(clippy::cast_sign_loss)]
+        let created_secs = created.seconds as u64;
+        if now.saturating_sub(created_secs) > ttl {
+            return true;
+        }
+    }
+    false
+}
+
 fn is_all_zero(bytes: &[u8]) -> bool {
     let mut acc = 0u8;
     for &b in bytes {
@@ -449,6 +490,11 @@ pub(crate) fn build_protocol_state(
         send_ratchet_pending: false,
         skipped_keys: vec![],
         cached_metadata_keys: vec![],
+        device_id: None,
+        session_ttl_seconds: None,
+        last_activity_unix: None,
+        total_messages_sent: 0,
+        total_messages_received: 0,
     })
 }
 
@@ -1549,6 +1595,9 @@ impl Session {
         if inner.state.version == 0 {
             return Err(ProtocolError::invalid_state("Session has been destroyed"));
         }
+        if check_inner_expired(&inner.state) {
+            return Err(ProtocolError::invalid_state("Session expired"));
+        }
         if inner.state.send_metadata_key.len() != METADATA_KEY_BYTES {
             return Err(ProtocolError::invalid_state(
                 "Send metadata key not initialized",
@@ -1650,6 +1699,14 @@ impl Session {
         envelope.header_nonce = header_nonce;
         envelope.sent_at = Some(timestamp_now()?);
 
+        inner.state.last_activity_unix = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        );
+        inner.state.total_messages_sent += 1;
+
         Ok(envelope)
     }
 
@@ -1661,6 +1718,9 @@ impl Session {
 
         if inner.state.version == 0 {
             return Err(ProtocolError::invalid_state("Session has been destroyed"));
+        }
+        if check_inner_expired(&inner.state) {
+            return Err(ProtocolError::invalid_state("Session expired"));
         }
         if envelope.version != PROTOCOL_VERSION {
             return Err(ProtocolError::invalid_input("Invalid envelope version"));
@@ -2014,6 +2074,14 @@ impl Session {
             }
         }
 
+        inner.state.last_activity_unix = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        );
+        inner.state.total_messages_received += 1;
+
         Ok(DecryptResult {
             plaintext,
             metadata,
@@ -2321,6 +2389,128 @@ impl Session {
             .state
             .identity_binding_hash
             .clone()
+    }
+
+    pub fn get_metadata(&self) -> Result<SessionMetadata, ProtocolError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| ProtocolError::invalid_state("Session lock poisoned"))?;
+        if inner.state.version == 0 {
+            return Err(ProtocolError::invalid_state("Session has been destroyed"));
+        }
+        let send_message_index = inner
+            .state
+            .send_chain
+            .as_ref()
+            .map_or(0, |c| c.message_index);
+        let recv_message_index = inner
+            .state
+            .recv_chain
+            .as_ref()
+            .map_or(0, |c| c.message_index);
+        let ng = load_nonce_generator(&inner.state)?;
+        let counter = ng.export_state().counter();
+        let max = if inner.state.max_nonce_counter == 0 {
+            MAX_NONCE_COUNTER
+        } else {
+            inner.state.max_nonce_counter
+        };
+        let nonce_remaining = max.saturating_sub(counter);
+        Ok(SessionMetadata {
+            session_id: inner.state.session_id.clone(),
+            is_initiator: inner.is_initiator,
+            send_ratchet_epoch: inner.state.send_ratchet_epoch,
+            recv_ratchet_epoch: inner.state.recv_ratchet_epoch,
+            send_message_index,
+            recv_message_index,
+            nonce_remaining,
+            skipped_keys_count: inner.skipped_message_keys.len(),
+            cached_metadata_keys_count: inner.cached_metadata_keys.len(),
+            state_counter: inner.state.state_counter,
+            total_messages_sent: inner.state.total_messages_sent,
+            total_messages_received: inner.state.total_messages_received,
+            device_id: inner.state.device_id.clone(),
+            session_ttl_seconds: inner.state.session_ttl_seconds,
+            last_activity_unix: inner.state.last_activity_unix,
+        })
+    }
+
+    pub fn is_expired(&self) -> Result<bool, ProtocolError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| ProtocolError::invalid_state("Session lock poisoned"))?;
+        if inner.state.version == 0 {
+            return Err(ProtocolError::invalid_state("Session has been destroyed"));
+        }
+        let Some(ttl) = inner.state.session_ttl_seconds else {
+            return Ok(false);
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if let Some(last) = inner.state.last_activity_unix {
+            if now.saturating_sub(last) > ttl {
+                return Ok(true);
+            }
+        }
+        if let Some(created) = &inner.state.created_at {
+            #[allow(clippy::cast_sign_loss)]
+            let created_secs = created.seconds as u64;
+            if now.saturating_sub(created_secs) > ttl {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    pub fn get_device_id(&self) -> Result<Option<Vec<u8>>, ProtocolError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| ProtocolError::invalid_state("Session lock poisoned"))?;
+        if inner.state.version == 0 {
+            return Err(ProtocolError::invalid_state("Session has been destroyed"));
+        }
+        Ok(inner.state.device_id.clone())
+    }
+
+    pub fn set_device_id(&self, device_id: &[u8]) -> Result<(), ProtocolError> {
+        if device_id.len() != DEVICE_ID_BYTES {
+            return Err(ProtocolError::invalid_input(
+                "device_id must be exactly DEVICE_ID_BYTES",
+            ));
+        }
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| ProtocolError::invalid_state("Session lock poisoned"))?;
+        if inner.state.version == 0 {
+            return Err(ProtocolError::invalid_state("Session has been destroyed"));
+        }
+        inner.state.device_id = Some(device_id.to_vec());
+        Ok(())
+    }
+
+    pub fn set_session_ttl(&self, ttl_seconds: Option<u64>) -> Result<(), ProtocolError> {
+        if let Some(ttl) = ttl_seconds {
+            if !(MIN_SESSION_TTL_SECONDS..=MAX_SESSION_TTL_SECONDS).contains(&ttl) {
+                return Err(ProtocolError::invalid_input(
+                    "TTL out of allowed range",
+                ));
+            }
+        }
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| ProtocolError::invalid_state("Session lock poisoned"))?;
+        if inner.state.version == 0 {
+            return Err(ProtocolError::invalid_state("Session has been destroyed"));
+        }
+        inner.state.session_ttl_seconds = ttl_seconds;
+        Ok(())
     }
 
     pub fn destroy(&self) {

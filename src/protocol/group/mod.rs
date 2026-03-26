@@ -28,8 +28,10 @@ use crate::interfaces::IGroupEventHandler;
 use crate::proto::GroupSecurityPolicy as ProtoGroupSecurityPolicy;
 use crate::proto::{
     GroupApplicationMessage, GroupCommit, GroupExternalJoinAuthorization, GroupKeyPackage,
-    GroupMemberSenderChain, GroupMessage, GroupMessagePolicy, GroupPlaintext, GroupProposal,
-    GroupProtocolState, GroupPublicState, GroupSenderData, SealedGroupState,
+    GroupMemberSenderChain, GroupMention as ProtoGroupMention, GroupMessage, GroupMessagePolicy,
+    GroupPlaintext, GroupProposal, GroupProtocolState, GroupPublicState, GroupReaction,
+    GroupReadReceipt, GroupReplyContext as ProtoGroupReplyContext, GroupSenderData,
+    GroupTypingIndicator, SealedGroupState,
 };
 
 pub use key_schedule::{EpochKeys, GroupKeySchedule};
@@ -264,6 +266,7 @@ struct GroupSessionInner {
     event_handler: Option<Arc<dyn IGroupEventHandler>>,
     last_sent_message_hash: Vec<u8>,
     security_policy: GroupSecurityPolicy,
+    member_roles: std::collections::HashMap<u32, i32>,
 }
 
 impl Drop for GroupSessionInner {
@@ -294,6 +297,9 @@ pub enum ContentType {
     SealedDisappearing,
     Edit,
     Delete,
+    Reaction,
+    ReadReceipt,
+    Typing,
 }
 
 impl ContentType {
@@ -304,6 +310,9 @@ impl ContentType {
             CONTENT_TYPE_SEALED_DISAPPEARING => ContentType::SealedDisappearing,
             CONTENT_TYPE_EDIT => ContentType::Edit,
             CONTENT_TYPE_DELETE => ContentType::Delete,
+            CONTENT_TYPE_REACTION => ContentType::Reaction,
+            CONTENT_TYPE_READ_RECEIPT => ContentType::ReadReceipt,
+            CONTENT_TYPE_TYPING => ContentType::Typing,
             _ => ContentType::Normal,
         }
     }
@@ -316,6 +325,9 @@ impl ContentType {
             ContentType::SealedDisappearing => CONTENT_TYPE_SEALED_DISAPPEARING,
             ContentType::Edit => CONTENT_TYPE_EDIT,
             ContentType::Delete => CONTENT_TYPE_DELETE,
+            ContentType::Reaction => CONTENT_TYPE_REACTION,
+            ContentType::ReadReceipt => CONTENT_TYPE_READ_RECEIPT,
+            ContentType::Typing => CONTENT_TYPE_TYPING,
         }
     }
 
@@ -429,6 +441,8 @@ pub struct MessagePolicy {
     pub ttl_seconds: u32,
     pub frankable: bool,
     pub referenced_message_id: Vec<u8>,
+    pub mentions: Vec<(u32, u32, u32)>,
+    pub reply_context: Option<ReplyContext>,
 }
 
 impl Default for MessagePolicy {
@@ -438,8 +452,75 @@ impl Default for MessagePolicy {
             ttl_seconds: 0,
             frankable: false,
             referenced_message_id: Vec::new(),
+            mentions: Vec::new(),
+            reply_context: None,
         }
     }
+}
+
+pub fn validate_reaction(reaction: &GroupReaction) -> Result<(), ProtocolError> {
+    if reaction.message_id.len() != MESSAGE_ID_BYTES {
+        return Err(ProtocolError::invalid_input(
+            "Reaction message_id must be 32 bytes",
+        ));
+    }
+    if reaction.emoji.is_empty() {
+        return Err(ProtocolError::invalid_input("Reaction emoji must not be empty"));
+    }
+    if reaction.emoji.chars().count() > MAX_REACTION_EMOJI_CHARS {
+        return Err(ProtocolError::invalid_input(format!(
+            "Reaction emoji exceeds {MAX_REACTION_EMOJI_CHARS} chars",
+        )));
+    }
+    Ok(())
+}
+
+pub fn validate_read_receipt(receipt: &GroupReadReceipt) -> Result<(), ProtocolError> {
+    if receipt.message_ids.len() > MAX_READ_RECEIPT_MESSAGE_IDS {
+        return Err(ProtocolError::invalid_input(format!(
+            "Read receipt exceeds {MAX_READ_RECEIPT_MESSAGE_IDS} message_ids",
+        )));
+    }
+    for id in &receipt.message_ids {
+        if id.len() != MESSAGE_ID_BYTES {
+            return Err(ProtocolError::invalid_input(
+                "Read receipt message_id must be 32 bytes",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_mentions(mentions: &[ProtoGroupMention]) -> Result<(), ProtocolError> {
+    if mentions.len() > MAX_MENTIONS_PER_MESSAGE {
+        return Err(ProtocolError::invalid_input(format!(
+            "Mentions exceed {MAX_MENTIONS_PER_MESSAGE} per message",
+        )));
+    }
+    Ok(())
+}
+
+pub fn validate_reply_context(ctx: &ProtoGroupReplyContext) -> Result<(), ProtocolError> {
+    if ctx.reply_to_message_id.len() != MESSAGE_ID_BYTES {
+        return Err(ProtocolError::invalid_input(
+            "reply_to_message_id must be 32 bytes",
+        ));
+    }
+    if let Some(ref root) = ctx.thread_root_id {
+        if root.len() != MESSAGE_ID_BYTES {
+            return Err(ProtocolError::invalid_input(
+                "thread_root_id must be 32 bytes",
+            ));
+        }
+    }
+    if let Some(depth) = ctx.depth {
+        if depth > MAX_THREAD_DEPTH {
+            return Err(ProtocolError::invalid_input(format!(
+                "Thread depth {depth} exceeds maximum {MAX_THREAD_DEPTH}",
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub struct SealedPayload {
@@ -490,6 +571,12 @@ impl Drop for FrankingData {
     }
 }
 
+pub struct ReplyContext {
+    pub reply_to_message_id: Vec<u8>,
+    pub thread_root_id: Option<Vec<u8>>,
+    pub depth: Option<u32>,
+}
+
 pub struct GroupDecryptResult {
     pub plaintext: Vec<u8>,
     pub sender_leaf_index: u32,
@@ -502,6 +589,8 @@ pub struct GroupDecryptResult {
     pub prev_message_hash: Vec<u8>,
     pub message_id: Vec<u8>,
     pub referenced_message_id: Vec<u8>,
+    pub mentions: Vec<(u32, u32, u32)>,
+    pub reply_context: Option<ReplyContext>,
 }
 
 #[allow(clippy::missing_fields_in_debug)]
@@ -668,6 +757,7 @@ impl GroupSession {
                 event_handler: None,
                 last_sent_message_hash: vec![0u8; SHA256_HASH_BYTES],
                 security_policy: policy,
+                member_roles: std::collections::HashMap::new(),
             }),
         })
     }
@@ -740,6 +830,7 @@ impl GroupSession {
                 event_handler: None,
                 last_sent_message_hash: vec![0u8; SHA256_HASH_BYTES],
                 security_policy,
+                member_roles: std::collections::HashMap::new(),
             }),
         })
     }
@@ -1421,6 +1512,7 @@ impl GroupSession {
                 event_handler: None,
                 last_sent_message_hash: vec![0u8; SHA256_HASH_BYTES],
                 security_policy,
+                member_roles: std::collections::HashMap::new(),
             }),
         };
 
@@ -1452,6 +1544,22 @@ impl GroupSession {
             sent_timestamp: now,
         };
 
+        let proto_mentions: Vec<ProtoGroupMention> = policy
+            .mentions
+            .iter()
+            .map(|&(leaf_index, offset, length)| ProtoGroupMention {
+                leaf_index,
+                offset,
+                length,
+            })
+            .collect();
+
+        let proto_reply = policy.reply_context.as_ref().map(|rc| ProtoGroupReplyContext {
+            reply_to_message_id: rc.reply_to_message_id.clone(),
+            thread_root_id: rc.thread_root_id.clone(),
+            depth: rc.depth,
+        });
+
         let mut gpt = GroupPlaintext {
             content: content.to_vec(),
             policy: Some(proto_policy),
@@ -1460,6 +1568,8 @@ impl GroupSession {
             sealed_nonce: Vec::new(),
             prev_message_hash: Vec::new(),
             referenced_message_id: policy.referenced_message_id.clone(),
+            mentions: proto_mentions,
+            reply_context: proto_reply,
         };
 
         if policy.content_type.is_sealed() {
@@ -1763,6 +1873,12 @@ impl GroupSession {
                 ttl_seconds: policy.ttl_seconds,
                 frankable: true,
                 referenced_message_id: policy.referenced_message_id.clone(),
+                mentions: policy.mentions.clone(),
+                reply_context: policy.reply_context.as_ref().map(|rc| ReplyContext {
+                    reply_to_message_id: rc.reply_to_message_id.clone(),
+                    thread_root_id: rc.thread_root_id.clone(),
+                    depth: rc.depth,
+                }),
             };
             &effective_policy
         } else {
@@ -1896,9 +2012,7 @@ impl GroupSession {
             hint,
             &MessagePolicy {
                 content_type: ContentType::Sealed,
-                ttl_seconds: 0,
-                frankable: false,
-                referenced_message_id: Vec::new(),
+                ..MessagePolicy::default()
             },
             Some(plaintext),
         )
@@ -1919,8 +2033,7 @@ impl GroupSession {
             &MessagePolicy {
                 content_type: ContentType::Disappearing,
                 ttl_seconds,
-                frankable: false,
-                referenced_message_id: Vec::new(),
+                ..MessagePolicy::default()
             },
             None,
         )
@@ -1931,9 +2044,8 @@ impl GroupSession {
             plaintext,
             &MessagePolicy {
                 content_type: ContentType::Normal,
-                ttl_seconds: 0,
                 frankable: true,
-                referenced_message_id: Vec::new(),
+                ..MessagePolicy::default()
             },
             None,
         )
@@ -1960,9 +2072,8 @@ impl GroupSession {
             new_content,
             &MessagePolicy {
                 content_type: ContentType::Edit,
-                ttl_seconds: 0,
-                frankable: false,
                 referenced_message_id: target_message_id.to_vec(),
+                ..MessagePolicy::default()
             },
             None,
         )
@@ -1973,9 +2084,8 @@ impl GroupSession {
             b"",
             &MessagePolicy {
                 content_type: ContentType::Delete,
-                ttl_seconds: 0,
-                frankable: false,
                 referenced_message_id: target_message_id.to_vec(),
+                ..MessagePolicy::default()
             },
             None,
         )
@@ -2115,6 +2225,18 @@ impl GroupSession {
 
         let prev_message_hash = group_plaintext.prev_message_hash.clone();
 
+        let mentions: Vec<(u32, u32, u32)> = group_plaintext
+            .mentions
+            .iter()
+            .map(|m| (m.leaf_index, m.offset, m.length))
+            .collect();
+
+        let reply_context = group_plaintext.reply_context.as_ref().map(|rc| ReplyContext {
+            reply_to_message_id: rc.reply_to_message_id.clone(),
+            thread_root_id: rc.thread_root_id.clone(),
+            depth: rc.depth,
+        });
+
         let (
             plaintext,
             content_type,
@@ -2159,7 +2281,93 @@ impl GroupSession {
             prev_message_hash,
             message_id,
             referenced_message_id,
+            mentions,
+            reply_context,
         })
+    }
+
+    pub fn encrypt_reaction(
+        &self,
+        message_id: &[u8],
+        emoji: &str,
+        remove: bool,
+    ) -> Result<Vec<u8>, ProtocolError> {
+        let reaction = GroupReaction {
+            message_id: message_id.to_vec(),
+            emoji: emoji.to_string(),
+            remove,
+        };
+        validate_reaction(&reaction)?;
+        let mut content = Vec::new();
+        reaction
+            .encode(&mut content)
+            .map_err(|e| ProtocolError::encode(format!("GroupReaction encode: {e}")))?;
+        self.encrypt_with_policy(
+            &content,
+            &MessagePolicy {
+                content_type: ContentType::Reaction,
+                ..MessagePolicy::default()
+            },
+        )
+    }
+
+    pub fn encrypt_read_receipt(
+        &self,
+        message_ids: &[Vec<u8>],
+        timestamp: u64,
+    ) -> Result<Vec<u8>, ProtocolError> {
+        let receipt = GroupReadReceipt {
+            message_ids: message_ids.to_vec(),
+            timestamp,
+        };
+        validate_read_receipt(&receipt)?;
+        let mut content = Vec::new();
+        receipt
+            .encode(&mut content)
+            .map_err(|e| ProtocolError::encode(format!("GroupReadReceipt encode: {e}")))?;
+        self.encrypt_with_policy(
+            &content,
+            &MessagePolicy {
+                content_type: ContentType::ReadReceipt,
+                ..MessagePolicy::default()
+            },
+        )
+    }
+
+    pub fn encrypt_typing(&self, is_typing: bool) -> Result<Vec<u8>, ProtocolError> {
+        let indicator = GroupTypingIndicator { is_typing };
+        let mut content = Vec::new();
+        indicator
+            .encode(&mut content)
+            .map_err(|e| ProtocolError::encode(format!("GroupTypingIndicator encode: {e}")))?;
+        self.encrypt_with_policy(
+            &content,
+            &MessagePolicy {
+                content_type: ContentType::Typing,
+                ..MessagePolicy::default()
+            },
+        )
+    }
+
+    pub fn set_member_role(&self, leaf_index: u32, role: i32) -> Result<(), ProtocolError> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| ProtocolError::invalid_state("GroupSession lock poisoned"))?;
+        inner.member_roles.insert(leaf_index, role);
+        Ok(())
+    }
+
+    pub fn get_member_role(&self, leaf_index: u32) -> Result<i32, ProtocolError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| ProtocolError::invalid_state("GroupSession lock poisoned"))?;
+        Ok(inner.member_roles.get(&leaf_index).copied().unwrap_or(0))
+    }
+
+    pub fn is_admin(&self, leaf_index: u32) -> Result<bool, ProtocolError> {
+        Ok(self.get_member_role(leaf_index)? == 2)
     }
 
     pub fn set_event_handler(&self, handler: Arc<dyn IGroupEventHandler>) {
@@ -2297,6 +2505,7 @@ impl GroupSession {
             nonce_counter: 0,
             created_at: None,
             security_policy: inner.security_policy.policy_bytes(),
+            member_roles: inner.member_roles.iter().map(|(&k, &v)| (k, v)).collect(),
         };
 
         let mut tmp = Vec::new();
@@ -2519,6 +2728,7 @@ impl GroupSession {
                 event_handler: None,
                 last_sent_message_hash: vec![0u8; SHA256_HASH_BYTES],
                 security_policy,
+                member_roles: state.member_roles.into_iter().collect(),
             }),
         })
     }
