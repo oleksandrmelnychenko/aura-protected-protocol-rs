@@ -10,10 +10,10 @@ use crate::core::constants::{
     MAX_COLLAGE_ATTACHMENTS, MAX_COLLAGE_DESCRIPTION_CHARS, MAX_COLLAGE_NAME_CHARS,
     MAX_CONTACT_AVATAR_DATA_SIZE, MAX_CONTACT_DISPLAY_NAME_CHARS, MAX_CONTACT_EMAIL_CHARS,
     MAX_CONTACT_ORGANIZATION_CHARS, MAX_CONTACT_PHONE_CHARS, MAX_INLINE_ATTACHMENT_DATA_SIZE,
-    MAX_LINK_PREVIEW_DESCRIPTION_CHARS, MAX_LINK_PREVIEW_DOMAIN_CHARS,
-    MAX_LINK_PREVIEW_IMAGE_SIZE, MAX_LINK_PREVIEW_TITLE_CHARS, MAX_LINK_PREVIEW_URL_CHARS,
-    MAX_LOCATION_LABEL_CHARS, MAX_VOICE_TRANSCRIPT_CHARS, MAX_VOICE_WAVEFORM_SAMPLES,
-    MESSAGE_ID_BYTES, MIN_ATTACHMENT_TTL_SECONDS,
+    MAX_LINK_PREVIEW_DESCRIPTION_CHARS, MAX_LINK_PREVIEW_DOMAIN_CHARS, MAX_LINK_PREVIEW_IMAGE_SIZE,
+    MAX_LINK_PREVIEW_TITLE_CHARS, MAX_LINK_PREVIEW_URL_CHARS, MAX_LOCATION_LABEL_CHARS,
+    MAX_VOICE_TRANSCRIPT_CHARS, MAX_VOICE_WAVEFORM_SAMPLES, MESSAGE_ID_BYTES,
+    MIN_ATTACHMENT_TTL_SECONDS,
 };
 use crate::core::errors::ProtocolError;
 use crate::crypto::{AesGcm, HkdfSha256};
@@ -27,18 +27,57 @@ use std::mem::size_of;
 
 fn validate_mime_type(mime_type: &str) -> Result<(), ProtocolError> {
     if mime_type.is_empty() {
-        return Err(ProtocolError::invalid_input("Attachment mime_type is required"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment mime_type is required",
+        ));
     }
     if mime_type.len() > 255 {
-        return Err(ProtocolError::invalid_input("Attachment mime_type too long"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment mime_type too long",
+        ));
     }
     if !mime_type.is_ascii() {
-        return Err(ProtocolError::invalid_input("Attachment mime_type must be ASCII"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment mime_type must be ASCII",
+        ));
     }
-    if !mime_type.contains('/') {
-        return Err(ProtocolError::invalid_input("Attachment mime_type must contain '/'"));
+    let Some((type_part, subtype_part)) = mime_type.split_once('/') else {
+        return Err(ProtocolError::invalid_input(
+            "Attachment mime_type must contain '/'",
+        ));
+    };
+    if type_part.is_empty() || subtype_part.is_empty() || subtype_part.contains('/') {
+        return Err(ProtocolError::invalid_input(
+            "Attachment mime_type must be type/subtype",
+        ));
+    }
+    if !type_part.bytes().all(is_mime_token_byte) || !subtype_part.bytes().all(is_mime_token_byte) {
+        return Err(ProtocolError::invalid_input(
+            "Attachment mime_type contains invalid characters",
+        ));
     }
     Ok(())
+}
+
+fn is_mime_token_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
+        )
 }
 
 pub fn generate_attachment_id() -> Vec<u8> {
@@ -51,23 +90,35 @@ pub fn generate_file_key() -> Vec<u8> {
 
 pub fn validate_manifest(manifest: &AttachmentManifest) -> Result<(), ProtocolError> {
     if manifest.version != ATTACHMENT_PROTOCOL_VERSION {
-        return Err(ProtocolError::invalid_input("Unsupported attachment manifest version"));
+        return Err(ProtocolError::invalid_input(
+            "Unsupported attachment manifest version",
+        ));
     }
     if manifest.attachment_id.len() != ATTACHMENT_ID_BYTES {
-        return Err(ProtocolError::invalid_input("Attachment ID must be 32 bytes"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment ID must be 32 bytes",
+        ));
     }
     validate_mime_type(&manifest.mime_type)?;
     if manifest.total_size == 0 {
-        return Err(ProtocolError::invalid_input("Attachment total_size must be > 0"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment total_size must be > 0",
+        ));
     }
     if manifest.chunk_size == 0 || manifest.chunk_size as usize > MAX_ATTACHMENT_CHUNK_SIZE {
-        return Err(ProtocolError::invalid_input("Attachment chunk_size is out of range"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment chunk_size is out of range",
+        ));
     }
     if manifest.chunk_count == 0 {
-        return Err(ProtocolError::invalid_input("Attachment chunk_count must be > 0"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment chunk_count must be > 0",
+        ));
     }
     if manifest.file_sha256.len() != ATTACHMENT_HASH_BYTES {
-        return Err(ProtocolError::invalid_input("Attachment file_sha256 must be 32 bytes"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment file_sha256 must be 32 bytes",
+        ));
     }
     if manifest.encrypted_file_key.is_empty()
         || manifest.encrypted_file_key.len() > MAX_ATTACHMENT_ENCRYPTED_FILE_KEY_SIZE
@@ -113,21 +164,27 @@ fn validate_manifest_optional_fields(manifest: &AttachmentManifest) -> Result<()
                 "Thumbnail fields must all be present or all absent",
             ));
         }
-        let thumb = manifest.encrypted_thumbnail.as_ref().unwrap();
+        let (Some(thumb), Some(nonce), Some(mime), Some(size)) = (
+            manifest.encrypted_thumbnail.as_ref(),
+            manifest.thumbnail_nonce.as_ref(),
+            manifest.thumbnail_mime_type.as_ref(),
+            manifest.thumbnail_size,
+        ) else {
+            return Err(ProtocolError::invalid_input(
+                "Thumbnail fields must all be present or all absent",
+            ));
+        };
         if thumb.len() < 16 || thumb.len() > MAX_ATTACHMENT_THUMBNAIL_SIZE + 16 {
             return Err(ProtocolError::invalid_input(
                 "Attachment encrypted_thumbnail size is out of range",
             ));
         }
-        let nonce = manifest.thumbnail_nonce.as_ref().unwrap();
         if nonce.len() != AES_GCM_NONCE_BYTES {
             return Err(ProtocolError::invalid_input(
                 "Attachment thumbnail_nonce must be 12 bytes",
             ));
         }
-        let mime = manifest.thumbnail_mime_type.as_ref().unwrap();
         validate_mime_type(mime)?;
-        let size = manifest.thumbnail_size.unwrap();
         if size == 0 || size as usize > MAX_ATTACHMENT_THUMBNAIL_SIZE {
             return Err(ProtocolError::invalid_input(
                 "Attachment thumbnail_size is out of range",
@@ -190,10 +247,14 @@ pub fn derive_chunk_nonce(
     chunk_index: u32,
 ) -> Result<Vec<u8>, ProtocolError> {
     if file_key.len() != ATTACHMENT_FILE_KEY_BYTES {
-        return Err(ProtocolError::invalid_input("Attachment file key must be 32 bytes"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment file key must be 32 bytes",
+        ));
     }
     if attachment_id.len() != ATTACHMENT_ID_BYTES {
-        return Err(ProtocolError::invalid_input("Attachment ID must be 32 bytes"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment ID must be 32 bytes",
+        ));
     }
     let mut salt = Vec::with_capacity(ATTACHMENT_ID_BYTES + size_of::<u32>());
     salt.extend_from_slice(attachment_id);
@@ -214,10 +275,14 @@ pub fn encrypt_chunk(
     plaintext: &[u8],
 ) -> Result<(Vec<u8>, Vec<u8>), ProtocolError> {
     if plaintext.is_empty() {
-        return Err(ProtocolError::invalid_input("Attachment chunk plaintext is empty"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment chunk plaintext is empty",
+        ));
     }
     if plaintext.len() > chunk_size as usize || plaintext.len() > MAX_ATTACHMENT_CHUNK_SIZE {
-        return Err(ProtocolError::invalid_input("Attachment chunk plaintext is too large"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment chunk plaintext is too large",
+        ));
     }
     if chunk_index >= chunk_count {
         return Err(ProtocolError::invalid_input(
@@ -257,19 +322,28 @@ pub fn decrypt_chunk(
         ));
     }
     if ciphertext.len() < 16 {
-        return Err(ProtocolError::invalid_input("Attachment chunk ciphertext is too small"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment chunk ciphertext is too small",
+        ));
     }
     if ciphertext.len() > chunk_size as usize + 16 {
-        return Err(ProtocolError::invalid_input("Attachment chunk ciphertext is too large"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment chunk ciphertext is too large",
+        ));
     }
     if nonce.len() != AES_GCM_NONCE_BYTES {
-        return Err(ProtocolError::invalid_input("Attachment chunk nonce must be 12 bytes"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment chunk nonce must be 12 bytes",
+        ));
     }
     validate_mime_type(mime_type)?;
 
     let expected_nonce = derive_chunk_nonce(file_key, attachment_id, chunk_index)?;
-    if !crate::crypto::CryptoInterop::constant_time_equals(nonce, &expected_nonce).unwrap_or(false) {
-        return Err(ProtocolError::invalid_input("Attachment chunk nonce mismatch"));
+    if !crate::crypto::CryptoInterop::constant_time_equals(nonce, &expected_nonce).unwrap_or(false)
+    {
+        return Err(ProtocolError::invalid_input(
+            "Attachment chunk nonce mismatch",
+        ));
     }
 
     let aad = chunk_aad(
@@ -296,7 +370,9 @@ pub fn validate_chunk_shape(
         ));
     }
     if nonce.len() != AES_GCM_NONCE_BYTES {
-        return Err(ProtocolError::invalid_input("Attachment chunk nonce must be 12 bytes"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment chunk nonce must be 12 bytes",
+        ));
     }
     if ciphertext.len() < 16 || ciphertext.len() > manifest.chunk_size as usize + 16 {
         return Err(ProtocolError::invalid_input(
@@ -338,16 +414,22 @@ pub fn encrypt_thumbnail(
     thumbnail_plaintext: &[u8],
 ) -> Result<(Vec<u8>, Vec<u8>), ProtocolError> {
     if file_key.len() != ATTACHMENT_FILE_KEY_BYTES {
-        return Err(ProtocolError::invalid_input("Attachment file key must be 32 bytes"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment file key must be 32 bytes",
+        ));
     }
     if attachment_id.len() != ATTACHMENT_ID_BYTES {
-        return Err(ProtocolError::invalid_input("Attachment ID must be 32 bytes"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment ID must be 32 bytes",
+        ));
     }
     if thumbnail_plaintext.is_empty() {
         return Err(ProtocolError::invalid_input("Thumbnail plaintext is empty"));
     }
     if thumbnail_plaintext.len() > MAX_ATTACHMENT_THUMBNAIL_SIZE {
-        return Err(ProtocolError::invalid_input("Thumbnail plaintext is too large"));
+        return Err(ProtocolError::invalid_input(
+            "Thumbnail plaintext is too large",
+        ));
     }
     validate_mime_type(thumbnail_mime_type)?;
 
@@ -365,23 +447,30 @@ pub fn decrypt_thumbnail(
     ciphertext: &[u8],
 ) -> Result<Vec<u8>, ProtocolError> {
     if file_key.len() != ATTACHMENT_FILE_KEY_BYTES {
-        return Err(ProtocolError::invalid_input("Attachment file key must be 32 bytes"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment file key must be 32 bytes",
+        ));
     }
     if attachment_id.len() != ATTACHMENT_ID_BYTES {
-        return Err(ProtocolError::invalid_input("Attachment ID must be 32 bytes"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment ID must be 32 bytes",
+        ));
     }
     if nonce.len() != AES_GCM_NONCE_BYTES {
-        return Err(ProtocolError::invalid_input("Thumbnail nonce must be 12 bytes"));
+        return Err(ProtocolError::invalid_input(
+            "Thumbnail nonce must be 12 bytes",
+        ));
     }
     if ciphertext.len() < 16 || ciphertext.len() > MAX_ATTACHMENT_THUMBNAIL_SIZE + 16 {
-        return Err(ProtocolError::invalid_input("Thumbnail ciphertext size is out of range"));
+        return Err(ProtocolError::invalid_input(
+            "Thumbnail ciphertext size is out of range",
+        ));
     }
     validate_mime_type(thumbnail_mime_type)?;
 
     let expected_nonce =
         derive_chunk_nonce(file_key, attachment_id, ATTACHMENT_THUMBNAIL_CHUNK_INDEX)?;
-    if !crate::crypto::CryptoInterop::constant_time_equals(nonce, &expected_nonce)
-        .unwrap_or(false)
+    if !crate::crypto::CryptoInterop::constant_time_equals(nonce, &expected_nonce).unwrap_or(false)
     {
         return Err(ProtocolError::invalid_input("Thumbnail nonce mismatch"));
     }
@@ -392,9 +481,14 @@ pub fn decrypt_thumbnail(
 
 // --- Resume / Progress ---
 
-pub fn create_chunk_progress(attachment_id: &[u8], chunk_count: u32) -> Result<ChunkProgress, ProtocolError> {
+pub fn create_chunk_progress(
+    attachment_id: &[u8],
+    chunk_count: u32,
+) -> Result<ChunkProgress, ProtocolError> {
     if attachment_id.len() != ATTACHMENT_ID_BYTES {
-        return Err(ProtocolError::invalid_input("Attachment ID must be 32 bytes"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment ID must be 32 bytes",
+        ));
     }
     if chunk_count == 0 {
         return Err(ProtocolError::invalid_input("chunk_count must be > 0"));
@@ -460,12 +554,35 @@ pub fn create_collage_manifest_with_metadata(
     layout: Option<i32>,
 ) -> Result<CollageManifest, ProtocolError> {
     if manifests.is_empty() {
-        return Err(ProtocolError::invalid_input("Collage must have at least 1 attachment"));
+        return Err(ProtocolError::invalid_input(
+            "Collage must have at least 1 attachment",
+        ));
     }
     if manifests.len() > MAX_COLLAGE_ATTACHMENTS {
         return Err(ProtocolError::invalid_input(
             "Collage exceeds max attachment count",
         ));
+    }
+    if let Some(name) = name {
+        if name.chars().count() > MAX_COLLAGE_NAME_CHARS {
+            return Err(ProtocolError::invalid_input(
+                "Collage name exceeds max length",
+            ));
+        }
+    }
+    if let Some(description) = description {
+        if description.chars().count() > MAX_COLLAGE_DESCRIPTION_CHARS {
+            return Err(ProtocolError::invalid_input(
+                "Collage description exceeds max length",
+            ));
+        }
+    }
+    if let Some(layout) = layout {
+        if !(0..=3).contains(&layout) {
+            return Err(ProtocolError::invalid_input(
+                "Collage layout must be 0, 1, 2, or 3",
+            ));
+        }
     }
 
     let mut seen_indices = BTreeSet::new();
@@ -473,7 +590,9 @@ pub fn create_collage_manifest_with_metadata(
 
     for (i, m) in manifests.iter().enumerate() {
         validate_manifest(m)?;
-        let idx = m.collage_index.unwrap_or_else(|| u32::try_from(i).unwrap_or(0));
+        let idx = m
+            .collage_index
+            .unwrap_or_else(|| u32::try_from(i).unwrap_or(0));
         if !seen_indices.insert(idx) {
             return Err(ProtocolError::invalid_input(
                 "Collage manifests must have unique collage_index values",
@@ -500,16 +619,22 @@ pub fn validate_collage_manifest(
     collage: &CollageManifest,
 ) -> Result<Vec<AttachmentManifest>, ProtocolError> {
     if collage.version != 1 {
-        return Err(ProtocolError::invalid_input("Unsupported collage manifest version"));
+        return Err(ProtocolError::invalid_input(
+            "Unsupported collage manifest version",
+        ));
     }
     if collage.collage_id.len() != COLLAGE_ID_BYTES {
         return Err(ProtocolError::invalid_input("Collage ID must be 32 bytes"));
     }
     if collage.manifests.is_empty() {
-        return Err(ProtocolError::invalid_input("Collage must have at least 1 attachment"));
+        return Err(ProtocolError::invalid_input(
+            "Collage must have at least 1 attachment",
+        ));
     }
     if collage.manifests.len() > MAX_COLLAGE_ATTACHMENTS {
-        return Err(ProtocolError::invalid_input("Collage exceeds max attachment count"));
+        return Err(ProtocolError::invalid_input(
+            "Collage exceeds max attachment count",
+        ));
     }
     if collage.display_count as usize != collage.manifests.len() {
         return Err(ProtocolError::invalid_input(
@@ -519,13 +644,22 @@ pub fn validate_collage_manifest(
 
     if let Some(ref name) = collage.name {
         if name.chars().count() > MAX_COLLAGE_NAME_CHARS {
-            return Err(ProtocolError::invalid_input("Collage name exceeds max length"));
+            return Err(ProtocolError::invalid_input(
+                "Collage name exceeds max length",
+            ));
         }
     }
     if let Some(ref desc) = collage.description {
         if desc.chars().count() > MAX_COLLAGE_DESCRIPTION_CHARS {
             return Err(ProtocolError::invalid_input(
                 "Collage description exceeds max length",
+            ));
+        }
+    }
+    if let Some(layout) = collage.layout {
+        if !(0..=3).contains(&layout) {
+            return Err(ProtocolError::invalid_input(
+                "Collage layout must be 0, 1, 2, or 3",
             ));
         }
     }
@@ -537,7 +671,9 @@ pub fn validate_collage_manifest(
         let m = AttachmentManifest::decode(bytes.as_slice())
             .map_err(|e| ProtocolError::decode(format!("CollageManifest entry decode: {e}")))?;
         validate_manifest(&m)?;
-        let idx = m.collage_index.unwrap_or_else(|| u32::try_from(i).unwrap_or(0));
+        let idx = m
+            .collage_index
+            .unwrap_or_else(|| u32::try_from(i).unwrap_or(0));
         if !seen_indices.insert(idx) {
             return Err(ProtocolError::invalid_input(
                 "Collage manifests must have unique collage_index values",
@@ -578,19 +714,29 @@ impl StreamingEncryptor {
         chunk_count: u32,
     ) -> Result<Self, ProtocolError> {
         if file_key.len() != ATTACHMENT_FILE_KEY_BYTES {
-            return Err(ProtocolError::invalid_input("Attachment file key must be 32 bytes"));
+            return Err(ProtocolError::invalid_input(
+                "Attachment file key must be 32 bytes",
+            ));
         }
         if attachment_id.len() != ATTACHMENT_ID_BYTES {
-            return Err(ProtocolError::invalid_input("Attachment ID must be 32 bytes"));
+            return Err(ProtocolError::invalid_input(
+                "Attachment ID must be 32 bytes",
+            ));
         }
         if chunk_size == 0 || chunk_size as usize > MAX_ATTACHMENT_CHUNK_SIZE {
-            return Err(ProtocolError::invalid_input("Attachment chunk_size is out of range"));
+            return Err(ProtocolError::invalid_input(
+                "Attachment chunk_size is out of range",
+            ));
         }
         if chunk_count == 0 {
-            return Err(ProtocolError::invalid_input("Attachment chunk_count must be > 0"));
+            return Err(ProtocolError::invalid_input(
+                "Attachment chunk_count must be > 0",
+            ));
         }
         if total_size == 0 {
-            return Err(ProtocolError::invalid_input("Attachment total_size must be > 0"));
+            return Err(ProtocolError::invalid_input(
+                "Attachment total_size must be > 0",
+            ));
         }
         validate_mime_type(&mime_type)?;
 
@@ -613,7 +759,8 @@ impl StreamingEncryptor {
         while offset < data.len() {
             let remaining_in_chunk = self.chunk_size as usize - self.buffer.len();
             let to_copy = remaining_in_chunk.min(data.len() - offset);
-            self.buffer.extend_from_slice(&data[offset..offset + to_copy]);
+            self.buffer
+                .extend_from_slice(&data[offset..offset + to_copy]);
             offset += to_copy;
 
             if self.buffer.len() == self.chunk_size as usize {
@@ -689,16 +836,24 @@ impl StreamingDecryptor {
         chunk_count: u32,
     ) -> Result<Self, ProtocolError> {
         if file_key.len() != ATTACHMENT_FILE_KEY_BYTES {
-            return Err(ProtocolError::invalid_input("Attachment file key must be 32 bytes"));
+            return Err(ProtocolError::invalid_input(
+                "Attachment file key must be 32 bytes",
+            ));
         }
         if attachment_id.len() != ATTACHMENT_ID_BYTES {
-            return Err(ProtocolError::invalid_input("Attachment ID must be 32 bytes"));
+            return Err(ProtocolError::invalid_input(
+                "Attachment ID must be 32 bytes",
+            ));
         }
         if chunk_size == 0 || chunk_size as usize > MAX_ATTACHMENT_CHUNK_SIZE {
-            return Err(ProtocolError::invalid_input("Attachment chunk_size is out of range"));
+            return Err(ProtocolError::invalid_input(
+                "Attachment chunk_size is out of range",
+            ));
         }
         if chunk_count == 0 {
-            return Err(ProtocolError::invalid_input("Attachment chunk_count must be > 0"));
+            return Err(ProtocolError::invalid_input(
+                "Attachment chunk_count must be > 0",
+            ));
         }
         validate_mime_type(&mime_type)?;
 
@@ -752,16 +907,16 @@ pub fn encrypt_file_key_for_session(
     attachment_id: &[u8],
 ) -> Result<Vec<u8>, ProtocolError> {
     if file_key.len() != ATTACHMENT_FILE_KEY_BYTES {
-        return Err(ProtocolError::invalid_input("Attachment file key must be 32 bytes"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment file key must be 32 bytes",
+        ));
     }
     if attachment_id.len() != ATTACHMENT_ID_BYTES {
-        return Err(ProtocolError::invalid_input("Attachment ID must be 32 bytes"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment ID must be 32 bytes",
+        ));
     }
-    let mut correlation = String::with_capacity(attachment_id.len() * 2);
-    for b in attachment_id {
-        use std::fmt::Write;
-        let _ = write!(correlation, "{b:02x}");
-    }
+    let correlation = attachment_id_to_correlation_id(attachment_id);
     let envelope = session.encrypt(file_key, 0, 0, Some(&correlation))?;
     let mut buf = Vec::new();
     envelope
@@ -773,8 +928,13 @@ pub fn encrypt_file_key_for_session(
 pub fn decrypt_file_key_from_session(
     session: &crate::protocol::Session,
     encrypted_file_key: &[u8],
-    _attachment_id: &[u8],
+    attachment_id: &[u8],
 ) -> Result<Vec<u8>, ProtocolError> {
+    if attachment_id.len() != ATTACHMENT_ID_BYTES {
+        return Err(ProtocolError::invalid_input(
+            "Attachment ID must be 32 bytes",
+        ));
+    }
     let envelope = crate::proto::SecureEnvelope::decode(encrypted_file_key)
         .map_err(|e| ProtocolError::decode(format!("File key envelope decode: {e}")))?;
     let result = session.decrypt(&envelope)?;
@@ -783,7 +943,22 @@ pub fn decrypt_file_key_from_session(
             "Decrypted file key has invalid length",
         ));
     }
+    let expected_correlation = attachment_id_to_correlation_id(attachment_id);
+    if result.metadata.correlation_id.as_deref() != Some(expected_correlation.as_str()) {
+        return Err(ProtocolError::invalid_input(
+            "Encrypted file key does not match attachment ID",
+        ));
+    }
     Ok(result.plaintext)
+}
+
+fn attachment_id_to_correlation_id(attachment_id: &[u8]) -> String {
+    let mut correlation = String::with_capacity(attachment_id.len() * 2);
+    for b in attachment_id {
+        use std::fmt::Write;
+        let _ = write!(correlation, "{b:02x}");
+    }
+    correlation
 }
 
 const WINDOWS_RESERVED_NAMES: &[&str] = &[
@@ -792,7 +967,8 @@ const WINDOWS_RESERVED_NAMES: &[&str] = &[
 ];
 
 fn is_windows_reserved(name: &str) -> bool {
-    let stem = name.split('.').next().unwrap_or("");
+    let normalized = name.trim_end_matches([' ', '.']);
+    let stem = normalized.split('.').next().unwrap_or("");
     let upper = stem.to_uppercase();
     WINDOWS_RESERVED_NAMES.iter().any(|r| *r == upper)
 }
@@ -805,19 +981,39 @@ pub fn validate_filename(name: &str) -> Result<(), ProtocolError> {
         return Err(ProtocolError::invalid_input("Filename exceeds max length"));
     }
     if name.bytes().any(|b| b == 0) {
-        return Err(ProtocolError::invalid_input("Filename must not contain NUL bytes"));
+        return Err(ProtocolError::invalid_input(
+            "Filename must not contain NUL bytes",
+        ));
     }
     if name.chars().any(char::is_control) {
-        return Err(ProtocolError::invalid_input("Filename must not contain control characters"));
+        return Err(ProtocolError::invalid_input(
+            "Filename must not contain control characters",
+        ));
     }
     if name.contains('/') || name.contains('\\') {
-        return Err(ProtocolError::invalid_input("Filename must not contain path separators"));
+        return Err(ProtocolError::invalid_input(
+            "Filename must not contain path separators",
+        ));
+    }
+    if name == "." || name == ".." {
+        return Err(ProtocolError::invalid_input(
+            "Filename must not be '.' or '..'",
+        ));
     }
     if name.contains("..") {
-        return Err(ProtocolError::invalid_input("Filename must not contain '..' sequences"));
+        return Err(ProtocolError::invalid_input(
+            "Filename must not contain '..' sequences",
+        ));
+    }
+    if name.ends_with(' ') || name.ends_with('.') {
+        return Err(ProtocolError::invalid_input(
+            "Filename must not end with '.' or space",
+        ));
     }
     if is_windows_reserved(name) {
-        return Err(ProtocolError::invalid_input("Filename must not be a Windows reserved name"));
+        return Err(ProtocolError::invalid_input(
+            "Filename must not be a Windows reserved name",
+        ));
     }
     Ok(())
 }
@@ -835,9 +1031,6 @@ pub fn sanitize_filename(name: &str) -> String {
         }
     }
     result = result.replace("..", "_");
-    if is_windows_reserved(&result) {
-        result.insert(0, '_');
-    }
     if result.len() > MAX_ATTACHMENT_FILENAME_BYTES {
         let mut end = MAX_ATTACHMENT_FILENAME_BYTES;
         while !result.is_char_boundary(end) && end > 0 {
@@ -845,8 +1038,17 @@ pub fn sanitize_filename(name: &str) -> String {
         }
         result.truncate(end);
     }
+    while result.ends_with(' ') || result.ends_with('.') {
+        result.pop();
+    }
+    if result == "." || result == ".." {
+        result.clear();
+    }
     if result.is_empty() {
         return "_".to_owned();
+    }
+    if is_windows_reserved(&result) {
+        result.insert(0, '_');
     }
     result
 }
@@ -875,23 +1077,108 @@ fn check_wave(header: &[u8]) -> bool {
 }
 
 const MAGIC_TABLE: &[MagicSignature] = &[
-    MagicSignature { mime: "image/png", offset: 0, bytes: &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A], extra_check: None },
-    MagicSignature { mime: "image/webp", offset: 0, bytes: b"RIFF", extra_check: Some(check_webp) },
-    MagicSignature { mime: "image/heic", offset: 4, bytes: b"ftyp", extra_check: Some(check_heic) },
-    MagicSignature { mime: "image/heif", offset: 4, bytes: b"ftyp", extra_check: Some(check_heic) },
-    MagicSignature { mime: "image/jpeg", offset: 0, bytes: &[0xFF, 0xD8, 0xFF], extra_check: None },
-    MagicSignature { mime: "image/gif", offset: 0, bytes: &[0x47, 0x49, 0x46, 0x38], extra_check: None },
-    MagicSignature { mime: "image/tiff", offset: 0, bytes: &[0x49, 0x49, 0x2A, 0x00], extra_check: None },
-    MagicSignature { mime: "image/bmp", offset: 0, bytes: &[0x42, 0x4D], extra_check: None },
-    MagicSignature { mime: "application/pdf", offset: 0, bytes: &[0x25, 0x50, 0x44, 0x46], extra_check: None },
-    MagicSignature { mime: "video/mp4", offset: 4, bytes: b"ftyp", extra_check: None },
-    MagicSignature { mime: "video/quicktime", offset: 4, bytes: b"ftyp", extra_check: None },
-    MagicSignature { mime: "video/webm", offset: 0, bytes: &[0x1A, 0x45, 0xDF, 0xA3], extra_check: None },
-    MagicSignature { mime: "audio/ogg", offset: 0, bytes: &[0x4F, 0x67, 0x67, 0x53], extra_check: None },
-    MagicSignature { mime: "video/ogg", offset: 0, bytes: &[0x4F, 0x67, 0x67, 0x53], extra_check: None },
-    MagicSignature { mime: "application/zip", offset: 0, bytes: &[0x50, 0x4B, 0x03, 0x04], extra_check: None },
-    MagicSignature { mime: "audio/flac", offset: 0, bytes: &[0x66, 0x4C, 0x61, 0x43], extra_check: None },
-    MagicSignature { mime: "audio/wav", offset: 0, bytes: b"RIFF", extra_check: Some(check_wave) },
+    MagicSignature {
+        mime: "image/png",
+        offset: 0,
+        bytes: &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+        extra_check: None,
+    },
+    MagicSignature {
+        mime: "image/webp",
+        offset: 0,
+        bytes: b"RIFF",
+        extra_check: Some(check_webp),
+    },
+    MagicSignature {
+        mime: "image/heic",
+        offset: 4,
+        bytes: b"ftyp",
+        extra_check: Some(check_heic),
+    },
+    MagicSignature {
+        mime: "image/heif",
+        offset: 4,
+        bytes: b"ftyp",
+        extra_check: Some(check_heic),
+    },
+    MagicSignature {
+        mime: "image/jpeg",
+        offset: 0,
+        bytes: &[0xFF, 0xD8, 0xFF],
+        extra_check: None,
+    },
+    MagicSignature {
+        mime: "image/gif",
+        offset: 0,
+        bytes: &[0x47, 0x49, 0x46, 0x38],
+        extra_check: None,
+    },
+    MagicSignature {
+        mime: "image/tiff",
+        offset: 0,
+        bytes: &[0x49, 0x49, 0x2A, 0x00],
+        extra_check: None,
+    },
+    MagicSignature {
+        mime: "image/bmp",
+        offset: 0,
+        bytes: &[0x42, 0x4D],
+        extra_check: None,
+    },
+    MagicSignature {
+        mime: "application/pdf",
+        offset: 0,
+        bytes: &[0x25, 0x50, 0x44, 0x46],
+        extra_check: None,
+    },
+    MagicSignature {
+        mime: "video/mp4",
+        offset: 4,
+        bytes: b"ftyp",
+        extra_check: None,
+    },
+    MagicSignature {
+        mime: "video/quicktime",
+        offset: 4,
+        bytes: b"ftyp",
+        extra_check: None,
+    },
+    MagicSignature {
+        mime: "video/webm",
+        offset: 0,
+        bytes: &[0x1A, 0x45, 0xDF, 0xA3],
+        extra_check: None,
+    },
+    MagicSignature {
+        mime: "audio/ogg",
+        offset: 0,
+        bytes: &[0x4F, 0x67, 0x67, 0x53],
+        extra_check: None,
+    },
+    MagicSignature {
+        mime: "video/ogg",
+        offset: 0,
+        bytes: &[0x4F, 0x67, 0x67, 0x53],
+        extra_check: None,
+    },
+    MagicSignature {
+        mime: "application/zip",
+        offset: 0,
+        bytes: &[0x50, 0x4B, 0x03, 0x04],
+        extra_check: None,
+    },
+    MagicSignature {
+        mime: "audio/flac",
+        offset: 0,
+        bytes: &[0x66, 0x4C, 0x61, 0x43],
+        extra_check: None,
+    },
+    MagicSignature {
+        mime: "audio/wav",
+        offset: 0,
+        bytes: b"RIFF",
+        extra_check: Some(check_wave),
+    },
 ];
 
 fn matches_signature(header: &[u8], sig: &MagicSignature) -> bool {
@@ -947,7 +1234,8 @@ pub fn validate_magic_bytes(header: &[u8], mime_type: &str) -> Result<(), Protoc
                         "Header too short to validate magic bytes",
                     ));
                 }
-                if header[sig.offset..sig.offset + sig.bytes.len()] != *sig.bytes || !check(header) {
+                if header[sig.offset..sig.offset + sig.bytes.len()] != *sig.bytes || !check(header)
+                {
                     return Err(ProtocolError::invalid_input(
                         "Magic bytes do not match declared mime type",
                     ));
@@ -996,7 +1284,9 @@ pub fn validate_magic_bytes(header: &[u8], mime_type: &str) -> Result<(), Protoc
     if mime_type == "image/tiff" && match_tiff_be(header) {
         return Ok(());
     }
-    Ok(())
+    Err(ProtocolError::invalid_input(
+        "Unsupported mime type for magic byte validation",
+    ))
 }
 
 pub fn detect_mime_from_magic(header: &[u8]) -> Option<&'static str> {
@@ -1052,14 +1342,20 @@ pub fn validate_content_policy(
 
 pub fn validate_inline_attachment(inline: &InlineAttachment) -> Result<(), ProtocolError> {
     if inline.attachment_id.len() != ATTACHMENT_ID_BYTES {
-        return Err(ProtocolError::invalid_input("Inline attachment ID must be 32 bytes"));
+        return Err(ProtocolError::invalid_input(
+            "Inline attachment ID must be 32 bytes",
+        ));
     }
     validate_mime_type(&inline.mime_type)?;
     if inline.data.is_empty() {
-        return Err(ProtocolError::invalid_input("Inline attachment data must not be empty"));
+        return Err(ProtocolError::invalid_input(
+            "Inline attachment data must not be empty",
+        ));
     }
     if inline.data.len() > MAX_INLINE_ATTACHMENT_DATA_SIZE {
-        return Err(ProtocolError::invalid_input("Inline attachment data exceeds max size"));
+        return Err(ProtocolError::invalid_input(
+            "Inline attachment data exceeds max size",
+        ));
     }
     if let Some(ref filename) = inline.original_filename {
         validate_filename(filename)?;
@@ -1090,10 +1386,14 @@ pub fn create_inline_attachment(
 
 pub fn validate_attachment_reference(reference: &AttachmentReference) -> Result<(), ProtocolError> {
     if reference.attachment_id.len() != ATTACHMENT_ID_BYTES {
-        return Err(ProtocolError::invalid_input("Attachment reference ID must be 32 bytes"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment reference ID must be 32 bytes",
+        ));
     }
     if !(0..=2).contains(&reference.reference_type) {
-        return Err(ProtocolError::invalid_input("Attachment reference_type must be 0, 1, or 2"));
+        return Err(ProtocolError::invalid_input(
+            "Attachment reference_type must be 0, 1, or 2",
+        ));
     }
     if let Some(ref mid) = reference.source_message_id {
         if mid.len() != MESSAGE_ID_BYTES {
@@ -1121,7 +1421,9 @@ pub fn create_attachment_reference(
 
 pub fn validate_voice_message_meta(voice: &VoiceMessageMeta) -> Result<(), ProtocolError> {
     if voice.waveform_samples.len() > MAX_VOICE_WAVEFORM_SAMPLES {
-        return Err(ProtocolError::invalid_input("Voice waveform_samples exceeds max count"));
+        return Err(ProtocolError::invalid_input(
+            "Voice waveform_samples exceeds max count",
+        ));
     }
     for s in &voice.waveform_samples {
         if !s.is_finite() || *s < 0.0 || *s > 1.0 {
@@ -1132,7 +1434,9 @@ pub fn validate_voice_message_meta(voice: &VoiceMessageMeta) -> Result<(), Proto
     }
     if let Some(ref transcript) = voice.transcript {
         if transcript.chars().count() > MAX_VOICE_TRANSCRIPT_CHARS {
-            return Err(ProtocolError::invalid_input("Voice transcript exceeds max length"));
+            return Err(ProtocolError::invalid_input(
+                "Voice transcript exceeds max length",
+            ));
         }
     }
     if let Some(speed) = voice.playback_speed_hint {
@@ -1181,7 +1485,9 @@ pub fn validate_location_attachment(loc: &LocationAttachment) -> Result<(), Prot
     }
     if let Some(ref label) = loc.label {
         if label.chars().count() > MAX_LOCATION_LABEL_CHARS {
-            return Err(ProtocolError::invalid_input("Location label exceeds max length"));
+            return Err(ProtocolError::invalid_input(
+                "Location label exceeds max length",
+            ));
         }
     }
     Ok(())
@@ -1207,7 +1513,9 @@ pub fn create_location_attachment(
 
 pub fn validate_contact_card(card: &ContactCard) -> Result<(), ProtocolError> {
     if card.display_name.is_empty() {
-        return Err(ProtocolError::invalid_input("ContactCard display_name must not be empty"));
+        return Err(ProtocolError::invalid_input(
+            "ContactCard display_name must not be empty",
+        ));
     }
     if card.display_name.chars().count() > MAX_CONTACT_DISPLAY_NAME_CHARS {
         return Err(ProtocolError::invalid_input(
@@ -1216,12 +1524,16 @@ pub fn validate_contact_card(card: &ContactCard) -> Result<(), ProtocolError> {
     }
     if let Some(ref phone) = card.phone {
         if phone.chars().count() > MAX_CONTACT_PHONE_CHARS {
-            return Err(ProtocolError::invalid_input("ContactCard phone exceeds max length"));
+            return Err(ProtocolError::invalid_input(
+                "ContactCard phone exceeds max length",
+            ));
         }
     }
     if let Some(ref email) = card.email {
         if email.chars().count() > MAX_CONTACT_EMAIL_CHARS {
-            return Err(ProtocolError::invalid_input("ContactCard email exceeds max length"));
+            return Err(ProtocolError::invalid_input(
+                "ContactCard email exceeds max length",
+            ));
         }
     }
     if let Some(ref avatar) = card.avatar_data {
@@ -1261,14 +1573,20 @@ pub fn create_contact_card(
 
 pub fn validate_link_preview(preview: &LinkPreview) -> Result<(), ProtocolError> {
     if preview.url.is_empty() {
-        return Err(ProtocolError::invalid_input("LinkPreview url must not be empty"));
+        return Err(ProtocolError::invalid_input(
+            "LinkPreview url must not be empty",
+        ));
     }
     if preview.url.chars().count() > MAX_LINK_PREVIEW_URL_CHARS {
-        return Err(ProtocolError::invalid_input("LinkPreview url exceeds max length"));
+        return Err(ProtocolError::invalid_input(
+            "LinkPreview url exceeds max length",
+        ));
     }
     if let Some(ref title) = preview.title {
         if title.chars().count() > MAX_LINK_PREVIEW_TITLE_CHARS {
-            return Err(ProtocolError::invalid_input("LinkPreview title exceeds max length"));
+            return Err(ProtocolError::invalid_input(
+                "LinkPreview title exceeds max length",
+            ));
         }
     }
     if let Some(ref desc) = preview.description {
@@ -1290,7 +1608,9 @@ pub fn validate_link_preview(preview: &LinkPreview) -> Result<(), ProtocolError>
     }
     if let Some(ref domain) = preview.domain {
         if domain.chars().count() > MAX_LINK_PREVIEW_DOMAIN_CHARS {
-            return Err(ProtocolError::invalid_input("LinkPreview domain exceeds max length"));
+            return Err(ProtocolError::invalid_input(
+                "LinkPreview domain exceeds max length",
+            ));
         }
     }
     Ok(())

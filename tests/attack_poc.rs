@@ -6,6 +6,9 @@
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
+use ecliptix_protocol::core::constants::{
+    DEFAULT_MESSAGES_PER_CHAIN, NONCE_EXHAUSTION_WARNING_PERCENT,
+};
 use ecliptix_protocol::core::errors::ProtocolError;
 use ecliptix_protocol::crypto::CryptoInterop;
 use ecliptix_protocol::identity::IdentityKeys;
@@ -494,8 +497,8 @@ fn nonce_remaining_decrements_on_encrypt() {
 
     let initial = alice.nonce_remaining().unwrap();
     assert_eq!(
-        initial, 65535,
-        "Fresh session should have MAX_NONCE_COUNTER remaining"
+        initial, DEFAULT_MESSAGES_PER_CHAIN,
+        "Fresh session should expose the current chain budget"
     );
 
     for i in 0..10u32 {
@@ -503,12 +506,15 @@ fn nonce_remaining_decrements_on_encrypt() {
     }
 
     let after = alice.nonce_remaining().unwrap();
-    assert_eq!(after, 65535 - 10, "Should have decremented by 10");
+    assert_eq!(
+        after,
+        DEFAULT_MESSAGES_PER_CHAIN - 10,
+        "Should have decremented by 10"
+    );
     println!("[FEATURE] nonce_remaining() correctly tracks: {initial} -> {after}");
 }
 
 #[test]
-#[ignore = "encrypts ~59K messages, takes ~10s"]
 #[allow(clippy::cast_possible_truncation)]
 fn nonce_exhaustion_warning_fires_at_threshold() {
     init();
@@ -517,7 +523,9 @@ fn nonce_exhaustion_warning_fires_at_threshold() {
     let handler = Arc::new(NonceWarningTracker::new());
     alice.set_event_handler(handler.clone());
 
-    let safe_count: u64 = 65535 - 6553 - 1; // 58981 encrypts keep remaining=6554 (above threshold)
+    let effective_capacity = 10_000_u64;
+    let threshold = effective_capacity * NONCE_EXHAUSTION_WARNING_PERCENT / 100;
+    let safe_count = effective_capacity - threshold - 1;
 
     for i in 0..safe_count {
         alice.encrypt(b"x", 0, i as u32, None).unwrap();
@@ -535,8 +543,11 @@ fn nonce_exhaustion_warning_fires_at_threshold() {
     );
     let remaining = handler.remaining.load(Ordering::SeqCst);
     let max_cap = handler.max.load(Ordering::SeqCst);
-    assert_eq!(max_cap, 65535);
-    assert!(remaining <= 6553, "remaining={remaining} should be <= 6553");
+    assert_eq!(max_cap, effective_capacity);
+    assert!(
+        remaining <= threshold,
+        "remaining={remaining} should be <= {threshold}"
+    );
     println!(
         "[FEATURE] Nonce exhaustion warning fired: remaining={remaining}, max={max_cap}, count={}",
         handler.count.load(Ordering::SeqCst)
@@ -565,11 +576,11 @@ fn nonce_exhaustion_handler_set_and_query() {
         alice.encrypt(b"msg", 0, i, None).unwrap();
     }
     let remaining = alice.nonce_remaining().unwrap();
-    assert_eq!(remaining, 65535 - 50);
+    assert_eq!(remaining, DEFAULT_MESSAGES_PER_CHAIN - 50);
     assert_eq!(
         handler.count.load(Ordering::SeqCst),
         0,
-        "No warning should fire with 65485 nonces remaining"
+        "No warning should fire while the current chain is still far from exhaustion"
     );
     println!("[FEATURE] Event handler set, nonce_remaining={remaining}, no spurious warnings");
 }
@@ -1468,7 +1479,7 @@ fn nonce_resets_on_dh_ratchet() {
 
     let remaining_before = alice.nonce_remaining().unwrap();
     assert!(
-        remaining_before < 65535,
+        remaining_before < DEFAULT_MESSAGES_PER_CHAIN,
         "Nonce counter should have advanced"
     );
 
@@ -1484,8 +1495,8 @@ fn nonce_resets_on_dh_ratchet() {
         "Nonce counter must reset after DH ratchet: before={remaining_before}, after={remaining_after}"
     );
     assert!(
-        remaining_after >= 65534,
-        "Nonce should be near max after reset: {remaining_after}"
+        remaining_after >= DEFAULT_MESSAGES_PER_CHAIN - 1,
+        "Nonce budget should reset near the per-chain maximum: {remaining_after}"
     );
 }
 

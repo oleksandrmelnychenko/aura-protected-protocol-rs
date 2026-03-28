@@ -13,7 +13,6 @@ pub mod welcome;
 use std::collections::BTreeMap;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use hmac::{Hmac, Mac};
 use prost::Message;
@@ -24,7 +23,7 @@ use crate::core::constants::*;
 use crate::core::errors::ProtocolError;
 use crate::crypto::{AesGcm, CryptoInterop, HkdfSha256, MessagePadding, SecureMemoryHandle};
 use crate::identity::IdentityKeys;
-use crate::interfaces::IGroupEventHandler;
+use crate::interfaces::{IGroupEventHandler, ITimeProvider, SystemTimeProvider};
 use crate::proto::GroupSecurityPolicy as ProtoGroupSecurityPolicy;
 use crate::proto::{
     GroupApplicationMessage, GroupCommit, GroupExternalJoinAuthorization, GroupKeyPackage,
@@ -166,9 +165,7 @@ impl GroupSecurityPolicy {
             enhanced_key_schedule: self.enhanced_key_schedule,
             mandatory_franking: self.mandatory_franking,
         };
-        let mut buf = Vec::new();
-        proto.encode(&mut buf).expect("policy encode infallible");
-        buf
+        proto.encode_to_vec()
     }
 
     fn from_proto_bytes(bytes: &[u8]) -> Result<Self, ProtocolError> {
@@ -465,7 +462,9 @@ pub fn validate_reaction(reaction: &GroupReaction) -> Result<(), ProtocolError> 
         ));
     }
     if reaction.emoji.is_empty() {
-        return Err(ProtocolError::invalid_input("Reaction emoji must not be empty"));
+        return Err(ProtocolError::invalid_input(
+            "Reaction emoji must not be empty",
+        ));
     }
     if reaction.emoji.chars().count() > MAX_REACTION_EMOJI_CHARS {
         return Err(ProtocolError::invalid_input(format!(
@@ -519,8 +518,141 @@ pub fn validate_reply_context(ctx: &ProtoGroupReplyContext) -> Result<(), Protoc
                 "Thread depth {depth} exceeds maximum {MAX_THREAD_DEPTH}",
             )));
         }
+        if depth > 0 && ctx.thread_root_id.is_none() {
+            return Err(ProtocolError::invalid_input(
+                "thread_root_id is required when thread depth is greater than zero",
+            ));
+        }
     }
     Ok(())
+}
+
+fn now_unix_secs(time_provider: &dyn ITimeProvider) -> Result<u64, ProtocolError> {
+    time_provider
+        .now_unix_secs()
+        .map_err(|_| ProtocolError::group_protocol("system clock is before UNIX epoch"))
+}
+
+fn validate_external_join_auth_time_window(
+    issued_at_unix: u64,
+    expires_at_unix: u64,
+    time_provider: &dyn ITimeProvider,
+) -> Result<(), ProtocolError> {
+    if issued_at_unix == 0 || expires_at_unix == 0 {
+        return Err(ProtocolError::group_protocol(
+            "External join authorization timestamps are required",
+        ));
+    }
+    if expires_at_unix < issued_at_unix {
+        return Err(ProtocolError::group_protocol(
+            "External join authorization expiry is before issue time",
+        ));
+    }
+    if expires_at_unix.saturating_sub(issued_at_unix) > EXTERNAL_JOIN_AUTH_VALIDITY_SECS {
+        return Err(ProtocolError::group_protocol(
+            "External join authorization validity window is too large",
+        ));
+    }
+    let now = now_unix_secs(time_provider)?;
+    if issued_at_unix > now.saturating_add(MAX_FUTURE_TIMESTAMP_SKEW_SECS) {
+        return Err(ProtocolError::group_protocol(format!(
+            "External join authorization issued_at {issued_at_unix} is too far in the future (now {now})"
+        )));
+    }
+    if now > expires_at_unix {
+        return Err(ProtocolError::group_protocol(format!(
+            "External join authorization expired at {expires_at_unix} (now {now})"
+        )));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_external_join_auth_format_version(
+    auth_format_version: u32,
+) -> Result<(), ProtocolError> {
+    if auth_format_version != GROUP_EXTERNAL_JOIN_AUTH_FORMAT_VERSION {
+        return Err(ProtocolError::group_protocol(format!(
+            "Unsupported external join authorization format version: expected {}, got {}",
+            GROUP_EXTERNAL_JOIN_AUTH_FORMAT_VERSION, auth_format_version
+        )));
+    }
+    Ok(())
+}
+
+fn validate_mentions_for_content(
+    mentions: &[ProtoGroupMention],
+    content: &[u8],
+) -> Result<(), ProtocolError> {
+    validate_mentions(mentions)?;
+    let content_len = u32::try_from(content.len())
+        .map_err(|_| ProtocolError::invalid_input("Message content too large"))?;
+    let mut spans = Vec::with_capacity(mentions.len());
+    for mention in mentions {
+        if mention.length == 0 {
+            return Err(ProtocolError::invalid_input(
+                "Mention length must be greater than zero",
+            ));
+        }
+        let end = mention
+            .offset
+            .checked_add(mention.length)
+            .ok_or_else(|| ProtocolError::invalid_input("Mention offset overflow"))?;
+        if end > content_len {
+            return Err(ProtocolError::invalid_input(
+                "Mention range exceeds message content length",
+            ));
+        }
+        spans.push((mention.offset, end));
+    }
+    spans.sort_unstable();
+    for pair in spans.windows(2) {
+        if pair[0].1 > pair[1].0 {
+            return Err(ProtocolError::invalid_input(
+                "Mention ranges must not overlap",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_annotations_against_tree(
+    tree: &RatchetTree,
+    content: &[u8],
+    mentions: &[ProtoGroupMention],
+    reply_context: Option<&ProtoGroupReplyContext>,
+) -> Result<(), ProtocolError> {
+    validate_mentions_for_content(mentions, content)?;
+    for mention in mentions {
+        if tree.get_leaf_data(mention.leaf_index).is_none() {
+            return Err(ProtocolError::invalid_input(
+                "Mention leaf_index must reference an active group member",
+            ));
+        }
+    }
+    if let Some(ctx) = reply_context {
+        validate_reply_context(ctx)?;
+    }
+    Ok(())
+}
+
+fn validate_member_role_value(role: i32) -> Result<(), ProtocolError> {
+    if !(0..=2).contains(&role) {
+        return Err(ProtocolError::invalid_input(
+            "member role must be 0 (Member), 1 (Moderator), or 2 (Admin)",
+        ));
+    }
+    Ok(())
+}
+
+fn prune_member_roles(
+    active_leaf_indices: &[u32],
+    member_roles: &mut std::collections::HashMap<u32, i32>,
+) {
+    let active_leaf_set: std::collections::BTreeSet<u32> =
+        active_leaf_indices.iter().copied().collect();
+    member_roles.retain(|leaf_index, role| {
+        active_leaf_set.contains(leaf_index) && validate_member_role_value(*role).is_ok()
+    });
 }
 
 pub struct SealedPayload {
@@ -607,13 +739,52 @@ impl std::fmt::Debug for GroupDecryptResult {
 
 pub struct GroupSession {
     inner: Mutex<GroupSessionInner>,
+    time_provider: Arc<dyn ITimeProvider>,
 }
 
 fn ed25519_secret_to_handle(raw: Zeroizing<Vec<u8>>) -> Result<SecureMemoryHandle, ProtocolError> {
+    if raw.len() != ED25519_SECRET_KEY_BYTES {
+        return Err(ProtocolError::invalid_input(format!(
+            "Ed25519 secret key must be {ED25519_SECRET_KEY_BYTES} bytes"
+        )));
+    }
     let mut handle = SecureMemoryHandle::allocate(ED25519_SECRET_KEY_BYTES)
         .map_err(ProtocolError::from_crypto)?;
     handle.write(&raw).map_err(ProtocolError::from_crypto)?;
     Ok(handle)
+}
+
+fn validate_ed25519_secret_matches_public(
+    secret: &SecureMemoryHandle,
+    expected_public: &[u8],
+) -> Result<(), ProtocolError> {
+    if expected_public.len() != ED25519_PUBLIC_KEY_BYTES {
+        return Err(ProtocolError::invalid_input(
+            "Invalid Ed25519 public key size in sealed group state",
+        ));
+    }
+    let mut secret_bytes = secret
+        .read_bytes(ED25519_SECRET_KEY_BYTES)
+        .map_err(ProtocolError::from_crypto)?;
+    let signing_key = {
+        let sk_array: [u8; ED25519_SECRET_KEY_BYTES] = secret_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| ProtocolError::invalid_input("Invalid Ed25519 secret key size"))?;
+        ed25519_dalek::SigningKey::from_keypair_bytes(&sk_array)
+            .map_err(|_| ProtocolError::key_generation("Invalid Ed25519 keypair bytes"))?
+    };
+    CryptoInterop::secure_wipe(&mut secret_bytes);
+
+    let actual_public = signing_key.verifying_key().to_bytes();
+    let matches = CryptoInterop::constant_time_equals(actual_public.as_ref(), expected_public)?;
+    if !matches {
+        return Err(ProtocolError::invalid_input(
+            "Ed25519 identity secret does not match sealed group state",
+        ));
+    }
+
+    Ok(())
 }
 
 #[inline]
@@ -679,13 +850,32 @@ impl GroupSession {
     }
 
     pub fn create(identity: &IdentityKeys, credential: Vec<u8>) -> Result<Self, ProtocolError> {
-        Self::create_with_policy(identity, credential, GroupSecurityPolicy::shield())
+        Self::create_with_policy_and_time_provider(
+            identity,
+            credential,
+            GroupSecurityPolicy::shield(),
+            Arc::new(SystemTimeProvider),
+        )
     }
 
     pub fn create_with_policy(
         identity: &IdentityKeys,
         credential: Vec<u8>,
         policy: GroupSecurityPolicy,
+    ) -> Result<Self, ProtocolError> {
+        Self::create_with_policy_and_time_provider(
+            identity,
+            credential,
+            policy,
+            Arc::new(SystemTimeProvider),
+        )
+    }
+
+    pub fn create_with_policy_and_time_provider(
+        identity: &IdentityKeys,
+        credential: Vec<u8>,
+        policy: GroupSecurityPolicy,
+        time_provider: Arc<dyn ITimeProvider>,
     ) -> Result<Self, ProtocolError> {
         policy.validate()?;
         let (kp, x25519_priv, kyber_sec) =
@@ -759,6 +949,7 @@ impl GroupSession {
                 security_policy: policy,
                 member_roles: std::collections::HashMap::new(),
             }),
+            time_provider,
         })
     }
 
@@ -790,6 +981,29 @@ impl GroupSession {
         identity_x25519: &[u8],
         ed25519_secret_raw: Zeroizing<Vec<u8>>,
     ) -> Result<Self, ProtocolError> {
+        Self::from_welcome_with_time_provider(
+            welcome_bytes,
+            x25519_private,
+            kyber_secret,
+            identity_ed25519,
+            identity_x25519,
+            ed25519_secret_raw,
+            Arc::new(SystemTimeProvider),
+        )
+    }
+
+    pub fn from_welcome_with_time_provider(
+        welcome_bytes: &[u8],
+        x25519_private: SecureMemoryHandle,
+        kyber_secret: SecureMemoryHandle,
+        identity_ed25519: &[u8],
+        identity_x25519: &[u8],
+        ed25519_secret_raw: Zeroizing<Vec<u8>>,
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<Self, ProtocolError> {
+        if welcome_bytes.len() > MAX_GROUP_MESSAGE_SIZE {
+            return Err(ProtocolError::invalid_input("Welcome too large"));
+        }
         let ed25519_secret = ed25519_secret_to_handle(ed25519_secret_raw)?;
         let welcome_msg = crate::proto::GroupWelcome::decode(welcome_bytes)
             .map_err(|e| ProtocolError::decode(format!("Welcome decode: {e}")))?;
@@ -832,6 +1046,7 @@ impl GroupSession {
                 security_policy,
                 member_roles: std::collections::HashMap::new(),
             }),
+            time_provider,
         })
     }
 
@@ -844,6 +1059,31 @@ impl GroupSession {
         ed25519_secret_raw: Zeroizing<Vec<u8>>,
         min_epoch: u64,
     ) -> Result<Self, ProtocolError> {
+        Self::from_welcome_with_min_epoch_and_time_provider(
+            welcome_bytes,
+            x25519_private,
+            kyber_secret,
+            identity_ed25519,
+            identity_x25519,
+            ed25519_secret_raw,
+            min_epoch,
+            Arc::new(SystemTimeProvider),
+        )
+    }
+
+    pub fn from_welcome_with_min_epoch_and_time_provider(
+        welcome_bytes: &[u8],
+        x25519_private: SecureMemoryHandle,
+        kyber_secret: SecureMemoryHandle,
+        identity_ed25519: &[u8],
+        identity_x25519: &[u8],
+        ed25519_secret_raw: Zeroizing<Vec<u8>>,
+        min_epoch: u64,
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<Self, ProtocolError> {
+        if welcome_bytes.len() > MAX_GROUP_MESSAGE_SIZE {
+            return Err(ProtocolError::invalid_input("Welcome too large"));
+        }
         let welcome_msg = crate::proto::GroupWelcome::decode(welcome_bytes)
             .map_err(|e| ProtocolError::decode(format!("Welcome decode: {e}")))?;
 
@@ -854,13 +1094,14 @@ impl GroupSession {
             )));
         }
 
-        Self::from_welcome(
+        Self::from_welcome_with_time_provider(
             welcome_bytes,
             x25519_private,
             kyber_secret,
             identity_ed25519,
             identity_x25519,
             ed25519_secret_raw,
+            time_provider,
         )
     }
 
@@ -935,6 +1176,8 @@ impl GroupSession {
         inner.sender_store = commit_output.new_sender_store;
         inner.group_context_hash = commit_output.group_context_hash;
         inner.replay_windows.clear();
+        let active_leaf_indices = inner.tree.populated_leaf_indices();
+        prune_member_roles(&active_leaf_indices, &mut inner.member_roles);
 
         let (_ext_priv, ext_x25519_pub, _ext_kyber_sec, ext_kyber_pub) =
             GroupKeySchedule::derive_external_keypairs(&inner.init_secret)?;
@@ -1003,6 +1246,8 @@ impl GroupSession {
         inner.sender_store = commit_output.new_sender_store;
         inner.group_context_hash = commit_output.group_context_hash;
         inner.replay_windows.clear();
+        let active_leaf_indices = inner.tree.populated_leaf_indices();
+        prune_member_roles(&active_leaf_indices, &mut inner.member_roles);
 
         let (_ext_priv, ext_x25519_pub, _ext_kyber_sec, ext_kyber_pub) =
             GroupKeySchedule::derive_external_keypairs(&inner.init_secret)?;
@@ -1022,7 +1267,7 @@ impl GroupSession {
             .inner
             .lock()
             .map_err(|_| ProtocolError::invalid_state("GroupSession lock poisoned"))?;
-        ensure_no_pending_reinit(&inner, "create_reinit_commit")?;
+        ensure_no_pending_reinit(&inner, "update")?;
 
         let my_leaf_idx = inner.my_leaf_idx;
         let init_secret = Zeroizing::new(inner.init_secret.clone());
@@ -1073,7 +1318,7 @@ impl GroupSession {
     }
 
     /// Create a commit that carries a single ReInit proposal, advancing the committer's
-    /// epoch. Other members must process the returned bytes via [`process_commit`].
+    /// epoch. Other members must process the returned bytes via [`Self::process_commit`].
     ///
     /// `new_group_id` must be exactly [`GROUP_ID_BYTES`] bytes.
     pub fn create_reinit_commit(
@@ -1224,6 +1469,8 @@ impl GroupSession {
         inner.group_context_hash = processed.group_context_hash;
         inner.replay_windows.clear();
         inner.last_sent_message_hash = vec![0u8; SHA256_HASH_BYTES];
+        let active_leaf_indices = inner.tree.populated_leaf_indices();
+        prune_member_roles(&active_leaf_indices, &mut inner.member_roles);
 
         let (_ext_priv, ext_x25519_pub, _ext_kyber_sec, ext_kyber_pub) =
             GroupKeySchedule::derive_external_keypairs(&inner.init_secret)?;
@@ -1326,7 +1573,9 @@ impl GroupSession {
             ));
         }
 
+        let issued_at_unix = now_unix_secs(self.time_provider.as_ref())?;
         let mut auth = GroupExternalJoinAuthorization {
+            auth_format_version: GROUP_EXTERNAL_JOIN_AUTH_FORMAT_VERSION,
             group_id: inner.group_id.clone(),
             epoch: inner.epoch,
             joiner_identity_ed25519_public: joiner_identity_ed25519_public.to_vec(),
@@ -1334,6 +1583,11 @@ impl GroupSession {
             joiner_credential: joiner_credential.to_vec(),
             authorizer_leaf_index: inner.my_leaf_idx,
             authorizer_signature: Vec::new(),
+            group_context_hash: inner.group_context_hash.clone(),
+            external_x25519_public: inner.external_x25519_public.clone(),
+            external_kyber_public: inner.external_kyber_public.clone(),
+            issued_at_unix,
+            expires_at_unix: issued_at_unix.saturating_add(EXTERNAL_JOIN_AUTH_VALIDITY_SECS),
         };
         let mut auth_bytes = Vec::new();
         auth.encode(&mut auth_bytes)
@@ -1358,12 +1612,34 @@ impl GroupSession {
         identity: &IdentityKeys,
         credential: Vec<u8>,
     ) -> Result<(Self, Vec<u8>), ProtocolError> {
+        Self::from_external_join_with_time_provider(
+            public_state_bytes,
+            authorization_bytes,
+            identity,
+            credential,
+            Arc::new(SystemTimeProvider),
+        )
+    }
+
+    pub fn from_external_join_with_time_provider(
+        public_state_bytes: &[u8],
+        authorization_bytes: &[u8],
+        identity: &IdentityKeys,
+        credential: Vec<u8>,
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<(Self, Vec<u8>), ProtocolError> {
         if public_state_bytes.len() > MAX_GROUP_MESSAGE_SIZE {
             return Err(ProtocolError::invalid_input("Public state too large"));
         }
 
         let public_state = GroupPublicState::decode(public_state_bytes)
             .map_err(|e| ProtocolError::decode(format!("GroupPublicState decode: {e}")))?;
+        if public_state.version != GROUP_PROTOCOL_VERSION {
+            return Err(ProtocolError::group_protocol(format!(
+                "External join: unsupported public state version {}",
+                public_state.version
+            )));
+        }
 
         let security_policy = GroupSecurityPolicy::from_proto_bytes(&public_state.security_policy)?;
         security_policy.validate()?;
@@ -1375,6 +1651,11 @@ impl GroupSession {
         if authorization_bytes.is_empty() {
             return Err(ProtocolError::group_protocol(
                 "External join authorization is required",
+            ));
+        }
+        if authorization_bytes.len() > MAX_GROUP_MESSAGE_SIZE {
+            return Err(ProtocolError::invalid_input(
+                "External join authorization too large",
             ));
         }
 
@@ -1396,6 +1677,15 @@ impl GroupSession {
                 "External join: group_context_hash mismatch",
             ));
         }
+        Self::validate_external_join_authorization_for_public_state(
+            &tree,
+            &public_state,
+            authorization_bytes,
+            &identity.get_identity_ed25519_public(),
+            &identity.get_identity_x25519_public(),
+            &credential,
+            time_provider.as_ref(),
+        )?;
 
         crate::security::DhValidator::validate_x25519_public_key(
             &public_state.external_x25519_public,
@@ -1514,6 +1804,7 @@ impl GroupSession {
                 security_policy,
                 member_roles: std::collections::HashMap::new(),
             }),
+            time_provider,
         };
 
         let mut commit_bytes = Vec::new();
@@ -1525,16 +1816,81 @@ impl GroupSession {
         Ok((session, commit_bytes))
     }
 
+    fn validate_external_join_authorization_for_public_state(
+        tree: &RatchetTree,
+        public_state: &GroupPublicState,
+        authorization_bytes: &[u8],
+        joiner_identity_ed25519_public: &[u8],
+        joiner_identity_x25519_public: &[u8],
+        joiner_credential: &[u8],
+        time_provider: &dyn ITimeProvider,
+    ) -> Result<(), ProtocolError> {
+        let auth = GroupExternalJoinAuthorization::decode(authorization_bytes)
+            .map_err(|e| ProtocolError::decode(format!("External join auth decode: {e}")))?;
+        validate_external_join_auth_format_version(auth.auth_format_version)?;
+        if auth.group_id != public_state.group_id {
+            return Err(ProtocolError::group_protocol(
+                "External join authorization group_id mismatch",
+            ));
+        }
+        if auth.epoch != public_state.epoch {
+            return Err(ProtocolError::group_protocol(format!(
+                "External join authorization epoch mismatch: expected {}, got {}",
+                public_state.epoch, auth.epoch
+            )));
+        }
+        if auth.joiner_identity_ed25519_public != joiner_identity_ed25519_public
+            || auth.joiner_identity_x25519_public != joiner_identity_x25519_public
+            || auth.joiner_credential != joiner_credential
+        {
+            return Err(ProtocolError::group_protocol(
+                "External join authorization does not match joiner identity",
+            ));
+        }
+        if auth.group_context_hash != public_state.group_context_hash {
+            return Err(ProtocolError::group_protocol(
+                "External join authorization group_context_hash mismatch",
+            ));
+        }
+        if auth.external_x25519_public != public_state.external_x25519_public
+            || auth.external_kyber_public != public_state.external_kyber_public
+        {
+            return Err(ProtocolError::group_protocol(
+                "External join authorization external init key mismatch",
+            ));
+        }
+        validate_external_join_auth_time_window(
+            auth.issued_at_unix,
+            auth.expires_at_unix,
+            time_provider,
+        )?;
+        let authorizer_leaf = tree
+            .get_leaf_data(auth.authorizer_leaf_index)
+            .ok_or_else(|| {
+                ProtocolError::group_protocol("External join authorizer leaf is blank")
+            })?;
+        let mut auth_for_verify = auth.clone();
+        auth_for_verify.authorizer_signature.clear();
+        let mut auth_bytes = Vec::new();
+        auth_for_verify
+            .encode(&mut auth_bytes)
+            .map_err(|e| ProtocolError::encode(format!("External join auth encode: {e}")))?;
+        Self::ed25519_verify_group_message_with_context(
+            &authorizer_leaf.identity_ed25519_public,
+            &auth.authorizer_signature,
+            &auth_bytes,
+            "External join authorization signature verification failed",
+        )
+    }
+
     fn build_group_plaintext(
+        &self,
         content: &[u8],
         policy: &MessagePolicy,
         message_key: &[u8],
         actual_plaintext: Option<&[u8]>,
     ) -> Result<(GroupPlaintext, Vec<u8>), ProtocolError> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = now_unix_secs(self.time_provider.as_ref())?;
 
         #[allow(clippy::cast_possible_wrap)]
         let content_type_i32 = policy.content_type.to_u32() as i32;
@@ -1554,11 +1910,14 @@ impl GroupSession {
             })
             .collect();
 
-        let proto_reply = policy.reply_context.as_ref().map(|rc| ProtoGroupReplyContext {
-            reply_to_message_id: rc.reply_to_message_id.clone(),
-            thread_root_id: rc.thread_root_id.clone(),
-            depth: rc.depth,
-        });
+        let proto_reply = policy
+            .reply_context
+            .as_ref()
+            .map(|rc| ProtoGroupReplyContext {
+                reply_to_message_id: rc.reply_to_message_id.clone(),
+                thread_root_id: rc.thread_root_id.clone(),
+                depth: rc.depth,
+            });
 
         let mut gpt = GroupPlaintext {
             content: content.to_vec(),
@@ -1605,6 +1964,7 @@ impl GroupSession {
 
     #[allow(clippy::type_complexity)]
     fn parse_group_plaintext(
+        &self,
         gpt: &GroupPlaintext,
         seal_key: &[u8],
         franking_tag_wire: &[u8],
@@ -1629,13 +1989,9 @@ impl GroupSession {
         let sent_timestamp = policy.map_or(0, |p| p.sent_timestamp);
 
         if content_type.is_disappearing() && ttl_seconds > 0 {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
+            let now = now_unix_secs(self.time_provider.as_ref())?;
 
-            const MAX_FUTURE_SKEW_SECS: u64 = 300;
-            if sent_timestamp > now.saturating_add(MAX_FUTURE_SKEW_SECS) {
+            if sent_timestamp > now.saturating_add(MAX_FUTURE_TIMESTAMP_SKEW_SECS) {
                 return Err(ProtocolError::invalid_input(format!(
                     "sent_timestamp {sent_timestamp} is too far in the future (now {now})"
                 )));
@@ -1813,10 +2169,11 @@ impl GroupSession {
         Ok(sig.to_bytes().to_vec())
     }
 
-    fn ed25519_verify_group_message(
+    fn ed25519_verify_group_message_with_context(
         public_key: &[u8],
         signature: &[u8],
         message: &[u8],
+        context: &str,
     ) -> Result<(), ProtocolError> {
         if public_key.len() != ED25519_PUBLIC_KEY_BYTES {
             return Err(ProtocolError::invalid_input(
@@ -1837,9 +2194,21 @@ impl GroupSession {
             .try_into()
             .map_err(|_| ProtocolError::invalid_input("Invalid Ed25519 signature size"))?;
         let sig = ed25519_dalek::Signature::from_bytes(&sig_array);
-        vk.verify_strict(message, &sig).map_err(|_| {
-            ProtocolError::group_protocol("Group sender signature verification failed")
-        })
+        vk.verify_strict(message, &sig)
+            .map_err(|_| ProtocolError::group_protocol(context))
+    }
+
+    fn ed25519_verify_group_message(
+        public_key: &[u8],
+        signature: &[u8],
+        message: &[u8],
+    ) -> Result<(), ProtocolError> {
+        Self::ed25519_verify_group_message_with_context(
+            public_key,
+            signature,
+            message,
+            "Group sender signature verification failed",
+        )
     }
 
     fn encrypt_internal(
@@ -1884,6 +2253,29 @@ impl GroupSession {
         } else {
             policy
         };
+        let proto_mentions: Vec<ProtoGroupMention> = policy
+            .mentions
+            .iter()
+            .map(|&(leaf_index, offset, length)| ProtoGroupMention {
+                leaf_index,
+                offset,
+                length,
+            })
+            .collect();
+        let proto_reply = policy
+            .reply_context
+            .as_ref()
+            .map(|rc| ProtoGroupReplyContext {
+                reply_to_message_id: rc.reply_to_message_id.clone(),
+                thread_root_id: rc.thread_root_id.clone(),
+                depth: rc.depth,
+            });
+        validate_annotations_against_tree(
+            &inner.tree,
+            content,
+            &proto_mentions,
+            proto_reply.as_ref(),
+        )?;
 
         let my_leaf_idx = inner.my_leaf_idx;
 
@@ -1898,8 +2290,9 @@ impl GroupSession {
 
         let (generation, mut message_key) = inner.sender_store.next_own_message_key(my_leaf_idx)?;
 
-        let remaining = policy_max.saturating_sub(generation);
-        let warning_threshold = policy_max / (100 / SENDER_KEY_EXHAUSTION_WARNING_PERCENT);
+        let remaining = policy_max.saturating_sub(generation.saturating_add(1));
+        let warning_threshold =
+            Self::compute_rotation_threshold(policy_max, SENDER_KEY_EXHAUSTION_WARNING_PERCENT)?;
         if remaining <= warning_threshold {
             if let Some(handler) = &inner.event_handler {
                 handler.on_sender_key_exhaustion_warning(remaining, policy_max);
@@ -1907,7 +2300,7 @@ impl GroupSession {
         }
 
         let (mut group_plaintext, franking_tag) =
-            Self::build_group_plaintext(content, policy, &message_key, actual_plaintext)?;
+            self.build_group_plaintext(content, policy, &message_key, actual_plaintext)?;
 
         group_plaintext
             .prev_message_hash
@@ -2222,6 +2615,12 @@ impl GroupSession {
         let pt_bytes = MessagePadding::unpad(&padded_plaintext)?;
         let group_plaintext = GroupPlaintext::decode(pt_bytes.as_slice())
             .map_err(|e| ProtocolError::decode(format!("GroupPlaintext decode: {e}")))?;
+        validate_annotations_against_tree(
+            &inner.tree,
+            &group_plaintext.content,
+            &group_plaintext.mentions,
+            group_plaintext.reply_context.as_ref(),
+        )?;
 
         let prev_message_hash = group_plaintext.prev_message_hash.clone();
 
@@ -2231,11 +2630,14 @@ impl GroupSession {
             .map(|m| (m.leaf_index, m.offset, m.length))
             .collect();
 
-        let reply_context = group_plaintext.reply_context.as_ref().map(|rc| ReplyContext {
-            reply_to_message_id: rc.reply_to_message_id.clone(),
-            thread_root_id: rc.thread_root_id.clone(),
-            depth: rc.depth,
-        });
+        let reply_context = group_plaintext
+            .reply_context
+            .as_ref()
+            .map(|rc| ReplyContext {
+                reply_to_message_id: rc.reply_to_message_id.clone(),
+                thread_root_id: rc.thread_root_id.clone(),
+                depth: rc.depth,
+            });
 
         let (
             plaintext,
@@ -2245,7 +2647,7 @@ impl GroupSession {
             ttl_seconds,
             sent_timestamp,
             referenced_message_id,
-        ) = Self::parse_group_plaintext(
+        ) = self.parse_group_plaintext(
             &group_plaintext,
             &seal_key,
             &app_msg.franking_tag,
@@ -2350,24 +2752,24 @@ impl GroupSession {
     }
 
     pub fn set_member_role(&self, leaf_index: u32, role: i32) -> Result<(), ProtocolError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| ProtocolError::invalid_state("GroupSession lock poisoned"))?;
-        inner.member_roles.insert(leaf_index, role);
-        Ok(())
+        let _ = (leaf_index, role);
+        Err(ProtocolError::invalid_state(
+            "member role APIs are disabled because roles are not protocol-authoritative",
+        ))
     }
 
     pub fn get_member_role(&self, leaf_index: u32) -> Result<i32, ProtocolError> {
-        let inner = self
-            .inner
-            .lock()
-            .map_err(|_| ProtocolError::invalid_state("GroupSession lock poisoned"))?;
-        Ok(inner.member_roles.get(&leaf_index).copied().unwrap_or(0))
+        let _ = leaf_index;
+        Err(ProtocolError::invalid_state(
+            "member role APIs are disabled because roles are not protocol-authoritative",
+        ))
     }
 
     pub fn is_admin(&self, leaf_index: u32) -> Result<bool, ProtocolError> {
-        Ok(self.get_member_role(leaf_index)? == 2)
+        let _ = leaf_index;
+        Err(ProtocolError::invalid_state(
+            "member role APIs are disabled because roles are not protocol-authoritative",
+        ))
     }
 
     pub fn set_event_handler(&self, handler: Arc<dyn IGroupEventHandler>) {
@@ -2543,9 +2945,8 @@ impl GroupSession {
         let dek_nonce = CryptoInterop::get_random_bytes(AES_GCM_NONCE_BYTES);
         let state_nonce = CryptoInterop::get_random_bytes(AES_GCM_NONCE_BYTES);
 
-        const SEALED_VERSION: u32 = 1;
         let mut dek_aad = Vec::with_capacity(12);
-        dek_aad.extend_from_slice(&SEALED_VERSION.to_le_bytes());
+        dek_aad.extend_from_slice(&GROUP_SEALED_STATE_VERSION.to_le_bytes());
         dek_aad.extend_from_slice(&external_counter.to_le_bytes());
         let encrypted_dek = AesGcm::encrypt(key, &dek_nonce, &dek, &dek_aad).inspect_err(|_e| {
             CryptoInterop::secure_wipe(&mut dek);
@@ -2563,7 +2964,7 @@ impl GroupSession {
         CryptoInterop::secure_wipe(&mut plaintext_state);
 
         let sealed = SealedGroupState {
-            version: SEALED_VERSION,
+            version: GROUP_SEALED_STATE_VERSION,
             dek_nonce,
             state_nonce,
             encrypted_dek,
@@ -2584,6 +2985,22 @@ impl GroupSession {
         ed25519_secret_raw: Zeroizing<Vec<u8>>,
         min_external_counter: u64,
     ) -> Result<Self, ProtocolError> {
+        Self::from_sealed_state_with_time_provider(
+            sealed_data,
+            key,
+            ed25519_secret_raw,
+            min_external_counter,
+            Arc::new(SystemTimeProvider),
+        )
+    }
+
+    pub fn from_sealed_state_with_time_provider(
+        sealed_data: &[u8],
+        key: &[u8],
+        ed25519_secret_raw: Zeroizing<Vec<u8>>,
+        min_external_counter: u64,
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<Self, ProtocolError> {
         if key.len() != AES_KEY_BYTES {
             return Err(ProtocolError::invalid_input(
                 "State encryption key must be 32 bytes",
@@ -2597,6 +3014,19 @@ impl GroupSession {
 
         let sealed = SealedGroupState::decode(sealed_data)
             .map_err(|e| ProtocolError::decode(format!("SealedGroupState decode: {e}")))?;
+        if sealed.version != GROUP_SEALED_STATE_VERSION {
+            return Err(ProtocolError::invalid_input(format!(
+                "Unsupported sealed group state version: expected {}, got {}",
+                GROUP_SEALED_STATE_VERSION, sealed.version
+            )));
+        }
+        if sealed.dek_nonce.len() != AES_GCM_NONCE_BYTES
+            || sealed.state_nonce.len() != AES_GCM_NONCE_BYTES
+        {
+            return Err(ProtocolError::invalid_input(
+                "Invalid nonce size in sealed group state",
+            ));
+        }
         if sealed.external_counter == 0 {
             return Err(ProtocolError::invalid_input(
                 "Sealed group state external counter must be > 0",
@@ -2663,6 +3093,17 @@ impl GroupSession {
             ));
         }
         state.state_hmac = saved_hmac;
+        if state.version != GROUP_PROTOCOL_VERSION {
+            Self::wipe_group_state_secrets(&mut state);
+            return Err(ProtocolError::invalid_input(format!(
+                "Unsupported group protocol state version: expected {}, got {}",
+                GROUP_PROTOCOL_VERSION, state.version
+            )));
+        }
+        validate_ed25519_secret_matches_public(&ed25519_secret, &state.my_identity_ed25519_public)
+            .inspect_err(|_| {
+                Self::wipe_group_state_secrets(&mut state);
+            })?;
 
         let tree =
             RatchetTree::from_proto(&state.tree_nodes, state.my_leaf_index).inspect_err(|_| {
@@ -2706,6 +3147,10 @@ impl GroupSession {
             GroupKeySchedule::derive_external_keypairs(&epoch_keys.init_secret)?;
 
         let init_secret = epoch_keys.init_secret.clone();
+        let mut member_roles: std::collections::HashMap<u32, i32> =
+            state.member_roles.into_iter().collect();
+        let active_leaf_indices = tree.populated_leaf_indices();
+        prune_member_roles(&active_leaf_indices, &mut member_roles);
 
         Ok(Self {
             inner: Mutex::new(GroupSessionInner {
@@ -2728,8 +3173,9 @@ impl GroupSession {
                 event_handler: None,
                 last_sent_message_hash: vec![0u8; SHA256_HASH_BYTES],
                 security_policy,
-                member_roles: state.member_roles.into_iter().collect(),
+                member_roles,
             }),
+            time_provider,
         })
     }
 
@@ -2771,7 +3217,12 @@ impl GroupSession {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_replay_windows_from_state, encode_replay_windows_for_state, SenderReplayWindow,
+        decode_replay_windows_from_state, encode_replay_windows_for_state, prune_member_roles,
+        validate_mentions_for_content, validate_reply_context, SenderReplayWindow,
+    };
+    use crate::core::constants::MESSAGE_ID_BYTES;
+    use crate::proto::{
+        GroupMention as ProtoGroupMention, GroupReplyContext as ProtoGroupReplyContext,
     };
     use std::collections::BTreeMap;
 
@@ -2802,5 +3253,68 @@ mod tests {
         assert!(restored.is_duplicate_or_too_old(42));
         assert!(restored.is_duplicate_or_too_old(41));
         assert!(!restored.is_duplicate_or_too_old(43));
+    }
+
+    #[test]
+    fn mention_validation_rejects_zero_length_out_of_bounds_and_overlap() {
+        let content = b"hello world";
+
+        let zero_length = vec![ProtoGroupMention {
+            leaf_index: 0,
+            offset: 0,
+            length: 0,
+        }];
+        assert!(validate_mentions_for_content(&zero_length, content).is_err());
+
+        let out_of_bounds = vec![ProtoGroupMention {
+            leaf_index: 0,
+            offset: 9,
+            length: 3,
+        }];
+        assert!(validate_mentions_for_content(&out_of_bounds, content).is_err());
+
+        let overlap = vec![
+            ProtoGroupMention {
+                leaf_index: 0,
+                offset: 0,
+                length: 5,
+            },
+            ProtoGroupMention {
+                leaf_index: 1,
+                offset: 4,
+                length: 2,
+            },
+        ];
+        assert!(validate_mentions_for_content(&overlap, content).is_err());
+    }
+
+    #[test]
+    fn reply_context_requires_thread_root_for_nonzero_depth() {
+        let invalid = ProtoGroupReplyContext {
+            reply_to_message_id: vec![0xAA; MESSAGE_ID_BYTES],
+            thread_root_id: None,
+            depth: Some(1),
+        };
+        assert!(validate_reply_context(&invalid).is_err());
+
+        let valid = ProtoGroupReplyContext {
+            reply_to_message_id: vec![0xAA; MESSAGE_ID_BYTES],
+            thread_root_id: Some(vec![0xBB; MESSAGE_ID_BYTES]),
+            depth: Some(1),
+        };
+        assert!(validate_reply_context(&valid).is_ok());
+    }
+
+    #[test]
+    fn prune_member_roles_removes_inactive_and_invalid_entries() {
+        let active_leaf_indices = vec![0, 2];
+        let mut member_roles = std::collections::HashMap::from([(0, 2), (1, 1), (2, 7)]);
+
+        prune_member_roles(&active_leaf_indices, &mut member_roles);
+
+        assert_eq!(member_roles.len(), 1);
+        assert_eq!(member_roles.get(&0), Some(&2));
+        assert!(!member_roles.contains_key(&1));
+        assert!(!member_roles.contains_key(&2));
     }
 }

@@ -10,11 +10,11 @@ extern "C" {
 #include <stdbool.h>
 
 #define EPP_API_VERSION_MAJOR 1
-#define EPP_API_VERSION_MINOR 0
+#define EPP_API_VERSION_MINOR 1
 #define EPP_API_VERSION_PATCH 1
 
 #define EPP_DEFAULT_ONE_TIME_KEY_COUNT 100
-#define EPP_LIBRARY_VERSION "1.0.1"
+#define EPP_LIBRARY_VERSION "1.1.1"
 
 typedef enum {
     EPP_SUCCESS = 0,
@@ -42,7 +42,10 @@ typedef enum {
     EPP_ERROR_TREE_INTEGRITY = 22,
     EPP_ERROR_WELCOME = 23,
     EPP_ERROR_MESSAGE_EXPIRED = 24,
-    EPP_ERROR_FRANKING = 25
+    EPP_ERROR_FRANKING = 25,
+    EPP_ERROR_VOIP_CALL = 26,
+    EPP_ERROR_VOIP_MEDIA = 27,
+    EPP_ERROR_VOIP_REKEY = 28
 } EppErrorCode;
 
 typedef struct EppError {

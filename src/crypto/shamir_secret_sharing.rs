@@ -189,6 +189,9 @@ impl ShamirSecretSharing {
 
         let share_header_len = SHARE_HEADER_SIZE;
         let secret_len = first_len - share_header_len;
+        if secret_len == 0 || secret_len > MAX_SHARE_SIZE {
+            return Err(ProtocolError::invalid_input("Invalid secret length"));
+        }
         let mut secret = vec![0u8; secret_len];
         let x_values: Vec<u8> = data_shares.iter().map(|s| s[MAGIC_BYTES.len()]).collect();
 

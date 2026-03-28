@@ -63,6 +63,12 @@ message GroupExternalJoinAuthorization {
   bytes joiner_credential = 5;
   uint32 authorizer_leaf_index = 6;
   bytes authorizer_signature = 7;      // Ed25519(authorizer, auth_without_sig)
+  bytes group_context_hash = 8;        // Binds auth to exported public state tree/policy
+  bytes external_x25519_public = 9;    // Binds auth to exported external init X25519 key
+  bytes external_kyber_public = 10;    // Binds auth to exported external init Kyber key
+  uint64 issued_at_unix = 11;          // Joiner-side freshness window start
+  uint64 expires_at_unix = 12;         // Joiner-side freshness window end
+  uint32 auth_format_version = 13;     // Signed ExternalInit auth payload format
 }
 
 // Pre-Shared Key injection (MLS RFC 9420 §12.2).

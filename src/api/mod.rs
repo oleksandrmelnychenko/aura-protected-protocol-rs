@@ -4,18 +4,18 @@
 pub mod relay;
 
 use prost::Message;
+use std::mem::size_of;
 use zeroize::Zeroizing;
 
 use crate::core::constants::{
     AES_GCM_NONCE_BYTES, AES_GCM_TAG_BYTES, DEFAULT_MESSAGES_PER_CHAIN, MAX_BUFFER_SIZE,
-    MAX_ENVELOPE_MESSAGE_SIZE, MAX_HANDSHAKE_MESSAGE_SIZE, MAX_VOIP_SIGNAL_MESSAGE_SIZE,
-    OPAQUE_ROOT_INFO,
-    OPAQUE_SESSION_KEY_BYTES, PROTOCOL_VERSION,
+    MAX_ENVELOPE_MESSAGE_SIZE, MAX_GROUP_MESSAGE_SIZE, MAX_HANDSHAKE_MESSAGE_SIZE,
+    MAX_VOIP_SIGNAL_MESSAGE_SIZE, OPAQUE_ROOT_INFO, OPAQUE_SESSION_KEY_BYTES, PROTOCOL_VERSION,
 };
 use crate::core::errors::ProtocolError;
 use crate::crypto::{CryptoInterop, HkdfSha256, SecureMemoryHandle, ShamirSecretSharing};
 use crate::identity::IdentityKeys;
-use crate::interfaces::StaticStateKeyProvider;
+use crate::interfaces::{ITimeProvider, StaticStateKeyProvider, SystemTimeProvider};
 use crate::proto::{GroupKeyPackage, OneTimePreKey, PreKeyBundle, SecureEnvelope};
 use crate::protocol::group::{self, GroupSecurityPolicy, GroupSession};
 use crate::protocol::{HandshakeInitReplayGuard, HandshakeInitiator, HandshakeResponder, Session};
@@ -28,6 +28,286 @@ pub struct DecryptResult {
 pub struct SessionIdentity {
     pub ed25519_public: Vec<u8>,
     pub x25519_public: Vec<u8>,
+}
+
+const SEALED_STATE_COUNTER_TRACKER_VERSION: u32 = 1;
+const SEALED_STATE_SLOT_VERSION: u32 = 1;
+
+/// Tracks sealed-state anti-rollback metadata for one persisted state slot.
+///
+/// The protocol's `external_counter` model needs two distinct values:
+/// - `max_restored_counter`: highest sealed-state counter that has already been
+///   accepted on restore/import. This is the value passed as
+///   `min_external_counter` on the next restore.
+/// - `latest_issued_counter`: highest counter already used for a local sealed
+///   export. The next export must use `latest_issued_counter + 1`.
+///
+/// Persist this tracker alongside the sealed blob for the same slot. Using a
+/// single counter is not enough to both restore the newest blob after restart
+/// and reject rollback to an older blob.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SealedStateCounterTracker {
+    max_restored_counter: u64,
+    latest_issued_counter: u64,
+}
+
+impl SealedStateCounterTracker {
+    pub const SERIALIZED_LEN: usize = size_of::<u32>() + size_of::<u64>() * 2;
+
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            max_restored_counter: 0,
+            latest_issued_counter: 0,
+        }
+    }
+
+    #[must_use]
+    pub const fn max_restored_counter(&self) -> u64 {
+        self.max_restored_counter
+    }
+
+    #[must_use]
+    pub const fn latest_issued_counter(&self) -> u64 {
+        self.latest_issued_counter
+    }
+
+    #[must_use]
+    pub const fn min_import_counter(&self) -> u64 {
+        self.max_restored_counter
+    }
+
+    pub fn next_export_counter(&self) -> Result<u64, ProtocolError> {
+        self.latest_issued_counter
+            .checked_add(1)
+            .ok_or_else(|| ProtocolError::invalid_state("sealed-state counter overflow"))
+    }
+
+    pub fn note_successful_export(&mut self, counter: u64) -> Result<(), ProtocolError> {
+        if counter == 0 {
+            return Err(ProtocolError::invalid_input(
+                "sealed-state counter must be > 0",
+            ));
+        }
+        if counter <= self.latest_issued_counter {
+            return Err(ProtocolError::invalid_state(format!(
+                "sealed-state export counter regression: {counter} <= latest issued {}",
+                self.latest_issued_counter
+            )));
+        }
+        if counter < self.max_restored_counter {
+            return Err(ProtocolError::invalid_state(format!(
+                "sealed-state export counter {counter} is below restored watermark {}",
+                self.max_restored_counter
+            )));
+        }
+        self.latest_issued_counter = counter;
+        Ok(())
+    }
+
+    pub fn note_successful_restore(&mut self, counter: u64) -> Result<(), ProtocolError> {
+        if counter == 0 {
+            return Err(ProtocolError::invalid_input(
+                "sealed-state counter must be > 0",
+            ));
+        }
+        if counter <= self.max_restored_counter {
+            return Err(ProtocolError::replay_attack(format!(
+                "sealed-state counter {counter} is not newer than restored watermark {}",
+                self.max_restored_counter
+            )));
+        }
+        self.max_restored_counter = counter;
+        if self.latest_issued_counter < counter {
+            self.latest_issued_counter = counter;
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(Self::SERIALIZED_LEN);
+        out.extend_from_slice(&SEALED_STATE_COUNTER_TRACKER_VERSION.to_le_bytes());
+        out.extend_from_slice(&self.max_restored_counter.to_le_bytes());
+        out.extend_from_slice(&self.latest_issued_counter.to_le_bytes());
+        out
+    }
+
+    pub fn deserialize(data: &[u8]) -> Result<Self, ProtocolError> {
+        if data.len() != Self::SERIALIZED_LEN {
+            return Err(ProtocolError::decode(format!(
+                "sealed-state counter tracker must be {} bytes, got {}",
+                Self::SERIALIZED_LEN,
+                data.len()
+            )));
+        }
+        let version = u32::from_le_bytes(
+            data[0..size_of::<u32>()]
+                .try_into()
+                .map_err(|_| ProtocolError::decode("counter tracker version missing"))?,
+        );
+        if version != SEALED_STATE_COUNTER_TRACKER_VERSION {
+            return Err(ProtocolError::invalid_input(format!(
+                "unsupported sealed-state counter tracker version {version}"
+            )));
+        }
+        let max_restored_offset = size_of::<u32>();
+        let latest_issued_offset = max_restored_offset + size_of::<u64>();
+        let max_restored_counter = u64::from_le_bytes(
+            data[max_restored_offset..latest_issued_offset]
+                .try_into()
+                .map_err(|_| ProtocolError::decode("counter tracker restored watermark missing"))?,
+        );
+        let latest_issued_counter = u64::from_le_bytes(
+            data[latest_issued_offset..latest_issued_offset + size_of::<u64>()]
+                .try_into()
+                .map_err(|_| ProtocolError::decode("counter tracker latest counter missing"))?,
+        );
+        if latest_issued_counter < max_restored_counter {
+            return Err(ProtocolError::invalid_state(format!(
+                "sealed-state tracker invariant violated: latest issued {} < restored watermark {}",
+                latest_issued_counter, max_restored_counter
+            )));
+        }
+        Ok(Self {
+            max_restored_counter,
+            latest_issued_counter,
+        })
+    }
+}
+
+/// Atomically persisted sealed-state slot containing both anti-rollback
+/// tracker state and the latest sealed blob for one storage slot.
+///
+/// Persist the serialized slot as a single record. After a successful restore,
+/// re-serialize and persist the updated slot so the restore watermark is
+/// advanced inside the same atomic record.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SealedStateSlot {
+    tracker: SealedStateCounterTracker,
+    sealed_state: Vec<u8>,
+}
+
+impl SealedStateSlot {
+    pub const HEADER_LEN: usize = size_of::<u32>() + SealedStateCounterTracker::SERIALIZED_LEN;
+
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            tracker: SealedStateCounterTracker::new(),
+            sealed_state: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub const fn max_restored_counter(&self) -> u64 {
+        self.tracker.max_restored_counter()
+    }
+
+    #[must_use]
+    pub const fn latest_issued_counter(&self) -> u64 {
+        self.tracker.latest_issued_counter()
+    }
+
+    #[must_use]
+    pub const fn min_import_counter(&self) -> u64 {
+        self.tracker.min_import_counter()
+    }
+
+    pub fn next_export_counter(&self) -> Result<u64, ProtocolError> {
+        self.tracker.next_export_counter()
+    }
+
+    #[must_use]
+    pub fn sealed_state(&self) -> &[u8] {
+        &self.sealed_state
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.sealed_state.is_empty()
+    }
+
+    pub fn note_successful_export(
+        &mut self,
+        counter: u64,
+        sealed_state: Vec<u8>,
+    ) -> Result<(), ProtocolError> {
+        if sealed_state.len() > MAX_BUFFER_SIZE {
+            return Err(ProtocolError::invalid_input(
+                "sealed-state slot payload too large",
+            ));
+        }
+        self.tracker.note_successful_export(counter)?;
+        self.sealed_state = sealed_state;
+        Ok(())
+    }
+
+    pub fn note_successful_restore(&mut self, counter: u64) -> Result<(), ProtocolError> {
+        self.tracker.note_successful_restore(counter)
+    }
+
+    pub fn serialize(&self) -> Result<Vec<u8>, ProtocolError> {
+        if self.sealed_state.len() > MAX_BUFFER_SIZE {
+            return Err(ProtocolError::invalid_input(
+                "sealed-state slot payload too large",
+            ));
+        }
+        let sealed_len = u32::try_from(self.sealed_state.len())
+            .map_err(|_| ProtocolError::invalid_input("sealed-state slot payload too large"))?;
+        let mut out =
+            Vec::with_capacity(Self::HEADER_LEN + size_of::<u32>() + self.sealed_state.len());
+        out.extend_from_slice(&SEALED_STATE_SLOT_VERSION.to_le_bytes());
+        out.extend_from_slice(&self.tracker.serialize());
+        out.extend_from_slice(&sealed_len.to_le_bytes());
+        out.extend_from_slice(&self.sealed_state);
+        Ok(out)
+    }
+
+    pub fn deserialize(data: &[u8]) -> Result<Self, ProtocolError> {
+        let min_len = Self::HEADER_LEN + size_of::<u32>();
+        if data.len() < min_len {
+            return Err(ProtocolError::decode(format!(
+                "sealed-state slot must be at least {min_len} bytes, got {}",
+                data.len()
+            )));
+        }
+        let version = u32::from_le_bytes(
+            data[0..size_of::<u32>()]
+                .try_into()
+                .map_err(|_| ProtocolError::decode("sealed-state slot version missing"))?,
+        );
+        if version != SEALED_STATE_SLOT_VERSION {
+            return Err(ProtocolError::invalid_input(format!(
+                "unsupported sealed-state slot version {version}"
+            )));
+        }
+        let tracker_offset = size_of::<u32>();
+        let tracker_end = tracker_offset + SealedStateCounterTracker::SERIALIZED_LEN;
+        let tracker = SealedStateCounterTracker::deserialize(&data[tracker_offset..tracker_end])?;
+        let sealed_len_offset = tracker_end;
+        let sealed_len_end = sealed_len_offset + size_of::<u32>();
+        let sealed_len = u32::from_le_bytes(
+            data[sealed_len_offset..sealed_len_end]
+                .try_into()
+                .map_err(|_| ProtocolError::decode("sealed-state slot payload length missing"))?,
+        ) as usize;
+        if sealed_len > MAX_BUFFER_SIZE {
+            return Err(ProtocolError::invalid_input(
+                "sealed-state slot payload too large",
+            ));
+        }
+        if data.len() != sealed_len_end + sealed_len {
+            return Err(ProtocolError::decode(format!(
+                "sealed-state slot length mismatch: declared {sealed_len} payload bytes, got {} total bytes",
+                data.len()
+            )));
+        }
+        Ok(Self {
+            tracker,
+            sealed_state: data[sealed_len_end..].to_vec(),
+        })
+    }
 }
 
 pub struct EcliptixSession(Session);
@@ -73,19 +353,113 @@ impl EcliptixSession {
         self.0.export_sealed_state(&provider, external_counter)
     }
 
+    pub fn serialize_with_counter_tracker(
+        &self,
+        key: &[u8],
+        tracker: &mut SealedStateCounterTracker,
+    ) -> Result<Vec<u8>, ProtocolError> {
+        let counter = tracker.next_export_counter()?;
+        let sealed = self.serialize(key, counter)?;
+        tracker.note_successful_export(counter)?;
+        Ok(sealed)
+    }
+
+    pub fn export_to_slot(
+        &self,
+        key: &[u8],
+        slot: &mut SealedStateSlot,
+    ) -> Result<(), ProtocolError> {
+        let counter = slot.next_export_counter()?;
+        let sealed = self.serialize(key, counter)?;
+        slot.note_successful_export(counter, sealed)
+    }
+
     pub fn deserialize(
         data: &[u8],
         key: &[u8],
         min_external_counter: u64,
     ) -> Result<(Self, u64), ProtocolError> {
+        Self::deserialize_with_time_provider(
+            data,
+            key,
+            min_external_counter,
+            Arc::new(SystemTimeProvider),
+        )
+    }
+
+    pub fn deserialize_with_time_provider(
+        data: &[u8],
+        key: &[u8],
+        min_external_counter: u64,
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<(Self, u64), ProtocolError> {
         let external_counter = Session::sealed_state_external_counter(data)?;
         let provider = StaticStateKeyProvider::new(key.to_vec())?;
-        let session = Session::from_sealed_state(data, &provider, min_external_counter)?;
+        let session = Session::from_sealed_state_with_time_provider(
+            data,
+            &provider,
+            min_external_counter,
+            time_provider,
+        )?;
         Ok((Self(session), external_counter))
     }
 
     pub fn sealed_external_counter(data: &[u8]) -> Result<u64, ProtocolError> {
         Session::sealed_state_external_counter(data)
+    }
+
+    pub fn deserialize_with_counter_tracker(
+        data: &[u8],
+        key: &[u8],
+        tracker: &mut SealedStateCounterTracker,
+    ) -> Result<Self, ProtocolError> {
+        Self::deserialize_with_counter_tracker_and_time_provider(
+            data,
+            key,
+            tracker,
+            Arc::new(SystemTimeProvider),
+        )
+    }
+
+    pub fn deserialize_with_counter_tracker_and_time_provider(
+        data: &[u8],
+        key: &[u8],
+        tracker: &mut SealedStateCounterTracker,
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<Self, ProtocolError> {
+        let (session, external_counter) = Self::deserialize_with_time_provider(
+            data,
+            key,
+            tracker.min_import_counter(),
+            time_provider,
+        )?;
+        tracker.note_successful_restore(external_counter)?;
+        Ok(session)
+    }
+
+    pub fn restore_from_slot(
+        slot: &mut SealedStateSlot,
+        key: &[u8],
+    ) -> Result<Self, ProtocolError> {
+        Self::restore_from_slot_with_time_provider(slot, key, Arc::new(SystemTimeProvider))
+    }
+
+    pub fn restore_from_slot_with_time_provider(
+        slot: &mut SealedStateSlot,
+        key: &[u8],
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<Self, ProtocolError> {
+        if slot.is_empty() {
+            return Err(ProtocolError::invalid_input("sealed-state slot is empty"));
+        }
+        let (session, external_counter) = Self::deserialize_with_time_provider(
+            slot.sealed_state(),
+            key,
+            slot.min_import_counter(),
+            time_provider,
+        )?;
+        slot.note_successful_restore(external_counter)?;
+        Ok(session)
     }
 
     pub fn nonce_remaining(&self) -> Result<u64, ProtocolError> {
@@ -138,16 +512,25 @@ impl EcliptixResponder {
 pub struct EcliptixProtocol {
     identity: IdentityKeys,
     max_messages: u32,
+    time_provider: Arc<dyn ITimeProvider>,
 }
 
 impl EcliptixProtocol {
     pub fn new(opk_count: u32) -> Result<Self, ProtocolError> {
+        Self::new_with_time_provider(opk_count, Arc::new(SystemTimeProvider))
+    }
+
+    pub fn new_with_time_provider(
+        opk_count: u32,
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<Self, ProtocolError> {
         let identity = IdentityKeys::create(opk_count)?;
         #[allow(clippy::cast_possible_truncation)]
         let max_messages = DEFAULT_MESSAGES_PER_CHAIN as u32;
         Ok(Self {
             identity,
             max_messages,
+            time_provider,
         })
     }
 
@@ -156,12 +539,27 @@ impl EcliptixProtocol {
         membership_id: &str,
         opk_count: u32,
     ) -> Result<Self, ProtocolError> {
+        Self::from_seed_with_time_provider(
+            seed,
+            membership_id,
+            opk_count,
+            Arc::new(SystemTimeProvider),
+        )
+    }
+
+    pub fn from_seed_with_time_provider(
+        seed: &[u8],
+        membership_id: &str,
+        opk_count: u32,
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<Self, ProtocolError> {
         let identity = IdentityKeys::create_from_master_key(seed, membership_id, opk_count)?;
         #[allow(clippy::cast_possible_truncation)]
         let max_messages = DEFAULT_MESSAGES_PER_CHAIN as u32;
         Ok(Self {
             identity,
             max_messages,
+            time_provider,
         })
     }
 
@@ -221,8 +619,12 @@ impl EcliptixProtocol {
             ProtocolError::decode(format!("Failed to decode peer PreKeyBundle: {e}"))
         })?;
 
-        let initiator =
-            HandshakeInitiator::start(&mut self.identity, &peer_bundle, self.max_messages)?;
+        let initiator = HandshakeInitiator::start_with_time_provider(
+            &mut self.identity,
+            &peer_bundle,
+            self.max_messages,
+            self.time_provider.clone(),
+        )?;
         let init_bytes = initiator.encoded_message().to_vec();
 
         Ok((EcliptixInitiator(initiator), init_bytes))
@@ -245,12 +647,13 @@ impl EcliptixProtocol {
             ProtocolError::decode(format!("Failed to decode local PreKeyBundle: {e}"))
         })?;
 
-        let responder = HandshakeResponder::process_with_replay_guard(
+        let responder = HandshakeResponder::process_with_replay_guard_and_time_provider(
             &mut self.identity,
             &local_bundle,
             init_bytes,
             self.max_messages,
             replay_guard,
+            self.time_provider.clone(),
         )?;
         let ack_bytes = responder.encoded_ack().to_vec();
 
@@ -270,7 +673,12 @@ impl EcliptixProtocol {
     }
 
     pub fn create_group(&self, credential: Vec<u8>) -> Result<EcliptixGroupSession, ProtocolError> {
-        let session = GroupSession::create(&self.identity, credential)?;
+        let session = GroupSession::create_with_policy_and_time_provider(
+            &self.identity,
+            credential,
+            GroupSecurityPolicy::shield(),
+            self.time_provider.clone(),
+        )?;
         Ok(EcliptixGroupSession(session))
     }
 
@@ -278,10 +686,11 @@ impl EcliptixProtocol {
         &self,
         credential: Vec<u8>,
     ) -> Result<EcliptixGroupSession, ProtocolError> {
-        let session = GroupSession::create_with_policy(
+        let session = GroupSession::create_with_policy_and_time_provider(
             &self.identity,
             credential,
             GroupSecurityPolicy::shield(),
+            self.time_provider.clone(),
         )?;
         Ok(EcliptixGroupSession(session))
     }
@@ -291,7 +700,12 @@ impl EcliptixProtocol {
         credential: Vec<u8>,
         policy: GroupSecurityPolicy,
     ) -> Result<EcliptixGroupSession, ProtocolError> {
-        let session = GroupSession::create_with_policy(&self.identity, credential, policy)?;
+        let session = GroupSession::create_with_policy_and_time_provider(
+            &self.identity,
+            credential,
+            policy,
+            self.time_provider.clone(),
+        )?;
         Ok(EcliptixGroupSession(session))
     }
 
@@ -302,13 +716,14 @@ impl EcliptixProtocol {
         kyber_secret: SecureMemoryHandle,
     ) -> Result<EcliptixGroupSession, ProtocolError> {
         let ed25519_secret = self.identity.get_identity_ed25519_private_key_copy()?;
-        let session = GroupSession::from_welcome(
+        let session = GroupSession::from_welcome_with_time_provider(
             welcome_bytes,
             x25519_private,
             kyber_secret,
             &self.identity.get_identity_ed25519_public(),
             &self.identity.get_identity_x25519_public(),
             ed25519_secret,
+            self.time_provider.clone(),
         )?;
         Ok(EcliptixGroupSession(session))
     }
@@ -319,11 +734,12 @@ impl EcliptixProtocol {
         authorization_bytes: &[u8],
         credential: Vec<u8>,
     ) -> Result<(EcliptixGroupSession, Vec<u8>), ProtocolError> {
-        let (session, commit_bytes) = GroupSession::from_external_join(
+        let (session, commit_bytes) = GroupSession::from_external_join_with_time_provider(
             public_state_bytes,
             authorization_bytes,
             &self.identity,
             credential,
+            self.time_provider.clone(),
         )?;
         Ok((EcliptixGroupSession(session), commit_bytes))
     }
@@ -415,6 +831,7 @@ use crate::protocol::voip::{
 use std::sync::Arc;
 
 pub struct EcliptixVoipSession(VoipSession);
+pub type EcliptixVoipScreenShareMeta = (u32, u32, u32, Option<String>);
 
 impl EcliptixVoipSession {
     pub fn encrypt_frame(
@@ -521,6 +938,27 @@ impl EcliptixVoipSession {
         self.0.export_sealed_state(state_key, external_counter)
     }
 
+    pub fn export_sealed_state_with_counter_tracker(
+        &self,
+        state_key: &[u8],
+        tracker: &mut SealedStateCounterTracker,
+    ) -> Result<Vec<u8>, ProtocolError> {
+        let counter = tracker.next_export_counter()?;
+        let sealed = self.export_sealed_state(state_key, counter)?;
+        tracker.note_successful_export(counter)?;
+        Ok(sealed)
+    }
+
+    pub fn export_to_slot(
+        &self,
+        state_key: &[u8],
+        slot: &mut SealedStateSlot,
+    ) -> Result<(), ProtocolError> {
+        let counter = slot.next_export_counter()?;
+        let sealed = self.export_sealed_state(state_key, counter)?;
+        slot.note_successful_export(counter, sealed)
+    }
+
     pub fn build_call_end(
         &self,
         device_id: &[u8],
@@ -569,20 +1007,155 @@ impl EcliptixVoipSession {
             .process_rekey_ack(ack_bytes, peer_ed25519_public, identity_kyber_secret)
     }
 
+    pub fn set_screen_share_meta(
+        &self,
+        width: u32,
+        height: u32,
+        frame_rate: u32,
+        codec_hint: Option<&str>,
+    ) -> Result<(), ProtocolError> {
+        self.0
+            .set_screen_share_meta(width, height, frame_rate, codec_hint)
+    }
+
+    pub fn get_screen_share_meta(
+        &self,
+    ) -> Result<Option<EcliptixVoipScreenShareMeta>, ProtocolError> {
+        self.0.get_screen_share_meta()
+    }
+
+    pub fn clear_screen_share_meta(&self) -> Result<(), ProtocolError> {
+        self.0.clear_screen_share_meta()
+    }
+
+    pub fn get_call_statistics(&self) -> Result<voip::CallStatistics, ProtocolError> {
+        self.0.get_call_statistics()
+    }
+
+    pub fn set_recording_consent(&self, consent: i32) -> Result<(), ProtocolError> {
+        self.0.set_recording_consent(consent)
+    }
+
+    pub fn get_local_recording_consent(&self) -> Result<i32, ProtocolError> {
+        self.0.get_local_recording_consent()
+    }
+
+    pub fn set_remote_recording_consent(&self, consent: i32) -> Result<(), ProtocolError> {
+        self.0.set_remote_recording_consent(consent)
+    }
+
+    pub fn get_remote_recording_consent(&self) -> Result<i32, ProtocolError> {
+        self.0.get_remote_recording_consent()
+    }
+
+    pub fn both_consented_to_recording(&self) -> Result<bool, ProtocolError> {
+        self.0.both_consented_to_recording()
+    }
+
+    pub fn build_recording_consent_message(
+        &self,
+        consent: i32,
+        timestamp_unix: u64,
+        identity_ed25519_secret: &[u8],
+    ) -> Result<Vec<u8>, ProtocolError> {
+        self.0
+            .build_recording_consent_message(consent, timestamp_unix, identity_ed25519_secret)
+    }
+
+    pub fn process_recording_consent_message(
+        &self,
+        message_bytes: &[u8],
+        peer_ed25519_public: &[u8],
+    ) -> Result<i32, ProtocolError> {
+        self.0
+            .process_recording_consent_message(message_bytes, peer_ed25519_public)
+    }
+
     pub fn from_sealed_state(
         data: &[u8],
         state_key: &[u8],
         min_external_counter: u64,
     ) -> Result<Self, ProtocolError> {
-        Ok(Self(VoipSession::from_sealed_state(
+        Self::from_sealed_state_with_time_provider(
             data,
             state_key,
             min_external_counter,
+            Arc::new(SystemTimeProvider),
+        )
+    }
+
+    pub fn from_sealed_state_with_time_provider(
+        data: &[u8],
+        state_key: &[u8],
+        min_external_counter: u64,
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<Self, ProtocolError> {
+        Ok(Self(VoipSession::from_sealed_state_with_time_provider(
+            data,
+            state_key,
+            min_external_counter,
+            time_provider,
         )?))
     }
 
     pub fn sealed_state_external_counter(data: &[u8]) -> Result<u64, ProtocolError> {
         VoipSession::sealed_state_external_counter(data)
+    }
+
+    pub fn from_sealed_state_with_counter_tracker(
+        data: &[u8],
+        state_key: &[u8],
+        tracker: &mut SealedStateCounterTracker,
+    ) -> Result<Self, ProtocolError> {
+        Self::from_sealed_state_with_counter_tracker_and_time_provider(
+            data,
+            state_key,
+            tracker,
+            Arc::new(SystemTimeProvider),
+        )
+    }
+
+    pub fn from_sealed_state_with_counter_tracker_and_time_provider(
+        data: &[u8],
+        state_key: &[u8],
+        tracker: &mut SealedStateCounterTracker,
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<Self, ProtocolError> {
+        let session = Self::from_sealed_state_with_time_provider(
+            data,
+            state_key,
+            tracker.min_import_counter(),
+            time_provider,
+        )?;
+        let external_counter = Self::sealed_state_external_counter(data)?;
+        tracker.note_successful_restore(external_counter)?;
+        Ok(session)
+    }
+
+    pub fn restore_from_slot(
+        slot: &mut SealedStateSlot,
+        state_key: &[u8],
+    ) -> Result<Self, ProtocolError> {
+        Self::restore_from_slot_with_time_provider(slot, state_key, Arc::new(SystemTimeProvider))
+    }
+
+    pub fn restore_from_slot_with_time_provider(
+        slot: &mut SealedStateSlot,
+        state_key: &[u8],
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<Self, ProtocolError> {
+        if slot.is_empty() {
+            return Err(ProtocolError::invalid_input("sealed-state slot is empty"));
+        }
+        let session = Self::from_sealed_state_with_time_provider(
+            slot.sealed_state(),
+            state_key,
+            slot.min_import_counter(),
+            time_provider,
+        )?;
+        let external_counter = Self::sealed_state_external_counter(slot.sealed_state())?;
+        slot.note_successful_restore(external_counter)?;
+        Ok(session)
     }
 }
 
@@ -592,6 +1165,7 @@ pub struct EcliptixCallInitiator {
     pub shield_mode: bool,
     pub ratchet_interval_frames: u32,
     pub pq_rekey_interval_secs: u32,
+    time_provider: Arc<dyn ITimeProvider>,
 }
 
 impl EcliptixCallInitiator {
@@ -622,13 +1196,14 @@ impl EcliptixCallInitiator {
             peer_key_confirm_mac,
             &auth_context,
         )?;
-        let session = VoipSession::from_key_material(
+        let session = VoipSession::from_key_material_with_time_provider(
             self.call_id,
             CallRole::Caller,
             key_material,
             self.ratchet_interval_frames,
             self.pq_rekey_interval_secs,
             self.shield_mode,
+            self.time_provider,
         )?;
         Ok(EcliptixVoipSession(session))
     }
@@ -720,6 +1295,7 @@ impl EcliptixProtocol {
             shield_mode,
             ratchet_interval_frames,
             pq_rekey_interval_secs,
+            time_provider: self.time_provider.clone(),
         };
 
         Ok((initiator, buf))
@@ -785,13 +1361,14 @@ impl EcliptixProtocol {
             .encode(&mut buf)
             .map_err(|e| ProtocolError::encode(format!("CallAccept encode: {e}")))?;
 
-        let session = VoipSession::from_key_material(
+        let session = VoipSession::from_key_material_with_time_provider(
             call_init.call_id,
             CallRole::Callee,
             accept_output.key_material,
             call_init.ratchet_interval_frames,
             call_init.pq_rekey_interval_secs,
             call_init.shield_mode,
+            self.time_provider.clone(),
         )?;
 
         Ok((EcliptixVoipSession(session), buf))
@@ -849,16 +1426,65 @@ impl EcliptixProtocol {
         session.process_rekey_ack(ack_bytes, peer_ed25519_public, &kyber_secret)
     }
 
+    pub fn build_call_recording_consent_message(
+        &self,
+        session: &EcliptixVoipSession,
+        consent: i32,
+        timestamp_unix: u64,
+    ) -> Result<Vec<u8>, ProtocolError> {
+        let ed25519_secret = self.identity.get_identity_ed25519_private_key_copy()?;
+        session.build_recording_consent_message(consent, timestamp_unix, &ed25519_secret)
+    }
+
+    pub fn process_call_recording_consent_message(
+        &self,
+        session: &EcliptixVoipSession,
+        message_bytes: &[u8],
+        peer_ed25519_public: &[u8],
+    ) -> Result<i32, ProtocolError> {
+        session.process_recording_consent_message(message_bytes, peer_ed25519_public)
+    }
+
     pub fn import_call_state(
         &self,
         data: &[u8],
         state_key: &[u8],
         min_external_counter: u64,
     ) -> Result<(EcliptixVoipSession, u64), ProtocolError> {
-        let session =
-            EcliptixVoipSession::from_sealed_state(data, state_key, min_external_counter)?;
+        let session = EcliptixVoipSession::from_sealed_state_with_time_provider(
+            data,
+            state_key,
+            min_external_counter,
+            self.time_provider.clone(),
+        )?;
         let external_counter = EcliptixVoipSession::sealed_state_external_counter(data)?;
         Ok((session, external_counter))
+    }
+
+    pub fn import_call_state_with_counter_tracker(
+        &self,
+        data: &[u8],
+        state_key: &[u8],
+        tracker: &mut SealedStateCounterTracker,
+    ) -> Result<EcliptixVoipSession, ProtocolError> {
+        EcliptixVoipSession::from_sealed_state_with_counter_tracker_and_time_provider(
+            data,
+            state_key,
+            tracker,
+            self.time_provider.clone(),
+        )
+    }
+
+    pub fn import_call_state_from_slot(
+        &self,
+        slot: &mut SealedStateSlot,
+        state_key: &[u8],
+    ) -> Result<EcliptixVoipSession, ProtocolError> {
+        EcliptixVoipSession::restore_from_slot_with_time_provider(
+            slot,
+            state_key,
+            self.time_provider.clone(),
+        )
     }
 }
 
@@ -869,6 +1495,9 @@ impl EcliptixGroupSession {
         &self,
         key_package_bytes: &[u8],
     ) -> Result<(Vec<u8>, Vec<u8>), ProtocolError> {
+        if key_package_bytes.len() > MAX_GROUP_MESSAGE_SIZE {
+            return Err(ProtocolError::invalid_input("KeyPackage too large"));
+        }
         let kp = GroupKeyPackage::decode(key_package_bytes)
             .map_err(|e| ProtocolError::decode(format!("KeyPackage decode: {e}")))?;
         self.0.add_member(&kp)
@@ -1025,20 +1654,128 @@ impl EcliptixGroupSession {
         self.0.export_sealed_state(key, external_counter)
     }
 
+    pub fn serialize_with_counter_tracker(
+        &self,
+        key: &[u8],
+        tracker: &mut SealedStateCounterTracker,
+    ) -> Result<Vec<u8>, ProtocolError> {
+        let counter = tracker.next_export_counter()?;
+        let sealed = self.serialize(key, counter)?;
+        tracker.note_successful_export(counter)?;
+        Ok(sealed)
+    }
+
+    pub fn export_to_slot(
+        &self,
+        key: &[u8],
+        slot: &mut SealedStateSlot,
+    ) -> Result<(), ProtocolError> {
+        let counter = slot.next_export_counter()?;
+        let sealed = self.serialize(key, counter)?;
+        slot.note_successful_export(counter, sealed)
+    }
+
     pub fn deserialize(
         data: &[u8],
         key: &[u8],
         ed25519_secret: Zeroizing<Vec<u8>>,
         min_external_counter: u64,
     ) -> Result<(Self, u64), ProtocolError> {
+        Self::deserialize_with_time_provider(
+            data,
+            key,
+            ed25519_secret,
+            min_external_counter,
+            Arc::new(SystemTimeProvider),
+        )
+    }
+
+    pub fn deserialize_with_time_provider(
+        data: &[u8],
+        key: &[u8],
+        ed25519_secret: Zeroizing<Vec<u8>>,
+        min_external_counter: u64,
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<(Self, u64), ProtocolError> {
         let external_counter = GroupSession::sealed_state_external_counter(data)?;
-        let session =
-            GroupSession::from_sealed_state(data, key, ed25519_secret, min_external_counter)?;
+        let session = GroupSession::from_sealed_state_with_time_provider(
+            data,
+            key,
+            ed25519_secret,
+            min_external_counter,
+            time_provider,
+        )?;
         Ok((Self(session), external_counter))
     }
 
     pub fn sealed_external_counter(data: &[u8]) -> Result<u64, ProtocolError> {
         GroupSession::sealed_state_external_counter(data)
+    }
+
+    pub fn deserialize_with_counter_tracker(
+        data: &[u8],
+        key: &[u8],
+        ed25519_secret: Zeroizing<Vec<u8>>,
+        tracker: &mut SealedStateCounterTracker,
+    ) -> Result<Self, ProtocolError> {
+        Self::deserialize_with_counter_tracker_and_time_provider(
+            data,
+            key,
+            ed25519_secret,
+            tracker,
+            Arc::new(SystemTimeProvider),
+        )
+    }
+
+    pub fn deserialize_with_counter_tracker_and_time_provider(
+        data: &[u8],
+        key: &[u8],
+        ed25519_secret: Zeroizing<Vec<u8>>,
+        tracker: &mut SealedStateCounterTracker,
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<Self, ProtocolError> {
+        let (session, external_counter) = Self::deserialize_with_time_provider(
+            data,
+            key,
+            ed25519_secret,
+            tracker.min_import_counter(),
+            time_provider,
+        )?;
+        tracker.note_successful_restore(external_counter)?;
+        Ok(session)
+    }
+
+    pub fn restore_from_slot(
+        slot: &mut SealedStateSlot,
+        key: &[u8],
+        ed25519_secret: Zeroizing<Vec<u8>>,
+    ) -> Result<Self, ProtocolError> {
+        Self::restore_from_slot_with_time_provider(
+            slot,
+            key,
+            ed25519_secret,
+            Arc::new(SystemTimeProvider),
+        )
+    }
+
+    pub fn restore_from_slot_with_time_provider(
+        slot: &mut SealedStateSlot,
+        key: &[u8],
+        ed25519_secret: Zeroizing<Vec<u8>>,
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<Self, ProtocolError> {
+        if slot.is_empty() {
+            return Err(ProtocolError::invalid_input("sealed-state slot is empty"));
+        }
+        let (session, external_counter) = Self::deserialize_with_time_provider(
+            slot.sealed_state(),
+            key,
+            ed25519_secret,
+            slot.min_import_counter(),
+            time_provider,
+        )?;
+        slot.note_successful_restore(external_counter)?;
+        Ok(session)
     }
 
     pub fn is_shielded(&self) -> Result<bool, ProtocolError> {

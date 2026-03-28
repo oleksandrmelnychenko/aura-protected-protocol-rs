@@ -215,10 +215,8 @@ pub fn sibling(x: u32, n: u32) -> Result<u32, ProtocolError> {
 }
 
 #[inline]
-pub const fn leaf_to_node(leaf_idx: u32) -> u32 {
-    leaf_idx
-        .checked_mul(2)
-        .expect("leaf_to_node: leaf index overflow")
+pub fn leaf_to_node(leaf_idx: u32) -> Result<u32, ProtocolError> {
+    checked_leaf_to_node(leaf_idx)
 }
 
 #[inline]

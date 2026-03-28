@@ -3,6 +3,7 @@
 
 use crate::core::errors::ProtocolError;
 use crate::crypto::{CryptoInterop, SecureMemoryHandle};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub trait IStateKeyProvider: Send + Sync {
     fn get_state_encryption_key(&self) -> Result<SecureMemoryHandle, ProtocolError>;
@@ -37,6 +38,22 @@ pub trait IIdentityEventHandler: Send + Sync {
     /// the exhaustion-warning threshold.  The caller should upload fresh OTKs
     /// via `replenish_one_time_pre_keys` to avoid running out.
     fn on_otk_exhaustion_warning(&self, remaining: u32, max_capacity: u32);
+}
+
+pub trait ITimeProvider: Send + Sync {
+    fn now_unix_secs(&self) -> Result<u64, ProtocolError>;
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SystemTimeProvider;
+
+impl ITimeProvider for SystemTimeProvider {
+    fn now_unix_secs(&self) -> Result<u64, ProtocolError> {
+        Ok(SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| ProtocolError::invalid_state("system clock is before UNIX epoch"))?
+            .as_secs())
+    }
 }
 
 pub struct StaticStateKeyProvider {

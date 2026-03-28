@@ -82,6 +82,179 @@ mod ffi {
     }
 
     #[test]
+    fn ffi_identity_out_handle_can_be_reused_across_successful_calls() {
+        init_lib();
+        let mut handle: *mut EppIdentityHandle = ptr::null_mut();
+        let mut err = null_error();
+        let mut first_x25519 = [0u8; 32];
+        let mut second_x25519 = [0u8; 32];
+
+        unsafe {
+            assert_eq!(
+                epp_identity_create(&mut handle, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_identity_get_x25519_public(
+                    handle,
+                    first_x25519.as_mut_ptr(),
+                    first_x25519.len(),
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+
+            assert_eq!(
+                epp_identity_create(&mut handle, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_identity_get_x25519_public(
+                    handle,
+                    second_x25519.as_mut_ptr(),
+                    second_x25519.len(),
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_ne!(first_x25519, second_x25519);
+
+            epp_identity_destroy(&mut handle);
+        }
+    }
+
+    #[test]
+    fn ffi_sealed_state_counter_tracker_roundtrip() {
+        init_lib();
+        let mut tracker: *mut EppSealedStateCounterTrackerHandle = ptr::null_mut();
+        let mut restored: *mut EppSealedStateCounterTrackerHandle = ptr::null_mut();
+        let mut serialized = null_buffer();
+        let mut err = null_error();
+        let mut max_restored = u64::MAX;
+        let mut latest_issued = u64::MAX;
+
+        unsafe {
+            assert_eq!(
+                epp_sealed_state_counter_tracker_create(&mut tracker, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert!(!tracker.is_null());
+            assert_eq!(
+                epp_sealed_state_counter_tracker_get_max_restored_counter(
+                    tracker,
+                    &mut max_restored,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(max_restored, 0);
+            assert_eq!(
+                epp_sealed_state_counter_tracker_get_latest_issued_counter(
+                    tracker,
+                    &mut latest_issued,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(latest_issued, 0);
+
+            assert_eq!(
+                epp_sealed_state_counter_tracker_serialize(tracker, &mut serialized, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert!(serialized.length > 0);
+
+            assert_eq!(
+                epp_sealed_state_counter_tracker_create_from_serialized(
+                    serialized.data,
+                    serialized.length,
+                    &mut restored,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert!(!restored.is_null());
+            max_restored = u64::MAX;
+            latest_issued = u64::MAX;
+            assert_eq!(
+                epp_sealed_state_counter_tracker_get_max_restored_counter(
+                    restored,
+                    &mut max_restored,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_counter_tracker_get_latest_issued_counter(
+                    restored,
+                    &mut latest_issued,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(max_restored, 0);
+            assert_eq!(latest_issued, 0);
+
+            epp_buffer_release(&mut serialized);
+            epp_sealed_state_counter_tracker_destroy(&mut tracker);
+            epp_sealed_state_counter_tracker_destroy(&mut restored);
+        }
+    }
+
+    #[test]
+    fn ffi_sealed_state_slot_roundtrip() {
+        init_lib();
+        let mut slot: *mut EppSealedStateSlotHandle = ptr::null_mut();
+        let mut restored: *mut EppSealedStateSlotHandle = ptr::null_mut();
+        let mut serialized = null_buffer();
+        let mut err = null_error();
+        let mut max_restored = u64::MAX;
+        let mut latest_issued = u64::MAX;
+
+        unsafe {
+            assert_eq!(
+                epp_sealed_state_slot_create(&mut slot, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_slot_serialize(slot, &mut serialized, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_slot_create_from_serialized(
+                    serialized.data,
+                    serialized.length,
+                    &mut restored,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_slot_get_max_restored_counter(
+                    restored,
+                    &mut max_restored,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_slot_get_latest_issued_counter(
+                    restored,
+                    &mut latest_issued,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(max_restored, 0);
+            assert_eq!(latest_issued, 0);
+
+            epp_buffer_release(&mut serialized);
+            epp_sealed_state_slot_destroy(&mut slot);
+            epp_sealed_state_slot_destroy(&mut restored);
+        }
+    }
+
+    #[test]
     fn ffi_identity_get_keys() {
         init_lib();
         let mut handle: *mut EppIdentityHandle = ptr::null_mut();
@@ -130,6 +303,49 @@ mod ffi {
         unsafe {
             epp_buffer_release(&mut bundle_buf);
             epp_identity_destroy(&mut handle);
+        }
+    }
+
+    #[test]
+    fn ffi_output_buffer_can_be_reused_across_successful_calls() {
+        init_lib();
+        let mut err = null_error();
+        let group_id = [0xABu8; 32];
+        let mut out = null_buffer();
+
+        unsafe {
+            assert_eq!(
+                epp_group_compute_message_id(
+                    group_id.as_ptr(),
+                    group_id.len(),
+                    1,
+                    2,
+                    3,
+                    &mut out,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(out.length, 32);
+            let first = std::slice::from_raw_parts(out.data, out.length).to_vec();
+
+            assert_eq!(
+                epp_group_compute_message_id(
+                    group_id.as_ptr(),
+                    group_id.len(),
+                    4,
+                    5,
+                    6,
+                    &mut out,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(out.length, 32);
+            let second = std::slice::from_raw_parts(out.data, out.length).to_vec();
+            assert_ne!(first, second);
+
+            epp_buffer_release(&mut out);
         }
     }
 
@@ -262,6 +478,148 @@ mod ffi {
             epp_session_destroy(&mut alice_session_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn ffi_session_deserialize_with_time_provider_uses_manual_clock() {
+        init_lib();
+
+        let initial_now = 1_700_000_000u64;
+        let mut alice_time: *mut EppTimeProviderHandle = ptr::null_mut();
+        let mut restore_time: *mut EppTimeProviderHandle = ptr::null_mut();
+        let mut alice_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut bob_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut init_h: *mut EppHandshakeInitiatorHandle = ptr::null_mut();
+        let mut resp_h: *mut EppHandshakeResponderHandle = ptr::null_mut();
+        let mut alice_session_h: *mut EppSessionHandle = ptr::null_mut();
+        let mut bob_session_h: *mut EppSessionHandle = ptr::null_mut();
+        let mut restored_session_h: *mut EppSessionHandle = ptr::null_mut();
+        let mut err = null_error();
+        let mut bob_bundle_buf = null_buffer();
+        let mut init_msg = null_buffer();
+        let mut ack_msg = null_buffer();
+        let mut sealed = null_buffer();
+        let mut external_counter = 0u64;
+        let state_key = [7u8; 32];
+        let config = EppSessionConfig {
+            max_messages_per_chain: 1000,
+        };
+
+        unsafe {
+            assert_eq!(
+                epp_time_provider_manual_create(initial_now, &mut alice_time, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_time_provider_manual_create(initial_now, &mut restore_time, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_identity_create(&mut alice_h, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_identity_create(&mut bob_h, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_identity_set_time_provider(alice_h, alice_time, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_prekey_bundle_create(bob_h, &mut bob_bundle_buf, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_handshake_initiator_start(
+                    alice_h,
+                    bob_bundle_buf.data,
+                    bob_bundle_buf.length,
+                    &config,
+                    &mut init_h,
+                    &mut init_msg,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_handshake_responder_start(
+                    bob_h,
+                    bob_bundle_buf.data,
+                    bob_bundle_buf.length,
+                    init_msg.data,
+                    init_msg.length,
+                    &config,
+                    &mut resp_h,
+                    &mut ack_msg,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_handshake_responder_finish(resp_h, &mut bob_session_h, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_handshake_initiator_finish(
+                    init_h,
+                    ack_msg.data,
+                    ack_msg.length,
+                    &mut alice_session_h,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_session_set_ttl(alice_session_h, 60, true, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_session_serialize_sealed(
+                    alice_session_h,
+                    state_key.as_ptr(),
+                    state_key.len(),
+                    1,
+                    &mut sealed,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_session_deserialize_sealed_with_time_provider(
+                    sealed.data,
+                    sealed.length,
+                    state_key.as_ptr(),
+                    state_key.len(),
+                    0,
+                    restore_time,
+                    &mut external_counter,
+                    &mut restored_session_h,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(external_counter, 1);
+            assert!(!epp_session_is_expired(restored_session_h));
+
+            assert_eq!(
+                epp_time_provider_manual_set_now_unix(restore_time, initial_now + 61, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert!(epp_session_is_expired(restored_session_h));
+
+            epp_buffer_release(&mut bob_bundle_buf);
+            epp_buffer_release(&mut init_msg);
+            epp_buffer_release(&mut ack_msg);
+            epp_buffer_release(&mut sealed);
+            epp_session_destroy(&mut restored_session_h);
+            epp_session_destroy(&mut bob_session_h);
+            epp_session_destroy(&mut alice_session_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+            epp_time_provider_destroy(&mut alice_time);
+            epp_time_provider_destroy(&mut restore_time);
         }
     }
 
@@ -977,6 +1335,379 @@ mod ffi {
     }
 
     #[test]
+    fn ffi_session_sealed_state_with_tracker_restores_latest_and_rejects_rollback() {
+        init_lib();
+
+        let mut alice_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut bob_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut err = null_error();
+        unsafe {
+            epp_identity_create(&mut alice_h, &mut err);
+            epp_identity_create(&mut bob_h, &mut err);
+        }
+
+        let mut bob_bundle_buf = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        unsafe {
+            epp_prekey_bundle_create(bob_h, &mut bob_bundle_buf, &mut err);
+        }
+
+        let mut alice_init_h: *mut EppHandshakeInitiatorHandle = ptr::null_mut();
+        let mut init_msg = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        unsafe {
+            epp_handshake_initiator_start(
+                alice_h,
+                bob_bundle_buf.data,
+                bob_bundle_buf.length,
+                ptr::null(),
+                &mut alice_init_h,
+                &mut init_msg,
+                &mut err,
+            );
+        }
+
+        let mut bob_resp_h: *mut EppHandshakeResponderHandle = ptr::null_mut();
+        let mut ack_msg = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        unsafe {
+            epp_handshake_responder_start(
+                bob_h,
+                bob_bundle_buf.data,
+                bob_bundle_buf.length,
+                init_msg.data,
+                init_msg.length,
+                ptr::null(),
+                &mut bob_resp_h,
+                &mut ack_msg,
+                &mut err,
+            );
+        }
+
+        let mut alice_session_h: *mut EppSessionHandle = ptr::null_mut();
+        let mut bob_session_h: *mut EppSessionHandle = ptr::null_mut();
+        unsafe {
+            epp_handshake_initiator_finish(
+                alice_init_h,
+                ack_msg.data,
+                ack_msg.length,
+                &mut alice_session_h,
+                &mut err,
+            );
+            epp_handshake_responder_finish(bob_resp_h, &mut bob_session_h, &mut err);
+        }
+
+        let seal_key = [0xACu8; 32];
+        let mut tracker: *mut EppSealedStateCounterTrackerHandle = ptr::null_mut();
+        let mut sealed1 = null_buffer();
+        let mut sealed2 = null_buffer();
+        let mut tracker_state1 = null_buffer();
+        let mut tracker_state2 = null_buffer();
+        let mut restart_tracker: *mut EppSealedStateCounterTrackerHandle = ptr::null_mut();
+        let mut next_restart_tracker: *mut EppSealedStateCounterTrackerHandle = ptr::null_mut();
+        let mut restored1: *mut EppSessionHandle = ptr::null_mut();
+        let mut restored2: *mut EppSessionHandle = ptr::null_mut();
+        let mut failed_restore: *mut EppSessionHandle = ptr::null_mut();
+        let mut max_restored = 0u64;
+        let mut latest_issued = 0u64;
+
+        unsafe {
+            assert_eq!(
+                epp_sealed_state_counter_tracker_create(&mut tracker, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_session_serialize_sealed_with_tracker(
+                    bob_session_h,
+                    seal_key.as_ptr(),
+                    seal_key.len(),
+                    tracker,
+                    &mut sealed1,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_counter_tracker_serialize(tracker, &mut tracker_state1, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_counter_tracker_create_from_serialized(
+                    tracker_state1.data,
+                    tracker_state1.length,
+                    &mut restart_tracker,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_session_deserialize_sealed_with_tracker(
+                    sealed1.data,
+                    sealed1.length,
+                    seal_key.as_ptr(),
+                    seal_key.len(),
+                    restart_tracker,
+                    &mut restored1,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert!(!restored1.is_null());
+            assert_eq!(
+                epp_sealed_state_counter_tracker_get_max_restored_counter(
+                    restart_tracker,
+                    &mut max_restored,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(max_restored, 1);
+            assert_eq!(
+                epp_sealed_state_counter_tracker_get_latest_issued_counter(
+                    restart_tracker,
+                    &mut latest_issued,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(latest_issued, 1);
+
+            assert_eq!(
+                epp_session_serialize_sealed_with_tracker(
+                    restored1,
+                    seal_key.as_ptr(),
+                    seal_key.len(),
+                    restart_tracker,
+                    &mut sealed2,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_counter_tracker_serialize(
+                    restart_tracker,
+                    &mut tracker_state2,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_counter_tracker_create_from_serialized(
+                    tracker_state2.data,
+                    tracker_state2.length,
+                    &mut next_restart_tracker,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+
+            assert_ne!(
+                epp_session_deserialize_sealed_with_tracker(
+                    sealed1.data,
+                    sealed1.length,
+                    seal_key.as_ptr(),
+                    seal_key.len(),
+                    next_restart_tracker,
+                    &mut failed_restore,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert!(failed_restore.is_null());
+
+            assert_eq!(
+                epp_session_deserialize_sealed_with_tracker(
+                    sealed2.data,
+                    sealed2.length,
+                    seal_key.as_ptr(),
+                    seal_key.len(),
+                    next_restart_tracker,
+                    &mut restored2,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert!(!restored2.is_null());
+
+            epp_buffer_release(&mut bob_bundle_buf);
+            epp_buffer_release(&mut init_msg);
+            epp_buffer_release(&mut ack_msg);
+            epp_buffer_release(&mut sealed1);
+            epp_buffer_release(&mut sealed2);
+            epp_buffer_release(&mut tracker_state1);
+            epp_buffer_release(&mut tracker_state2);
+            epp_session_destroy(&mut alice_session_h);
+            epp_session_destroy(&mut bob_session_h);
+            epp_session_destroy(&mut restored1);
+            epp_session_destroy(&mut restored2);
+            epp_handshake_initiator_destroy(&mut alice_init_h);
+            epp_handshake_responder_destroy(&mut bob_resp_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+            epp_sealed_state_counter_tracker_destroy(&mut tracker);
+            epp_sealed_state_counter_tracker_destroy(&mut restart_tracker);
+            epp_sealed_state_counter_tracker_destroy(&mut next_restart_tracker);
+        }
+    }
+
+    #[test]
+    fn ffi_session_persisted_slot_roundtrip() {
+        init_lib();
+
+        let mut alice_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut bob_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut err = null_error();
+        unsafe {
+            epp_identity_create(&mut alice_h, &mut err);
+            epp_identity_create(&mut bob_h, &mut err);
+        }
+
+        let mut bob_bundle_buf = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        unsafe {
+            epp_prekey_bundle_create(bob_h, &mut bob_bundle_buf, &mut err);
+        }
+
+        let mut alice_init_h: *mut EppHandshakeInitiatorHandle = ptr::null_mut();
+        let mut init_msg = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        unsafe {
+            epp_handshake_initiator_start(
+                alice_h,
+                bob_bundle_buf.data,
+                bob_bundle_buf.length,
+                ptr::null(),
+                &mut alice_init_h,
+                &mut init_msg,
+                &mut err,
+            );
+        }
+
+        let mut bob_resp_h: *mut EppHandshakeResponderHandle = ptr::null_mut();
+        let mut ack_msg = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        unsafe {
+            epp_handshake_responder_start(
+                bob_h,
+                bob_bundle_buf.data,
+                bob_bundle_buf.length,
+                init_msg.data,
+                init_msg.length,
+                ptr::null(),
+                &mut bob_resp_h,
+                &mut ack_msg,
+                &mut err,
+            );
+        }
+
+        let mut alice_session_h: *mut EppSessionHandle = ptr::null_mut();
+        let mut bob_session_h: *mut EppSessionHandle = ptr::null_mut();
+        unsafe {
+            epp_handshake_initiator_finish(
+                alice_init_h,
+                ack_msg.data,
+                ack_msg.length,
+                &mut alice_session_h,
+                &mut err,
+            );
+            epp_handshake_responder_finish(bob_resp_h, &mut bob_session_h, &mut err);
+        }
+
+        let seal_key = [0xBDu8; 32];
+        let mut slot: *mut EppSealedStateSlotHandle = ptr::null_mut();
+        let mut restart_slot: *mut EppSealedStateSlotHandle = ptr::null_mut();
+        let mut serialized_slot = null_buffer();
+        let mut restored: *mut EppSessionHandle = ptr::null_mut();
+        let mut max_restored = 0u64;
+        let mut latest_issued = 0u64;
+
+        unsafe {
+            assert_eq!(
+                epp_sealed_state_slot_create(&mut slot, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_session_export_persisted_state(
+                    bob_session_h,
+                    seal_key.as_ptr(),
+                    seal_key.len(),
+                    slot,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_slot_serialize(slot, &mut serialized_slot, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_slot_create_from_serialized(
+                    serialized_slot.data,
+                    serialized_slot.length,
+                    &mut restart_slot,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_session_restore_persisted_state(
+                    restart_slot,
+                    seal_key.as_ptr(),
+                    seal_key.len(),
+                    &mut restored,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert!(!restored.is_null());
+            assert_eq!(
+                epp_sealed_state_slot_get_max_restored_counter(
+                    restart_slot,
+                    &mut max_restored,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_slot_get_latest_issued_counter(
+                    restart_slot,
+                    &mut latest_issued,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(max_restored, 1);
+            assert_eq!(latest_issued, 1);
+
+            epp_buffer_release(&mut bob_bundle_buf);
+            epp_buffer_release(&mut init_msg);
+            epp_buffer_release(&mut ack_msg);
+            epp_buffer_release(&mut serialized_slot);
+            epp_session_destroy(&mut alice_session_h);
+            epp_session_destroy(&mut bob_session_h);
+            epp_session_destroy(&mut restored);
+            epp_handshake_initiator_destroy(&mut alice_init_h);
+            epp_handshake_responder_destroy(&mut bob_resp_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+            epp_sealed_state_slot_destroy(&mut slot);
+            epp_sealed_state_slot_destroy(&mut restart_slot);
+        }
+    }
+
+    #[test]
     fn ffi_group_deserialize_does_not_overwrite_counter_on_failure() {
         init_lib();
 
@@ -1034,6 +1765,214 @@ mod ffi {
             epp_buffer_release(&mut sealed_buf);
             epp_group_destroy(&mut group_h);
             epp_identity_destroy(&mut identity_h);
+        }
+    }
+
+    #[test]
+    fn ffi_group_sealed_state_with_tracker_restores_latest_and_rejects_rollback() {
+        init_lib();
+
+        let mut identity_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut err = null_error();
+        let code = unsafe { epp_identity_create(&mut identity_h, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let mut group_h: *mut EppGroupSessionHandle = ptr::null_mut();
+        let code = unsafe { epp_group_create(identity_h, ptr::null(), 0, &mut group_h, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let seal_key = [0xCEu8; 32];
+        let mut tracker: *mut EppSealedStateCounterTrackerHandle = ptr::null_mut();
+        let mut restart_tracker: *mut EppSealedStateCounterTrackerHandle = ptr::null_mut();
+        let mut next_restart_tracker: *mut EppSealedStateCounterTrackerHandle = ptr::null_mut();
+        let mut sealed1 = null_buffer();
+        let mut sealed2 = null_buffer();
+        let mut tracker_state1 = null_buffer();
+        let mut tracker_state2 = null_buffer();
+        let mut restored1: *mut EppGroupSessionHandle = ptr::null_mut();
+        let mut restored2: *mut EppGroupSessionHandle = ptr::null_mut();
+        let mut failed_restore: *mut EppGroupSessionHandle = ptr::null_mut();
+
+        unsafe {
+            assert_eq!(
+                epp_sealed_state_counter_tracker_create(&mut tracker, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_group_serialize_with_tracker(
+                    group_h,
+                    seal_key.as_ptr(),
+                    seal_key.len(),
+                    tracker,
+                    &mut sealed1,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_counter_tracker_serialize(tracker, &mut tracker_state1, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_counter_tracker_create_from_serialized(
+                    tracker_state1.data,
+                    tracker_state1.length,
+                    &mut restart_tracker,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_group_deserialize_with_tracker(
+                    sealed1.data,
+                    sealed1.length,
+                    seal_key.as_ptr(),
+                    seal_key.len(),
+                    restart_tracker,
+                    identity_h,
+                    &mut restored1,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert!(!restored1.is_null());
+            assert_eq!(
+                epp_group_serialize_with_tracker(
+                    restored1,
+                    seal_key.as_ptr(),
+                    seal_key.len(),
+                    restart_tracker,
+                    &mut sealed2,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_counter_tracker_serialize(
+                    restart_tracker,
+                    &mut tracker_state2,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_counter_tracker_create_from_serialized(
+                    tracker_state2.data,
+                    tracker_state2.length,
+                    &mut next_restart_tracker,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_ne!(
+                epp_group_deserialize_with_tracker(
+                    sealed1.data,
+                    sealed1.length,
+                    seal_key.as_ptr(),
+                    seal_key.len(),
+                    next_restart_tracker,
+                    identity_h,
+                    &mut failed_restore,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert!(failed_restore.is_null());
+            assert_eq!(
+                epp_group_deserialize_with_tracker(
+                    sealed2.data,
+                    sealed2.length,
+                    seal_key.as_ptr(),
+                    seal_key.len(),
+                    next_restart_tracker,
+                    identity_h,
+                    &mut restored2,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert!(!restored2.is_null());
+
+            epp_buffer_release(&mut sealed1);
+            epp_buffer_release(&mut sealed2);
+            epp_buffer_release(&mut tracker_state1);
+            epp_buffer_release(&mut tracker_state2);
+            epp_group_destroy(&mut group_h);
+            epp_group_destroy(&mut restored1);
+            epp_group_destroy(&mut restored2);
+            epp_identity_destroy(&mut identity_h);
+            epp_sealed_state_counter_tracker_destroy(&mut tracker);
+            epp_sealed_state_counter_tracker_destroy(&mut restart_tracker);
+            epp_sealed_state_counter_tracker_destroy(&mut next_restart_tracker);
+        }
+    }
+
+    #[test]
+    fn ffi_group_persisted_slot_roundtrip() {
+        init_lib();
+
+        let mut identity_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut err = null_error();
+        let code = unsafe { epp_identity_create(&mut identity_h, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let mut group_h: *mut EppGroupSessionHandle = ptr::null_mut();
+        let code = unsafe { epp_group_create(identity_h, ptr::null(), 0, &mut group_h, &mut err) };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+
+        let seal_key = [0xCFu8; 32];
+        let mut slot: *mut EppSealedStateSlotHandle = ptr::null_mut();
+        let mut restart_slot: *mut EppSealedStateSlotHandle = ptr::null_mut();
+        let mut serialized_slot = null_buffer();
+        let mut restored: *mut EppGroupSessionHandle = ptr::null_mut();
+
+        unsafe {
+            assert_eq!(
+                epp_sealed_state_slot_create(&mut slot, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_group_export_persisted_state(
+                    group_h,
+                    seal_key.as_ptr(),
+                    seal_key.len(),
+                    slot,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_slot_serialize(slot, &mut serialized_slot, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_slot_create_from_serialized(
+                    serialized_slot.data,
+                    serialized_slot.length,
+                    &mut restart_slot,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_group_restore_persisted_state(
+                    restart_slot,
+                    seal_key.as_ptr(),
+                    seal_key.len(),
+                    identity_h,
+                    &mut restored,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert!(!restored.is_null());
+
+            epp_buffer_release(&mut serialized_slot);
+            epp_group_destroy(&mut group_h);
+            epp_group_destroy(&mut restored);
+            epp_identity_destroy(&mut identity_h);
+            epp_sealed_state_slot_destroy(&mut slot);
+            epp_sealed_state_slot_destroy(&mut restart_slot);
         }
     }
 
@@ -1163,7 +2102,8 @@ mod ffi {
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
 
-        let code = unsafe { epp_attachment_manifest_validate(manifest.data, manifest.length, &mut err) };
+        let code =
+            unsafe { epp_attachment_manifest_validate(manifest.data, manifest.length, &mut err) };
         assert_eq!(code, EppErrorCode::EppSuccess);
 
         let code = unsafe {
@@ -1201,7 +2141,8 @@ mod ffi {
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
-        let decrypted = unsafe { std::slice::from_raw_parts(plaintext_out.data, plaintext_out.length) };
+        let decrypted =
+            unsafe { std::slice::from_raw_parts(plaintext_out.data, plaintext_out.length) };
         assert_eq!(decrypted, chunk_plaintext);
 
         unsafe {
@@ -1257,8 +2198,9 @@ mod ffi {
         let mut tampered = Vec::new();
         manifest.encode(&mut tampered).expect("encode manifest");
 
-        let code =
-            unsafe { epp_attachment_manifest_validate(tampered.as_ptr(), tampered.len(), &mut err) };
+        let code = unsafe {
+            epp_attachment_manifest_validate(tampered.as_ptr(), tampered.len(), &mut err)
+        };
         assert_eq!(code, EppErrorCode::EppErrorInvalidInput);
 
         unsafe {
@@ -1463,6 +2405,45 @@ mod ffi {
                 &mut err,
             );
         }
+        assert_eq!(out_key, out_key2);
+    }
+
+    #[test]
+    fn ffi_derive_root_key_supports_extended_output_length() {
+        init_lib();
+        let opaque_key = ecliptix_protocol::crypto::CryptoInterop::get_random_bytes(32);
+        let user_ctx = b"test-context-extended";
+        let mut out_key = vec![0u8; 64];
+        let mut err = null_error();
+
+        let code = unsafe {
+            epp_derive_root_key(
+                opaque_key.as_ptr(),
+                opaque_key.len(),
+                user_ctx.as_ptr(),
+                user_ctx.len(),
+                out_key.as_mut_ptr(),
+                out_key.len(),
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        assert!(out_key.iter().any(|&b| b != 0));
+        assert!(out_key[32..].iter().any(|&b| b != 0));
+
+        let mut out_key2 = vec![0u8; 64];
+        let code = unsafe {
+            epp_derive_root_key(
+                opaque_key.as_ptr(),
+                opaque_key.len(),
+                user_ctx.as_ptr(),
+                user_ctx.len(),
+                out_key2.as_mut_ptr(),
+                out_key2.len(),
+                &mut err,
+            )
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
         assert_eq!(out_key, out_key2);
     }
 
@@ -2011,6 +2992,329 @@ fn ffi_group_external_join_roundtrip() {
 }
 
 #[test]
+fn ffi_group_decrypt_ex_clears_stale_result_on_failure() {
+    init();
+
+    use ecliptix_protocol::ffi::api::*;
+    use std::ptr;
+
+    unsafe {
+        let mut alice_handle: *mut EppIdentityHandle = ptr::null_mut();
+        let mut bob_handle: *mut EppIdentityHandle = ptr::null_mut();
+        let mut alice_group_handle: *mut EppGroupSessionHandle = ptr::null_mut();
+        let mut bob_group_handle: *mut EppGroupSessionHandle = ptr::null_mut();
+        let mut err = EppError {
+            code: EppErrorCode::EppSuccess,
+            message: ptr::null_mut(),
+        };
+
+        assert_eq!(
+            epp_identity_create(&mut alice_handle, &mut err),
+            EppErrorCode::EppSuccess
+        );
+        assert_eq!(
+            epp_identity_create(&mut bob_handle, &mut err),
+            EppErrorCode::EppSuccess
+        );
+        assert_eq!(
+            epp_group_create_with_policy(
+                alice_handle,
+                b"alice".as_ptr(),
+                b"alice".len(),
+                &EppGroupSecurityPolicy {
+                    max_messages_per_epoch: 1000,
+                    max_skipped_keys_per_sender: 4,
+                    block_external_join: 0,
+                    enhanced_key_schedule: 0,
+                    mandatory_franking: 0,
+                },
+                &mut alice_group_handle,
+                &mut err,
+            ),
+            EppErrorCode::EppSuccess
+        );
+
+        let mut public_state = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        assert_eq!(
+            epp_group_export_public_state(alice_group_handle, &mut public_state, &mut err),
+            EppErrorCode::EppSuccess
+        );
+
+        let mut bob_ed = [0u8; 32];
+        let mut bob_x = [0u8; 32];
+        assert_eq!(
+            epp_identity_get_ed25519_public(
+                bob_handle,
+                bob_ed.as_mut_ptr(),
+                bob_ed.len(),
+                &mut err,
+            ),
+            EppErrorCode::EppSuccess
+        );
+        assert_eq!(
+            epp_identity_get_x25519_public(bob_handle, bob_x.as_mut_ptr(), bob_x.len(), &mut err),
+            EppErrorCode::EppSuccess
+        );
+
+        let mut authorization = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        assert_eq!(
+            epp_group_authorize_external_join(
+                alice_group_handle,
+                bob_ed.as_ptr(),
+                bob_ed.len(),
+                bob_x.as_ptr(),
+                bob_x.len(),
+                b"bob".as_ptr(),
+                b"bob".len(),
+                &mut authorization,
+                &mut err,
+            ),
+            EppErrorCode::EppSuccess
+        );
+
+        let mut commit = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        assert_eq!(
+            epp_group_join_external(
+                bob_handle,
+                public_state.data,
+                public_state.length,
+                authorization.data,
+                authorization.length,
+                b"bob".as_ptr(),
+                b"bob".len(),
+                &mut bob_group_handle,
+                &mut commit,
+                &mut err,
+            ),
+            EppErrorCode::EppSuccess
+        );
+        assert_eq!(
+            epp_group_process_commit(alice_group_handle, commit.data, commit.length, &mut err),
+            EppErrorCode::EppSuccess
+        );
+
+        let mut ciphertext = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        assert_eq!(
+            epp_group_encrypt(
+                alice_group_handle,
+                b"ffi-group".as_ptr(),
+                b"ffi-group".len(),
+                &mut ciphertext,
+                &mut err,
+            ),
+            EppErrorCode::EppSuccess
+        );
+
+        let mut result = EppGroupDecryptResult {
+            plaintext: EppBuffer {
+                data: ptr::null_mut(),
+                length: 0,
+            },
+            sender_leaf_index: 0,
+            generation: 0,
+            content_type: 0,
+            ttl_seconds: 0,
+            sent_timestamp: 0,
+            message_id: EppBuffer {
+                data: ptr::null_mut(),
+                length: 0,
+            },
+            referenced_message_id: EppBuffer {
+                data: ptr::null_mut(),
+                length: 0,
+            },
+            has_sealed_payload: 0,
+            has_franking_data: 0,
+            mentions_count: 0,
+            reply_to_message_id: EppBuffer {
+                data: ptr::null_mut(),
+                length: 0,
+            },
+        };
+        assert_eq!(
+            epp_group_decrypt_ex(
+                bob_group_handle,
+                ciphertext.data,
+                ciphertext.length,
+                &mut result,
+                &mut err,
+            ),
+            EppErrorCode::EppSuccess
+        );
+        assert!(!result.plaintext.data.is_null());
+        assert!(!result.message_id.data.is_null());
+
+        let mut tampered = std::slice::from_raw_parts(ciphertext.data, ciphertext.length).to_vec();
+        let last = tampered.len() - 1;
+        tampered[last] ^= 0x55;
+
+        let code = epp_group_decrypt_ex(
+            bob_group_handle,
+            tampered.as_ptr(),
+            tampered.len(),
+            &mut result,
+            &mut err,
+        );
+        assert_ne!(code, EppErrorCode::EppSuccess);
+        assert!(result.plaintext.data.is_null());
+        assert_eq!(result.plaintext.length, 0);
+        assert!(result.message_id.data.is_null());
+        assert_eq!(result.message_id.length, 0);
+        assert!(result.referenced_message_id.data.is_null());
+        assert_eq!(result.referenced_message_id.length, 0);
+        assert!(result.reply_to_message_id.data.is_null());
+        assert_eq!(result.reply_to_message_id.length, 0);
+        assert_eq!(result.has_sealed_payload, 0);
+        assert_eq!(result.has_franking_data, 0);
+        assert_eq!(result.mentions_count, 0);
+
+        epp_group_decrypt_result_free(&mut result);
+        epp_buffer_release(&mut public_state);
+        epp_buffer_release(&mut authorization);
+        epp_buffer_release(&mut commit);
+        epp_buffer_release(&mut ciphertext);
+        epp_group_destroy(&mut alice_group_handle);
+        epp_group_destroy(&mut bob_group_handle);
+        epp_identity_destroy(&mut alice_handle);
+        epp_identity_destroy(&mut bob_handle);
+    }
+}
+
+#[test]
+fn ffi_group_external_join_rejects_tampered_authorization() {
+    init();
+
+    use ecliptix_protocol::ffi::api::*;
+    use std::ptr;
+
+    unsafe {
+        let mut alice_handle: *mut EppIdentityHandle = ptr::null_mut();
+        let mut err = EppError {
+            code: EppErrorCode::EppSuccess,
+            message: ptr::null_mut(),
+        };
+        assert_eq!(
+            epp_identity_create(&mut alice_handle, &mut err),
+            EppErrorCode::EppSuccess
+        );
+
+        let mut group_handle: *mut EppGroupSessionHandle = ptr::null_mut();
+        let cred = b"alice";
+        let policy = EppGroupSecurityPolicy {
+            max_messages_per_epoch: 1000,
+            max_skipped_keys_per_sender: 4,
+            block_external_join: 0,
+            enhanced_key_schedule: 0,
+            mandatory_franking: 0,
+        };
+        assert_eq!(
+            epp_group_create_with_policy(
+                alice_handle,
+                cred.as_ptr(),
+                cred.len(),
+                &policy,
+                &mut group_handle,
+                &mut err,
+            ),
+            EppErrorCode::EppSuccess
+        );
+
+        let mut pub_state_buf = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        assert_eq!(
+            epp_group_export_public_state(group_handle, &mut pub_state_buf, &mut err),
+            EppErrorCode::EppSuccess
+        );
+
+        let mut bob_handle: *mut EppIdentityHandle = ptr::null_mut();
+        assert_eq!(
+            epp_identity_create(&mut bob_handle, &mut err),
+            EppErrorCode::EppSuccess
+        );
+
+        let bob_cred = b"bob";
+        let mut bob_ed = [0u8; 32];
+        let mut bob_x = [0u8; 32];
+        assert_eq!(
+            epp_identity_get_ed25519_public(
+                bob_handle,
+                bob_ed.as_mut_ptr(),
+                bob_ed.len(),
+                &mut err
+            ),
+            EppErrorCode::EppSuccess
+        );
+        assert_eq!(
+            epp_identity_get_x25519_public(bob_handle, bob_x.as_mut_ptr(), bob_x.len(), &mut err),
+            EppErrorCode::EppSuccess
+        );
+
+        let mut auth_buf = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        assert_eq!(
+            epp_group_authorize_external_join(
+                group_handle,
+                bob_ed.as_ptr(),
+                bob_ed.len(),
+                bob_x.as_ptr(),
+                bob_x.len(),
+                bob_cred.as_ptr(),
+                bob_cred.len(),
+                &mut auth_buf,
+                &mut err,
+            ),
+            EppErrorCode::EppSuccess
+        );
+        assert!(auth_buf.length > 0);
+        *auth_buf.data ^= 0xFF;
+
+        let mut bob_group_handle: *mut EppGroupSessionHandle = ptr::null_mut();
+        let mut commit_buf = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        let code = epp_group_join_external(
+            bob_handle,
+            pub_state_buf.data,
+            pub_state_buf.length,
+            auth_buf.data,
+            auth_buf.length,
+            bob_cred.as_ptr(),
+            bob_cred.len(),
+            &mut bob_group_handle,
+            &mut commit_buf,
+            &mut err,
+        );
+        assert_ne!(code, EppErrorCode::EppSuccess);
+        assert!(bob_group_handle.is_null());
+
+        epp_buffer_release(&mut pub_state_buf);
+        epp_buffer_release(&mut auth_buf);
+        epp_buffer_release(&mut commit_buf);
+        epp_group_destroy(&mut group_handle);
+        epp_group_destroy(&mut bob_group_handle);
+        epp_identity_destroy(&mut alice_handle);
+        epp_identity_destroy(&mut bob_handle);
+    }
+}
+
+#[test]
 fn ffi_group_member_leaf_indices() {
     init();
 
@@ -2051,6 +3355,52 @@ fn ffi_group_member_leaf_indices() {
         assert_eq!(leaf_idx, 0);
 
         epp_buffer_release(&mut indices_buf);
+        epp_group_destroy(&mut group_handle);
+        epp_identity_destroy(&mut alice_handle);
+    }
+}
+
+#[test]
+fn ffi_group_member_role_apis_are_disabled() {
+    init();
+
+    use ecliptix_protocol::ffi::api::*;
+    use std::ptr;
+
+    unsafe {
+        let mut alice_handle: *mut EppIdentityHandle = ptr::null_mut();
+        let mut err = EppError {
+            code: EppErrorCode::EppSuccess,
+            message: ptr::null_mut(),
+        };
+        assert_eq!(
+            epp_identity_create(&mut alice_handle, &mut err),
+            EppErrorCode::EppSuccess
+        );
+
+        let mut group_handle: *mut EppGroupSessionHandle = ptr::null_mut();
+        let cred = b"alice";
+        assert_eq!(
+            epp_group_create(
+                alice_handle,
+                cred.as_ptr(),
+                cred.len(),
+                &mut group_handle,
+                &mut err,
+            ),
+            EppErrorCode::EppSuccess
+        );
+
+        let mut role = -1;
+        assert_ne!(
+            epp_group_set_member_role(group_handle, 0, 2, &mut err),
+            EppErrorCode::EppSuccess
+        );
+        assert_ne!(
+            epp_group_get_member_role(group_handle, 0, &mut role, &mut err),
+            EppErrorCode::EppSuccess
+        );
+
         epp_group_destroy(&mut group_handle);
         epp_identity_destroy(&mut alice_handle);
     }
@@ -2610,8 +3960,8 @@ fn ffi_group_callbacks_epoch_advanced_and_member_added() {
 
 #[test]
 fn identity_otk_exhaustion_callback_fires() {
-    // Use Rust API directly: create identity with 5 OTKs, set handler,
-    // consume one → remaining=4 ≤ threshold(10) → callback fires.
+    // Use Rust API directly: create identity with a non-round OTK capacity so
+    // the warning threshold must use ceil rounding: ceil(19 * 10%) = 2.
     use ecliptix_protocol::identity::IdentityKeys;
     use ecliptix_protocol::interfaces::IIdentityEventHandler;
     use std::sync::{
@@ -2619,29 +3969,106 @@ fn identity_otk_exhaustion_callback_fires() {
         Arc,
     };
 
-    struct Counter(AtomicU32);
+    struct Counter {
+        count: AtomicU32,
+        last_remaining: AtomicU32,
+        last_capacity: AtomicU32,
+    }
+
     impl IIdentityEventHandler for Counter {
         fn on_otk_exhaustion_warning(&self, remaining: u32, max_capacity: u32) {
-            assert!(remaining <= max_capacity * 10 / 100 + 1);
-            self.0.fetch_add(1, Ordering::SeqCst);
+            self.last_remaining.store(remaining, Ordering::SeqCst);
+            self.last_capacity.store(max_capacity, Ordering::SeqCst);
+            self.count.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let identity = IdentityKeys::create(19).expect("create identity");
+    let counter = Arc::new(Counter {
+        count: AtomicU32::new(0),
+        last_remaining: AtomicU32::new(0),
+        last_capacity: AtomicU32::new(0),
+    });
+    identity.set_event_handler(counter.clone());
+
+    let bundle = identity.create_public_bundle().unwrap();
+    let opk_ids: Vec<u32> = bundle
+        .one_time_pre_keys()
+        .iter()
+        .map(ecliptix_protocol::models::OneTimePreKeyPublic::id)
+        .collect();
+
+    for opk_id in &opk_ids[..16] {
+        identity
+            .consume_one_time_pre_key_by_id(*opk_id)
+            .expect("consume");
+    }
+    assert_eq!(counter.count.load(Ordering::SeqCst), 0);
+
+    identity
+        .consume_one_time_pre_key_by_id(opk_ids[16])
+        .expect("consume at threshold crossing");
+    assert_eq!(counter.count.load(Ordering::SeqCst), 1);
+    assert_eq!(counter.last_remaining.load(Ordering::SeqCst), 2);
+    assert_eq!(counter.last_capacity.load(Ordering::SeqCst), 19);
+}
+
+#[test]
+fn identity_otk_exhaustion_callback_tracks_replenished_capacity() {
+    use ecliptix_protocol::identity::IdentityKeys;
+    use ecliptix_protocol::interfaces::IIdentityEventHandler;
+    use std::sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    };
+
+    struct Counter {
+        count: AtomicU32,
+        last_remaining: AtomicU32,
+        last_capacity: AtomicU32,
+    }
+
+    impl IIdentityEventHandler for Counter {
+        fn on_otk_exhaustion_warning(&self, remaining: u32, max_capacity: u32) {
+            self.last_remaining.store(remaining, Ordering::SeqCst);
+            self.last_capacity.store(max_capacity, Ordering::SeqCst);
+            self.count.fetch_add(1, Ordering::SeqCst);
         }
     }
 
     let identity = IdentityKeys::create(5).expect("create identity");
-    let counter = Arc::new(Counter(AtomicU32::new(0)));
+    identity
+        .replenish_one_time_pre_keys(14)
+        .expect("replenish identity otks");
+
+    let counter = Arc::new(Counter {
+        count: AtomicU32::new(0),
+        last_remaining: AtomicU32::new(0),
+        last_capacity: AtomicU32::new(0),
+    });
     identity.set_event_handler(counter.clone());
 
-    // Pick the first OTK id from the public bundle
     let bundle = identity.create_public_bundle().unwrap();
-    let first_opk_id = bundle.one_time_pre_keys()[0].id();
+    let opk_ids: Vec<u32> = bundle
+        .one_time_pre_keys()
+        .iter()
+        .map(ecliptix_protocol::models::OneTimePreKeyPublic::id)
+        .collect();
+    assert_eq!(opk_ids.len(), 19);
+
+    for opk_id in &opk_ids[..16] {
+        identity
+            .consume_one_time_pre_key_by_id(*opk_id)
+            .expect("consume");
+    }
+    assert_eq!(counter.count.load(Ordering::SeqCst), 0);
 
     identity
-        .consume_one_time_pre_key_by_id(first_opk_id)
-        .expect("consume");
-    assert!(
-        counter.0.load(Ordering::SeqCst) >= 1,
-        "on_otk_exhaustion_warning must fire when remaining ≤ threshold"
-    );
+        .consume_one_time_pre_key_by_id(opk_ids[16])
+        .expect("consume at replenished threshold crossing");
+    assert_eq!(counter.count.load(Ordering::SeqCst), 1);
+    assert_eq!(counter.last_remaining.load(Ordering::SeqCst), 2);
+    assert_eq!(counter.last_capacity.load(Ordering::SeqCst), 19);
 }
 
 // ─── ReInit proposed callback fires ─────────────────────────────────────────
@@ -2702,6 +4129,151 @@ fn group_reinit_proposed_callback_fires() {
 }
 
 // ─── Session ratchet stalling warning ────────────────────────────────────────
+
+#[test]
+fn ffi_session_nonce_exhaustion_warning_fires() {
+    init();
+
+    use ecliptix_protocol::ffi::api::*;
+    use std::ptr;
+    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+
+    static NONCE_WARNING_FIRES: AtomicU32 = AtomicU32::new(0);
+    static LAST_NONCE_REMAINING: AtomicU64 = AtomicU64::new(0);
+    static LAST_NONCE_MAX: AtomicU64 = AtomicU64::new(0);
+
+    NONCE_WARNING_FIRES.store(0, Ordering::SeqCst);
+    LAST_NONCE_REMAINING.store(0, Ordering::SeqCst);
+    LAST_NONCE_MAX.store(0, Ordering::SeqCst);
+
+    unsafe extern "C" fn on_nonce_warning(
+        remaining: u64,
+        max_capacity: u64,
+        _ud: *mut std::ffi::c_void,
+    ) {
+        LAST_NONCE_REMAINING.store(remaining, Ordering::SeqCst);
+        LAST_NONCE_MAX.store(max_capacity, Ordering::SeqCst);
+        NONCE_WARNING_FIRES.fetch_add(1, Ordering::SeqCst);
+    }
+
+    unsafe {
+        let mut alice_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut bob_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut err = EppError {
+            code: EppErrorCode::EppSuccess,
+            message: ptr::null_mut(),
+        };
+
+        epp_identity_create(&mut alice_h, &mut err);
+        epp_identity_create(&mut bob_h, &mut err);
+
+        let mut bundle = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        epp_prekey_bundle_create(bob_h, &mut bundle, &mut err);
+
+        let cfg = EppSessionConfig {
+            max_messages_per_chain: 1000,
+        };
+        let mut init_h: *mut EppHandshakeInitiatorHandle = ptr::null_mut();
+        let mut resp_h: *mut EppHandshakeResponderHandle = ptr::null_mut();
+        let mut init_msg = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        let mut ack_msg = EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        let mut alice_s: *mut EppSessionHandle = ptr::null_mut();
+        let mut bob_s: *mut EppSessionHandle = ptr::null_mut();
+
+        epp_handshake_initiator_start(
+            alice_h,
+            bundle.data,
+            bundle.length,
+            &cfg,
+            &mut init_h,
+            &mut init_msg,
+            &mut err,
+        );
+        epp_handshake_responder_start(
+            bob_h,
+            bundle.data,
+            bundle.length,
+            init_msg.data,
+            init_msg.length,
+            &cfg,
+            &mut resp_h,
+            &mut ack_msg,
+            &mut err,
+        );
+        epp_handshake_responder_finish(resp_h, &mut bob_s, &mut err);
+        epp_handshake_initiator_finish(
+            init_h,
+            ack_msg.data,
+            ack_msg.length,
+            &mut alice_s,
+            &mut err,
+        );
+
+        let cbs = EppSessionEventCallbacks {
+            on_handshake_completed: None,
+            on_ratchet_rotated: None,
+            on_error: None,
+            on_nonce_exhaustion_warning: Some(on_nonce_warning),
+            on_ratchet_stalling_warning: None,
+            user_data: ptr::null_mut(),
+        };
+        epp_session_set_event_handler(alice_s, &cbs, &mut err);
+
+        for i in 0u32..901 {
+            let mut enc = EppBuffer {
+                data: ptr::null_mut(),
+                length: 0,
+            };
+            epp_session_encrypt(
+                alice_s,
+                b"x".as_ptr(),
+                1,
+                EppEnvelopeType::EppEnvelopeRequest,
+                i,
+                ptr::null(),
+                0,
+                &mut enc,
+                &mut err,
+            );
+            let mut plain = EppBuffer {
+                data: ptr::null_mut(),
+                length: 0,
+            };
+            let mut meta = EppBuffer {
+                data: ptr::null_mut(),
+                length: 0,
+            };
+            epp_session_decrypt(bob_s, enc.data, enc.length, &mut plain, &mut meta, &mut err);
+            epp_buffer_release(&mut enc);
+            epp_buffer_release(&mut plain);
+            epp_buffer_release(&mut meta);
+        }
+
+        assert!(
+            NONCE_WARNING_FIRES.load(Ordering::SeqCst) >= 1,
+            "on_nonce_exhaustion_warning must fire near the chain budget limit"
+        );
+        assert_eq!(LAST_NONCE_MAX.load(Ordering::SeqCst), 1000);
+        assert!(LAST_NONCE_REMAINING.load(Ordering::SeqCst) <= 100);
+
+        epp_buffer_release(&mut bundle);
+        epp_buffer_release(&mut init_msg);
+        epp_buffer_release(&mut ack_msg);
+        epp_session_destroy(&mut alice_s);
+        epp_session_destroy(&mut bob_s);
+        epp_identity_destroy(&mut alice_h);
+        epp_identity_destroy(&mut bob_h);
+    }
+}
 
 #[test]
 fn ffi_session_ratchet_stalling_warning_fires() {
@@ -2844,8 +4416,8 @@ fn ffi_session_ratchet_stalling_warning_fires() {
 mod attachment_v2 {
     use ecliptix_protocol::ffi::api::*;
     use ecliptix_protocol::proto::{
-        AttachmentManifest, AttachmentReference, CollageManifest, ContactCard, ContentPolicy,
-        InlineAttachment, LinkPreview, LocationAttachment, VoiceMessageMeta,
+        AttachmentManifest, CollageManifest, ContactCard, ContentPolicy, LinkPreview,
+        LocationAttachment, VoiceMessageMeta,
     };
     use prost::Message;
     use std::ptr;
@@ -2855,11 +4427,17 @@ mod attachment_v2 {
     }
 
     const fn null_error() -> EppError {
-        EppError { code: EppErrorCode::EppSuccess, message: ptr::null_mut() }
+        EppError {
+            code: EppErrorCode::EppSuccess,
+            message: ptr::null_mut(),
+        }
     }
 
     const fn null_buffer() -> EppBuffer {
-        EppBuffer { data: ptr::null_mut(), length: 0 }
+        EppBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        }
     }
 
     #[test]
@@ -2879,11 +4457,17 @@ mod attachment_v2 {
 
         let code = unsafe {
             epp_attachment_encrypt_thumbnail(
-                file_key.data, file_key.length,
-                attachment_id.data, attachment_id.length,
-                thumb_mime.as_ptr().cast(), thumb_mime.len(),
-                thumb_data.as_ptr(), thumb_data.len(),
-                &mut nonce, &mut ct, &mut err,
+                file_key.data,
+                file_key.length,
+                attachment_id.data,
+                attachment_id.length,
+                thumb_mime.as_ptr().cast(),
+                thumb_mime.len(),
+                thumb_data.as_ptr(),
+                thumb_data.len(),
+                &mut nonce,
+                &mut ct,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
@@ -2892,12 +4476,18 @@ mod attachment_v2 {
 
         let code = unsafe {
             epp_attachment_decrypt_thumbnail(
-                file_key.data, file_key.length,
-                attachment_id.data, attachment_id.length,
-                thumb_mime.as_ptr().cast(), thumb_mime.len(),
-                nonce.data, nonce.length,
-                ct.data, ct.length,
-                &mut pt, &mut err,
+                file_key.data,
+                file_key.length,
+                attachment_id.data,
+                attachment_id.length,
+                thumb_mime.as_ptr().cast(),
+                thumb_mime.len(),
+                nonce.data,
+                nonce.length,
+                ct.data,
+                ct.length,
+                &mut pt,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
@@ -2929,11 +4519,17 @@ mod attachment_v2 {
 
         let code = unsafe {
             epp_attachment_encrypt_thumbnail(
-                file_key.data, file_key.length,
-                attachment_id.data, attachment_id.length,
-                thumb_mime.as_ptr().cast(), thumb_mime.len(),
-                oversized.as_ptr(), oversized.len(),
-                &mut nonce, &mut ct, &mut err,
+                file_key.data,
+                file_key.length,
+                attachment_id.data,
+                attachment_id.length,
+                thumb_mime.as_ptr().cast(),
+                thumb_mime.len(),
+                oversized.as_ptr(),
+                oversized.len(),
+                &mut nonce,
+                &mut ct,
+                &mut err,
             )
         };
         assert_ne!(code, EppErrorCode::EppSuccess);
@@ -2949,9 +4545,18 @@ mod attachment_v2 {
         init_v2();
         let mut err = null_error();
 
-        assert_eq!(unsafe { epp_attachment_validate_ttl(3600, &mut err) }, EppErrorCode::EppSuccess);
-        assert_ne!(unsafe { epp_attachment_validate_ttl(10, &mut err) }, EppErrorCode::EppSuccess);
-        assert_ne!(unsafe { epp_attachment_validate_ttl(31 * 24 * 3600, &mut err) }, EppErrorCode::EppSuccess);
+        assert_eq!(
+            unsafe { epp_attachment_validate_ttl(3600, &mut err) },
+            EppErrorCode::EppSuccess
+        );
+        assert_ne!(
+            unsafe { epp_attachment_validate_ttl(10, &mut err) },
+            EppErrorCode::EppSuccess
+        );
+        assert_ne!(
+            unsafe { epp_attachment_validate_ttl(31 * 24 * 3600, &mut err) },
+            EppErrorCode::EppSuccess
+        );
     }
 
     #[test]
@@ -2970,26 +4575,54 @@ mod attachment_v2 {
 
         let mut progress = null_buffer();
         let code = unsafe {
-            epp_attachment_progress_create(attachment_id.data, attachment_id.length, 5, &mut progress, &mut err)
+            epp_attachment_progress_create(
+                attachment_id.data,
+                attachment_id.length,
+                5,
+                &mut progress,
+                &mut err,
+            )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
 
         let mut updated = null_buffer();
         let code = unsafe {
-            epp_attachment_progress_mark_completed(progress.data, progress.length, 0, 1024, 100, &mut updated, &mut err)
+            epp_attachment_progress_mark_completed(
+                progress.data,
+                progress.length,
+                0,
+                1024,
+                100,
+                &mut updated,
+                &mut err,
+            )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
 
         let mut updated2 = null_buffer();
         let code = unsafe {
-            epp_attachment_progress_mark_completed(updated.data, updated.length, 2, 2048, 200, &mut updated2, &mut err)
+            epp_attachment_progress_mark_completed(
+                updated.data,
+                updated.length,
+                2,
+                2048,
+                200,
+                &mut updated2,
+                &mut err,
+            )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
 
         let mut remaining = null_buffer();
         let mut remaining_count = 0u32;
         let code = unsafe {
-            epp_attachment_progress_get_remaining(updated2.data, updated2.length, &mut remaining, &mut remaining_count, &mut err)
+            epp_attachment_progress_get_remaining(
+                updated2.data,
+                updated2.length,
+                &mut remaining,
+                &mut remaining_count,
+                &mut err,
+            )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
         assert_eq!(remaining_count, 3);
@@ -3021,31 +4654,46 @@ mod attachment_v2 {
                 version: 1,
                 attachment_id: unsafe { std::slice::from_raw_parts(aid.data, aid.length) }.to_vec(),
                 mime_type: "image/jpeg".to_string(),
-                total_size: 1024, chunk_size: 1024, chunk_count: 1,
+                total_size: 1024,
+                chunk_size: 1024,
+                chunk_count: 1,
                 file_sha256: vec![7u8; 32],
                 encrypted_file_key: vec![9u8; 48],
                 encryption_scheme: "AES-256-GCM-SIV".to_string(),
                 collage_index: Some(i),
-                encrypted_thumbnail: None, thumbnail_nonce: None,
-                thumbnail_mime_type: None, thumbnail_size: None,
-                ttl_seconds: None, created_at_unix: None,
-                original_filename: None, media_width: None,
-                media_height: None, duration_ms: None,
-                alt_text: None, content_policy: None, voice_meta: None,
+                encrypted_thumbnail: None,
+                thumbnail_nonce: None,
+                thumbnail_mime_type: None,
+                thumbnail_size: None,
+                ttl_seconds: None,
+                created_at_unix: None,
+                original_filename: None,
+                media_width: None,
+                media_height: None,
+                duration_ms: None,
+                alt_text: None,
+                content_policy: None,
+                voice_meta: None,
             };
             let mut buf = Vec::new();
             manifest.encode(&mut buf).unwrap();
             manifests_raw.push(buf);
-            unsafe { epp_buffer_release(&mut aid); epp_buffer_release(&mut fk); }
+            unsafe {
+                epp_buffer_release(&mut aid);
+                epp_buffer_release(&mut fk);
+            }
         }
 
-        let ptrs: Vec<*const u8> = manifests_raw.iter().map(|b| b.as_ptr()).collect();
-        let lens: Vec<usize> = manifests_raw.iter().map(|b| b.len()).collect();
+        let ptrs: Vec<*const u8> = manifests_raw.iter().map(Vec::as_ptr).collect();
+        let lens: Vec<usize> = manifests_raw.iter().map(Vec::len).collect();
         let mut collage = null_buffer();
-        let code = unsafe { epp_attachment_collage_create(ptrs.as_ptr(), lens.as_ptr(), 3, &mut collage, &mut err) };
+        let code = unsafe {
+            epp_attachment_collage_create(ptrs.as_ptr(), lens.as_ptr(), 3, &mut collage, &mut err)
+        };
         assert_eq!(code, EppErrorCode::EppSuccess);
 
-        let code = unsafe { epp_attachment_collage_validate(collage.data, collage.length, &mut err) };
+        let code =
+            unsafe { epp_attachment_collage_validate(collage.data, collage.length, &mut err) };
         assert_eq!(code, EppErrorCode::EppSuccess);
         unsafe { epp_buffer_release(&mut collage) };
     }
@@ -3068,11 +4716,17 @@ mod attachment_v2 {
         let mut enc_handle: *mut EppStreamingEncryptorHandle = ptr::null_mut();
         let code = unsafe {
             epp_attachment_streaming_encryptor_create(
-                file_key.data, file_key.length,
-                attachment_id.data, attachment_id.length,
-                mime.as_ptr().cast(), mime.len(),
-                total_size, chunk_size, chunk_count,
-                &mut enc_handle, &mut err,
+                file_key.data,
+                file_key.length,
+                attachment_id.data,
+                attachment_id.length,
+                mime.as_ptr().cast(),
+                mime.len(),
+                total_size,
+                chunk_size,
+                chunk_count,
+                &mut enc_handle,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
@@ -3081,8 +4735,12 @@ mod attachment_v2 {
         let mut chunk_count_out = 0u32;
         let code = unsafe {
             epp_attachment_streaming_encryptor_write(
-                enc_handle, data.as_ptr(), data.len(),
-                &mut all_chunks_buf, &mut chunk_count_out, &mut err,
+                enc_handle,
+                data.as_ptr(),
+                data.len(),
+                &mut all_chunks_buf,
+                &mut chunk_count_out,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
@@ -3091,7 +4749,12 @@ mod attachment_v2 {
         let mut last_chunk = null_buffer();
         let mut has_last = 0u8;
         let code = unsafe {
-            epp_attachment_streaming_encryptor_finish(enc_handle, &mut last_chunk, &mut has_last, &mut err)
+            epp_attachment_streaming_encryptor_finish(
+                enc_handle,
+                &mut last_chunk,
+                &mut has_last,
+                &mut err,
+            )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
         assert_eq!(has_last, 1);
@@ -3100,11 +4763,17 @@ mod attachment_v2 {
         let mut dec_handle: *mut EppStreamingDecryptorHandle = ptr::null_mut();
         let code = unsafe {
             epp_attachment_streaming_decryptor_create(
-                file_key.data, file_key.length,
-                attachment_id.data, attachment_id.length,
-                mime.as_ptr().cast(), mime.len(),
-                total_size, chunk_size, chunk_count,
-                &mut dec_handle, &mut err,
+                file_key.data,
+                file_key.length,
+                attachment_id.data,
+                attachment_id.length,
+                mime.as_ptr().cast(),
+                mime.len(),
+                total_size,
+                chunk_size,
+                chunk_count,
+                &mut dec_handle,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
@@ -3120,20 +4789,31 @@ mod attachment_v2 {
             for _ in 0..count {
                 let ci = u32::from_le_bytes(buf_data[offset..offset + 4].try_into().unwrap());
                 offset += 4;
-                let nlen = u32::from_le_bytes(buf_data[offset..offset + 4].try_into().unwrap()) as usize;
+                let nlen =
+                    u32::from_le_bytes(buf_data[offset..offset + 4].try_into().unwrap()) as usize;
                 offset += 4;
                 let nonce_s = &buf_data[offset..offset + nlen];
                 offset += nlen;
-                let ctlen = u32::from_le_bytes(buf_data[offset..offset + 4].try_into().unwrap()) as usize;
+                let ctlen =
+                    u32::from_le_bytes(buf_data[offset..offset + 4].try_into().unwrap()) as usize;
                 offset += 4;
                 let ct_s = &buf_data[offset..offset + ctlen];
                 offset += ctlen;
 
-                let mut pt = EppBuffer { data: ptr::null_mut(), length: 0 };
+                let mut pt = EppBuffer {
+                    data: ptr::null_mut(),
+                    length: 0,
+                };
                 let code = unsafe {
                     epp_attachment_streaming_decryptor_write(
-                        dec_handle, ci, nonce_s.as_ptr(), nonce_s.len(),
-                        ct_s.as_ptr(), ct_s.len(), &mut pt, err,
+                        dec_handle,
+                        ci,
+                        nonce_s.as_ptr(),
+                        nonce_s.len(),
+                        ct_s.as_ptr(),
+                        ct_s.len(),
+                        &mut pt,
+                        err,
                     )
                 };
                 assert_eq!(code, EppErrorCode::EppSuccess);
@@ -3143,7 +4823,8 @@ mod attachment_v2 {
             result
         }
 
-        let chunks_data = unsafe { std::slice::from_raw_parts(all_chunks_buf.data, all_chunks_buf.length) };
+        let chunks_data =
+            unsafe { std::slice::from_raw_parts(all_chunks_buf.data, all_chunks_buf.length) };
         let mut reassembled = parse_and_decrypt(dec_handle, chunks_data, 2, &mut err);
 
         let last_data = unsafe { std::slice::from_raw_parts(last_chunk.data, last_chunk.length) };
@@ -3176,11 +4857,17 @@ mod attachment_v2 {
         let mut thumb_ct = null_buffer();
         let code = unsafe {
             epp_attachment_encrypt_thumbnail(
-                file_key.data, file_key.length,
-                attachment_id.data, attachment_id.length,
-                thumb_mime.as_ptr().cast(), thumb_mime.len(),
-                thumb_data.as_ptr(), thumb_data.len(),
-                &mut thumb_nonce, &mut thumb_ct, &mut err,
+                file_key.data,
+                file_key.length,
+                attachment_id.data,
+                attachment_id.length,
+                thumb_mime.as_ptr().cast(),
+                thumb_mime.len(),
+                thumb_data.as_ptr(),
+                thumb_data.len(),
+                &mut thumb_nonce,
+                &mut thumb_ct,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
@@ -3191,23 +4878,35 @@ mod attachment_v2 {
         let mut manifest = null_buffer();
         let code = unsafe {
             epp_attachment_manifest_create_v2(
-                attachment_id.data, attachment_id.length,
-                mime.as_ptr().cast(), mime.len(),
-                4096, 1024, 4,
-                file_hash.as_ptr(), file_hash.len(),
-                wrapped_key.as_ptr(), wrapped_key.len(),
+                attachment_id.data,
+                attachment_id.length,
+                mime.as_ptr().cast(),
+                mime.len(),
+                4096,
+                1024,
+                4,
+                file_hash.as_ptr(),
+                file_hash.len(),
+                wrapped_key.as_ptr(),
+                wrapped_key.len(),
                 -1,
-                thumb_ct.data, thumb_ct.length,
-                thumb_nonce.data, thumb_nonce.length,
-                thumb_mime.as_ptr().cast(), thumb_mime.len(),
-                thumb_data.len() as u32,
-                86400, 1700000000,
-                &mut manifest, &mut err,
+                thumb_ct.data,
+                thumb_ct.length,
+                thumb_nonce.data,
+                thumb_nonce.length,
+                thumb_mime.as_ptr().cast(),
+                thumb_mime.len(),
+                u32::try_from(thumb_data.len()).unwrap(),
+                86400,
+                1_700_000_000,
+                &mut manifest,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
 
-        let code = unsafe { epp_attachment_manifest_validate(manifest.data, manifest.length, &mut err) };
+        let code =
+            unsafe { epp_attachment_manifest_validate(manifest.data, manifest.length, &mut err) };
         assert_eq!(code, EppErrorCode::EppSuccess);
 
         unsafe {
@@ -3228,7 +4927,9 @@ mod attachment_v2 {
             version: 1,
             attachment_id: vec![1u8; 32],
             mime_type: "image/png".to_string(),
-            total_size: 100, chunk_size: 100, chunk_count: 1,
+            total_size: 100,
+            chunk_size: 100,
+            chunk_count: 1,
             file_sha256: vec![2u8; 32],
             encrypted_file_key: vec![3u8; 48],
             encryption_scheme: "AES-256-GCM-SIV".to_string(),
@@ -3237,10 +4938,15 @@ mod attachment_v2 {
             thumbnail_nonce: None,
             thumbnail_mime_type: None,
             thumbnail_size: None,
-            ttl_seconds: None, created_at_unix: None,
-            original_filename: None, media_width: None,
-            media_height: None, duration_ms: None,
-            alt_text: None, content_policy: None, voice_meta: None,
+            ttl_seconds: None,
+            created_at_unix: None,
+            original_filename: None,
+            media_width: None,
+            media_height: None,
+            duration_ms: None,
+            alt_text: None,
+            content_policy: None,
+            voice_meta: None,
         };
         let mut buf = Vec::new();
         manifest.encode(&mut buf).unwrap();
@@ -3253,7 +4959,9 @@ mod attachment_v2 {
     fn file_key_encrypt_decrypt_with_session() {
         init_v2();
         let mut err = null_error();
-        let config = EppSessionConfig { max_messages_per_chain: 1000 };
+        let config = EppSessionConfig {
+            max_messages_per_chain: 1000,
+        };
 
         let mut alice_h: *mut EppIdentityHandle = ptr::null_mut();
         let mut bob_h: *mut EppIdentityHandle = ptr::null_mut();
@@ -3269,8 +4977,13 @@ mod attachment_v2 {
         let mut init_msg = null_buffer();
         let code = unsafe {
             epp_handshake_initiator_start(
-                alice_h, bob_bundle.data, bob_bundle.length,
-                &config, &mut init_h, &mut init_msg, &mut err,
+                alice_h,
+                bob_bundle.data,
+                bob_bundle.length,
+                &config,
+                &mut init_h,
+                &mut init_msg,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
@@ -3279,9 +4992,15 @@ mod attachment_v2 {
         let mut ack_msg = null_buffer();
         let code = unsafe {
             epp_handshake_responder_start(
-                bob_h, bob_bundle.data, bob_bundle.length,
-                init_msg.data, init_msg.length,
-                &config, &mut resp_h, &mut ack_msg, &mut err,
+                bob_h,
+                bob_bundle.data,
+                bob_bundle.length,
+                init_msg.data,
+                init_msg.length,
+                &config,
+                &mut resp_h,
+                &mut ack_msg,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
@@ -3290,7 +5009,13 @@ mod attachment_v2 {
         let mut alice_s: *mut EppSessionHandle = ptr::null_mut();
         unsafe {
             epp_handshake_responder_finish(resp_h, &mut bob_s, &mut err);
-            epp_handshake_initiator_finish(init_h, ack_msg.data, ack_msg.length, &mut alice_s, &mut err);
+            epp_handshake_initiator_finish(
+                init_h,
+                ack_msg.data,
+                ack_msg.length,
+                &mut alice_s,
+                &mut err,
+            );
         }
         assert!(!alice_s.is_null());
         assert!(!bob_s.is_null());
@@ -3303,9 +5028,13 @@ mod attachment_v2 {
         let mut encrypted_fk = null_buffer();
         let code = unsafe {
             epp_attachment_encrypt_file_key(
-                alice_s, file_key.data, file_key.length,
-                attachment_id.data, attachment_id.length,
-                &mut encrypted_fk, &mut err,
+                alice_s,
+                file_key.data,
+                file_key.length,
+                attachment_id.data,
+                attachment_id.length,
+                &mut encrypted_fk,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
@@ -3314,16 +5043,40 @@ mod attachment_v2 {
         let mut decrypted_fk = null_buffer();
         let code = unsafe {
             epp_attachment_decrypt_file_key(
-                bob_s, encrypted_fk.data, encrypted_fk.length,
-                attachment_id.data, attachment_id.length,
-                &mut decrypted_fk, &mut err,
+                bob_s,
+                encrypted_fk.data,
+                encrypted_fk.length,
+                attachment_id.data,
+                attachment_id.length,
+                &mut decrypted_fk,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
         assert_eq!(decrypted_fk.length, 32);
 
+        let mut wrong_attachment_id = [0u8; 32];
+        let attachment_id_slice =
+            unsafe { std::slice::from_raw_parts(attachment_id.data, attachment_id.length) };
+        wrong_attachment_id.copy_from_slice(attachment_id_slice);
+        wrong_attachment_id[0] ^= 0xFF;
+        let mut wrong_fk = null_buffer();
+        let code = unsafe {
+            epp_attachment_decrypt_file_key(
+                bob_s,
+                encrypted_fk.data,
+                encrypted_fk.length,
+                wrong_attachment_id.as_ptr(),
+                wrong_attachment_id.len(),
+                &mut wrong_fk,
+                &mut err,
+            )
+        };
+        assert_ne!(code, EppErrorCode::EppSuccess);
+
         let original = unsafe { std::slice::from_raw_parts(file_key.data, file_key.length) };
-        let decrypted = unsafe { std::slice::from_raw_parts(decrypted_fk.data, decrypted_fk.length) };
+        let decrypted =
+            unsafe { std::slice::from_raw_parts(decrypted_fk.data, decrypted_fk.length) };
         assert_eq!(original, decrypted);
 
         unsafe {
@@ -3334,6 +5087,7 @@ mod attachment_v2 {
             epp_buffer_release(&mut file_key);
             epp_buffer_release(&mut encrypted_fk);
             epp_buffer_release(&mut decrypted_fk);
+            epp_buffer_release(&mut wrong_fk);
             epp_session_destroy(&mut alice_s);
             epp_session_destroy(&mut bob_s);
             epp_identity_destroy(&mut alice_h);
@@ -3386,8 +5140,21 @@ mod attachment_v2 {
         assert_ne!(code, EppErrorCode::EppSuccess);
 
         let name2 = "con.txt";
-        let code2 = unsafe { epp_attachment_validate_filename(name2.as_ptr(), name2.len(), &mut err) };
+        let code2 =
+            unsafe { epp_attachment_validate_filename(name2.as_ptr(), name2.len(), &mut err) };
         assert_ne!(code2, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn filename_rejects_windows_normalized_reserved_and_dot_segments() {
+        init_v2();
+        let mut err = null_error();
+
+        for name in [".", "CON.", "LPT1 ", "aux. "] {
+            let code =
+                unsafe { epp_attachment_validate_filename(name.as_ptr(), name.len(), &mut err) };
+            assert_ne!(code, EppErrorCode::EppSuccess, "name={name}");
+        }
     }
 
     #[test]
@@ -3396,7 +5163,9 @@ mod attachment_v2 {
         let mut err = null_error();
         let name = "../bad/file\x00.txt";
         let mut out = null_buffer();
-        let code = unsafe { epp_attachment_sanitize_filename(name.as_ptr(), name.len(), &mut out, &mut err) };
+        let code = unsafe {
+            epp_attachment_sanitize_filename(name.as_ptr(), name.len(), &mut out, &mut err)
+        };
         assert_eq!(code, EppErrorCode::EppSuccess);
         let sanitized = unsafe { std::slice::from_raw_parts(out.data, out.length) };
         let s = std::str::from_utf8(sanitized).unwrap();
@@ -3409,6 +5178,22 @@ mod attachment_v2 {
     }
 
     #[test]
+    fn sanitize_normalizes_windows_edge_cases() {
+        init_v2();
+        let mut err = null_error();
+        let name = "CON. ";
+        let mut out = null_buffer();
+        let code = unsafe {
+            epp_attachment_sanitize_filename(name.as_ptr(), name.len(), &mut out, &mut err)
+        };
+        assert_eq!(code, EppErrorCode::EppSuccess);
+        let sanitized = unsafe { std::slice::from_raw_parts(out.data, out.length) };
+        let s = std::str::from_utf8(sanitized).unwrap();
+        assert_eq!(s, "_CON");
+        unsafe { epp_buffer_release(&mut out) };
+    }
+
+    #[test]
     fn magic_jpeg_valid() {
         init_v2();
         let mut err = null_error();
@@ -3416,8 +5201,10 @@ mod attachment_v2 {
         let mime = "image/jpeg";
         let code = unsafe {
             epp_attachment_validate_magic_bytes(
-                header.as_ptr(), header.len(),
-                mime.as_ptr(), mime.len(),
+                header.as_ptr(),
+                header.len(),
+                mime.as_ptr(),
+                mime.len(),
                 &mut err,
             )
         };
@@ -3432,8 +5219,10 @@ mod attachment_v2 {
         let mime = "image/png";
         let code = unsafe {
             epp_attachment_validate_magic_bytes(
-                header.as_ptr(), header.len(),
-                mime.as_ptr(), mime.len(),
+                header.as_ptr(),
+                header.len(),
+                mime.as_ptr(),
+                mime.len(),
                 &mut err,
             )
         };
@@ -3448,8 +5237,10 @@ mod attachment_v2 {
         let mime = "image/png";
         let code = unsafe {
             epp_attachment_validate_magic_bytes(
-                header.as_ptr(), header.len(),
-                mime.as_ptr(), mime.len(),
+                header.as_ptr(),
+                header.len(),
+                mime.as_ptr(),
+                mime.len(),
                 &mut err,
             )
         };
@@ -3457,26 +5248,30 @@ mod attachment_v2 {
     }
 
     #[test]
-    fn magic_unknown_passes() {
+    fn magic_unknown_rejected() {
         init_v2();
         let mut err = null_error();
         let header = [0x00u8; 16];
         let mime = "application/x-custom";
         let code = unsafe {
             epp_attachment_validate_magic_bytes(
-                header.as_ptr(), header.len(),
-                mime.as_ptr(), mime.len(),
+                header.as_ptr(),
+                header.len(),
+                mime.as_ptr(),
+                mime.len(),
                 &mut err,
             )
         };
-        assert_eq!(code, EppErrorCode::EppSuccess);
+        assert_ne!(code, EppErrorCode::EppSuccess);
     }
 
     #[test]
     fn detect_jpeg() {
         init_v2();
         let mut err = null_error();
-        let header = [0xFFu8, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01];
+        let header = [
+            0xFFu8, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01,
+        ];
         let mut out = null_buffer();
         let code = unsafe {
             epp_attachment_detect_mime(header.as_ptr(), header.len(), &mut out, &mut err)
@@ -3491,7 +5286,9 @@ mod attachment_v2 {
     fn detect_unknown() {
         init_v2();
         let mut err = null_error();
-        let header = [0x01u8, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C];
+        let header = [
+            0x01u8, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
+        ];
         let mut out = null_buffer();
         let code = unsafe {
             epp_attachment_detect_mime(header.as_ptr(), header.len(), &mut out, &mut err)
@@ -3509,16 +5306,23 @@ mod attachment_v2 {
             version: 1,
             attachment_id: vec![1u8; 32],
             mime_type: "image/jpeg".to_string(),
-            total_size: 100, chunk_size: 100, chunk_count: 1,
+            total_size: 100,
+            chunk_size: 100,
+            chunk_count: 1,
             file_sha256: vec![2u8; 32],
             encrypted_file_key: vec![3u8; 48],
             encryption_scheme: "AES-256-GCM-SIV".to_string(),
             collage_index: None,
-            encrypted_thumbnail: None, thumbnail_nonce: None,
-            thumbnail_mime_type: None, thumbnail_size: None,
-            ttl_seconds: None, created_at_unix: None,
-            original_filename: None, media_width: None,
-            media_height: None, duration_ms: None,
+            encrypted_thumbnail: None,
+            thumbnail_nonce: None,
+            thumbnail_mime_type: None,
+            thumbnail_size: None,
+            ttl_seconds: None,
+            created_at_unix: None,
+            original_filename: None,
+            media_width: None,
+            media_height: None,
+            duration_ms: None,
             alt_text: None,
             content_policy: Some(ContentPolicy {
                 view_once: true,
@@ -3541,16 +5345,23 @@ mod attachment_v2 {
             version: 1,
             attachment_id: vec![1u8; 32],
             mime_type: "image/jpeg".to_string(),
-            total_size: 100, chunk_size: 100, chunk_count: 1,
+            total_size: 100,
+            chunk_size: 100,
+            chunk_count: 1,
             file_sha256: vec![2u8; 32],
             encrypted_file_key: vec![3u8; 48],
             encryption_scheme: "AES-256-GCM-SIV".to_string(),
             collage_index: None,
-            encrypted_thumbnail: None, thumbnail_nonce: None,
-            thumbnail_mime_type: None, thumbnail_size: None,
-            ttl_seconds: Some(3600), created_at_unix: Some(1700000000),
-            original_filename: None, media_width: None,
-            media_height: None, duration_ms: None,
+            encrypted_thumbnail: None,
+            thumbnail_nonce: None,
+            thumbnail_mime_type: None,
+            thumbnail_size: None,
+            ttl_seconds: Some(3600),
+            created_at_unix: Some(1_700_000_000),
+            original_filename: None,
+            media_width: None,
+            media_height: None,
+            duration_ms: None,
             alt_text: None,
             content_policy: Some(ContentPolicy {
                 view_once: true,
@@ -3581,41 +5392,59 @@ mod attachment_v2 {
                 version: 1,
                 attachment_id: unsafe { std::slice::from_raw_parts(aid.data, aid.length) }.to_vec(),
                 mime_type: "image/jpeg".to_string(),
-                total_size: 1024, chunk_size: 1024, chunk_count: 1,
+                total_size: 1024,
+                chunk_size: 1024,
+                chunk_count: 1,
                 file_sha256: vec![7u8; 32],
                 encrypted_file_key: vec![9u8; 48],
                 encryption_scheme: "AES-256-GCM-SIV".to_string(),
                 collage_index: Some(i),
-                encrypted_thumbnail: None, thumbnail_nonce: None,
-                thumbnail_mime_type: None, thumbnail_size: None,
-                ttl_seconds: None, created_at_unix: None,
-                original_filename: None, media_width: None,
-                media_height: None, duration_ms: None,
-                alt_text: None, content_policy: None, voice_meta: None,
+                encrypted_thumbnail: None,
+                thumbnail_nonce: None,
+                thumbnail_mime_type: None,
+                thumbnail_size: None,
+                ttl_seconds: None,
+                created_at_unix: None,
+                original_filename: None,
+                media_width: None,
+                media_height: None,
+                duration_ms: None,
+                alt_text: None,
+                content_policy: None,
+                voice_meta: None,
             };
             let mut buf = Vec::new();
             manifest.encode(&mut buf).unwrap();
             manifests_raw.push(buf);
-            unsafe { epp_buffer_release(&mut aid); epp_buffer_release(&mut fk); }
+            unsafe {
+                epp_buffer_release(&mut aid);
+                epp_buffer_release(&mut fk);
+            }
         }
 
-        let ptrs: Vec<*const u8> = manifests_raw.iter().map(|b| b.as_ptr()).collect();
-        let lens: Vec<usize> = manifests_raw.iter().map(|b| b.len()).collect();
+        let ptrs: Vec<*const u8> = manifests_raw.iter().map(Vec::as_ptr).collect();
+        let lens: Vec<usize> = manifests_raw.iter().map(Vec::len).collect();
         let name = "My Album";
         let desc = "Vacation photos";
         let mut collage = null_buffer();
         let code = unsafe {
             epp_attachment_collage_create_with_metadata(
-                ptrs.as_ptr(), lens.as_ptr(), 2,
-                name.as_ptr(), name.len(),
-                desc.as_ptr(), desc.len(),
+                ptrs.as_ptr(),
+                lens.as_ptr(),
+                2,
+                name.as_ptr(),
+                name.len(),
+                desc.as_ptr(),
+                desc.len(),
                 0,
-                &mut collage, &mut err,
+                &mut collage,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
 
-        let code = unsafe { epp_attachment_collage_validate(collage.data, collage.length, &mut err) };
+        let code =
+            unsafe { epp_attachment_collage_validate(collage.data, collage.length, &mut err) };
         assert_eq!(code, EppErrorCode::EppSuccess);
 
         let collage_bytes = unsafe { std::slice::from_raw_parts(collage.data, collage.length) };
@@ -3641,39 +5470,169 @@ mod attachment_v2 {
             version: 1,
             attachment_id: unsafe { std::slice::from_raw_parts(aid.data, aid.length) }.to_vec(),
             mime_type: "image/jpeg".to_string(),
-            total_size: 1024, chunk_size: 1024, chunk_count: 1,
+            total_size: 1024,
+            chunk_size: 1024,
+            chunk_count: 1,
             file_sha256: vec![7u8; 32],
             encrypted_file_key: vec![9u8; 48],
             encryption_scheme: "AES-256-GCM-SIV".to_string(),
             collage_index: Some(0),
-            encrypted_thumbnail: None, thumbnail_nonce: None,
-            thumbnail_mime_type: None, thumbnail_size: None,
-            ttl_seconds: None, created_at_unix: None,
-            original_filename: None, media_width: None,
-            media_height: None, duration_ms: None,
-            alt_text: None, content_policy: None, voice_meta: None,
+            encrypted_thumbnail: None,
+            thumbnail_nonce: None,
+            thumbnail_mime_type: None,
+            thumbnail_size: None,
+            ttl_seconds: None,
+            created_at_unix: None,
+            original_filename: None,
+            media_width: None,
+            media_height: None,
+            duration_ms: None,
+            alt_text: None,
+            content_policy: None,
+            voice_meta: None,
         };
         let mut buf = Vec::new();
         manifest.encode(&mut buf).unwrap();
         manifests_raw.push(buf);
-        unsafe { epp_buffer_release(&mut aid); epp_buffer_release(&mut fk); }
+        unsafe {
+            epp_buffer_release(&mut aid);
+            epp_buffer_release(&mut fk);
+        }
 
-        let ptrs: Vec<*const u8> = manifests_raw.iter().map(|b| b.as_ptr()).collect();
-        let lens: Vec<usize> = manifests_raw.iter().map(|b| b.len()).collect();
+        let ptrs: Vec<*const u8> = manifests_raw.iter().map(Vec::as_ptr).collect();
+        let lens: Vec<usize> = manifests_raw.iter().map(Vec::len).collect();
         let long_name = "A".repeat(256);
         let mut collage = null_buffer();
         let code = unsafe {
             epp_attachment_collage_create_with_metadata(
-                ptrs.as_ptr(), lens.as_ptr(), 1,
-                long_name.as_ptr(), long_name.len(),
-                ptr::null(), 0,
+                ptrs.as_ptr(),
+                lens.as_ptr(),
+                1,
+                long_name.as_ptr(),
+                long_name.len(),
+                ptr::null(),
+                0,
                 -1,
-                &mut collage, &mut err,
+                &mut collage,
+                &mut err,
+            )
+        };
+        assert_ne!(code, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn collage_invalid_layout_rejected_at_create() {
+        init_v2();
+        let mut err = null_error();
+
+        let manifest = AttachmentManifest {
+            version: 1,
+            attachment_id: vec![1u8; 32],
+            mime_type: "image/jpeg".to_string(),
+            total_size: 1024,
+            chunk_size: 1024,
+            chunk_count: 1,
+            file_sha256: vec![7u8; 32],
+            encrypted_file_key: vec![9u8; 48],
+            encryption_scheme: "AES-256-GCM-SIV".to_string(),
+            collage_index: Some(0),
+            encrypted_thumbnail: None,
+            thumbnail_nonce: None,
+            thumbnail_mime_type: None,
+            thumbnail_size: None,
+            ttl_seconds: None,
+            created_at_unix: None,
+            original_filename: None,
+            media_width: None,
+            media_height: None,
+            duration_ms: None,
+            alt_text: None,
+            content_policy: None,
+            voice_meta: None,
+        };
+        let mut manifest_bytes = Vec::new();
+        manifest.encode(&mut manifest_bytes).unwrap();
+
+        let ptrs = [manifest_bytes.as_ptr()];
+        let lens = [manifest_bytes.len()];
+        let mut collage = null_buffer();
+        let code = unsafe {
+            epp_attachment_collage_create_with_metadata(
+                ptrs.as_ptr(),
+                lens.as_ptr(),
+                1,
+                ptr::null(),
+                0,
+                ptr::null(),
+                0,
+                7,
+                &mut collage,
+                &mut err,
+            )
+        };
+        assert_ne!(code, EppErrorCode::EppSuccess);
+    }
+
+    #[test]
+    fn collage_validate_rejects_tampered_invalid_layout() {
+        init_v2();
+        let mut err = null_error();
+
+        let manifest = AttachmentManifest {
+            version: 1,
+            attachment_id: vec![1u8; 32],
+            mime_type: "image/jpeg".to_string(),
+            total_size: 1024,
+            chunk_size: 1024,
+            chunk_count: 1,
+            file_sha256: vec![7u8; 32],
+            encrypted_file_key: vec![9u8; 48],
+            encryption_scheme: "AES-256-GCM-SIV".to_string(),
+            collage_index: Some(0),
+            encrypted_thumbnail: None,
+            thumbnail_nonce: None,
+            thumbnail_mime_type: None,
+            thumbnail_size: None,
+            ttl_seconds: None,
+            created_at_unix: None,
+            original_filename: None,
+            media_width: None,
+            media_height: None,
+            duration_ms: None,
+            alt_text: None,
+            content_policy: None,
+            voice_meta: None,
+        };
+        let mut manifest_bytes = Vec::new();
+        manifest.encode(&mut manifest_bytes).unwrap();
+
+        let ptrs = [manifest_bytes.as_ptr()];
+        let lens = [manifest_bytes.len()];
+        let mut collage = null_buffer();
+        let code = unsafe {
+            epp_attachment_collage_create_with_metadata(
+                ptrs.as_ptr(),
+                lens.as_ptr(),
+                1,
+                ptr::null(),
+                0,
+                ptr::null(),
+                0,
+                0,
+                &mut collage,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
 
-        let code = unsafe { epp_attachment_collage_validate(collage.data, collage.length, &mut err) };
+        let collage_bytes = unsafe { std::slice::from_raw_parts(collage.data, collage.length) };
+        let mut parsed = CollageManifest::decode(collage_bytes).unwrap();
+        parsed.layout = Some(9);
+        let mut tampered = Vec::new();
+        parsed.encode(&mut tampered).unwrap();
+
+        let code =
+            unsafe { epp_attachment_collage_validate(tampered.as_ptr(), tampered.len(), &mut err) };
         assert_ne!(code, EppErrorCode::EppSuccess);
 
         unsafe { epp_buffer_release(&mut collage) };
@@ -3687,14 +5646,19 @@ mod attachment_v2 {
             version: 1,
             attachment_id: vec![1u8; 32],
             mime_type: "video/mp4".to_string(),
-            total_size: 2048, chunk_size: 1024, chunk_count: 2,
+            total_size: 2048,
+            chunk_size: 1024,
+            chunk_count: 2,
             file_sha256: vec![2u8; 32],
             encrypted_file_key: vec![3u8; 48],
             encryption_scheme: "AES-256-GCM-SIV".to_string(),
             collage_index: None,
-            encrypted_thumbnail: None, thumbnail_nonce: None,
-            thumbnail_mime_type: None, thumbnail_size: None,
-            ttl_seconds: None, created_at_unix: None,
+            encrypted_thumbnail: None,
+            thumbnail_nonce: None,
+            thumbnail_mime_type: None,
+            thumbnail_size: None,
+            ttl_seconds: None,
+            created_at_unix: None,
             original_filename: Some("holiday.mp4".to_string()),
             media_width: Some(1920),
             media_height: Some(1080),
@@ -3714,26 +5678,32 @@ mod attachment_v2 {
         init_v2();
         let mut err = null_error();
         let mut out = null_buffer();
-        let aid = vec![1u8; 32];
+        let aid = [1u8; 32];
         let mime = "text/plain";
-        let data = vec![0xABu8; 128];
+        let data = [0xABu8; 128];
 
         let code = unsafe {
             epp_attachment_inline_create(
-                aid.as_ptr(), aid.len(),
-                mime.as_ptr(), mime.len(),
-                data.as_ptr(), data.len(),
-                ptr::null(), 0,
-                0, 0, 0, 0,
-                &mut out, &mut err,
+                aid.as_ptr(),
+                aid.len(),
+                mime.as_ptr(),
+                mime.len(),
+                data.as_ptr(),
+                data.len(),
+                ptr::null(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                &mut out,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
         assert!(out.length > 0);
 
-        let code = unsafe {
-            epp_attachment_inline_validate(out.data, out.length, &mut err)
-        };
+        let code = unsafe { epp_attachment_inline_validate(out.data, out.length, &mut err) };
         assert_eq!(code, EppErrorCode::EppSuccess);
         unsafe { epp_buffer_release(&mut out) };
     }
@@ -3743,22 +5713,23 @@ mod attachment_v2 {
         init_v2();
         let mut err = null_error();
         let mut out = null_buffer();
-        let aid = vec![2u8; 32];
-        let smid = vec![3u8; 32];
+        let aid = [2u8; 32];
+        let smid = [3u8; 32];
 
         let code = unsafe {
             epp_attachment_reference_create(
-                aid.as_ptr(), aid.len(),
+                aid.as_ptr(),
+                aid.len(),
                 0,
-                smid.as_ptr(), smid.len(),
-                &mut out, &mut err,
+                smid.as_ptr(),
+                smid.len(),
+                &mut out,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
 
-        let code = unsafe {
-            epp_attachment_reference_validate(out.data, out.length, &mut err)
-        };
+        let code = unsafe { epp_attachment_reference_validate(out.data, out.length, &mut err) };
         assert_eq!(code, EppErrorCode::EppSuccess);
         unsafe { epp_buffer_release(&mut out) };
     }
@@ -3772,18 +5743,20 @@ mod attachment_v2 {
 
         let code = unsafe {
             epp_attachment_voice_meta_create(
-                waveform.as_ptr(), waveform.len(),
-                ptr::null(), 0,
-                1.0, 1,
+                waveform.as_ptr(),
+                waveform.len(),
+                ptr::null(),
                 0,
-                &mut out, &mut err,
+                1.0,
+                1,
+                0,
+                &mut out,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
 
-        let code = unsafe {
-            epp_attachment_voice_meta_validate(out.data, out.length, &mut err)
-        };
+        let code = unsafe { epp_attachment_voice_meta_validate(out.data, out.length, &mut err) };
         assert_eq!(code, EppErrorCode::EppSuccess);
         unsafe { epp_buffer_release(&mut out) };
     }
@@ -3800,9 +5773,7 @@ mod attachment_v2 {
         };
         let mut buf = Vec::new();
         bad.encode(&mut buf).unwrap();
-        let code = unsafe {
-            epp_attachment_voice_meta_validate(buf.as_ptr(), buf.len(), &mut err)
-        };
+        let code = unsafe { epp_attachment_voice_meta_validate(buf.as_ptr(), buf.len(), &mut err) };
         assert_ne!(code, EppErrorCode::EppSuccess);
     }
 
@@ -3814,18 +5785,21 @@ mod attachment_v2 {
 
         let code = unsafe {
             epp_attachment_location_create(
-                48.8566, 2.3522,
-                10.0, 1,
-                ptr::null(), 0,
-                0, 0,
-                &mut out, &mut err,
+                48.8566,
+                2.3522,
+                10.0,
+                1,
+                ptr::null(),
+                0,
+                0,
+                0,
+                &mut out,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
 
-        let code = unsafe {
-            epp_attachment_location_validate(out.data, out.length, &mut err)
-        };
+        let code = unsafe { epp_attachment_location_validate(out.data, out.length, &mut err) };
         assert_eq!(code, EppErrorCode::EppSuccess);
         unsafe { epp_buffer_release(&mut out) };
     }
@@ -3843,9 +5817,7 @@ mod attachment_v2 {
         };
         let mut buf = Vec::new();
         bad.encode(&mut buf).unwrap();
-        let code = unsafe {
-            epp_attachment_location_validate(buf.as_ptr(), buf.len(), &mut err)
-        };
+        let code = unsafe { epp_attachment_location_validate(buf.as_ptr(), buf.len(), &mut err) };
         assert_ne!(code, EppErrorCode::EppSuccess);
     }
 
@@ -3858,19 +5830,23 @@ mod attachment_v2 {
 
         let code = unsafe {
             epp_attachment_contact_card_create(
-                name.as_ptr(), name.len(),
-                ptr::null(), 0,
-                ptr::null(), 0,
-                ptr::null(), 0,
-                ptr::null(), 0,
-                &mut out, &mut err,
+                name.as_ptr(),
+                name.len(),
+                ptr::null(),
+                0,
+                ptr::null(),
+                0,
+                ptr::null(),
+                0,
+                ptr::null(),
+                0,
+                &mut out,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
 
-        let code = unsafe {
-            epp_attachment_contact_card_validate(out.data, out.length, &mut err)
-        };
+        let code = unsafe { epp_attachment_contact_card_validate(out.data, out.length, &mut err) };
         assert_eq!(code, EppErrorCode::EppSuccess);
         unsafe { epp_buffer_release(&mut out) };
     }
@@ -3888,9 +5864,8 @@ mod attachment_v2 {
         };
         let mut buf = Vec::new();
         bad.encode(&mut buf).unwrap();
-        let code = unsafe {
-            epp_attachment_contact_card_validate(buf.as_ptr(), buf.len(), &mut err)
-        };
+        let code =
+            unsafe { epp_attachment_contact_card_validate(buf.as_ptr(), buf.len(), &mut err) };
         assert_ne!(code, EppErrorCode::EppSuccess);
     }
 
@@ -3903,20 +5878,25 @@ mod attachment_v2 {
 
         let code = unsafe {
             epp_attachment_link_preview_create(
-                url.as_ptr(), url.len(),
-                ptr::null(), 0,
-                ptr::null(), 0,
-                ptr::null(), 0,
-                ptr::null(), 0,
-                ptr::null(), 0,
-                &mut out, &mut err,
+                url.as_ptr(),
+                url.len(),
+                ptr::null(),
+                0,
+                ptr::null(),
+                0,
+                ptr::null(),
+                0,
+                ptr::null(),
+                0,
+                ptr::null(),
+                0,
+                &mut out,
+                &mut err,
             )
         };
         assert_eq!(code, EppErrorCode::EppSuccess);
 
-        let code = unsafe {
-            epp_attachment_link_preview_validate(out.data, out.length, &mut err)
-        };
+        let code = unsafe { epp_attachment_link_preview_validate(out.data, out.length, &mut err) };
         assert_eq!(code, EppErrorCode::EppSuccess);
         unsafe { epp_buffer_release(&mut out) };
     }
@@ -3935,9 +5915,8 @@ mod attachment_v2 {
         };
         let mut buf = Vec::new();
         bad.encode(&mut buf).unwrap();
-        let code = unsafe {
-            epp_attachment_link_preview_validate(buf.as_ptr(), buf.len(), &mut err)
-        };
+        let code =
+            unsafe { epp_attachment_link_preview_validate(buf.as_ptr(), buf.len(), &mut err) };
         assert_ne!(code, EppErrorCode::EppSuccess);
     }
 
@@ -3949,17 +5928,25 @@ mod attachment_v2 {
             version: 1,
             attachment_id: vec![1u8; 32],
             mime_type: "audio/ogg".to_string(),
-            total_size: 2048, chunk_size: 1024, chunk_count: 2,
+            total_size: 2048,
+            chunk_size: 1024,
+            chunk_count: 2,
             file_sha256: vec![2u8; 32],
             encrypted_file_key: vec![3u8; 48],
             encryption_scheme: "AES-256-GCM-SIV".to_string(),
             collage_index: None,
-            encrypted_thumbnail: None, thumbnail_nonce: None,
-            thumbnail_mime_type: None, thumbnail_size: None,
-            ttl_seconds: None, created_at_unix: None,
-            original_filename: None, media_width: None,
-            media_height: None, duration_ms: Some(5000),
-            alt_text: None, content_policy: None,
+            encrypted_thumbnail: None,
+            thumbnail_nonce: None,
+            thumbnail_mime_type: None,
+            thumbnail_size: None,
+            ttl_seconds: None,
+            created_at_unix: None,
+            original_filename: None,
+            media_width: None,
+            media_height: None,
+            duration_ms: Some(5000),
+            alt_text: None,
+            content_policy: None,
             voice_meta: Some(VoiceMessageMeta {
                 waveform_samples: vec![0.0, 0.5, 1.0, 0.5, 0.0],
                 transcript: Some("Hello world".to_string()),
@@ -4046,12 +6033,7 @@ mod voip_improvements {
                 alice_kyber.len(),
                 &mut err,
             );
-            epp_identity_get_kyber_public(
-                bob_h,
-                bob_kyber.as_mut_ptr(),
-                bob_kyber.len(),
-                &mut err,
-            );
+            epp_identity_get_kyber_public(bob_h, bob_kyber.as_mut_ptr(), bob_kyber.len(), &mut err);
         }
 
         let mut init_buf = null_buffer();
@@ -4110,6 +6092,1154 @@ mod voip_improvements {
             init_buf,
             accept_buf,
         )
+    }
+
+    #[test]
+    fn ffi_voip_import_sealed_state_with_time_provider_uses_manual_clock() {
+        init_lib();
+
+        let initial_now = 1_710_000_000u64;
+        let mut alice_time: *mut EppTimeProviderHandle = ptr::null_mut();
+        let mut bob_time: *mut EppTimeProviderHandle = ptr::null_mut();
+        let mut restore_time: *mut EppTimeProviderHandle = ptr::null_mut();
+        let mut alice_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut bob_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut err = null_error();
+
+        unsafe {
+            assert_eq!(
+                epp_time_provider_manual_create(initial_now, &mut alice_time, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_time_provider_manual_create(initial_now, &mut bob_time, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_time_provider_manual_create(initial_now, &mut restore_time, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_identity_create(&mut alice_h, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_identity_create(&mut bob_h, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_identity_set_time_provider(alice_h, alice_time, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_identity_set_time_provider(bob_h, bob_time, &mut err),
+                EppErrorCode::EppSuccess
+            );
+        }
+
+        let mut alice_kyber = vec![0u8; 1184];
+        let mut bob_kyber = vec![0u8; 1184];
+        unsafe {
+            assert_eq!(
+                epp_identity_get_kyber_public(
+                    alice_h,
+                    alice_kyber.as_mut_ptr(),
+                    alice_kyber.len(),
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_identity_get_kyber_public(
+                    bob_h,
+                    bob_kyber.as_mut_ptr(),
+                    bob_kyber.len(),
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+        }
+
+        let mut init_buf = null_buffer();
+        let mut init_h: *mut EppVoipCallInitiatorHandle = ptr::null_mut();
+        let mut accept_buf = null_buffer();
+        let mut alice_session_h: *mut EppVoipSessionHandle = ptr::null_mut();
+        let mut bob_session_h: *mut EppVoipSessionHandle = ptr::null_mut();
+        let mut restored_session_h: *mut EppVoipSessionHandle = ptr::null_mut();
+        let mut sealed = null_buffer();
+        let mut stats = EppCallStatistics {
+            frames_sent: 0,
+            frames_received: 0,
+            frames_dropped: 0,
+            rekey_count: 0,
+            ratchet_generation: 0,
+            call_duration_secs: 0,
+        };
+        let state_key = [9u8; 32];
+
+        unsafe {
+            assert_eq!(
+                epp_voip_call_init_start(
+                    alice_h,
+                    bob_kyber.as_ptr(),
+                    bob_kyber.len(),
+                    0,
+                    512,
+                    60,
+                    &mut init_buf,
+                    &mut init_h,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_voip_accept_call(
+                    bob_h,
+                    init_buf.data,
+                    init_buf.length,
+                    alice_kyber.as_ptr(),
+                    alice_kyber.len(),
+                    &mut accept_buf,
+                    &mut bob_session_h,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_voip_call_init_complete(
+                    init_h,
+                    alice_h,
+                    accept_buf.data,
+                    accept_buf.length,
+                    &mut alice_session_h,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_voip_export_sealed_state(
+                    alice_session_h,
+                    state_key.as_ptr(),
+                    state_key.len(),
+                    1,
+                    &mut sealed,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_voip_import_sealed_state_with_time_provider(
+                    sealed.data,
+                    sealed.length,
+                    state_key.as_ptr(),
+                    state_key.len(),
+                    0,
+                    restore_time,
+                    &mut restored_session_h,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_voip_get_call_statistics(restored_session_h, &mut stats, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(stats.call_duration_secs, 0);
+
+            assert_eq!(
+                epp_time_provider_manual_set_now_unix(restore_time, initial_now + 42, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_voip_get_call_statistics(restored_session_h, &mut stats, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(stats.call_duration_secs, 42);
+
+            epp_buffer_release(&mut init_buf);
+            epp_buffer_release(&mut accept_buf);
+            epp_buffer_release(&mut sealed);
+            epp_voip_call_initiator_destroy(init_h);
+            epp_voip_session_destroy(restored_session_h);
+            epp_voip_session_destroy(alice_session_h);
+            epp_voip_session_destroy(bob_session_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+            epp_time_provider_destroy(&mut alice_time);
+            epp_time_provider_destroy(&mut bob_time);
+            epp_time_provider_destroy(&mut restore_time);
+        }
+    }
+
+    #[test]
+    fn ffi_voip_call_init_requires_all_outputs() {
+        init_lib();
+        let mut alice_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut bob_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut err = null_error();
+
+        unsafe {
+            epp_identity_create(&mut alice_h, &mut err);
+            epp_identity_create(&mut bob_h, &mut err);
+        }
+
+        let mut bob_kyber = vec![0u8; 1184];
+        unsafe {
+            assert_eq!(
+                epp_identity_get_kyber_public(
+                    bob_h,
+                    bob_kyber.as_mut_ptr(),
+                    bob_kyber.len(),
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+        }
+
+        let mut init_buf = null_buffer();
+        let mut init_h: *mut EppVoipCallInitiatorHandle = ptr::null_mut();
+
+        unsafe {
+            assert_eq!(
+                epp_voip_call_init_start(
+                    alice_h,
+                    bob_kyber.as_ptr(),
+                    bob_kyber.len(),
+                    0,
+                    512,
+                    60,
+                    ptr::null_mut(),
+                    &mut init_h,
+                    &mut err
+                ),
+                EppErrorCode::EppErrorNullPointer
+            );
+            assert!(init_h.is_null());
+
+            assert_eq!(
+                epp_voip_call_init_start(
+                    alice_h,
+                    bob_kyber.as_ptr(),
+                    bob_kyber.len(),
+                    0,
+                    512,
+                    60,
+                    &mut init_buf,
+                    ptr::null_mut(),
+                    &mut err
+                ),
+                EppErrorCode::EppErrorNullPointer
+            );
+            assert!(init_buf.data.is_null());
+            assert_eq!(init_buf.length, 0);
+
+            assert_eq!(
+                epp_voip_call_init_start(
+                    alice_h,
+                    bob_kyber.as_ptr(),
+                    bob_kyber.len(),
+                    0,
+                    512,
+                    60,
+                    &mut init_buf,
+                    &mut init_h,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+
+            epp_buffer_release(&mut init_buf);
+            epp_voip_call_initiator_destroy(init_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn ffi_voip_accept_call_requires_all_outputs() {
+        init_lib();
+        let mut alice_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut bob_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut err = null_error();
+
+        unsafe {
+            epp_identity_create(&mut alice_h, &mut err);
+            epp_identity_create(&mut bob_h, &mut err);
+        }
+
+        let mut alice_kyber = vec![0u8; 1184];
+        let mut bob_kyber = vec![0u8; 1184];
+        unsafe {
+            assert_eq!(
+                epp_identity_get_kyber_public(
+                    alice_h,
+                    alice_kyber.as_mut_ptr(),
+                    alice_kyber.len(),
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_identity_get_kyber_public(
+                    bob_h,
+                    bob_kyber.as_mut_ptr(),
+                    bob_kyber.len(),
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+        }
+
+        let mut init_buf = null_buffer();
+        let mut init_h: *mut EppVoipCallInitiatorHandle = ptr::null_mut();
+        let mut accept_buf = null_buffer();
+        let mut bob_session_h: *mut EppVoipSessionHandle = ptr::null_mut();
+
+        unsafe {
+            assert_eq!(
+                epp_voip_call_init_start(
+                    alice_h,
+                    bob_kyber.as_ptr(),
+                    bob_kyber.len(),
+                    0,
+                    512,
+                    60,
+                    &mut init_buf,
+                    &mut init_h,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+
+            assert_eq!(
+                epp_voip_accept_call(
+                    bob_h,
+                    init_buf.data,
+                    init_buf.length,
+                    alice_kyber.as_ptr(),
+                    alice_kyber.len(),
+                    ptr::null_mut(),
+                    &mut bob_session_h,
+                    &mut err
+                ),
+                EppErrorCode::EppErrorNullPointer
+            );
+            assert!(bob_session_h.is_null());
+
+            assert_eq!(
+                epp_voip_accept_call(
+                    bob_h,
+                    init_buf.data,
+                    init_buf.length,
+                    alice_kyber.as_ptr(),
+                    alice_kyber.len(),
+                    &mut accept_buf,
+                    ptr::null_mut(),
+                    &mut err
+                ),
+                EppErrorCode::EppErrorNullPointer
+            );
+            assert!(accept_buf.data.is_null());
+            assert_eq!(accept_buf.length, 0);
+
+            assert_eq!(
+                epp_voip_accept_call(
+                    bob_h,
+                    init_buf.data,
+                    init_buf.length,
+                    alice_kyber.as_ptr(),
+                    alice_kyber.len(),
+                    &mut accept_buf,
+                    &mut bob_session_h,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+
+            epp_buffer_release(&mut init_buf);
+            epp_buffer_release(&mut accept_buf);
+            epp_voip_call_initiator_destroy(init_h);
+            epp_voip_session_destroy(bob_session_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn ffi_voip_call_init_complete_requires_session_output_without_consuming_initiator() {
+        init_lib();
+        let mut alice_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut bob_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut err = null_error();
+
+        unsafe {
+            epp_identity_create(&mut alice_h, &mut err);
+            epp_identity_create(&mut bob_h, &mut err);
+        }
+
+        let mut alice_kyber = vec![0u8; 1184];
+        let mut bob_kyber = vec![0u8; 1184];
+        unsafe {
+            assert_eq!(
+                epp_identity_get_kyber_public(
+                    alice_h,
+                    alice_kyber.as_mut_ptr(),
+                    alice_kyber.len(),
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_identity_get_kyber_public(
+                    bob_h,
+                    bob_kyber.as_mut_ptr(),
+                    bob_kyber.len(),
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+        }
+
+        let mut init_buf = null_buffer();
+        let mut accept_buf = null_buffer();
+        let mut init_h: *mut EppVoipCallInitiatorHandle = ptr::null_mut();
+        let mut bob_session_h: *mut EppVoipSessionHandle = ptr::null_mut();
+        let mut alice_session_h: *mut EppVoipSessionHandle = ptr::null_mut();
+
+        unsafe {
+            assert_eq!(
+                epp_voip_call_init_start(
+                    alice_h,
+                    bob_kyber.as_ptr(),
+                    bob_kyber.len(),
+                    0,
+                    512,
+                    60,
+                    &mut init_buf,
+                    &mut init_h,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_voip_accept_call(
+                    bob_h,
+                    init_buf.data,
+                    init_buf.length,
+                    alice_kyber.as_ptr(),
+                    alice_kyber.len(),
+                    &mut accept_buf,
+                    &mut bob_session_h,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+
+            assert_eq!(
+                epp_voip_call_init_complete(
+                    init_h,
+                    alice_h,
+                    accept_buf.data,
+                    accept_buf.length,
+                    ptr::null_mut(),
+                    &mut err
+                ),
+                EppErrorCode::EppErrorNullPointer
+            );
+            assert!(alice_session_h.is_null());
+
+            assert_eq!(
+                epp_voip_call_init_complete(
+                    init_h,
+                    alice_h,
+                    accept_buf.data,
+                    accept_buf.length,
+                    &mut alice_session_h,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert!(!alice_session_h.is_null());
+
+            epp_buffer_release(&mut init_buf);
+            epp_buffer_release(&mut accept_buf);
+            epp_voip_call_initiator_destroy(init_h);
+            epp_voip_session_destroy(alice_session_h);
+            epp_voip_session_destroy(bob_session_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn ffi_voip_encrypt_frame_clears_stale_output_on_failure() {
+        init_lib();
+        let (
+            mut alice_h,
+            mut bob_h,
+            alice_session_h,
+            bob_session_h,
+            init_h,
+            mut init_buf,
+            mut accept_buf,
+        ) = setup_voip_session_pair();
+
+        let mut err = null_error();
+        let mut enc = null_encrypted_frame();
+
+        unsafe {
+            let alice_ssrc = epp_voip_ssrc(alice_session_h, &mut err);
+            assert_eq!(
+                epp_voip_encrypt_frame(
+                    alice_session_h,
+                    111,
+                    alice_ssrc,
+                    160,
+                    1,
+                    b"hello".as_ptr(),
+                    b"hello".len(),
+                    &mut enc,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert!(!enc.call_id.data.is_null());
+            assert!(!enc.encrypted_payload.data.is_null());
+
+            let code = epp_voip_encrypt_frame(
+                alice_session_h,
+                111,
+                alice_ssrc,
+                320,
+                2,
+                ptr::null(),
+                1,
+                &mut enc,
+                &mut err,
+            );
+            assert_ne!(code, EppErrorCode::EppSuccess);
+            assert!(enc.call_id.data.is_null());
+            assert_eq!(enc.call_id.length, 0);
+            assert!(enc.encrypted_payload.data.is_null());
+            assert_eq!(enc.encrypted_payload.length, 0);
+            assert!(enc.nonce.data.is_null());
+            assert_eq!(enc.nonce.length, 0);
+            assert!(enc.encrypted_header.data.is_null());
+            assert_eq!(enc.encrypted_header.length, 0);
+            assert_eq!(enc.frame_counter, 0);
+            assert_eq!(enc.ratchet_generation, 0);
+
+            epp_buffer_release(&mut enc.call_id);
+            epp_buffer_release(&mut enc.encrypted_payload);
+            epp_buffer_release(&mut enc.nonce);
+            epp_buffer_release(&mut enc.encrypted_header);
+            epp_buffer_release(&mut init_buf);
+            epp_buffer_release(&mut accept_buf);
+            epp_voip_session_destroy(alice_session_h);
+            epp_voip_session_destroy(bob_session_h);
+            epp_voip_call_initiator_destroy(init_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn ffi_voip_encrypt_frame_requires_out_frame() {
+        init_lib();
+        let (
+            mut alice_h,
+            mut bob_h,
+            alice_session_h,
+            bob_session_h,
+            init_h,
+            mut init_buf,
+            mut accept_buf,
+        ) = setup_voip_session_pair();
+
+        let mut err = null_error();
+
+        unsafe {
+            let alice_ssrc = epp_voip_ssrc(alice_session_h, &mut err);
+            assert_eq!(
+                epp_voip_encrypt_frame(
+                    alice_session_h,
+                    111,
+                    alice_ssrc,
+                    160,
+                    1,
+                    b"hello".as_ptr(),
+                    b"hello".len(),
+                    ptr::null_mut(),
+                    &mut err
+                ),
+                EppErrorCode::EppErrorNullPointer
+            );
+
+            let mut enc = null_encrypted_frame();
+            assert_eq!(
+                epp_voip_encrypt_frame(
+                    alice_session_h,
+                    111,
+                    alice_ssrc,
+                    160,
+                    1,
+                    b"hello".as_ptr(),
+                    b"hello".len(),
+                    &mut enc,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+
+            epp_buffer_release(&mut enc.call_id);
+            epp_buffer_release(&mut enc.encrypted_payload);
+            epp_buffer_release(&mut enc.nonce);
+            epp_buffer_release(&mut enc.encrypted_header);
+            epp_buffer_release(&mut init_buf);
+            epp_buffer_release(&mut accept_buf);
+            epp_voip_session_destroy(alice_session_h);
+            epp_voip_session_destroy(bob_session_h);
+            epp_voip_call_initiator_destroy(init_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn ffi_voip_decrypt_frame_clears_stale_output_on_failure() {
+        init_lib();
+        let (
+            mut alice_h,
+            mut bob_h,
+            alice_session_h,
+            bob_session_h,
+            init_h,
+            mut init_buf,
+            mut accept_buf,
+        ) = setup_voip_session_pair();
+
+        let mut err = null_error();
+        let mut enc = null_encrypted_frame();
+        let mut dec = null_decrypted_frame();
+
+        unsafe {
+            let alice_ssrc = epp_voip_ssrc(alice_session_h, &mut err);
+            assert_eq!(
+                epp_voip_encrypt_frame(
+                    alice_session_h,
+                    111,
+                    alice_ssrc,
+                    160,
+                    1,
+                    b"hello".as_ptr(),
+                    b"hello".len(),
+                    &mut enc,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_voip_decrypt_frame(
+                    bob_session_h,
+                    enc.call_id.data,
+                    enc.call_id.length,
+                    enc.ssrc,
+                    enc.frame_counter,
+                    enc.ratchet_generation,
+                    enc.encrypted_payload.data,
+                    enc.encrypted_payload.length,
+                    enc.nonce.data,
+                    enc.nonce.length,
+                    enc.encrypted_header.data,
+                    enc.encrypted_header.length,
+                    &mut dec,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert!(!dec.payload.data.is_null());
+
+            let mut tampered_payload = std::slice::from_raw_parts(
+                enc.encrypted_payload.data,
+                enc.encrypted_payload.length,
+            )
+            .to_vec();
+            let last = tampered_payload.len() - 1;
+            tampered_payload[last] ^= 0x11;
+
+            let code = epp_voip_decrypt_frame(
+                bob_session_h,
+                enc.call_id.data,
+                enc.call_id.length,
+                enc.ssrc,
+                enc.frame_counter + 1,
+                enc.ratchet_generation,
+                tampered_payload.as_ptr(),
+                tampered_payload.len(),
+                enc.nonce.data,
+                enc.nonce.length,
+                enc.encrypted_header.data,
+                enc.encrypted_header.length,
+                &mut dec,
+                &mut err,
+            );
+            assert_ne!(code, EppErrorCode::EppSuccess);
+            assert!(dec.payload.data.is_null());
+            assert_eq!(dec.payload.length, 0);
+            assert_eq!(dec.payload_type, 0);
+            assert_eq!(dec.ssrc, 0);
+            assert_eq!(dec.timestamp, 0);
+            assert_eq!(dec.sequence_number, 0);
+            assert_eq!(dec.frame_counter, 0);
+            assert_eq!(dec.ratchet_generation, 0);
+
+            epp_buffer_release(&mut enc.call_id);
+            epp_buffer_release(&mut enc.encrypted_payload);
+            epp_buffer_release(&mut enc.nonce);
+            epp_buffer_release(&mut enc.encrypted_header);
+            epp_buffer_release(&mut dec.payload);
+            epp_buffer_release(&mut init_buf);
+            epp_buffer_release(&mut accept_buf);
+            epp_voip_session_destroy(alice_session_h);
+            epp_voip_session_destroy(bob_session_h);
+            epp_voip_call_initiator_destroy(init_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn ffi_voip_decrypt_frame_requires_out_frame() {
+        init_lib();
+        let (
+            mut alice_h,
+            mut bob_h,
+            alice_session_h,
+            bob_session_h,
+            init_h,
+            mut init_buf,
+            mut accept_buf,
+        ) = setup_voip_session_pair();
+
+        let mut err = null_error();
+        let mut enc = null_encrypted_frame();
+        let mut dec = null_decrypted_frame();
+
+        unsafe {
+            let alice_ssrc = epp_voip_ssrc(alice_session_h, &mut err);
+            assert_eq!(
+                epp_voip_encrypt_frame(
+                    alice_session_h,
+                    111,
+                    alice_ssrc,
+                    160,
+                    1,
+                    b"hello".as_ptr(),
+                    b"hello".len(),
+                    &mut enc,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+
+            assert_eq!(
+                epp_voip_decrypt_frame(
+                    bob_session_h,
+                    enc.call_id.data,
+                    enc.call_id.length,
+                    enc.ssrc,
+                    enc.frame_counter,
+                    enc.ratchet_generation,
+                    enc.encrypted_payload.data,
+                    enc.encrypted_payload.length,
+                    enc.nonce.data,
+                    enc.nonce.length,
+                    enc.encrypted_header.data,
+                    enc.encrypted_header.length,
+                    ptr::null_mut(),
+                    &mut err
+                ),
+                EppErrorCode::EppErrorNullPointer
+            );
+
+            assert_eq!(
+                epp_voip_decrypt_frame(
+                    bob_session_h,
+                    enc.call_id.data,
+                    enc.call_id.length,
+                    enc.ssrc,
+                    enc.frame_counter,
+                    enc.ratchet_generation,
+                    enc.encrypted_payload.data,
+                    enc.encrypted_payload.length,
+                    enc.nonce.data,
+                    enc.nonce.length,
+                    enc.encrypted_header.data,
+                    enc.encrypted_header.length,
+                    &mut dec,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+
+            epp_buffer_release(&mut enc.call_id);
+            epp_buffer_release(&mut enc.encrypted_payload);
+            epp_buffer_release(&mut enc.nonce);
+            epp_buffer_release(&mut enc.encrypted_header);
+            epp_buffer_release(&mut dec.payload);
+            epp_buffer_release(&mut init_buf);
+            epp_buffer_release(&mut accept_buf);
+            epp_voip_session_destroy(alice_session_h);
+            epp_voip_session_destroy(bob_session_h);
+            epp_voip_call_initiator_destroy(init_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn ffi_voip_encrypt_call_control_requires_out_frame() {
+        init_lib();
+        let (
+            mut alice_h,
+            mut bob_h,
+            alice_session_h,
+            bob_session_h,
+            init_h,
+            mut init_buf,
+            mut accept_buf,
+        ) = setup_voip_session_pair();
+
+        let mut err = null_error();
+        let mut enc = null_encrypted_frame();
+
+        unsafe {
+            assert_eq!(
+                epp_voip_encrypt_call_control(alice_session_h, 1, 0, ptr::null_mut(), &mut err),
+                EppErrorCode::EppErrorNullPointer
+            );
+            assert_eq!(
+                epp_voip_encrypt_call_control(alice_session_h, 1, 0, &mut enc, &mut err),
+                EppErrorCode::EppSuccess
+            );
+
+            epp_buffer_release(&mut enc.call_id);
+            epp_buffer_release(&mut enc.encrypted_payload);
+            epp_buffer_release(&mut enc.nonce);
+            epp_buffer_release(&mut enc.encrypted_header);
+            epp_buffer_release(&mut init_buf);
+            epp_buffer_release(&mut accept_buf);
+            epp_voip_session_destroy(alice_session_h);
+            epp_voip_session_destroy(bob_session_h);
+            epp_voip_call_initiator_destroy(init_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn ffi_voip_import_sealed_state_requires_out_session() {
+        init_lib();
+        let (
+            mut alice_h,
+            mut bob_h,
+            alice_session_h,
+            bob_session_h,
+            init_h,
+            mut init_buf,
+            mut accept_buf,
+        ) = setup_voip_session_pair();
+
+        let mut err = null_error();
+        let state_key = [0x42u8; 32];
+        let mut sealed = null_buffer();
+        let mut restored: *mut EppVoipSessionHandle = ptr::null_mut();
+
+        unsafe {
+            assert_eq!(
+                epp_voip_export_sealed_state(
+                    alice_session_h,
+                    state_key.as_ptr(),
+                    state_key.len(),
+                    7,
+                    &mut sealed,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_voip_import_sealed_state(
+                    sealed.data,
+                    sealed.length,
+                    state_key.as_ptr(),
+                    state_key.len(),
+                    7,
+                    ptr::null_mut(),
+                    &mut err
+                ),
+                EppErrorCode::EppErrorNullPointer
+            );
+            assert_eq!(
+                epp_voip_import_sealed_state(
+                    sealed.data,
+                    sealed.length,
+                    state_key.as_ptr(),
+                    state_key.len(),
+                    6,
+                    &mut restored,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert!(!restored.is_null());
+
+            epp_buffer_release(&mut sealed);
+            epp_buffer_release(&mut init_buf);
+            epp_buffer_release(&mut accept_buf);
+            epp_voip_session_destroy(restored);
+            epp_voip_session_destroy(alice_session_h);
+            epp_voip_session_destroy(bob_session_h);
+            epp_voip_call_initiator_destroy(init_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn ffi_voip_sealed_state_with_tracker_restores_latest_and_rejects_rollback() {
+        init_lib();
+        let (
+            mut alice_h,
+            mut bob_h,
+            alice_session_h,
+            bob_session_h,
+            init_h,
+            mut init_buf,
+            mut accept_buf,
+        ) = setup_voip_session_pair();
+
+        let mut err = null_error();
+        let state_key = [0x52u8; 32];
+        let mut tracker: *mut EppSealedStateCounterTrackerHandle = ptr::null_mut();
+        let mut restart_tracker: *mut EppSealedStateCounterTrackerHandle = ptr::null_mut();
+        let mut next_restart_tracker: *mut EppSealedStateCounterTrackerHandle = ptr::null_mut();
+        let mut sealed1 = null_buffer();
+        let mut sealed2 = null_buffer();
+        let mut tracker_state1 = null_buffer();
+        let mut tracker_state2 = null_buffer();
+        let mut restored1: *mut EppVoipSessionHandle = ptr::null_mut();
+        let mut restored2: *mut EppVoipSessionHandle = ptr::null_mut();
+        let mut failed_restore: *mut EppVoipSessionHandle = ptr::null_mut();
+        let mut max_restored = 0u64;
+        let mut latest_issued = 0u64;
+
+        unsafe {
+            assert_eq!(
+                epp_sealed_state_counter_tracker_create(&mut tracker, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_voip_export_sealed_state_with_tracker(
+                    alice_session_h,
+                    state_key.as_ptr(),
+                    state_key.len(),
+                    tracker,
+                    &mut sealed1,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_counter_tracker_serialize(tracker, &mut tracker_state1, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_counter_tracker_create_from_serialized(
+                    tracker_state1.data,
+                    tracker_state1.length,
+                    &mut restart_tracker,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_voip_import_sealed_state_with_tracker(
+                    sealed1.data,
+                    sealed1.length,
+                    state_key.as_ptr(),
+                    state_key.len(),
+                    restart_tracker,
+                    &mut restored1,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert!(!restored1.is_null());
+            assert_eq!(
+                epp_sealed_state_counter_tracker_get_max_restored_counter(
+                    restart_tracker,
+                    &mut max_restored,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(max_restored, 1);
+            assert_eq!(
+                epp_sealed_state_counter_tracker_get_latest_issued_counter(
+                    restart_tracker,
+                    &mut latest_issued,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(latest_issued, 1);
+
+            assert_eq!(
+                epp_voip_export_sealed_state_with_tracker(
+                    restored1,
+                    state_key.as_ptr(),
+                    state_key.len(),
+                    restart_tracker,
+                    &mut sealed2,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_counter_tracker_serialize(
+                    restart_tracker,
+                    &mut tracker_state2,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_counter_tracker_create_from_serialized(
+                    tracker_state2.data,
+                    tracker_state2.length,
+                    &mut next_restart_tracker,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_ne!(
+                epp_voip_import_sealed_state_with_tracker(
+                    sealed1.data,
+                    sealed1.length,
+                    state_key.as_ptr(),
+                    state_key.len(),
+                    next_restart_tracker,
+                    &mut failed_restore,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert!(failed_restore.is_null());
+            assert_eq!(
+                epp_voip_import_sealed_state_with_tracker(
+                    sealed2.data,
+                    sealed2.length,
+                    state_key.as_ptr(),
+                    state_key.len(),
+                    next_restart_tracker,
+                    &mut restored2,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert!(!restored2.is_null());
+
+            epp_buffer_release(&mut sealed1);
+            epp_buffer_release(&mut sealed2);
+            epp_buffer_release(&mut tracker_state1);
+            epp_buffer_release(&mut tracker_state2);
+            epp_buffer_release(&mut init_buf);
+            epp_buffer_release(&mut accept_buf);
+            epp_voip_session_destroy(restored1);
+            epp_voip_session_destroy(restored2);
+            epp_voip_session_destroy(alice_session_h);
+            epp_voip_session_destroy(bob_session_h);
+            epp_voip_call_initiator_destroy(init_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+            epp_sealed_state_counter_tracker_destroy(&mut tracker);
+            epp_sealed_state_counter_tracker_destroy(&mut restart_tracker);
+            epp_sealed_state_counter_tracker_destroy(&mut next_restart_tracker);
+        }
+    }
+
+    #[test]
+    fn ffi_voip_persisted_slot_roundtrip() {
+        init_lib();
+        let (
+            mut alice_h,
+            mut bob_h,
+            alice_session_h,
+            bob_session_h,
+            init_h,
+            mut init_buf,
+            mut accept_buf,
+        ) = setup_voip_session_pair();
+
+        let mut err = null_error();
+        let state_key = [0x53u8; 32];
+        let mut slot: *mut EppSealedStateSlotHandle = ptr::null_mut();
+        let mut restart_slot: *mut EppSealedStateSlotHandle = ptr::null_mut();
+        let mut serialized_slot = null_buffer();
+        let mut restored: *mut EppVoipSessionHandle = ptr::null_mut();
+
+        unsafe {
+            assert_eq!(
+                epp_sealed_state_slot_create(&mut slot, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_voip_export_persisted_state(
+                    alice_session_h,
+                    state_key.as_ptr(),
+                    state_key.len(),
+                    slot,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_slot_serialize(slot, &mut serialized_slot, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_sealed_state_slot_create_from_serialized(
+                    serialized_slot.data,
+                    serialized_slot.length,
+                    &mut restart_slot,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_voip_restore_persisted_state(
+                    restart_slot,
+                    state_key.as_ptr(),
+                    state_key.len(),
+                    &mut restored,
+                    &mut err
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert!(!restored.is_null());
+
+            epp_buffer_release(&mut serialized_slot);
+            epp_buffer_release(&mut init_buf);
+            epp_buffer_release(&mut accept_buf);
+            epp_voip_session_destroy(restored);
+            epp_voip_session_destroy(alice_session_h);
+            epp_voip_session_destroy(bob_session_h);
+            epp_voip_call_initiator_destroy(init_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+            epp_sealed_state_slot_destroy(&mut slot);
+            epp_sealed_state_slot_destroy(&mut restart_slot);
+        }
     }
 
     #[test]
@@ -4232,7 +7362,7 @@ mod voip_improvements {
                         111,
                         alice_ssrc,
                         160 + i,
-                        1 + (i as u16),
+                        1 + u16::try_from(i).unwrap(),
                         payload.as_ptr(),
                         payload.len(),
                         &mut enc,
@@ -4277,14 +7407,12 @@ mod voip_improvements {
                 ratchet_generation: 0,
                 call_duration_secs: 0,
             };
-            let code =
-                epp_voip_get_call_statistics(alice_session_h, &mut stats, &mut err);
+            let code = epp_voip_get_call_statistics(alice_session_h, &mut stats, &mut err);
             assert_eq!(code, EppErrorCode::EppSuccess);
             assert_eq!(stats.frames_sent, 5);
             assert_eq!(stats.frames_received, 0);
 
-            let code =
-                epp_voip_get_call_statistics(bob_session_h, &mut stats, &mut err);
+            let code = epp_voip_get_call_statistics(bob_session_h, &mut stats, &mut err);
             assert_eq!(code, EppErrorCode::EppSuccess);
             assert_eq!(stats.frames_sent, 0);
             assert_eq!(stats.frames_received, 5);
@@ -4314,35 +7442,99 @@ mod voip_improvements {
         ) = setup_voip_session_pair();
 
         let mut err = null_error();
+        let mut alice_ed25519 = vec![0u8; 32];
+        let mut bob_ed25519 = vec![0u8; 32];
 
         unsafe {
+            assert_eq!(
+                epp_identity_get_ed25519_public(
+                    alice_h,
+                    alice_ed25519.as_mut_ptr(),
+                    alice_ed25519.len(),
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_identity_get_ed25519_public(
+                    bob_h,
+                    bob_ed25519.as_mut_ptr(),
+                    bob_ed25519.len(),
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+
             assert_eq!(epp_voip_get_local_recording_consent(alice_session_h), 0);
             assert_eq!(epp_voip_get_remote_recording_consent(alice_session_h), 0);
             assert!(!epp_voip_both_consented_to_recording(alice_session_h));
 
-            assert_eq!(
-                epp_voip_set_recording_consent(alice_session_h, 1, &mut err),
-                EppErrorCode::EppSuccess
-            );
-            assert_eq!(epp_voip_get_local_recording_consent(alice_session_h), 1);
-            assert!(!epp_voip_both_consented_to_recording(alice_session_h));
-
-            assert_eq!(
+            assert_ne!(
                 epp_voip_set_remote_recording_consent(alice_session_h, 1, &mut err),
                 EppErrorCode::EppSuccess
             );
-            assert!(epp_voip_both_consented_to_recording(alice_session_h));
+            assert!(!epp_voip_both_consented_to_recording(alice_session_h));
+            assert_eq!(epp_voip_get_remote_recording_consent(alice_session_h), 0);
 
+            let mut alice_consent = null_buffer();
             assert_eq!(
-                epp_voip_set_remote_recording_consent(alice_session_h, 2, &mut err),
+                epp_voip_build_recording_consent_message(
+                    alice_session_h,
+                    alice_h,
+                    1,
+                    1_700_000_000,
+                    &mut alice_consent,
+                    &mut err,
+                ),
                 EppErrorCode::EppSuccess
             );
-            assert!(!epp_voip_both_consented_to_recording(alice_session_h));
-            assert_eq!(epp_voip_get_remote_recording_consent(alice_session_h), 2);
+            assert_eq!(epp_voip_get_local_recording_consent(alice_session_h), 1);
+            assert_eq!(
+                epp_voip_process_recording_consent_message(
+                    bob_session_h,
+                    alice_ed25519.as_ptr(),
+                    alice_ed25519.len(),
+                    alice_consent.data,
+                    alice_consent.length,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(epp_voip_get_remote_recording_consent(bob_session_h), 1);
+            assert!(!epp_voip_both_consented_to_recording(bob_session_h));
+
+            let mut bob_consent = null_buffer();
+            assert_eq!(
+                epp_voip_build_recording_consent_message(
+                    bob_session_h,
+                    bob_h,
+                    1,
+                    1_700_000_001,
+                    &mut bob_consent,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(epp_voip_get_local_recording_consent(bob_session_h), 1);
+            assert_eq!(
+                epp_voip_process_recording_consent_message(
+                    alice_session_h,
+                    bob_ed25519.as_ptr(),
+                    bob_ed25519.len(),
+                    bob_consent.data,
+                    bob_consent.length,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert!(epp_voip_both_consented_to_recording(alice_session_h));
+            assert!(epp_voip_both_consented_to_recording(bob_session_h));
 
             let code = epp_voip_set_recording_consent(alice_session_h, 5, &mut err);
             assert_ne!(code, EppErrorCode::EppSuccess);
 
+            epp_buffer_release(&mut alice_consent);
+            epp_buffer_release(&mut bob_consent);
             epp_buffer_release(&mut init_buf);
             epp_buffer_release(&mut accept_buf);
             epp_voip_call_initiator_destroy(init_h);

@@ -8,7 +8,9 @@ use crate::core::errors::ProtocolError;
 use crate::crypto::{
     AesGcm, CryptoInterop, HkdfSha256, KyberInterop, MessagePadding, SecureMemoryHandle,
 };
-use crate::interfaces::{IProtocolEventHandler, IStateKeyProvider};
+use crate::interfaces::{
+    IProtocolEventHandler, IStateKeyProvider, ITimeProvider, SystemTimeProvider,
+};
 use crate::proto::{
     CachedMessageKey, CachedMetadataKey, ChainState, DhKeyPair, EnvelopeMetadata, KyberKeyPair,
     NonceState as NonceStateProto, ProtocolState, SealedState, SecureEnvelope,
@@ -19,13 +21,17 @@ use hmac::{Hmac, Mac};
 use prost::Message;
 use prost_types::Timestamp;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::Mutex;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
 type HmacSha256 = Hmac<Sha256>;
+type SeenPayloadNonceCache = (
+    HashSet<[u8; AES_GCM_NONCE_BYTES]>,
+    VecDeque<[u8; AES_GCM_NONCE_BYTES]>,
+);
 
 #[derive(Debug)]
 pub struct DecryptResult {
@@ -275,6 +281,19 @@ fn store_nonce_state(state: &mut ProtocolState, ns: NonceStateLocal) {
     });
 }
 
+fn effective_chain_nonce_budget(state: &ProtocolState) -> u64 {
+    let max_nonce_counter = if state.max_nonce_counter == 0 {
+        MAX_NONCE_COUNTER
+    } else {
+        state.max_nonce_counter
+    };
+    if state.max_messages_per_chain == 0 {
+        max_nonce_counter
+    } else {
+        max_nonce_counter.min(u64::from(state.max_messages_per_chain))
+    }
+}
+
 fn reset_nonce_generator(state: &mut ProtocolState) -> Result<(), ProtocolError> {
     let limit = if state.max_nonce_counter == 0 {
         MAX_NONCE_COUNTER
@@ -286,36 +305,37 @@ fn reset_nonce_generator(state: &mut ProtocolState) -> Result<(), ProtocolError>
     Ok(())
 }
 
-fn timestamp_now() -> Result<Timestamp, ProtocolError> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| ProtocolError::invalid_state("System clock is before UNIX epoch"))?;
-    #[allow(clippy::cast_possible_wrap)]
-    let seconds = now.as_secs() as i64;
+fn timestamp_from_unix_secs(unix_secs: u64) -> Result<Timestamp, ProtocolError> {
+    let seconds = i64::try_from(unix_secs)
+        .map_err(|_| ProtocolError::invalid_state("Unix timestamp exceeds i64 range"))?;
     Ok(Timestamp { seconds, nanos: 0 })
 }
 
-fn check_inner_expired(state: &ProtocolState) -> bool {
+fn timestamp_now(time_provider: &dyn ITimeProvider) -> Result<Timestamp, ProtocolError> {
+    timestamp_from_unix_secs(time_provider.now_unix_secs()?)
+}
+
+fn check_inner_expired(
+    state: &ProtocolState,
+    time_provider: &dyn ITimeProvider,
+) -> Result<bool, ProtocolError> {
     let Some(ttl) = state.session_ttl_seconds else {
-        return false;
+        return Ok(false);
     };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+    let now = time_provider.now_unix_secs()?;
     if let Some(last) = state.last_activity_unix {
         if now.saturating_sub(last) > ttl {
-            return true;
+            return Ok(true);
         }
     }
     if let Some(created) = &state.created_at {
         #[allow(clippy::cast_sign_loss)]
         let created_secs = created.seconds as u64;
         if now.saturating_sub(created_secs) > ttl {
-            return true;
+            return Ok(true);
         }
     }
-    false
+    Ok(false)
 }
 
 fn is_all_zero(bytes: &[u8]) -> bool {
@@ -371,6 +391,7 @@ pub(crate) fn build_protocol_state(
     max_messages_per_chain: u32,
     max_nonce_counter: u64,
     nonce_generator: NonceStateLocal,
+    created_at_unix: u64,
     local_identity_ed25519: &[u8],
     local_identity_x25519: &[u8],
     peer_identity_ed25519: &[u8],
@@ -443,7 +464,7 @@ pub(crate) fn build_protocol_state(
     Ok(ProtocolState {
         version: PROTOCOL_VERSION,
         is_initiator,
-        created_at: Some(timestamp_now()?),
+        created_at: Some(timestamp_from_unix_secs(created_at_unix)?),
         session_id: session_id.to_vec(),
         root_key: root_key.to_vec(),
         metadata_key: metadata_key.to_vec(),
@@ -504,7 +525,8 @@ struct SessionInner {
     skipped_message_keys: BTreeMap<(u64, u64), Vec<u8>>,
     cached_metadata_keys: BTreeMap<u64, Vec<u8>>,
     replay_epoch: u64,
-    seen_payload_nonces: HashSet<Vec<u8>>,
+    seen_payload_nonces: HashSet<[u8; AES_GCM_NONCE_BYTES]>,
+    seen_payload_nonce_order: VecDeque<[u8; AES_GCM_NONCE_BYTES]>,
     is_initiator: bool,
     dh_private_handle: Option<SecureMemoryHandle>,
     kyber_secret_handle: Option<SecureMemoryHandle>,
@@ -546,14 +568,148 @@ impl Drop for SessionInner {
     }
 }
 
+struct SendProgressSnapshot {
+    send_chain: Option<ChainState>,
+    nonce_generator: Option<NonceStateProto>,
+    messages_since_last_dh_ratchet: u64,
+}
+
+impl SendProgressSnapshot {
+    fn capture(inner: &SessionInner) -> Self {
+        Self {
+            send_chain: inner.state.send_chain.clone(),
+            nonce_generator: inner.state.nonce_generator.clone(),
+            messages_since_last_dh_ratchet: inner.messages_since_last_dh_ratchet,
+        }
+    }
+
+    fn restore(&self, inner: &mut SessionInner) {
+        if let Some(chain) = inner.state.send_chain.as_mut() {
+            CryptoInterop::secure_wipe(&mut chain.chain_key);
+            for cached in &mut chain.skipped_message_keys {
+                CryptoInterop::secure_wipe(&mut cached.message_key);
+            }
+        }
+        inner.state.send_chain.clone_from(&self.send_chain);
+        inner
+            .state
+            .nonce_generator
+            .clone_from(&self.nonce_generator);
+        inner.messages_since_last_dh_ratchet = self.messages_since_last_dh_ratchet;
+    }
+}
+
+impl Drop for SendProgressSnapshot {
+    fn drop(&mut self) {
+        if let Some(chain) = self.send_chain.as_mut() {
+            CryptoInterop::secure_wipe(&mut chain.chain_key);
+            for cached in &mut chain.skipped_message_keys {
+                CryptoInterop::secure_wipe(&mut cached.message_key);
+            }
+        }
+    }
+}
+
+struct SendRatchetSnapshot {
+    state: ProtocolState,
+    dh_private_key: Option<Vec<u8>>,
+    kyber_secret_key: Option<Vec<u8>>,
+    send_ratchet_pending: bool,
+    messages_since_last_dh_ratchet: u64,
+}
+
+impl SendRatchetSnapshot {
+    fn capture(inner: &SessionInner) -> Result<Self, ProtocolError> {
+        Ok(Self {
+            state: inner.state.clone(),
+            dh_private_key: inner
+                .dh_private_handle
+                .as_ref()
+                .map(|handle| handle.read_bytes(X25519_PRIVATE_KEY_BYTES))
+                .transpose()
+                .map_err(ProtocolError::from_crypto)?,
+            kyber_secret_key: inner
+                .kyber_secret_handle
+                .as_ref()
+                .map(|handle| handle.read_bytes(KYBER_SECRET_KEY_BYTES))
+                .transpose()
+                .map_err(ProtocolError::from_crypto)?,
+            send_ratchet_pending: inner.send_ratchet_pending,
+            messages_since_last_dh_ratchet: inner.messages_since_last_dh_ratchet,
+        })
+    }
+
+    fn restore(self, inner: &mut SessionInner) {
+        let mut snapshot = self;
+        wipe_protocol_state_keys(&mut inner.state);
+        inner.dh_private_handle.take();
+        inner.kyber_secret_handle.take();
+
+        inner.state = std::mem::take(&mut snapshot.state);
+        inner.send_ratchet_pending = snapshot.send_ratchet_pending;
+        inner.messages_since_last_dh_ratchet = snapshot.messages_since_last_dh_ratchet;
+        inner.dh_private_handle =
+            restore_secret_handle(snapshot.dh_private_key.take(), X25519_PRIVATE_KEY_BYTES);
+        inner.kyber_secret_handle =
+            restore_secret_handle(snapshot.kyber_secret_key.take(), KYBER_SECRET_KEY_BYTES);
+    }
+}
+
+impl Drop for SendRatchetSnapshot {
+    fn drop(&mut self) {
+        wipe_protocol_state_keys(&mut self.state);
+        if let Some(key) = self.dh_private_key.as_mut() {
+            CryptoInterop::secure_wipe(key);
+        }
+        if let Some(key) = self.kyber_secret_key.as_mut() {
+            CryptoInterop::secure_wipe(key);
+        }
+    }
+}
+
+fn restore_secret_handle(
+    secret: Option<Vec<u8>>,
+    expected_len: usize,
+) -> Option<SecureMemoryHandle> {
+    let mut secret = secret?;
+    if secret.len() != expected_len {
+        CryptoInterop::secure_wipe(&mut secret);
+        return None;
+    }
+    let Ok(mut handle) = SecureMemoryHandle::allocate(expected_len) else {
+        CryptoInterop::secure_wipe(&mut secret);
+        return None;
+    };
+    if handle.write(&secret).is_err() {
+        CryptoInterop::secure_wipe(&mut secret);
+        return None;
+    }
+    CryptoInterop::secure_wipe(&mut secret);
+    Some(handle)
+}
+
+fn rollback_send_encrypt_state(
+    inner: &mut SessionInner,
+    ratchet_snapshot: &mut Option<SendRatchetSnapshot>,
+    progress_snapshot: &SendProgressSnapshot,
+) {
+    if let Some(snapshot) = ratchet_snapshot.take() {
+        snapshot.restore(inner);
+    } else {
+        progress_snapshot.restore(inner);
+    }
+}
+
 pub struct Session {
     inner: Mutex<SessionInner>,
+    time_provider: Arc<dyn ITimeProvider>,
 }
 
 impl Session {
     fn new(
         mut state: ProtocolState,
         pending_kyber_shared_secret: Vec<u8>,
+        time_provider: Arc<dyn ITimeProvider>,
     ) -> Result<Self, ProtocolError> {
         let replay_epoch = state.recv_ratchet_epoch;
         let is_initiator = state.is_initiator;
@@ -600,6 +756,7 @@ impl Session {
                 cached_metadata_keys: BTreeMap::new(),
                 replay_epoch,
                 seen_payload_nonces: HashSet::new(),
+                seen_payload_nonce_order: VecDeque::new(),
                 is_initiator,
                 dh_private_handle,
                 kyber_secret_handle,
@@ -607,10 +764,18 @@ impl Session {
                 event_handler: None,
                 messages_since_last_dh_ratchet: 0,
             }),
+            time_provider,
         })
     }
 
     pub fn from_handshake_state(hs: HandshakeState) -> Result<Self, ProtocolError> {
+        Self::from_handshake_state_with_time_provider(hs, Arc::new(SystemTimeProvider))
+    }
+
+    pub fn from_handshake_state_with_time_provider(
+        hs: HandshakeState,
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<Self, ProtocolError> {
         let mut hs = std::mem::ManuallyDrop::new(hs);
         let mut state = std::mem::take(&mut hs.state);
         let mut kyber_zeroizing = std::mem::take(&mut hs.kyber_shared_secret);
@@ -621,7 +786,7 @@ impl Session {
             ));
         }
         let kyber_shared_secret = std::mem::take(&mut *kyber_zeroizing);
-        let session = Self::new(state, kyber_shared_secret)?;
+        let session = Self::new(state, kyber_shared_secret, time_provider)?;
         {
             let mut inner = session
                 .inner
@@ -645,15 +810,13 @@ impl Session {
             .map_err(|_| ProtocolError::invalid_state("Session lock poisoned"))?;
         let ng = load_nonce_generator(&inner.state)?;
         let counter = ng.export_state().counter();
-        let max = if inner.state.max_nonce_counter == 0 {
-            MAX_NONCE_COUNTER
-        } else {
-            inner.state.max_nonce_counter
-        };
-        Ok(max.saturating_sub(counter))
+        Ok(effective_chain_nonce_budget(&inner.state).saturating_sub(counter))
     }
 
-    fn from_state_internal(state: ProtocolState) -> Result<Self, ProtocolError> {
+    fn from_state_internal_with_time_provider(
+        state: ProtocolState,
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<Self, ProtocolError> {
         if state.version != PROTOCOL_VERSION {
             return Err(ProtocolError::invalid_input(
                 "Invalid protocol version in state",
@@ -928,11 +1091,8 @@ impl Session {
         }
 
         let replay_epoch = state.replay_epoch;
-        let mut seen_payload_nonces: HashSet<Vec<u8>> =
-            state.seen_payload_nonces.iter().cloned().collect();
-        if seen_payload_nonces.len() > MAX_SEEN_NONCES {
-            Self::prune_seen_nonces(&mut seen_payload_nonces);
-        }
+        let (seen_payload_nonces, seen_payload_nonce_order) =
+            Self::rebuild_seen_payload_nonce_cache(&state.seen_payload_nonces)?;
 
         let mut sanitized = state;
         sanitized.state_hmac.clear();
@@ -990,6 +1150,7 @@ impl Session {
                 cached_metadata_keys: cached_mk,
                 replay_epoch,
                 seen_payload_nonces,
+                seen_payload_nonce_order,
                 is_initiator,
                 dh_private_handle,
                 kyber_secret_handle,
@@ -997,6 +1158,7 @@ impl Session {
                 event_handler: None,
                 messages_since_last_dh_ratchet: 0,
             }),
+            time_provider,
         })
     }
 
@@ -1051,9 +1213,12 @@ impl Session {
         hybrid_ikm.extend_from_slice(&inner.pending_kyber_shared_secret);
         CryptoInterop::secure_wipe(&mut dh_init);
 
-        let salt = inner.state.root_key.clone();
-        let hybrid_out =
-            derive_key_bytes(&hybrid_ikm, ROOT_KEY_BYTES * 2, &salt, HYBRID_RATCHET_INFO);
+        let hybrid_out = derive_key_bytes(
+            &hybrid_ikm,
+            ROOT_KEY_BYTES * 2,
+            &inner.state.root_key,
+            HYBRID_RATCHET_INFO,
+        );
         CryptoInterop::secure_wipe(&mut hybrid_ikm);
         let mut hybrid_out = hybrid_out.inspect_err(|_e| {
             wipe_pending(inner);
@@ -1089,20 +1254,18 @@ impl Session {
 
         inner.state.root_key = new_root;
         inner.state.send_chain = Some(ChainState {
-            chain_key: send_chain.clone(),
+            chain_key: send_chain,
             message_index: 0,
             skipped_message_keys: vec![],
         });
         inner.state.recv_chain = Some(ChainState {
-            chain_key: recv_chain.clone(),
+            chain_key: recv_chain,
             message_index: 0,
             skipped_message_keys: vec![],
         });
         inner.state.send_ratchet_epoch = 0;
         inner.state.recv_ratchet_epoch = 0;
 
-        CryptoInterop::secure_wipe(&mut send_chain);
-        CryptoInterop::secure_wipe(&mut recv_chain);
         wipe_pending(inner);
         inner.skipped_message_keys.clear();
         Ok(())
@@ -1212,18 +1375,48 @@ impl Session {
         }
     }
 
-    fn prune_seen_nonces(set: &mut HashSet<Vec<u8>>) {
-        let mut entries: Vec<Vec<u8>> = set.drain().collect();
-        entries.sort_by_key(|n| {
-            if n.len() >= 12 {
-                u32::from_le_bytes([n[8], n[9], n[10], n[11]])
-            } else {
-                0u32
+    fn prune_seen_nonces(
+        set: &mut HashSet<[u8; AES_GCM_NONCE_BYTES]>,
+        order: &mut VecDeque<[u8; AES_GCM_NONCE_BYTES]>,
+    ) {
+        while order.len() > MAX_SEEN_NONCES {
+            if let Some(oldest) = order.pop_front() {
+                set.remove(&oldest);
             }
-        });
-        let keep_from = entries.len().saturating_sub(MAX_SEEN_NONCES / 2);
-        for entry in entries.drain(keep_from..) {
-            set.insert(entry);
+        }
+    }
+
+    fn payload_nonce_to_array(nonce: &[u8]) -> Result<[u8; AES_GCM_NONCE_BYTES], ProtocolError> {
+        if nonce.len() != AES_GCM_NONCE_BYTES {
+            return Err(ProtocolError::invalid_input("Invalid payload nonce size"));
+        }
+        let mut arr = [0u8; AES_GCM_NONCE_BYTES];
+        arr.copy_from_slice(nonce);
+        Ok(arr)
+    }
+
+    fn rebuild_seen_payload_nonce_cache(
+        entries: &[Vec<u8>],
+    ) -> Result<SeenPayloadNonceCache, ProtocolError> {
+        let mut set = HashSet::with_capacity(entries.len().min(MAX_SEEN_NONCES));
+        let mut order = VecDeque::with_capacity(entries.len().min(MAX_SEEN_NONCES));
+        for nonce in entries {
+            let nonce = Self::payload_nonce_to_array(nonce)?;
+            if set.insert(nonce) {
+                order.push_back(nonce);
+                Self::prune_seen_nonces(&mut set, &mut order);
+            }
+        }
+        Ok((set, order))
+    }
+
+    fn remember_seen_payload_nonce(inner: &mut SessionInner, nonce: [u8; AES_GCM_NONCE_BYTES]) {
+        if inner.seen_payload_nonces.insert(nonce) {
+            inner.seen_payload_nonce_order.push_back(nonce);
+            Self::prune_seen_nonces(
+                &mut inner.seen_payload_nonces,
+                &mut inner.seen_payload_nonce_order,
+            );
         }
     }
 
@@ -1305,19 +1498,7 @@ impl Session {
         inner: &mut SessionInner,
         envelope: &mut SecureEnvelope,
     ) -> Result<(), ProtocolError> {
-        let chain_idx = inner
-            .state
-            .send_chain
-            .as_ref()
-            .map_or(0, |c| c.message_index);
-        let max = u64::from(inner.state.max_messages_per_chain);
-        if max == 0 || max > MAX_MESSAGES_PER_CHAIN as u64 {
-            return Err(ProtocolError::invalid_state(
-                "Invalid max messages per chain",
-            ));
-        }
-
-        let should_ratchet = inner.send_ratchet_pending || chain_idx >= max;
+        let should_ratchet = Self::send_ratchet_rotation_needed(inner)?;
         if !should_ratchet {
             return Ok(());
         }
@@ -1376,9 +1557,12 @@ impl Session {
         augmented_info.extend_from_slice(HYBRID_RATCHET_INFO);
         augmented_info.extend_from_slice(&new_kyber_pk);
 
-        let salt = inner.state.root_key.clone();
-        let ratchet_out =
-            derive_key_bytes(&hybrid_ikm, RATCHET_OUTPUT_BYTES, &salt, &augmented_info);
+        let ratchet_out = derive_key_bytes(
+            &hybrid_ikm,
+            RATCHET_OUTPUT_BYTES,
+            &inner.state.root_key,
+            &augmented_info,
+        );
         CryptoInterop::secure_wipe(&mut hybrid_ikm);
         let mut ratchet_out = ratchet_out.inspect_err(|_e| {
             CryptoInterop::secure_wipe(&mut new_private);
@@ -1390,9 +1574,9 @@ impl Session {
             return Err(ProtocolError::invalid_state("Ratchet output size mismatch"));
         }
 
-        let new_root = ratchet_out[..ROOT_KEY_BYTES].to_vec();
-        let new_chain = ratchet_out[ROOT_KEY_BYTES..ROOT_KEY_BYTES + CHAIN_KEY_BYTES].to_vec();
-        let new_metadata = ratchet_out[ROOT_KEY_BYTES + CHAIN_KEY_BYTES..].to_vec();
+        let mut new_root = ratchet_out[..ROOT_KEY_BYTES].to_vec();
+        let mut new_chain = ratchet_out[ROOT_KEY_BYTES..ROOT_KEY_BYTES + CHAIN_KEY_BYTES].to_vec();
+        let mut new_metadata = ratchet_out[ROOT_KEY_BYTES + CHAIN_KEY_BYTES..].to_vec();
         CryptoInterop::secure_wipe(&mut ratchet_out);
 
         let prev_chain_len = inner
@@ -1405,7 +1589,7 @@ impl Session {
         inner.state.root_key.clone_from(&new_root);
         inner.state.send_metadata_key.clone_from(&new_metadata);
         inner.state.send_chain = Some(ChainState {
-            chain_key: new_chain.clone(),
+            chain_key: std::mem::take(&mut new_chain),
             message_index: 0,
             skipped_message_keys: vec![],
         });
@@ -1456,6 +1640,22 @@ impl Session {
         CryptoInterop::secure_wipe(&mut { new_chain });
         CryptoInterop::secure_wipe(&mut { new_metadata });
         Ok(())
+    }
+
+    fn send_ratchet_rotation_needed(inner: &SessionInner) -> Result<bool, ProtocolError> {
+        let chain_idx = inner
+            .state
+            .send_chain
+            .as_ref()
+            .map_or(0, |c| c.message_index);
+        let max = u64::from(inner.state.max_messages_per_chain);
+        if max == 0 || max > MAX_MESSAGES_PER_CHAIN as u64 {
+            return Err(ProtocolError::invalid_state(
+                "Invalid max messages per chain",
+            ));
+        }
+
+        Ok(inner.send_ratchet_pending || chain_idx >= max)
     }
 
     fn apply_recv_ratchet(
@@ -1531,9 +1731,12 @@ impl Session {
         augmented_info.extend_from_slice(HYBRID_RATCHET_INFO);
         augmented_info.extend_from_slice(new_kyber_pk);
 
-        let salt = inner.state.root_key.clone();
-        let ratchet_out =
-            derive_key_bytes(&hybrid_ikm, RATCHET_OUTPUT_BYTES, &salt, &augmented_info);
+        let ratchet_out = derive_key_bytes(
+            &hybrid_ikm,
+            RATCHET_OUTPUT_BYTES,
+            &inner.state.root_key,
+            &augmented_info,
+        );
         CryptoInterop::secure_wipe(&mut hybrid_ikm);
         let mut ratchet_out = ratchet_out?;
 
@@ -1542,9 +1745,9 @@ impl Session {
             return Err(ProtocolError::invalid_state("Ratchet output size mismatch"));
         }
 
-        let new_root = ratchet_out[..ROOT_KEY_BYTES].to_vec();
-        let new_chain = ratchet_out[ROOT_KEY_BYTES..ROOT_KEY_BYTES + CHAIN_KEY_BYTES].to_vec();
-        let new_metadata = ratchet_out[ROOT_KEY_BYTES + CHAIN_KEY_BYTES..].to_vec();
+        let mut new_root = ratchet_out[..ROOT_KEY_BYTES].to_vec();
+        let mut new_chain = ratchet_out[ROOT_KEY_BYTES..ROOT_KEY_BYTES + CHAIN_KEY_BYTES].to_vec();
+        let mut new_metadata = ratchet_out[ROOT_KEY_BYTES + CHAIN_KEY_BYTES..].to_vec();
         CryptoInterop::secure_wipe(&mut ratchet_out);
 
         inner.cached_metadata_keys.insert(
@@ -1556,7 +1759,7 @@ impl Session {
         inner.state.root_key.clone_from(&new_root);
         inner.state.metadata_key.clone_from(&new_metadata);
         inner.state.recv_chain = Some(ChainState {
-            chain_key: new_chain.clone(),
+            chain_key: std::mem::take(&mut new_chain),
             message_index: 0,
             skipped_message_keys: vec![],
         });
@@ -1587,6 +1790,26 @@ impl Session {
         envelope_id: u32,
         correlation_id: Option<&str>,
     ) -> Result<SecureEnvelope, ProtocolError> {
+        self.encrypt_internal(
+            payload,
+            envelope_type,
+            envelope_id,
+            correlation_id,
+            |_inner| Ok(()),
+        )
+    }
+
+    fn encrypt_internal<F>(
+        &self,
+        payload: &[u8],
+        envelope_type: i32,
+        envelope_id: u32,
+        correlation_id: Option<&str>,
+        post_ratchet_hook: F,
+    ) -> Result<SecureEnvelope, ProtocolError>
+    where
+        F: FnOnce(&mut SessionInner) -> Result<(), ProtocolError>,
+    {
         let mut inner = self
             .inner
             .lock()
@@ -1595,7 +1818,7 @@ impl Session {
         if inner.state.version == 0 {
             return Err(ProtocolError::invalid_state("Session has been destroyed"));
         }
-        if check_inner_expired(&inner.state) {
+        if check_inner_expired(&inner.state, self.time_provider.as_ref())? {
             return Err(ProtocolError::invalid_state("Session expired"));
         }
         if inner.state.send_metadata_key.len() != METADATA_KEY_BYTES {
@@ -1612,27 +1835,74 @@ impl Session {
             ..Default::default()
         };
 
-        Self::maybe_rotate_send_ratchet(&mut inner, &mut envelope)?;
+        let mut send_ratchet_snapshot = if Self::send_ratchet_rotation_needed(&inner)? {
+            Some(SendRatchetSnapshot::capture(&inner)?)
+        } else {
+            None
+        };
+        if let Err(err) = Self::maybe_rotate_send_ratchet(&mut inner, &mut envelope) {
+            if let Some(snapshot) = send_ratchet_snapshot.take() {
+                snapshot.restore(&mut inner);
+            }
+            return Err(err);
+        }
 
         let ratchet_epoch = inner.state.send_ratchet_epoch;
         envelope.ratchet_epoch = ratchet_epoch;
+        let send_progress_snapshot = SendProgressSnapshot::capture(&inner);
+        if let Err(err) = post_ratchet_hook(&mut inner) {
+            rollback_send_encrypt_state(
+                &mut inner,
+                &mut send_ratchet_snapshot,
+                &send_progress_snapshot,
+            );
+            return Err(err);
+        }
 
-        let (message_index, mut message_key) = Self::next_send_message_key(&mut inner)?;
-
-        let mut nonce_gen = load_nonce_generator(&inner.state)?;
-        let payload_nonce = nonce_gen.next(message_index).inspect_err(|_e| {
-            CryptoInterop::secure_wipe(&mut message_key);
-        })?;
-        let nonce_export = nonce_gen.export_state();
-        let max_cap = if inner.state.max_nonce_counter == 0 {
-            MAX_NONCE_COUNTER
-        } else {
-            inner.state.max_nonce_counter
+        let (message_index, mut message_key) = match Self::next_send_message_key(&mut inner) {
+            Ok(value) => value,
+            Err(err) => {
+                rollback_send_encrypt_state(
+                    &mut inner,
+                    &mut send_ratchet_snapshot,
+                    &send_progress_snapshot,
+                );
+                return Err(err);
+            }
         };
+
+        let mut nonce_gen = match load_nonce_generator(&inner.state) {
+            Ok(value) => value,
+            Err(err) => {
+                CryptoInterop::secure_wipe(&mut message_key);
+                rollback_send_encrypt_state(
+                    &mut inner,
+                    &mut send_ratchet_snapshot,
+                    &send_progress_snapshot,
+                );
+                return Err(err);
+            }
+        };
+        let payload_nonce = match nonce_gen.next(message_index) {
+            Ok(value) => value,
+            Err(err) => {
+                CryptoInterop::secure_wipe(&mut message_key);
+                rollback_send_encrypt_state(
+                    &mut inner,
+                    &mut send_ratchet_snapshot,
+                    &send_progress_snapshot,
+                );
+                return Err(err);
+            }
+        };
+        let nonce_export = nonce_gen.export_state();
+        let max_cap = effective_chain_nonce_budget(&inner.state);
         let remaining = max_cap.saturating_sub(nonce_export.counter());
         store_nonce_state(&mut inner.state, nonce_export);
 
-        let threshold = max_cap / (100 / NONCE_EXHAUSTION_WARNING_PERCENT);
+        let threshold = max_cap
+            .saturating_mul(NONCE_EXHAUSTION_WARNING_PERCENT)
+            .div_ceil(100);
         if remaining <= threshold {
             if let Some(handler) = &inner.event_handler {
                 handler.on_nonce_exhaustion_warning(remaining, max_cap);
@@ -1658,6 +1928,11 @@ impl Session {
             let mut buf = Vec::new();
             metadata.encode(&mut buf).map_err(|e| {
                 CryptoInterop::secure_wipe(&mut message_key);
+                rollback_send_encrypt_state(
+                    &mut inner,
+                    &mut send_ratchet_snapshot,
+                    &send_progress_snapshot,
+                );
                 ProtocolError::encode(format!("Failed to serialize metadata: {e}"))
             })?;
             buf
@@ -1666,48 +1941,114 @@ impl Session {
         let header_nonce = CryptoInterop::get_random_bytes(AES_GCM_NONCE_BYTES);
         if header_nonce.len() != AES_GCM_NONCE_BYTES {
             CryptoInterop::secure_wipe(&mut message_key);
+            rollback_send_encrypt_state(
+                &mut inner,
+                &mut send_ratchet_snapshot,
+                &send_progress_snapshot,
+            );
             return Err(ProtocolError::generic("Failed to generate header nonce"));
         }
 
-        let metadata_aad = build_metadata_aad(&inner.state, ratchet_epoch).inspect_err(|_e| {
-            CryptoInterop::secure_wipe(&mut message_key);
-        })?;
+        let metadata_aad = match build_metadata_aad(&inner.state, ratchet_epoch) {
+            Ok(value) => value,
+            Err(err) => {
+                CryptoInterop::secure_wipe(&mut message_key);
+                rollback_send_encrypt_state(
+                    &mut inner,
+                    &mut send_ratchet_snapshot,
+                    &send_progress_snapshot,
+                );
+                return Err(err);
+            }
+        };
 
-        let encrypted_metadata = AesGcm::encrypt(
+        let encrypted_metadata = match AesGcm::encrypt(
             &inner.state.send_metadata_key,
             &header_nonce,
             &metadata_bytes,
             &metadata_aad,
-        )
-        .inspect_err(|_e| {
-            CryptoInterop::secure_wipe(&mut message_key);
-        })?;
-
-        let payload_aad = build_payload_aad(&inner.state, ratchet_epoch, message_index)
-            .inspect_err(|_e| {
+        ) {
+            Ok(value) => value,
+            Err(err) => {
                 CryptoInterop::secure_wipe(&mut message_key);
-            })?;
+                rollback_send_encrypt_state(
+                    &mut inner,
+                    &mut send_ratchet_snapshot,
+                    &send_progress_snapshot,
+                );
+                return Err(err);
+            }
+        };
+
+        let payload_aad = match build_payload_aad(&inner.state, ratchet_epoch, message_index) {
+            Ok(value) => value,
+            Err(err) => {
+                CryptoInterop::secure_wipe(&mut message_key);
+                rollback_send_encrypt_state(
+                    &mut inner,
+                    &mut send_ratchet_snapshot,
+                    &send_progress_snapshot,
+                );
+                return Err(err);
+            }
+        };
 
         let padded_payload = MessagePadding::pad(payload);
         let encrypted_payload =
             AesGcm::encrypt(&message_key, &payload_nonce, &padded_payload, &payload_aad);
         CryptoInterop::secure_wipe(&mut message_key);
-        let encrypted_payload = encrypted_payload?;
+        let encrypted_payload = match encrypted_payload {
+            Ok(value) => value,
+            Err(err) => {
+                rollback_send_encrypt_state(
+                    &mut inner,
+                    &mut send_ratchet_snapshot,
+                    &send_progress_snapshot,
+                );
+                return Err(err);
+            }
+        };
 
         envelope.encrypted_metadata = encrypted_metadata;
         envelope.encrypted_payload = encrypted_payload;
         envelope.header_nonce = header_nonce;
-        envelope.sent_at = Some(timestamp_now()?);
+        envelope.sent_at = Some(match timestamp_now(self.time_provider.as_ref()) {
+            Ok(value) => value,
+            Err(err) => {
+                rollback_send_encrypt_state(
+                    &mut inner,
+                    &mut send_ratchet_snapshot,
+                    &send_progress_snapshot,
+                );
+                return Err(err);
+            }
+        });
 
-        inner.state.last_activity_unix = Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-        );
+        inner.state.last_activity_unix = Some(self.time_provider.now_unix_secs()?);
         inner.state.total_messages_sent += 1;
 
         Ok(envelope)
+    }
+
+    #[cfg(test)]
+    fn encrypt_with_post_ratchet_hook<F>(
+        &self,
+        payload: &[u8],
+        envelope_type: i32,
+        envelope_id: u32,
+        correlation_id: Option<&str>,
+        post_ratchet_hook: F,
+    ) -> Result<SecureEnvelope, ProtocolError>
+    where
+        F: FnOnce(&mut SessionInner) -> Result<(), ProtocolError>,
+    {
+        self.encrypt_internal(
+            payload,
+            envelope_type,
+            envelope_id,
+            correlation_id,
+            post_ratchet_hook,
+        )
     }
 
     pub fn decrypt(&self, envelope: &SecureEnvelope) -> Result<DecryptResult, ProtocolError> {
@@ -1719,7 +2060,7 @@ impl Session {
         if inner.state.version == 0 {
             return Err(ProtocolError::invalid_state("Session has been destroyed"));
         }
-        if check_inner_expired(&inner.state) {
+        if check_inner_expired(&inner.state, self.time_provider.as_ref())? {
             return Err(ProtocolError::invalid_state("Session expired"));
         }
         if envelope.version != PROTOCOL_VERSION {
@@ -1915,7 +2256,15 @@ impl Session {
             return Err(ProtocolError::invalid_input("Nonce index mismatch"));
         }
 
-        let nonce_key = metadata.payload_nonce.clone();
+        let nonce_key = match Self::payload_nonce_to_array(&metadata.payload_nonce) {
+            Ok(nonce_key) => nonce_key,
+            Err(e) => {
+                if ratchet_snapshot.is_some() {
+                    rollback_ratchet(&mut inner, ratchet_snapshot.take());
+                }
+                return Err(e);
+            }
+        };
         if inner.seen_payload_nonces.contains(&nonce_key) {
             if ratchet_snapshot.is_some() {
                 rollback_ratchet(&mut inner, ratchet_snapshot.take());
@@ -2052,11 +2401,7 @@ impl Session {
             }
         };
 
-        inner.seen_payload_nonces.insert(nonce_key);
-
-        if inner.seen_payload_nonces.len() > MAX_SEEN_NONCES {
-            Self::prune_seen_nonces(&mut inner.seen_payload_nonces);
-        }
+        Self::remember_seen_payload_nonce(&mut inner, nonce_key);
 
         if !inner.send_ratchet_pending {
             inner.send_ratchet_pending = true;
@@ -2074,12 +2419,7 @@ impl Session {
             }
         }
 
-        inner.state.last_activity_unix = Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-        );
+        inner.state.last_activity_unix = Some(self.time_provider.now_unix_secs()?);
         inner.state.total_messages_received += 1;
 
         Ok(DecryptResult {
@@ -2136,7 +2476,10 @@ impl Session {
         }
 
         copy.replay_epoch = inner.replay_epoch;
-        copy.seen_payload_nonces = inner.seen_payload_nonces.iter().cloned().collect();
+        copy.seen_payload_nonces = Vec::with_capacity(inner.seen_payload_nonce_order.len());
+        for nonce in &inner.seen_payload_nonce_order {
+            copy.seen_payload_nonces.push(nonce.to_vec());
+        }
 
         copy.skipped_keys = inner
             .skipped_message_keys
@@ -2249,6 +2592,20 @@ impl Session {
         key_provider: &dyn IStateKeyProvider,
         min_external_counter: u64,
     ) -> Result<Self, ProtocolError> {
+        Self::from_sealed_state_with_time_provider(
+            sealed_data,
+            key_provider,
+            min_external_counter,
+            Arc::new(SystemTimeProvider),
+        )
+    }
+
+    pub fn from_sealed_state_with_time_provider(
+        sealed_data: &[u8],
+        key_provider: &dyn IStateKeyProvider,
+        min_external_counter: u64,
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<Self, ProtocolError> {
         if sealed_data.len() > MAX_PROTOBUF_MESSAGE_SIZE {
             return Err(ProtocolError::invalid_input("Sealed state too large"));
         }
@@ -2322,7 +2679,7 @@ impl Session {
         })?;
         CryptoInterop::secure_wipe(&mut plaintext_state);
 
-        let session = Self::from_state_internal(state_proto);
+        let session = Self::from_state_internal_with_time_provider(state_proto, time_provider);
         if session.is_err() {
             CryptoInterop::secure_wipe(&mut kek_bytes);
         }
@@ -2411,12 +2768,7 @@ impl Session {
             .map_or(0, |c| c.message_index);
         let ng = load_nonce_generator(&inner.state)?;
         let counter = ng.export_state().counter();
-        let max = if inner.state.max_nonce_counter == 0 {
-            MAX_NONCE_COUNTER
-        } else {
-            inner.state.max_nonce_counter
-        };
-        let nonce_remaining = max.saturating_sub(counter);
+        let nonce_remaining = effective_chain_nonce_budget(&inner.state).saturating_sub(counter);
         Ok(SessionMetadata {
             session_id: inner.state.session_id.clone(),
             is_initiator: inner.is_initiator,
@@ -2447,10 +2799,7 @@ impl Session {
         let Some(ttl) = inner.state.session_ttl_seconds else {
             return Ok(false);
         };
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = self.time_provider.now_unix_secs()?;
         if let Some(last) = inner.state.last_activity_unix {
             if now.saturating_sub(last) > ttl {
                 return Ok(true);
@@ -2497,9 +2846,7 @@ impl Session {
     pub fn set_session_ttl(&self, ttl_seconds: Option<u64>) -> Result<(), ProtocolError> {
         if let Some(ttl) = ttl_seconds {
             if !(MIN_SESSION_TTL_SECONDS..=MAX_SESSION_TTL_SECONDS).contains(&ttl) {
-                return Err(ProtocolError::invalid_input(
-                    "TTL out of allowed range",
-                ));
+                return Err(ProtocolError::invalid_input("TTL out of allowed range"));
             }
         }
         let mut inner = self
@@ -2559,6 +2906,7 @@ impl Session {
         CryptoInterop::secure_wipe(&mut inner.pending_kyber_shared_secret);
 
         inner.seen_payload_nonces.clear();
+        inner.seen_payload_nonce_order.clear();
 
         CryptoInterop::secure_wipe(&mut inner.state.identity_binding_hash);
         CryptoInterop::secure_wipe(&mut inner.state.session_id);
@@ -2574,5 +2922,158 @@ impl Session {
             .state
             .version
             == 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::identity::IdentityKeys;
+    use crate::proto::{OneTimePreKey, PreKeyBundle};
+    use crate::protocol::{HandshakeInitiator, HandshakeResponder};
+    use prost::Message;
+
+    fn init_crypto() {
+        let _ = CryptoInterop::initialize();
+    }
+
+    fn build_proto_bundle(identity: &IdentityKeys) -> Vec<u8> {
+        let bundle = identity.create_public_bundle().unwrap();
+        let one_time_pre_keys: Vec<OneTimePreKey> = bundle
+            .one_time_pre_keys()
+            .iter()
+            .map(|key| OneTimePreKey {
+                one_time_pre_key_id: key.id(),
+                public_key: key.public_key_vec(),
+            })
+            .collect();
+        let proto_bundle = PreKeyBundle {
+            version: 1,
+            identity_ed25519_public: bundle.identity_ed25519_public().to_vec(),
+            identity_x25519_public: bundle.identity_x25519_public().to_vec(),
+            identity_x25519_signature: bundle.identity_x25519_signature().to_vec(),
+            signed_pre_key_id: bundle.signed_pre_key_id(),
+            signed_pre_key_public: bundle.signed_pre_key_public().to_vec(),
+            signed_pre_key_signature: bundle.signed_pre_key_signature().to_vec(),
+            one_time_pre_keys,
+            kyber_public: bundle.kyber_public().unwrap_or(&[]).to_vec(),
+        };
+        let mut encoded = Vec::new();
+        proto_bundle.encode(&mut encoded).unwrap();
+        encoded
+    }
+
+    fn create_session_pair_with_chain_limit(max_messages_per_chain: u32) -> (Session, Session) {
+        let mut alice = IdentityKeys::create(5).unwrap();
+        let mut bob = IdentityKeys::create(5).unwrap();
+        let bob_bundle = PreKeyBundle::decode(build_proto_bundle(&bob).as_slice()).unwrap();
+        let initiator =
+            HandshakeInitiator::start(&mut alice, &bob_bundle, max_messages_per_chain).unwrap();
+        let init_bytes = initiator.encoded_message().to_vec();
+        let responder =
+            HandshakeResponder::process(&mut bob, &bob_bundle, &init_bytes, max_messages_per_chain)
+                .unwrap();
+        let ack_bytes = responder.encoded_ack().to_vec();
+        let bob_session = responder.finish().unwrap();
+        let alice_session = initiator.finish(&ack_bytes).unwrap();
+        (alice_session, bob_session)
+    }
+
+    fn synthetic_nonce(prefix: u8, counter: u16, message_index: u16) -> Vec<u8> {
+        let mut nonce = vec![prefix; AES_GCM_NONCE_BYTES];
+        nonce[NONCE_PREFIX_BYTES..NONCE_PREFIX_BYTES + NONCE_COUNTER_BYTES]
+            .copy_from_slice(&counter.to_le_bytes());
+        nonce[NONCE_PREFIX_BYTES + NONCE_COUNTER_BYTES..]
+            .copy_from_slice(&message_index.to_le_bytes());
+        nonce
+    }
+
+    #[test]
+    fn seen_nonce_cache_preserves_insertion_order_across_ratchets() {
+        init_crypto();
+
+        let mut entries = Vec::with_capacity(MAX_SEEN_NONCES + 3);
+        for i in 0..MAX_SEEN_NONCES {
+            let counter = u16::try_from(10_000 + i).unwrap();
+            entries.push(synthetic_nonce(0xA5, counter, counter));
+        }
+        let newest_after_ratchet = [
+            synthetic_nonce(0x5A, 0, 0),
+            synthetic_nonce(0x5A, 1, 0),
+            synthetic_nonce(0x5A, 2, 0),
+        ];
+        entries.extend(newest_after_ratchet.iter().cloned());
+
+        let (seen, order) = Session::rebuild_seen_payload_nonce_cache(&entries).unwrap();
+        let expected: Vec<Vec<u8>> = entries[entries.len() - MAX_SEEN_NONCES..].to_vec();
+        let mut actual = Vec::with_capacity(order.len());
+        for nonce in &order {
+            actual.push(nonce.to_vec());
+        }
+
+        assert_eq!(actual, expected);
+        assert_eq!(seen.len(), MAX_SEEN_NONCES);
+        let first = Session::payload_nonce_to_array(&entries[0]).unwrap();
+        assert!(!seen.contains(&first));
+        for nonce in newest_after_ratchet {
+            let nonce = Session::payload_nonce_to_array(&nonce).unwrap();
+            assert!(seen.contains(&nonce));
+        }
+    }
+
+    #[test]
+    fn send_ratchet_rollback_restores_pre_rotate_state_on_failure() {
+        init_crypto();
+        let (alice, bob) = create_session_pair_with_chain_limit(8);
+
+        {
+            let mut inner = alice.inner.lock().unwrap();
+            inner.send_ratchet_pending = true;
+            inner.state.send_ratchet_pending = true;
+        }
+
+        let pre_nonce_remaining = alice.nonce_remaining().unwrap();
+        let pre_send_epoch;
+        let pre_send_index;
+        let pre_dh_public;
+        let pre_kyber_public;
+        {
+            let inner = alice.inner.lock().unwrap();
+            pre_send_epoch = inner.state.send_ratchet_epoch;
+            pre_send_index = inner.state.send_chain.as_ref().unwrap().message_index;
+            pre_dh_public = inner.state.dh_local.as_ref().unwrap().public_key.clone();
+            pre_kyber_public = inner.state.kyber_local.as_ref().unwrap().public_key.clone();
+        }
+
+        let failed =
+            alice.encrypt_with_post_ratchet_hook(b"force rollback", 0, 1, None, |_inner| {
+                Err(ProtocolError::invalid_state("test post-ratchet failure"))
+            });
+        assert!(failed.is_err());
+
+        {
+            let inner = alice.inner.lock().unwrap();
+            assert_eq!(inner.state.send_ratchet_epoch, pre_send_epoch);
+            assert_eq!(
+                inner.state.send_chain.as_ref().unwrap().message_index,
+                pre_send_index
+            );
+            assert!(inner.send_ratchet_pending);
+            assert!(inner.state.send_ratchet_pending);
+            assert_eq!(
+                inner.state.dh_local.as_ref().unwrap().public_key,
+                pre_dh_public
+            );
+            assert_eq!(
+                inner.state.kyber_local.as_ref().unwrap().public_key,
+                pre_kyber_public
+            );
+            assert_eq!(inner.state.total_messages_sent, 0);
+        }
+        assert_eq!(alice.nonce_remaining().unwrap(), pre_nonce_remaining);
+
+        let envelope = alice.encrypt(b"hello after rollback", 0, 2, None).unwrap();
+        let decrypted = bob.decrypt(&envelope).unwrap();
+        assert_eq!(decrypted.plaintext, b"hello after rollback");
     }
 }

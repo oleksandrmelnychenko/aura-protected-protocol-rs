@@ -262,6 +262,60 @@ public final class EppSession {
         return data
     }
 
+    /// Serializes the session state using a managed anti-rollback tracker.
+    ///
+    /// Persist the returned sealed state together with `tracker.serialize()`
+    /// for the same storage slot.
+    public func serialize(key: Data, tracker: EppSealedStateCounterTracker) throws -> Data {
+        guard handle != nil else { throw EppError.objectDisposed }
+        guard tracker.handle != nil else { throw EppError.objectDisposed }
+        var outBuffer = NativeEppBuffer(data: nil, length: 0)
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = key.withUnsafeBytes { keyBytes in
+            native_epp_session_serialize_sealed_with_tracker(
+                handle,
+                keyBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                key.count,
+                tracker.handle,
+                &outBuffer,
+                &outError
+            )
+        }
+        defer {
+            if outBuffer.data != nil { native_epp_buffer_release(&outBuffer) }
+            native_epp_error_free(&outError)
+        }
+        guard result == EPP_SUCCESS else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+        guard let data = dataFromBuffer(outBuffer) else {
+            throw EppError.bufferTooSmall
+        }
+        return data
+    }
+
+    /// Exports the session state into a managed persisted slot.
+    ///
+    /// Persist `slot.serialize()` as one record after a successful export.
+    public func exportPersistedState(key: Data, slot: EppSealedStateSlot) throws {
+        guard handle != nil else { throw EppError.objectDisposed }
+        guard slot.handle != nil else { throw EppError.objectDisposed }
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = key.withUnsafeBytes { keyBytes in
+            native_epp_session_export_persisted_state(
+                handle,
+                keyBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                key.count,
+                slot.handle,
+                &outError
+            )
+        }
+        defer { native_epp_error_free(&outError) }
+        guard result == EPP_SUCCESS else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+    }
+
     /// Deserializes a previously sealed session state.
     ///
     /// The `minExternalCounter` parameter prevents rollback attacks by rejecting
@@ -300,6 +354,154 @@ public final class EppSession {
             throw EppError.from(code: result, nativeError: outError)
         }
         return (EppSession(handle: handle), outCounter)
+    }
+
+    public static func deserialize(
+        sealedState: Data,
+        key: Data,
+        minExternalCounter: UInt64,
+        timeProvider: EppTimeProvider
+    ) throws -> (session: EppSession, externalCounter: UInt64) {
+        guard timeProvider.handle != nil else { throw EppError.objectDisposed }
+        var outHandle: UnsafeMutableRawPointer?
+        var outCounter: UInt64 = 0
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = sealedState.withUnsafeBytes { stateBytes in
+            key.withUnsafeBytes { keyBytes in
+                native_epp_session_deserialize_sealed_with_time_provider(
+                    stateBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    sealedState.count,
+                    keyBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    key.count,
+                    minExternalCounter,
+                    timeProvider.handle,
+                    &outCounter,
+                    &outHandle,
+                    &outError
+                )
+            }
+        }
+        defer { native_epp_error_free(&outError) }
+        guard result == EPP_SUCCESS, let handle = outHandle else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+        return (EppSession(handle: handle), outCounter)
+    }
+
+    /// Deserializes a previously sealed session state using a managed tracker.
+    ///
+    /// The tracker supplies the restore watermark and is advanced only after a
+    /// successful restore.
+    public static func deserialize(
+        sealedState: Data,
+        key: Data,
+        tracker: EppSealedStateCounterTracker
+    ) throws -> EppSession {
+        guard tracker.handle != nil else { throw EppError.objectDisposed }
+        var outHandle: UnsafeMutableRawPointer?
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = sealedState.withUnsafeBytes { stateBytes in
+            key.withUnsafeBytes { keyBytes in
+                native_epp_session_deserialize_sealed_with_tracker(
+                    stateBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    sealedState.count,
+                    keyBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    key.count,
+                    tracker.handle,
+                    &outHandle,
+                    &outError
+                )
+            }
+        }
+        defer { native_epp_error_free(&outError) }
+        guard result == EPP_SUCCESS, let handle = outHandle else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+        return EppSession(handle: handle)
+    }
+
+    public static func deserialize(
+        sealedState: Data,
+        key: Data,
+        tracker: EppSealedStateCounterTracker,
+        timeProvider: EppTimeProvider
+    ) throws -> EppSession {
+        guard tracker.handle != nil else { throw EppError.objectDisposed }
+        guard timeProvider.handle != nil else { throw EppError.objectDisposed }
+        var outHandle: UnsafeMutableRawPointer?
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = sealedState.withUnsafeBytes { stateBytes in
+            key.withUnsafeBytes { keyBytes in
+                native_epp_session_deserialize_sealed_with_tracker_and_time_provider(
+                    stateBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    sealedState.count,
+                    keyBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    key.count,
+                    tracker.handle,
+                    timeProvider.handle,
+                    &outHandle,
+                    &outError
+                )
+            }
+        }
+        defer { native_epp_error_free(&outError) }
+        guard result == EPP_SUCCESS, let handle = outHandle else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+        return EppSession(handle: handle)
+    }
+
+    /// Restores a session from a managed persisted slot.
+    ///
+    /// After a successful restore, re-serialize and persist the slot so its
+    /// restore watermark is advanced in the same record.
+    public static func restorePersistedState(
+        slot: EppSealedStateSlot,
+        key: Data
+    ) throws -> EppSession {
+        guard slot.handle != nil else { throw EppError.objectDisposed }
+        var outHandle: UnsafeMutableRawPointer?
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = key.withUnsafeBytes { keyBytes in
+            native_epp_session_restore_persisted_state(
+                slot.handle,
+                keyBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                key.count,
+                &outHandle,
+                &outError
+            )
+        }
+        defer { native_epp_error_free(&outError) }
+        guard result == EPP_SUCCESS, let handle = outHandle else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+        return EppSession(handle: handle)
+    }
+
+    public static func restorePersistedState(
+        slot: EppSealedStateSlot,
+        key: Data,
+        timeProvider: EppTimeProvider
+    ) throws -> EppSession {
+        guard slot.handle != nil else { throw EppError.objectDisposed }
+        guard timeProvider.handle != nil else { throw EppError.objectDisposed }
+        var outHandle: UnsafeMutableRawPointer?
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = key.withUnsafeBytes { keyBytes in
+            native_epp_session_restore_persisted_state_with_time_provider(
+                slot.handle,
+                keyBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                key.count,
+                timeProvider.handle,
+                &outHandle,
+                &outError
+            )
+        }
+        defer { native_epp_error_free(&outError) }
+        guard result == EPP_SUCCESS, let handle = outHandle else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+        return EppSession(handle: handle)
     }
 
     public func sessionId() throws -> Data {

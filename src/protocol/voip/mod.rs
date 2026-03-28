@@ -9,6 +9,9 @@ use std::sync::{Arc, Mutex};
 use crate::core::constants::*;
 use crate::core::errors::ProtocolError;
 use crate::crypto::{CryptoInterop, HkdfSha256, SecureMemoryHandle};
+use crate::interfaces::{ITimeProvider, SystemTimeProvider};
+use crate::security::DhValidator;
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use hmac::{Hmac, Mac};
 use prost::Message;
 use sha2::Sha256;
@@ -26,9 +29,110 @@ pub use call_key_exchange::{
 };
 
 #[allow(unused_imports)]
-use crate::proto::{CallQualityMetrics, ScreenShareMetadata};
+use crate::proto::{CallQualityMetrics, RecordingConsentMessage, ScreenShareMetadata};
 
 type HmacSha256 = Hmac<Sha256>;
+
+fn is_all_zero(bytes: &[u8]) -> bool {
+    let mut acc = 0u8;
+    for &b in bytes {
+        acc |= b;
+    }
+    acc == 0
+}
+
+fn now_unix_secs(time_provider: &dyn ITimeProvider) -> Result<u64, ProtocolError> {
+    time_provider
+        .now_unix_secs()
+        .map_err(|_| ProtocolError::voip_call("system clock is before UNIX epoch"))
+}
+
+fn validate_recording_consent_value(consent: i32) -> Result<(), ProtocolError> {
+    if !(0..=2).contains(&consent) {
+        return Err(ProtocolError::InvalidInput(
+            "recording consent must be 0, 1, or 2".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_timestamp_not_too_far_in_future(
+    timestamp_unix: u64,
+    label: &str,
+    time_provider: &dyn ITimeProvider,
+) -> Result<(), ProtocolError> {
+    let now = now_unix_secs(time_provider)?;
+    if timestamp_unix > now.saturating_add(MAX_FUTURE_TIMESTAMP_SKEW_SECS) {
+        return Err(ProtocolError::voip_call(format!(
+            "{label} timestamp {timestamp_unix} is too far in the future (now {now})"
+        )));
+    }
+    Ok(())
+}
+
+fn append_recording_consent_signature_input(
+    out: &mut Vec<u8>,
+    call_id: &[u8],
+    consent: i32,
+    timestamp_unix: u64,
+) {
+    out.extend_from_slice(b"Ecliptix-VoIP-RecordingConsent-v1");
+    out.extend_from_slice(call_id);
+    out.extend_from_slice(&consent.to_le_bytes());
+    out.extend_from_slice(&timestamp_unix.to_le_bytes());
+}
+
+fn sign_recording_consent_message(
+    identity_ed25519_secret: &[u8],
+    call_id: &[u8],
+    consent: i32,
+    timestamp_unix: u64,
+) -> Result<Vec<u8>, ProtocolError> {
+    if identity_ed25519_secret.len() != ED25519_SECRET_KEY_BYTES {
+        return Err(ProtocolError::voip_call("invalid Ed25519 secret key size"));
+    }
+    let key_bytes: [u8; ED25519_SECRET_KEY_BYTES] = identity_ed25519_secret
+        .try_into()
+        .map_err(|_| ProtocolError::voip_call("Ed25519 key conversion failed"))?;
+    let signing_key = SigningKey::from_keypair_bytes(&key_bytes)
+        .map_err(|_| ProtocolError::voip_call("invalid Ed25519 keypair bytes"))?;
+    let mut message = Vec::with_capacity(64 + call_id.len());
+    append_recording_consent_signature_input(&mut message, call_id, consent, timestamp_unix);
+    Ok(signing_key.sign(&message).to_bytes().to_vec())
+}
+
+fn verify_recording_consent_signature(
+    peer_ed25519_public: &[u8],
+    call_id: &[u8],
+    consent: i32,
+    timestamp_unix: u64,
+    signature: &[u8],
+) -> Result<(), ProtocolError> {
+    if peer_ed25519_public.len() != ED25519_PUBLIC_KEY_BYTES {
+        return Err(ProtocolError::voip_call("invalid Ed25519 public key size"));
+    }
+    if signature.len() != ED25519_SIGNATURE_BYTES {
+        return Err(ProtocolError::voip_call(
+            "invalid recording consent signature size",
+        ));
+    }
+
+    let pk_bytes: [u8; ED25519_PUBLIC_KEY_BYTES] = peer_ed25519_public
+        .try_into()
+        .map_err(|_| ProtocolError::voip_call("Ed25519 public key conversion failed"))?;
+    let verifying_key = VerifyingKey::from_bytes(&pk_bytes)
+        .map_err(|_| ProtocolError::voip_call("invalid Ed25519 public key"))?;
+    let sig_bytes: [u8; ED25519_SIGNATURE_BYTES] = signature
+        .try_into()
+        .map_err(|_| ProtocolError::voip_call("signature conversion failed"))?;
+    let sig = Signature::from_bytes(&sig_bytes);
+
+    let mut message = Vec::with_capacity(64 + call_id.len());
+    append_recording_consent_signature_input(&mut message, call_id, consent, timestamp_unix);
+    verifying_key
+        .verify_strict(&message, &sig)
+        .map_err(|_| ProtocolError::voip_call("recording consent signature verification failed"))
+}
 
 pub trait IVoipEventHandler: Send + Sync {
     fn on_call_established(&self, call_id: &[u8], role: CallRole);
@@ -94,6 +198,7 @@ pub struct CallStatistics {
 
 pub struct VoipSession {
     inner: Mutex<VoipSessionInner>,
+    time_provider: Arc<dyn ITimeProvider>,
 }
 
 #[allow(dead_code)]
@@ -127,8 +232,10 @@ struct VoipSessionInner {
     frames_dropped: u64,
     last_metrics_timestamp: u64,
     local_recording_consent: i32,
+    local_recording_consent_timestamp_unix: u64,
     remote_recording_consent: i32,
-    created_at: std::time::Instant,
+    remote_recording_consent_timestamp_unix: u64,
+    created_at_unix: u64,
 }
 
 impl VoipSession {
@@ -140,10 +247,31 @@ impl VoipSession {
         pq_rekey_interval_secs: u32,
         shield_mode: bool,
     ) -> Result<Self, ProtocolError> {
+        Self::from_key_material_with_time_provider(
+            call_id,
+            role,
+            key_material,
+            ratchet_interval_frames,
+            pq_rekey_interval_secs,
+            shield_mode,
+            Arc::new(SystemTimeProvider),
+        )
+    }
+
+    pub fn from_key_material_with_time_provider(
+        call_id: Vec<u8>,
+        role: CallRole,
+        key_material: CallKeyMaterial,
+        ratchet_interval_frames: u32,
+        pq_rekey_interval_secs: u32,
+        shield_mode: bool,
+        time_provider: Arc<dyn ITimeProvider>,
+    ) -> Result<Self, ProtocolError> {
         if call_id.len() != CALL_ID_BYTES {
             return Err(ProtocolError::voip_call("invalid call_id size"));
         }
 
+        let created_at_unix = now_unix_secs(time_provider.as_ref())?;
         let ssrc_bytes = CryptoInterop::get_random_bytes(SSRC_BYTES);
         let ssrc = u32::from_be_bytes(
             ssrc_bytes[..4]
@@ -193,12 +321,15 @@ impl VoipSession {
             frames_dropped: 0,
             last_metrics_timestamp: 0,
             local_recording_consent: 0,
+            local_recording_consent_timestamp_unix: 0,
             remote_recording_consent: 0,
-            created_at: std::time::Instant::now(),
+            remote_recording_consent_timestamp_unix: 0,
+            created_at_unix,
         };
 
         Ok(Self {
             inner: Mutex::new(inner),
+            time_provider,
         })
     }
 
@@ -312,6 +443,12 @@ impl VoipSession {
 
         if encrypted.call_id != inner.call_id {
             return Err(ProtocolError::voip_call("call_id mismatch"));
+        }
+        if encrypted.encrypted_payload.len() > MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE {
+            return Err(ProtocolError::voip_media("encrypted payload too large"));
+        }
+        if encrypted.encrypted_header.len() > MAX_VOIP_ENCRYPTED_HEADER_SIZE {
+            return Err(ProtocolError::voip_media("encrypted header too large"));
         }
 
         if !inner.replay_window.check(encrypted.frame_counter) {
@@ -556,10 +693,17 @@ impl VoipSession {
             send_ratchet_generation: send_snapshot.generation,
             recv_ratchet_generation: recv_snapshot.generation,
             replay_bitmap,
-            screen_share_meta: None,
-            local_recording_consent: None,
-            remote_recording_consent: None,
-            total_rekey_count: 0,
+            screen_share_meta: inner.screen_share_meta.clone(),
+            local_recording_consent: Some(inner.local_recording_consent),
+            remote_recording_consent: Some(inner.remote_recording_consent),
+            total_rekey_count: inner.ratchet_generation,
+            created_at_unix: inner.created_at_unix,
+            frames_sent: inner.frames_sent,
+            frames_received: inner.frames_received,
+            frames_dropped: inner.frames_dropped,
+            last_metrics_timestamp: inner.last_metrics_timestamp,
+            remote_recording_consent_timestamp_unix: inner.remote_recording_consent_timestamp_unix,
+            local_recording_consent_timestamp_unix: inner.local_recording_consent_timestamp_unix,
         };
 
         let mut state_bytes = Vec::new();
@@ -594,6 +738,20 @@ impl VoipSession {
         data: &[u8],
         state_key: &[u8],
         min_external_counter: u64,
+    ) -> Result<Self, ProtocolError> {
+        Self::from_sealed_state_with_time_provider(
+            data,
+            state_key,
+            min_external_counter,
+            Arc::new(SystemTimeProvider),
+        )
+    }
+
+    pub fn from_sealed_state_with_time_provider(
+        data: &[u8],
+        state_key: &[u8],
+        min_external_counter: u64,
+        time_provider: Arc<dyn ITimeProvider>,
     ) -> Result<Self, ProtocolError> {
         let header_size = 8 + AES_GCM_NONCE_BYTES + HMAC_BYTES;
         if data.len() < header_size + AES_GCM_TAG_BYTES {
@@ -735,6 +893,34 @@ impl VoipSession {
         } else {
             state.pq_rekey_interval_secs
         };
+        if let Some(ref meta) = state.screen_share_meta {
+            validate_screen_share_metadata(meta)?;
+        }
+        if let Some(consent) = state.local_recording_consent {
+            validate_recording_consent_value(consent)?;
+        }
+        if let Some(consent) = state.remote_recording_consent {
+            validate_recording_consent_value(consent)?;
+        }
+        if state.local_recording_consent_timestamp_unix > 0 {
+            validate_timestamp_not_too_far_in_future(
+                state.local_recording_consent_timestamp_unix,
+                "local recording consent",
+                time_provider.as_ref(),
+            )?;
+        }
+        if state.remote_recording_consent_timestamp_unix > 0 {
+            validate_timestamp_not_too_far_in_future(
+                state.remote_recording_consent_timestamp_unix,
+                "remote recording consent",
+                time_provider.as_ref(),
+            )?;
+        }
+        let created_at_unix = if state.created_at_unix == 0 {
+            now_unix_secs(time_provider.as_ref())?
+        } else {
+            state.created_at_unix
+        };
 
         let inner = VoipSessionInner {
             call_id: state.call_id,
@@ -755,18 +941,21 @@ impl VoipSession {
             frames_since_ratchet: state.frames_since_ratchet,
             event_handler: None,
             pending_rekey: None,
-            screen_share_meta: None,
-            frames_sent: 0,
-            frames_received: 0,
-            frames_dropped: 0,
-            last_metrics_timestamp: 0,
-            local_recording_consent: 0,
-            remote_recording_consent: 0,
-            created_at: std::time::Instant::now(),
+            screen_share_meta: state.screen_share_meta,
+            frames_sent: state.frames_sent,
+            frames_received: state.frames_received,
+            frames_dropped: state.frames_dropped,
+            last_metrics_timestamp: state.last_metrics_timestamp,
+            local_recording_consent: state.local_recording_consent.unwrap_or(0),
+            local_recording_consent_timestamp_unix: state.local_recording_consent_timestamp_unix,
+            remote_recording_consent: state.remote_recording_consent.unwrap_or(0),
+            remote_recording_consent_timestamp_unix: state.remote_recording_consent_timestamp_unix,
+            created_at_unix,
         };
 
         Ok(Self {
             inner: Mutex::new(inner),
+            time_provider,
         })
     }
 
@@ -991,9 +1180,15 @@ impl VoipSession {
             .as_slice()
             .try_into()
             .map_err(|_| ProtocolError::voip_rekey("invalid rekey ephemeral key"))?;
+        DhValidator::validate_x25519_public_key(&rekey.ephemeral_x25519_public)?;
         let classical_ss = eph_secret
             .diffie_hellman(&x25519_dalek::PublicKey::from(peer_eph))
             .to_bytes();
+        if is_all_zero(&classical_ss) {
+            return Err(ProtocolError::voip_rekey(
+                "X25519 rekey DH produced all-zero output",
+            ));
+        }
 
         let (resp_kyber_ct, resp_kyber_ss) =
             crate::crypto::KyberInterop::encapsulate(peer_kyber_public)
@@ -1127,11 +1322,17 @@ impl VoipSession {
             .as_slice()
             .try_into()
             .map_err(|_| ProtocolError::voip_rekey("invalid rekey ack ephemeral key"))?;
+        DhValidator::validate_x25519_public_key(&ack.ephemeral_x25519_public)?;
 
         let secret = x25519_dalek::StaticSecret::from(eph_priv_arr);
         let classical_ss = secret
             .diffie_hellman(&x25519_dalek::PublicKey::from(peer_eph))
             .to_bytes();
+        if is_all_zero(&classical_ss) {
+            return Err(ProtocolError::voip_rekey(
+                "X25519 rekey ack DH produced all-zero output",
+            ));
+        }
 
         let resp_kyber_ss =
             crate::crypto::KyberInterop::decapsulate(&ack.kyber_ciphertext, identity_kyber_secret)
@@ -1230,13 +1431,19 @@ impl VoipSession {
         codec_hint: Option<&str>,
     ) -> Result<(), ProtocolError> {
         if width == 0 || width > MAX_SCREEN_SHARE_WIDTH {
-            return Err(ProtocolError::InvalidInput("screen share width out of range".into()));
+            return Err(ProtocolError::InvalidInput(
+                "screen share width out of range".into(),
+            ));
         }
         if height == 0 || height > MAX_SCREEN_SHARE_HEIGHT {
-            return Err(ProtocolError::InvalidInput("screen share height out of range".into()));
+            return Err(ProtocolError::InvalidInput(
+                "screen share height out of range".into(),
+            ));
         }
         if frame_rate == 0 || frame_rate > MAX_SCREEN_SHARE_FRAME_RATE {
-            return Err(ProtocolError::InvalidInput("screen share frame_rate out of range".into()));
+            return Err(ProtocolError::InvalidInput(
+                "screen share frame_rate out of range".into(),
+            ));
         }
         if let Some(hint) = codec_hint {
             if hint.len() > MAX_CODEC_HINT_CHARS {
@@ -1247,6 +1454,9 @@ impl VoipSession {
             .inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if inner.state != CallState::Active {
+            return Err(ProtocolError::voip_call("call is not active"));
+        }
         inner.screen_share_meta = Some(ScreenShareMetadata {
             width,
             height,
@@ -1264,9 +1474,10 @@ impl VoipSession {
             .inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        Ok(inner.screen_share_meta.as_ref().map(|m| {
-            (m.width, m.height, m.frame_rate, m.codec_hint.clone())
-        }))
+        Ok(inner
+            .screen_share_meta
+            .as_ref()
+            .map(|m| (m.width, m.height, m.frame_rate, m.codec_hint.clone())))
     }
 
     pub fn clear_screen_share_meta(&self) -> Result<(), ProtocolError> {
@@ -1274,6 +1485,9 @@ impl VoipSession {
             .inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if inner.state != CallState::Active {
+            return Err(ProtocolError::voip_call("call is not active"));
+        }
         inner.screen_share_meta = None;
         Ok(())
     }
@@ -1283,7 +1497,8 @@ impl VoipSession {
             .inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let elapsed = inner.created_at.elapsed().as_secs();
+        let elapsed =
+            now_unix_secs(self.time_provider.as_ref())?.saturating_sub(inner.created_at_unix);
         Ok(CallStatistics {
             frames_sent: inner.frames_sent,
             frames_received: inner.frames_received,
@@ -1295,13 +1510,14 @@ impl VoipSession {
     }
 
     pub fn set_recording_consent(&self, consent: i32) -> Result<(), ProtocolError> {
-        if !(0..=2).contains(&consent) {
-            return Err(ProtocolError::InvalidInput("recording consent must be 0, 1, or 2".into()));
-        }
+        validate_recording_consent_value(consent)?;
         let mut inner = self
             .inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if inner.state != CallState::Active {
+            return Err(ProtocolError::voip_call("call is not active"));
+        }
         inner.local_recording_consent = consent;
         Ok(())
     }
@@ -1315,15 +1531,11 @@ impl VoipSession {
     }
 
     pub fn set_remote_recording_consent(&self, consent: i32) -> Result<(), ProtocolError> {
-        if !(0..=2).contains(&consent) {
-            return Err(ProtocolError::InvalidInput("recording consent must be 0, 1, or 2".into()));
-        }
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        inner.remote_recording_consent = consent;
-        Ok(())
+        validate_recording_consent_value(consent)?;
+        let _ = consent;
+        Err(ProtocolError::voip_call(
+            "remote recording consent must be updated via a signed RecordingConsentMessage",
+        ))
     }
 
     pub fn get_remote_recording_consent(&self) -> Result<i32, ProtocolError> {
@@ -1341,17 +1553,126 @@ impl VoipSession {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(inner.local_recording_consent == 1 && inner.remote_recording_consent == 1)
     }
+
+    pub fn build_recording_consent_message(
+        &self,
+        consent: i32,
+        timestamp_unix: u64,
+        identity_ed25519_secret: &[u8],
+    ) -> Result<Vec<u8>, ProtocolError> {
+        validate_recording_consent_value(consent)?;
+        if timestamp_unix == 0 {
+            return Err(ProtocolError::voip_call(
+                "recording consent timestamp must be > 0",
+            ));
+        }
+        validate_timestamp_not_too_far_in_future(
+            timestamp_unix,
+            "recording consent",
+            self.time_provider.as_ref(),
+        )?;
+        let inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if inner.state != CallState::Active {
+            return Err(ProtocolError::voip_call("call is not active"));
+        }
+        if timestamp_unix <= inner.local_recording_consent_timestamp_unix {
+            return Err(ProtocolError::voip_call(
+                "stale local recording consent timestamp rejected",
+            ));
+        }
+        let signature = sign_recording_consent_message(
+            identity_ed25519_secret,
+            &inner.call_id,
+            consent,
+            timestamp_unix,
+        )?;
+        let message = RecordingConsentMessage {
+            call_id: inner.call_id.clone(),
+            consent,
+            timestamp_unix,
+            signature,
+        };
+        let mut out = Vec::new();
+        message
+            .encode(&mut out)
+            .map_err(|e| ProtocolError::encode(format!("RecordingConsentMessage encode: {e}")))?;
+        let mut inner = inner;
+        inner.local_recording_consent = consent;
+        inner.local_recording_consent_timestamp_unix = timestamp_unix;
+        Ok(out)
+    }
+
+    pub fn process_recording_consent_message(
+        &self,
+        message_bytes: &[u8],
+        peer_ed25519_public: &[u8],
+    ) -> Result<i32, ProtocolError> {
+        if message_bytes.len() > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
+            return Err(ProtocolError::voip_call(
+                "RecordingConsentMessage too large",
+            ));
+        }
+        let message = RecordingConsentMessage::decode(message_bytes)
+            .map_err(|e| ProtocolError::decode(format!("RecordingConsentMessage decode: {e}")))?;
+        validate_recording_consent_value(message.consent)?;
+        if message.timestamp_unix == 0 {
+            return Err(ProtocolError::voip_call(
+                "recording consent timestamp must be > 0",
+            ));
+        }
+        validate_timestamp_not_too_far_in_future(
+            message.timestamp_unix,
+            "recording consent",
+            self.time_provider.as_ref(),
+        )?;
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if inner.state != CallState::Active {
+            return Err(ProtocolError::voip_call("call is not active"));
+        }
+        if message.call_id != inner.call_id {
+            return Err(ProtocolError::voip_call(
+                "recording consent call_id mismatch",
+            ));
+        }
+        if message.timestamp_unix <= inner.remote_recording_consent_timestamp_unix {
+            return Err(ProtocolError::voip_call(
+                "stale recording consent message rejected",
+            ));
+        }
+        verify_recording_consent_signature(
+            peer_ed25519_public,
+            &message.call_id,
+            message.consent,
+            message.timestamp_unix,
+            &message.signature,
+        )?;
+        inner.remote_recording_consent = message.consent;
+        inner.remote_recording_consent_timestamp_unix = message.timestamp_unix;
+        Ok(message.consent)
+    }
 }
 
 pub fn validate_screen_share_metadata(meta: &ScreenShareMetadata) -> Result<(), ProtocolError> {
     if meta.width == 0 || meta.width > MAX_SCREEN_SHARE_WIDTH {
-        return Err(ProtocolError::InvalidInput("screen share width out of range".into()));
+        return Err(ProtocolError::InvalidInput(
+            "screen share width out of range".into(),
+        ));
     }
     if meta.height == 0 || meta.height > MAX_SCREEN_SHARE_HEIGHT {
-        return Err(ProtocolError::InvalidInput("screen share height out of range".into()));
+        return Err(ProtocolError::InvalidInput(
+            "screen share height out of range".into(),
+        ));
     }
     if meta.frame_rate == 0 || meta.frame_rate > MAX_SCREEN_SHARE_FRAME_RATE {
-        return Err(ProtocolError::InvalidInput("screen share frame_rate out of range".into()));
+        return Err(ProtocolError::InvalidInput(
+            "screen share frame_rate out of range".into(),
+        ));
     }
     if let Some(ref hint) = meta.codec_hint {
         if hint.len() > MAX_CODEC_HINT_CHARS {
@@ -1364,7 +1685,9 @@ pub fn validate_screen_share_metadata(meta: &ScreenShareMetadata) -> Result<(), 
 pub fn validate_call_quality_metrics(metrics: &CallQualityMetrics) -> Result<(), ProtocolError> {
     if let Some(level) = metrics.audio_level {
         if level > MAX_AUDIO_LEVEL {
-            return Err(ProtocolError::InvalidInput("audio_level exceeds maximum".into()));
+            return Err(ProtocolError::InvalidInput(
+                "audio_level exceeds maximum".into(),
+            ));
         }
     }
     Ok(())

@@ -8,6 +8,7 @@ pub mod nonce;
 pub mod session;
 pub mod voip;
 
+pub use attachment::{EncryptedChunk, StreamingDecryptor, StreamingEncryptor};
 pub use group::{
     ContentType, FrankingData, GroupDecryptResult, GroupSecurityPolicy, GroupSession,
     MessagePolicy, SealedPayload,
@@ -17,7 +18,6 @@ pub use nonce::{NonceGenerator, NonceState};
 pub use session::{
     DecryptResult, HandshakeState, LocalIdentity, PeerIdentity, Session, SessionMetadata,
 };
-pub use attachment::{EncryptedChunk, StreamingDecryptor, StreamingEncryptor};
 pub use voip::{
     CallControlType, CallRole, CallState, CallStatistics, IVoipEventHandler, VoipSession,
 };

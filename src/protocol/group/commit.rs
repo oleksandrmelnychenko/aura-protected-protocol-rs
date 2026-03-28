@@ -210,7 +210,14 @@ pub fn process_commit(
             ));
         }
         validate_external_join_structure(&commit.proposals)?;
-        validate_external_join_authorization(tree, group_id, current_epoch, &commit.proposals)?;
+        validate_external_join_authorization(
+            tree,
+            group_id,
+            current_epoch,
+            prev_init_secret,
+            policy,
+            &commit.proposals,
+        )?;
     }
 
     if !is_external_join && commit.committer_leaf_index >= tree.leaf_count() {
@@ -534,6 +541,8 @@ fn validate_external_join_authorization(
     tree: &RatchetTree,
     group_id: &[u8],
     current_epoch: u64,
+    prev_init_secret: &[u8],
+    policy: &GroupSecurityPolicy,
     proposals: &[GroupProposal],
 ) -> Result<(), ProtocolError> {
     let external_init = proposals
@@ -562,6 +571,7 @@ fn validate_external_join_authorization(
 
     let auth = GroupExternalJoinAuthorization::decode(external_init.authorization.as_slice())
         .map_err(|e| ProtocolError::decode(format!("External join auth decode: {e}")))?;
+    super::validate_external_join_auth_format_version(auth.auth_format_version)?;
     if auth.group_id != group_id {
         return Err(ProtocolError::group_protocol(
             "External join authorization group_id mismatch",
@@ -572,6 +582,32 @@ fn validate_external_join_authorization(
             "External join authorization epoch mismatch: expected {current_epoch}, got {}",
             auth.epoch
         )));
+    }
+    let tree_hash = tree.tree_hash()?;
+    let policy_bytes = policy.policy_bytes();
+    let current_group_context_hash = GroupKeySchedule::compute_group_context_hash(
+        group_id,
+        current_epoch,
+        &tree_hash,
+        &policy_bytes,
+    );
+    if auth.group_context_hash != current_group_context_hash {
+        return Err(ProtocolError::group_protocol(
+            "External join authorization group_context_hash mismatch",
+        ));
+    }
+    let (
+        _ext_x25519_secret,
+        current_external_x25519_public,
+        _ext_kyber_secret,
+        current_external_kyber_public,
+    ) = GroupKeySchedule::derive_external_keypairs(prev_init_secret)?;
+    if auth.external_x25519_public != current_external_x25519_public
+        || auth.external_kyber_public != current_external_kyber_public
+    {
+        return Err(ProtocolError::group_protocol(
+            "External join authorization external init key mismatch",
+        ));
     }
     if auth.joiner_identity_ed25519_public != add_key_package.identity_ed25519_public
         || auth.joiner_identity_x25519_public != add_key_package.identity_x25519_public

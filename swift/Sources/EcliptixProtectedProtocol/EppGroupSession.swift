@@ -1251,6 +1251,55 @@ public final class EppGroupSession {
         return data
     }
 
+    /// Serializes the group session state using a managed anti-rollback tracker.
+    public func serialize(key: Data, tracker: EppSealedStateCounterTracker) throws -> Data {
+        guard handle != nil else { throw EppError.objectDisposed }
+        guard tracker.handle != nil else { throw EppError.objectDisposed }
+        var outBuffer = NativeEppBuffer(data: nil, length: 0)
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = key.withUnsafeBytes { keyBytes in
+            native_epp_group_serialize_with_tracker(
+                handle,
+                keyBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                key.count,
+                tracker.handle,
+                &outBuffer,
+                &outError
+            )
+        }
+        defer {
+            if outBuffer.data != nil { native_epp_buffer_release(&outBuffer) }
+            native_epp_error_free(&outError)
+        }
+        guard result == EPP_SUCCESS else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+        guard let data = dataFromBuffer(outBuffer) else {
+            throw EppError.bufferTooSmall
+        }
+        return data
+    }
+
+    /// Exports the group session state into a managed persisted slot.
+    public func exportPersistedState(key: Data, slot: EppSealedStateSlot) throws {
+        guard handle != nil else { throw EppError.objectDisposed }
+        guard slot.handle != nil else { throw EppError.objectDisposed }
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = key.withUnsafeBytes { keyBytes in
+            native_epp_group_export_persisted_state(
+                handle,
+                keyBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                key.count,
+                slot.handle,
+                &outError
+            )
+        }
+        defer { native_epp_error_free(&outError) }
+        guard result == EPP_SUCCESS else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+    }
+
     /// Deserializes a previously sealed group session state.
     ///
     /// The `minExternalCounter` parameter prevents rollback attacks by rejecting
@@ -1293,6 +1342,67 @@ public final class EppGroupSession {
             throw EppError.from(code: result, nativeError: outError)
         }
         return (EppGroupSession(handle: handle), outCounter)
+    }
+
+    /// Deserializes a sealed group session using a managed anti-rollback
+    /// tracker. The tracker supplies the restore watermark and is updated only
+    /// after a successful restore.
+    public static func deserialize(
+        sealedState: Data,
+        key: Data,
+        tracker: EppSealedStateCounterTracker,
+        identity: EppIdentity
+    ) throws -> EppGroupSession {
+        guard tracker.handle != nil else { throw EppError.objectDisposed }
+        guard identity.handle != nil else { throw EppError.objectDisposed }
+        var outHandle: UnsafeMutableRawPointer?
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = sealedState.withUnsafeBytes { stateBytes in
+            key.withUnsafeBytes { keyBytes in
+                native_epp_group_deserialize_with_tracker(
+                    stateBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    sealedState.count,
+                    keyBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    key.count,
+                    tracker.handle,
+                    identity.handle,
+                    &outHandle,
+                    &outError
+                )
+            }
+        }
+        defer { native_epp_error_free(&outError) }
+        guard result == EPP_SUCCESS, let handle = outHandle else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+        return EppGroupSession(handle: handle)
+    }
+
+    /// Restores a group session from a managed persisted slot.
+    public static func restorePersistedState(
+        slot: EppSealedStateSlot,
+        key: Data,
+        identity: EppIdentity
+    ) throws -> EppGroupSession {
+        guard slot.handle != nil else { throw EppError.objectDisposed }
+        guard identity.handle != nil else { throw EppError.objectDisposed }
+        var outHandle: UnsafeMutableRawPointer?
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = key.withUnsafeBytes { keyBytes in
+            native_epp_group_restore_persisted_state(
+                slot.handle,
+                keyBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                key.count,
+                identity.handle,
+                &outHandle,
+                &outError
+            )
+        }
+        defer { native_epp_error_free(&outError) }
+        guard result == EPP_SUCCESS, let handle = outHandle else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+        return EppGroupSession(handle: handle)
     }
 
     /// Exports the public state of the group for external join operations.

@@ -1,14 +1,19 @@
 // Copyright (c) 2026 Oleksandr Melnychenko. All rights reserved.
 // SPDX-License-Identifier: MIT
 
-use ecliptix_protocol::api::{EcliptixGroupSession, EcliptixProtocol};
+use ecliptix_protocol::api::{
+    EcliptixGroupSession, EcliptixProtocol, EcliptixSession, EcliptixVoipSession,
+    SealedStateCounterTracker, SealedStateSlot,
+};
 use ecliptix_protocol::core::constants::{
-    HMAC_BYTES, MAX_BUFFER_SIZE, MAX_ENVELOPE_MESSAGE_SIZE, MAX_INFLIGHT_HANDSHAKE_INITS,
-    MAX_ONE_TIME_PRE_KEYS_PER_BUNDLE, MAX_PROTOBUF_MESSAGE_SIZE,
+    HMAC_BYTES, MAX_BUFFER_SIZE, MAX_ENVELOPE_MESSAGE_SIZE, MAX_GROUP_MESSAGE_SIZE,
+    MAX_INFLIGHT_HANDSHAKE_INITS, MAX_ONE_TIME_PRE_KEYS_PER_BUNDLE, MAX_PROTOBUF_MESSAGE_SIZE,
 };
 use ecliptix_protocol::crypto::CryptoInterop;
 use ecliptix_protocol::identity::IdentityKeys;
-use ecliptix_protocol::proto::{OneTimePreKey, PreKeyBundle};
+use ecliptix_protocol::proto::{
+    GroupCommit, GroupExternalJoinAuthorization, OneTimePreKey, PreKeyBundle,
+};
 use ecliptix_protocol::protocol::GroupSecurityPolicy;
 use prost::Message;
 use std::sync::Once;
@@ -43,6 +48,71 @@ fn authorize_external_join_api(
             credential,
         )
         .unwrap()
+}
+
+fn resign_external_join_authorization_for_api_test(
+    authorization: &mut GroupExternalJoinAuthorization,
+    signer_secret: &[u8],
+) -> Vec<u8> {
+    authorization.authorizer_signature.clear();
+
+    let mut auth_for_sig = Vec::new();
+    authorization.encode(&mut auth_for_sig).unwrap();
+
+    let signer_secret: [u8; 64] = signer_secret.try_into().unwrap();
+    let signing_key = ed25519_dalek::SigningKey::from_keypair_bytes(&signer_secret).unwrap();
+    use ed25519_dalek::Signer;
+    authorization.authorizer_signature = signing_key.sign(&auth_for_sig).to_bytes().to_vec();
+
+    let mut signed = Vec::new();
+    authorization.encode(&mut signed).unwrap();
+    signed
+}
+
+fn resign_group_commit_for_api_test(commit: &mut GroupCommit, signer_secret: &[u8]) -> Vec<u8> {
+    commit.committer_signature.clear();
+
+    let mut commit_for_sig = Vec::new();
+    commit.encode(&mut commit_for_sig).unwrap();
+
+    let signer_secret: [u8; 64] = signer_secret.try_into().unwrap();
+    let signing_key = ed25519_dalek::SigningKey::from_keypair_bytes(&signer_secret).unwrap();
+    use ed25519_dalek::Signer;
+    commit.committer_signature = signing_key.sign(&commit_for_sig).to_bytes().to_vec();
+
+    let mut signed = Vec::new();
+    commit.encode(&mut signed).unwrap();
+    signed
+}
+
+fn extract_voip_peer_material(bundle_bytes: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let bundle = PreKeyBundle::decode(bundle_bytes).unwrap();
+    (bundle.kyber_public, bundle.identity_ed25519_public)
+}
+
+fn create_api_voip_session_pair() -> (
+    EcliptixProtocol,
+    EcliptixProtocol,
+    EcliptixVoipSession,
+    EcliptixVoipSession,
+    Vec<u8>,
+    Vec<u8>,
+) {
+    let alice = EcliptixProtocol::new(5).unwrap();
+    let bob = EcliptixProtocol::new(5).unwrap();
+    let (alice_kyber, alice_ed25519) = extract_voip_peer_material(&alice.pre_key_bundle().unwrap());
+    let (bob_kyber, bob_ed25519) = extract_voip_peer_material(&bob.pre_key_bundle().unwrap());
+    let (initiator, call_init) = alice.initiate_call(&bob_kyber, false, 512, 60).unwrap();
+    let (bob_session, call_accept) = bob.accept_call(&call_init, &alice_kyber).unwrap();
+    let alice_session = alice.complete_call(initiator, &call_accept).unwrap();
+    (
+        alice,
+        bob,
+        alice_session,
+        bob_session,
+        alice_ed25519,
+        bob_ed25519,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +255,137 @@ fn api_p2p_session_serialize_deserialize() {
 }
 
 #[test]
+fn api_sealed_state_counter_tracker_serialization_roundtrip() {
+    let mut tracker = SealedStateCounterTracker::new();
+    assert_eq!(tracker.next_export_counter().unwrap(), 1);
+    tracker.note_successful_export(1).unwrap();
+    tracker.note_successful_restore(1).unwrap();
+    assert_eq!(tracker.max_restored_counter(), 1);
+    assert_eq!(tracker.latest_issued_counter(), 1);
+
+    let encoded = tracker.serialize();
+    let decoded = SealedStateCounterTracker::deserialize(&encoded).unwrap();
+    assert_eq!(decoded, tracker);
+}
+
+#[test]
+fn api_sealed_state_slot_serialization_roundtrip() {
+    let mut slot = SealedStateSlot::new();
+    slot.note_successful_export(1, vec![1, 2, 3, 4]).unwrap();
+    slot.note_successful_restore(1).unwrap();
+
+    let encoded = slot.serialize().unwrap();
+    let decoded = SealedStateSlot::deserialize(&encoded).unwrap();
+    assert_eq!(decoded, slot);
+    assert_eq!(decoded.max_restored_counter(), 1);
+    assert_eq!(decoded.latest_issued_counter(), 1);
+    assert_eq!(decoded.sealed_state(), &[1, 2, 3, 4]);
+}
+
+#[test]
+fn api_p2p_session_counter_tracker_restores_latest_and_rejects_rollback() {
+    init();
+
+    let mut alice = EcliptixProtocol::new(5).unwrap();
+    let mut bob = EcliptixProtocol::new(5).unwrap();
+
+    let bob_bundle = bob.pre_key_bundle().unwrap();
+    let (initiator, init_msg) = alice.begin_session(&bob_bundle).unwrap();
+    let (responder, ack_msg) = bob.accept_session(&init_msg).unwrap();
+
+    let mut alice_session = initiator.complete(&ack_msg).unwrap();
+    let mut bob_session = responder.complete().unwrap();
+
+    let ct1 = alice_session.encrypt(b"before", 0, 1, None).unwrap();
+    let _ = bob_session.decrypt(&ct1).unwrap();
+
+    let key = vec![0x44u8; 32];
+    let mut tracker = SealedStateCounterTracker::new();
+    let sealed1 = alice_session
+        .serialize_with_counter_tracker(&key, &mut tracker)
+        .unwrap();
+    let tracker_bytes = tracker.serialize();
+
+    let mut restart_tracker = SealedStateCounterTracker::deserialize(&tracker_bytes).unwrap();
+    let mut restored =
+        EcliptixSession::deserialize_with_counter_tracker(&sealed1, &key, &mut restart_tracker)
+            .unwrap();
+    assert_eq!(restart_tracker.max_restored_counter(), 1);
+    assert_eq!(restart_tracker.latest_issued_counter(), 1);
+
+    let ct2 = restored
+        .encrypt(b"after managed restore", 0, 2, None)
+        .unwrap();
+    let result = bob_session.decrypt(&ct2).unwrap();
+    assert_eq!(result.plaintext, b"after managed restore");
+
+    let sealed2 = restored
+        .serialize_with_counter_tracker(&key, &mut restart_tracker)
+        .unwrap();
+    assert_eq!(restart_tracker.max_restored_counter(), 1);
+    assert_eq!(restart_tracker.latest_issued_counter(), 2);
+
+    let tracker_after_export = restart_tracker.serialize();
+    let mut next_restart = SealedStateCounterTracker::deserialize(&tracker_after_export).unwrap();
+    assert!(
+        EcliptixSession::deserialize_with_counter_tracker(&sealed1, &key, &mut next_restart)
+            .is_err()
+    );
+    let mut latest =
+        EcliptixSession::deserialize_with_counter_tracker(&sealed2, &key, &mut next_restart)
+            .unwrap();
+    assert_eq!(next_restart.max_restored_counter(), 2);
+    assert_eq!(next_restart.latest_issued_counter(), 2);
+
+    let ct3 = latest.encrypt(b"latest only", 0, 3, None).unwrap();
+    let result = bob_session.decrypt(&ct3).unwrap();
+    assert_eq!(result.plaintext, b"latest only");
+}
+
+#[test]
+fn api_p2p_session_slot_roundtrip() {
+    init();
+
+    let mut alice = EcliptixProtocol::new(5).unwrap();
+    let mut bob = EcliptixProtocol::new(5).unwrap();
+
+    let bob_bundle = bob.pre_key_bundle().unwrap();
+    let (initiator, init_msg) = alice.begin_session(&bob_bundle).unwrap();
+    let (responder, ack_msg) = bob.accept_session(&init_msg).unwrap();
+
+    let mut alice_session = initiator.complete(&ack_msg).unwrap();
+    let mut bob_session = responder.complete().unwrap();
+
+    let ct1 = alice_session.encrypt(b"before", 0, 1, None).unwrap();
+    let _ = bob_session.decrypt(&ct1).unwrap();
+
+    let key = vec![0x24u8; 32];
+    let mut slot = SealedStateSlot::new();
+    alice_session.export_to_slot(&key, &mut slot).unwrap();
+    let slot_bytes = slot.serialize().unwrap();
+
+    let mut restart_slot = SealedStateSlot::deserialize(&slot_bytes).unwrap();
+    let mut restored = EcliptixSession::restore_from_slot(&mut restart_slot, &key).unwrap();
+    assert_eq!(restart_slot.max_restored_counter(), 1);
+    assert_eq!(restart_slot.latest_issued_counter(), 1);
+
+    let ct2 = restored.encrypt(b"after slot restore", 0, 2, None).unwrap();
+    let result = bob_session.decrypt(&ct2).unwrap();
+    assert_eq!(result.plaintext, b"after slot restore");
+
+    restored.export_to_slot(&key, &mut restart_slot).unwrap();
+    let next_slot_bytes = restart_slot.serialize().unwrap();
+    let mut next_restart = SealedStateSlot::deserialize(&next_slot_bytes).unwrap();
+    let mut latest = EcliptixSession::restore_from_slot(&mut next_restart, &key).unwrap();
+    assert_eq!(next_restart.max_restored_counter(), 2);
+    assert_eq!(next_restart.latest_issued_counter(), 2);
+
+    let ct3 = latest.encrypt(b"latest slot only", 0, 3, None).unwrap();
+    let result = bob_session.decrypt(&ct3).unwrap();
+    assert_eq!(result.plaintext, b"latest slot only");
+}
+
+#[test]
 fn api_p2p_session_serialize_wrong_key_fails() {
     init();
 
@@ -271,9 +472,9 @@ fn api_p2p_begin_session_rejects_bundle_with_too_many_opks() {
     let mut bundle = PreKeyBundle::decode(bundle_bytes.as_slice()).unwrap();
 
     let mut opks = Vec::new();
-    for i in 0..(MAX_ONE_TIME_PRE_KEYS_PER_BUNDLE + 1) {
+    for i in 0..=MAX_ONE_TIME_PRE_KEYS_PER_BUNDLE {
         opks.push(OneTimePreKey {
-            one_time_pre_key_id: i as u32 + 1,
+            one_time_pre_key_id: u32::try_from(i).unwrap() + 1,
             public_key: bundle.signed_pre_key_public.clone(),
         });
     }
@@ -360,6 +561,152 @@ fn api_p2p_decrypt_wrong_session_fails() {
     let ct = alice_bob.encrypt(b"for bob only", 0, 1, None).unwrap();
     let result = charlie_session.decrypt(&ct);
     assert!(result.is_err());
+}
+
+#[test]
+fn api_voip_signed_recording_consent_and_metadata_wrappers() {
+    init();
+
+    let (alice, bob, alice_session, bob_session, alice_ed25519, bob_ed25519) =
+        create_api_voip_session_pair();
+
+    alice_session
+        .set_screen_share_meta(1920, 1080, 30, Some("H264"))
+        .unwrap();
+    assert_eq!(
+        alice_session.get_screen_share_meta().unwrap(),
+        Some((1920, 1080, 30, Some("H264".to_string())))
+    );
+
+    let encrypted = alice_session
+        .encrypt_frame(111, alice_session.ssrc(), 160, 1, b"opus-frame")
+        .unwrap();
+    let decrypted = bob_session.decrypt_frame(&encrypted).unwrap();
+    assert_eq!(decrypted.payload, b"opus-frame");
+
+    let alice_stats = alice_session.get_call_statistics().unwrap();
+    assert_eq!(alice_stats.frames_sent, 1);
+    let bob_stats = bob_session.get_call_statistics().unwrap();
+    assert_eq!(bob_stats.frames_received, 1);
+
+    let alice_consent = alice
+        .build_call_recording_consent_message(&alice_session, 1, 1_700_000_000)
+        .unwrap();
+    assert_eq!(alice_session.get_local_recording_consent().unwrap(), 1);
+    bob.process_call_recording_consent_message(&bob_session, &alice_consent, &alice_ed25519)
+        .unwrap();
+    assert_eq!(bob_session.get_remote_recording_consent().unwrap(), 1);
+    assert!(!bob_session.both_consented_to_recording().unwrap());
+
+    let bob_consent = bob
+        .build_call_recording_consent_message(&bob_session, 1, 1_700_000_001)
+        .unwrap();
+    assert_eq!(bob_session.get_local_recording_consent().unwrap(), 1);
+    alice
+        .process_call_recording_consent_message(&alice_session, &bob_consent, &bob_ed25519)
+        .unwrap();
+    assert_eq!(alice_session.get_remote_recording_consent().unwrap(), 1);
+    assert!(alice_session.both_consented_to_recording().unwrap());
+    assert!(bob_session.both_consented_to_recording().unwrap());
+
+    alice_session.clear_screen_share_meta().unwrap();
+    assert_eq!(alice_session.get_screen_share_meta().unwrap(), None);
+}
+
+#[test]
+fn api_voip_counter_tracker_restores_latest_and_rejects_rollback() {
+    init();
+
+    let (alice, _bob, alice_session, bob_session, _alice_ed25519, _bob_ed25519) =
+        create_api_voip_session_pair();
+
+    let state_key = vec![0x61u8; 32];
+    let mut tracker = SealedStateCounterTracker::new();
+    let sealed1 = alice_session
+        .export_sealed_state_with_counter_tracker(&state_key, &mut tracker)
+        .unwrap();
+    let tracker_bytes = tracker.serialize();
+
+    let mut restart_tracker = SealedStateCounterTracker::deserialize(&tracker_bytes).unwrap();
+    let restored = alice
+        .import_call_state_with_counter_tracker(&sealed1, &state_key, &mut restart_tracker)
+        .unwrap();
+    assert_eq!(restart_tracker.max_restored_counter(), 1);
+    assert_eq!(restart_tracker.latest_issued_counter(), 1);
+
+    let encrypted = restored
+        .encrypt_frame(111, restored.ssrc(), 160, 1, b"managed-voip")
+        .unwrap();
+    let decrypted = bob_session.decrypt_frame(&encrypted).unwrap();
+    assert_eq!(decrypted.payload, b"managed-voip");
+
+    let sealed2 = restored
+        .export_sealed_state_with_counter_tracker(&state_key, &mut restart_tracker)
+        .unwrap();
+    let tracker_after_export = restart_tracker.serialize();
+
+    let mut next_restart = SealedStateCounterTracker::deserialize(&tracker_after_export).unwrap();
+    assert!(EcliptixVoipSession::from_sealed_state_with_counter_tracker(
+        &sealed1,
+        &state_key,
+        &mut next_restart,
+    )
+    .is_err());
+    let latest = EcliptixVoipSession::from_sealed_state_with_counter_tracker(
+        &sealed2,
+        &state_key,
+        &mut next_restart,
+    )
+    .unwrap();
+    assert_eq!(next_restart.max_restored_counter(), 2);
+    assert_eq!(next_restart.latest_issued_counter(), 2);
+
+    let encrypted = latest
+        .encrypt_frame(111, latest.ssrc(), 320, 2, b"latest-voip")
+        .unwrap();
+    let decrypted = bob_session.decrypt_frame(&encrypted).unwrap();
+    assert_eq!(decrypted.payload, b"latest-voip");
+}
+
+#[test]
+fn api_voip_slot_roundtrip() {
+    init();
+
+    let (alice, _bob, alice_session, bob_session, _alice_ed25519, _bob_ed25519) =
+        create_api_voip_session_pair();
+
+    let state_key = vec![0x62u8; 32];
+    let mut slot = SealedStateSlot::new();
+    alice_session.export_to_slot(&state_key, &mut slot).unwrap();
+    let slot_bytes = slot.serialize().unwrap();
+
+    let mut restart_slot = SealedStateSlot::deserialize(&slot_bytes).unwrap();
+    let restored = alice
+        .import_call_state_from_slot(&mut restart_slot, &state_key)
+        .unwrap();
+    assert_eq!(restart_slot.max_restored_counter(), 1);
+    assert_eq!(restart_slot.latest_issued_counter(), 1);
+
+    let encrypted = restored
+        .encrypt_frame(111, restored.ssrc(), 160, 1, b"slot-voip")
+        .unwrap();
+    let decrypted = bob_session.decrypt_frame(&encrypted).unwrap();
+    assert_eq!(decrypted.payload, b"slot-voip");
+
+    restored
+        .export_to_slot(&state_key, &mut restart_slot)
+        .unwrap();
+    let next_slot_bytes = restart_slot.serialize().unwrap();
+    let mut next_restart = SealedStateSlot::deserialize(&next_slot_bytes).unwrap();
+    let latest = EcliptixVoipSession::restore_from_slot(&mut next_restart, &state_key).unwrap();
+    assert_eq!(next_restart.max_restored_counter(), 2);
+    assert_eq!(next_restart.latest_issued_counter(), 2);
+
+    let encrypted = latest
+        .encrypt_frame(111, latest.ssrc(), 320, 2, b"latest-slot-voip")
+        .unwrap();
+    let decrypted = bob_session.decrypt_frame(&encrypted).unwrap();
+    assert_eq!(decrypted.payload, b"latest-slot-voip");
 }
 
 // ---------------------------------------------------------------------------
@@ -472,6 +819,158 @@ fn api_group_external_join() {
 }
 
 #[test]
+fn api_group_external_join_rejects_stale_authorization() {
+    init();
+
+    let alice_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_group = alice_proto
+        .create_group_with_policy(b"alice".to_vec(), permissive_group_policy())
+        .unwrap();
+
+    let charlie_proto = EcliptixProtocol::new(5).unwrap();
+    let authorization = authorize_external_join_api(&alice_group, &charlie_proto, b"charlie");
+
+    let _commit = alice_group.update().unwrap();
+    let public_state = alice_group.export_public_state().unwrap();
+
+    let result =
+        charlie_proto.join_group_external(&public_state, &authorization, b"charlie".to_vec());
+    assert!(result.is_err());
+}
+
+#[test]
+fn api_group_external_join_rejects_expired_authorization() {
+    init();
+
+    let alice_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_group = alice_proto
+        .create_group_with_policy(b"alice".to_vec(), permissive_group_policy())
+        .unwrap();
+    let public_state = alice_group.export_public_state().unwrap();
+
+    let charlie_proto = EcliptixProtocol::new(5).unwrap();
+    let mut authorization = GroupExternalJoinAuthorization::decode(
+        authorize_external_join_api(&alice_group, &charlie_proto, b"charlie").as_slice(),
+    )
+    .unwrap();
+    authorization.issued_at_unix = 1;
+    authorization.expires_at_unix = 2;
+
+    let alice_secret = alice_proto.get_identity_ed25519_private_key_copy().unwrap();
+    let expired_authorization = resign_external_join_authorization_for_api_test(
+        &mut authorization,
+        alice_secret.as_slice(),
+    );
+
+    let result = charlie_proto.join_group_external(
+        &public_state,
+        &expired_authorization,
+        b"charlie".to_vec(),
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn api_group_external_join_rejects_unsupported_authorization_format() {
+    init();
+
+    let alice_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_group = alice_proto
+        .create_group_with_policy(b"alice".to_vec(), permissive_group_policy())
+        .unwrap();
+    let public_state = alice_group.export_public_state().unwrap();
+
+    let charlie_proto = EcliptixProtocol::new(5).unwrap();
+    let mut authorization = GroupExternalJoinAuthorization::decode(
+        authorize_external_join_api(&alice_group, &charlie_proto, b"charlie").as_slice(),
+    )
+    .unwrap();
+    authorization.auth_format_version = 0;
+
+    let alice_secret = alice_proto.get_identity_ed25519_private_key_copy().unwrap();
+    let tampered_authorization = resign_external_join_authorization_for_api_test(
+        &mut authorization,
+        alice_secret.as_slice(),
+    );
+
+    let result = charlie_proto.join_group_external(
+        &public_state,
+        &tampered_authorization,
+        b"charlie".to_vec(),
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn api_group_external_join_commit_accepts_delayed_apply_after_authorization_expiry() {
+    init();
+
+    let alice_proto = EcliptixProtocol::new(5).unwrap();
+    let bob_proto = EcliptixProtocol::new(5).unwrap();
+    let carol_proto = EcliptixProtocol::new(5).unwrap();
+
+    let alice_group = alice_proto
+        .create_group_with_policy(b"alice".to_vec(), permissive_group_policy())
+        .unwrap();
+
+    let (bob_kp_bytes, bob_x25519, bob_kyber) =
+        bob_proto.generate_key_package(b"bob".to_vec()).unwrap();
+    let (_commit, welcome) = alice_group.add_member(&bob_kp_bytes).unwrap();
+    let bob_group = bob_proto
+        .join_group(&welcome, bob_x25519, bob_kyber)
+        .unwrap();
+
+    let state_key = vec![0xA5; 32];
+    let bob_sealed = bob_group.serialize(&state_key, 1).unwrap();
+
+    let authorization = authorize_external_join_api(&alice_group, &carol_proto, b"carol");
+    let public_state = alice_group.export_public_state().unwrap();
+    let (carol_group, ext_commit) = carol_proto
+        .join_group_external(&public_state, &authorization, b"carol".to_vec())
+        .unwrap();
+
+    let mut commit = GroupCommit::decode(ext_commit.as_slice()).unwrap();
+    let external_init = commit
+        .proposals
+        .iter_mut()
+        .find_map(|proposal| match proposal.proposal.as_mut() {
+            Some(ecliptix_protocol::proto::group_proposal::Proposal::ExternalInit(ext)) => {
+                Some(ext)
+            }
+            _ => None,
+        })
+        .unwrap();
+
+    let mut auth =
+        GroupExternalJoinAuthorization::decode(external_init.authorization.as_slice()).unwrap();
+    auth.issued_at_unix = 1;
+    auth.expires_at_unix = 2;
+
+    let alice_secret = alice_proto.get_identity_ed25519_private_key_copy().unwrap();
+    external_init.authorization =
+        resign_external_join_authorization_for_api_test(&mut auth, alice_secret.as_slice());
+
+    let carol_secret = carol_proto.get_identity_ed25519_private_key_copy().unwrap();
+    let expired_commit = resign_group_commit_for_api_test(&mut commit, carol_secret.as_slice());
+
+    alice_group.process_commit(&expired_commit).unwrap();
+
+    let bob_secret = bob_proto.get_identity_ed25519_private_key_copy().unwrap();
+    let (bob_restored, restored_counter) =
+        EcliptixGroupSession::deserialize(&bob_sealed, &state_key, bob_secret, 0).unwrap();
+    assert_eq!(restored_counter, 1);
+    bob_restored.process_commit(&expired_commit).unwrap();
+
+    let ct = carol_group
+        .encrypt(b"carol after delayed api external join")
+        .unwrap();
+    let pt_alice = alice_group.decrypt(&ct).unwrap();
+    let pt_bob = bob_restored.decrypt(&ct).unwrap();
+    assert_eq!(pt_alice.plaintext, b"carol after delayed api external join");
+    assert_eq!(pt_bob.plaintext, b"carol after delayed api external join");
+}
+
+#[test]
 fn api_group_serialize_deserialize() {
     init();
 
@@ -499,6 +998,94 @@ fn api_group_serialize_deserialize() {
 }
 
 #[test]
+fn api_group_counter_tracker_restores_latest_and_rejects_rollback() {
+    init();
+
+    let proto = EcliptixProtocol::new(5).unwrap();
+    let session = proto.create_group(b"cred".to_vec()).unwrap();
+    let key = vec![0x77u8; 32];
+    let mut tracker = SealedStateCounterTracker::new();
+
+    let sealed1 = session
+        .serialize_with_counter_tracker(&key, &mut tracker)
+        .unwrap();
+    let tracker_bytes = tracker.serialize();
+
+    let mut restart_tracker = SealedStateCounterTracker::deserialize(&tracker_bytes).unwrap();
+    let restored = EcliptixGroupSession::deserialize_with_counter_tracker(
+        &sealed1,
+        &key,
+        proto.get_identity_ed25519_private_key_copy().unwrap(),
+        &mut restart_tracker,
+    )
+    .unwrap();
+    assert_eq!(restart_tracker.max_restored_counter(), 1);
+    assert_eq!(restart_tracker.latest_issued_counter(), 1);
+    assert_eq!(session.group_id().unwrap(), restored.group_id().unwrap());
+
+    let sealed2 = restored
+        .serialize_with_counter_tracker(&key, &mut restart_tracker)
+        .unwrap();
+    let tracker_after_export = restart_tracker.serialize();
+
+    let mut next_restart = SealedStateCounterTracker::deserialize(&tracker_after_export).unwrap();
+    assert!(EcliptixGroupSession::deserialize_with_counter_tracker(
+        &sealed1,
+        &key,
+        proto.get_identity_ed25519_private_key_copy().unwrap(),
+        &mut next_restart,
+    )
+    .is_err());
+    let latest = EcliptixGroupSession::deserialize_with_counter_tracker(
+        &sealed2,
+        &key,
+        proto.get_identity_ed25519_private_key_copy().unwrap(),
+        &mut next_restart,
+    )
+    .unwrap();
+    assert_eq!(next_restart.max_restored_counter(), 2);
+    assert_eq!(next_restart.latest_issued_counter(), 2);
+    assert_eq!(session.group_id().unwrap(), latest.group_id().unwrap());
+}
+
+#[test]
+fn api_group_slot_roundtrip() {
+    init();
+
+    let proto = EcliptixProtocol::new(5).unwrap();
+    let session = proto.create_group(b"cred".to_vec()).unwrap();
+    let key = vec![0x87u8; 32];
+    let mut slot = SealedStateSlot::new();
+
+    session.export_to_slot(&key, &mut slot).unwrap();
+    let slot_bytes = slot.serialize().unwrap();
+
+    let mut restart_slot = SealedStateSlot::deserialize(&slot_bytes).unwrap();
+    let restored = EcliptixGroupSession::restore_from_slot(
+        &mut restart_slot,
+        &key,
+        proto.get_identity_ed25519_private_key_copy().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(restart_slot.max_restored_counter(), 1);
+    assert_eq!(restart_slot.latest_issued_counter(), 1);
+    assert_eq!(session.group_id().unwrap(), restored.group_id().unwrap());
+
+    restored.export_to_slot(&key, &mut restart_slot).unwrap();
+    let next_slot_bytes = restart_slot.serialize().unwrap();
+    let mut next_restart = SealedStateSlot::deserialize(&next_slot_bytes).unwrap();
+    let latest = EcliptixGroupSession::restore_from_slot(
+        &mut next_restart,
+        &key,
+        proto.get_identity_ed25519_private_key_copy().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(next_restart.max_restored_counter(), 2);
+    assert_eq!(next_restart.latest_issued_counter(), 2);
+    assert_eq!(session.group_id().unwrap(), latest.group_id().unwrap());
+}
+
+#[test]
 fn api_group_serialize_wrong_key_fails() {
     init();
 
@@ -512,6 +1099,31 @@ fn api_group_serialize_wrong_key_fails() {
     let wrong_key = vec![0xFFu8; 32];
     let result = EcliptixGroupSession::deserialize(&sealed, &wrong_key, ed_secret, 0);
     assert!(result.is_err());
+}
+
+#[test]
+fn api_group_deserialize_wrong_identity_secret_rejected() {
+    init();
+
+    let alice_proto = EcliptixProtocol::new(0).unwrap();
+    let mallory_proto = EcliptixProtocol::new(0).unwrap();
+    let session = alice_proto.create_group(b"cred".to_vec()).unwrap();
+
+    let key = vec![0x99u8; 32];
+    let sealed = session.serialize(&key, 1).unwrap();
+
+    let wrong_secret = mallory_proto
+        .get_identity_ed25519_private_key_copy()
+        .unwrap();
+    let result = EcliptixGroupSession::deserialize(&sealed, &key, wrong_secret, 0);
+    let Err(err) = result else {
+        panic!("Mismatched identity secret must be rejected");
+    };
+    let err = err.to_string();
+    assert!(
+        err.contains("does not match sealed group state"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
@@ -643,11 +1255,57 @@ fn api_group_add_member_invalid_key_package_fails() {
 }
 
 #[test]
+fn api_group_add_member_oversized_key_package_fails() {
+    init();
+
+    let proto = EcliptixProtocol::new(0).unwrap();
+    let session = proto.create_group(b"cred".to_vec()).unwrap();
+
+    let oversized = vec![0xAB; MAX_GROUP_MESSAGE_SIZE + 1];
+    let result = session.add_member(&oversized);
+    assert!(result.is_err());
+}
+
+#[test]
 fn api_group_join_external_invalid_state_fails() {
     init();
 
     let proto = EcliptixProtocol::new(0).unwrap();
     let result = proto.join_group_external(b"garbage", b"invalid-auth", b"cred".to_vec());
+    assert!(result.is_err());
+}
+
+#[test]
+fn api_group_join_external_oversized_authorization_fails() {
+    init();
+
+    let alice_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_group = alice_proto
+        .create_group_with_policy(b"alice".to_vec(), permissive_group_policy())
+        .unwrap();
+    let public_state = alice_group.export_public_state().unwrap();
+
+    let joiner = EcliptixProtocol::new(5).unwrap();
+    let oversized_auth = vec![0xCD; MAX_GROUP_MESSAGE_SIZE + 1];
+    let result = joiner.join_group_external(&public_state, &oversized_auth, b"join".to_vec());
+    assert!(result.is_err());
+}
+
+#[test]
+fn api_group_join_rejects_oversized_welcome() {
+    init();
+
+    let alice_proto = EcliptixProtocol::new(5).unwrap();
+    let bob_proto = EcliptixProtocol::new(5).unwrap();
+
+    let alice_group = alice_proto.create_group(b"alice".to_vec()).unwrap();
+    let (bob_kp, bob_x25519, bob_kyber) = bob_proto.generate_key_package(b"bob".to_vec()).unwrap();
+    let (_commit, welcome) = alice_group.add_member(&bob_kp).unwrap();
+
+    let mut oversized_welcome = welcome;
+    oversized_welcome.resize(MAX_GROUP_MESSAGE_SIZE + 1, 0x00);
+
+    let result = bob_proto.join_group(&oversized_welcome, bob_x25519, bob_kyber);
     assert!(result.is_err());
 }
 

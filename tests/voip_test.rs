@@ -8,7 +8,9 @@ use ecliptix_protocol::core::constants::*;
 use ecliptix_protocol::core::errors::ProtocolError;
 use ecliptix_protocol::crypto::{AesGcm, CryptoInterop, HkdfSha256, SecureMemoryHandle};
 use ecliptix_protocol::identity::IdentityKeys;
-use ecliptix_protocol::proto::{CallRekey, CallRekeyAck, PreKeyBundle, VoipSessionState};
+use ecliptix_protocol::proto::{
+    CallRekey, CallRekeyAck, PreKeyBundle, RecordingConsentMessage, VoipSessionState,
+};
 use ecliptix_protocol::protocol::voip::call_key_exchange::{
     callee_accept_with_context, caller_finish_with_context, caller_init_with_context,
     CallInitAuthContext,
@@ -1237,6 +1239,42 @@ fn voip_session_wrong_call_id_rejected() {
 }
 
 #[test]
+fn voip_session_rejects_oversized_encrypted_payload() {
+    init();
+    let (alice, bob) = setup_voip_session_pair(false);
+
+    let header = FrameHeader {
+        payload_type: 111,
+        ssrc: alice.ssrc(),
+        timestamp: 160,
+        sequence_number: 1,
+    };
+    let mut encrypted = alice.encrypt_frame(&header, b"audio").unwrap();
+    encrypted.encrypted_payload = vec![0xAA; MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE + 1];
+
+    let result = bob.decrypt_frame(&encrypted);
+    assert!(result.is_err());
+}
+
+#[test]
+fn voip_session_rejects_oversized_encrypted_header() {
+    init();
+    let (alice, bob) = setup_voip_session_pair(false);
+
+    let header = FrameHeader {
+        payload_type: 111,
+        ssrc: alice.ssrc(),
+        timestamp: 160,
+        sequence_number: 1,
+    };
+    let mut encrypted = alice.encrypt_frame(&header, b"audio").unwrap();
+    encrypted.encrypted_header = vec![0xBB; MAX_VOIP_ENCRYPTED_HEADER_SIZE + 1];
+
+    let result = bob.decrypt_frame(&encrypted);
+    assert!(result.is_err());
+}
+
+#[test]
 fn voip_session_end_call_prevents_further_encryption() {
     init();
     let (alice, _bob) = setup_voip_session_pair(false);
@@ -1270,6 +1308,28 @@ fn voip_session_end_call_prevents_further_decryption() {
     bob.end_call().unwrap();
     let result = bob.decrypt_frame(&encrypted);
     assert!(result.is_err());
+}
+
+#[test]
+fn voip_session_end_call_rejects_mutating_metadata_and_consent() {
+    init();
+    let (alice_id, _bob_id, alice, _bob) = setup_voip_session_pair_with_identities(false);
+
+    alice.end_call().unwrap();
+    assert!(alice.set_recording_consent(1).is_err());
+    assert!(alice
+        .set_screen_share_meta(1920, 1080, 30, Some("av1"))
+        .is_err());
+    assert!(alice.clear_screen_share_meta().is_err());
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let alice_ed_secret = alice_id.get_identity_ed25519_private_key_copy().unwrap();
+    assert!(alice
+        .build_recording_consent_message(1, now, &alice_ed_secret)
+        .is_err());
 }
 
 #[test]
@@ -1650,6 +1710,120 @@ fn voip_session_call_end_roundtrip() {
         .is_err());
 }
 
+#[test]
+fn voip_recording_consent_signed_roundtrip_and_replay_protection() {
+    init();
+    let (_alice_id, bob_id, alice, bob) = setup_voip_session_pair_with_identities(false);
+
+    alice.set_recording_consent(1).unwrap();
+    assert!(alice.set_remote_recording_consent(1).is_err());
+
+    let timestamp_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let bob_ed_secret = bob_id.get_identity_ed25519_private_key_copy().unwrap();
+    let bob_ed_public = bob_id.get_identity_ed25519_public();
+
+    let consent_message = bob
+        .build_recording_consent_message(1, timestamp_unix, &bob_ed_secret)
+        .unwrap();
+
+    assert_eq!(
+        alice
+            .process_recording_consent_message(&consent_message, &bob_ed_public)
+            .unwrap(),
+        1
+    );
+    assert_eq!(alice.get_remote_recording_consent().unwrap(), 1);
+    assert!(alice.both_consented_to_recording().unwrap());
+    assert!(alice
+        .process_recording_consent_message(&consent_message, &bob_ed_public)
+        .is_err());
+}
+
+#[test]
+fn voip_recording_consent_builder_updates_local_state_and_rejects_stale_or_future_timestamps() {
+    init();
+    let (alice_id, _bob_id, alice, _bob) = setup_voip_session_pair_with_identities(false);
+
+    let timestamp_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let alice_ed_secret = alice_id.get_identity_ed25519_private_key_copy().unwrap();
+
+    let grant = alice
+        .build_recording_consent_message(1, timestamp_unix, &alice_ed_secret)
+        .unwrap();
+    assert_eq!(alice.get_local_recording_consent().unwrap(), 1);
+    assert_eq!(
+        RecordingConsentMessage::decode(grant.as_slice())
+            .unwrap()
+            .consent,
+        1
+    );
+
+    assert!(alice
+        .build_recording_consent_message(0, timestamp_unix, &alice_ed_secret)
+        .is_err());
+    assert!(alice
+        .build_recording_consent_message(0, timestamp_unix.saturating_sub(1), &alice_ed_secret)
+        .is_err());
+
+    let revoke = alice
+        .build_recording_consent_message(0, timestamp_unix + 1, &alice_ed_secret)
+        .unwrap();
+    assert_eq!(alice.get_local_recording_consent().unwrap(), 0);
+    assert_eq!(
+        RecordingConsentMessage::decode(revoke.as_slice())
+            .unwrap()
+            .consent,
+        0
+    );
+
+    let far_future_timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .saturating_add(MAX_FUTURE_TIMESTAMP_SKEW_SECS + 1);
+    assert!(alice
+        .build_recording_consent_message(1, far_future_timestamp, &alice_ed_secret)
+        .is_err());
+}
+
+#[test]
+fn voip_recording_consent_tampered_or_wrong_signer_rejected() {
+    init();
+    let (alice_id, bob_id, alice, bob) = setup_voip_session_pair_with_identities(false);
+
+    let timestamp_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let bob_ed_secret = bob_id.get_identity_ed25519_private_key_copy().unwrap();
+    let bob_ed_public = bob_id.get_identity_ed25519_public();
+
+    let consent_message = bob
+        .build_recording_consent_message(1, timestamp_unix, &bob_ed_secret)
+        .unwrap();
+    let mut tampered = RecordingConsentMessage::decode(consent_message.as_slice()).unwrap();
+    tampered.consent = 2;
+    let mut tampered_bytes = Vec::new();
+    tampered.encode(&mut tampered_bytes).unwrap();
+    assert!(alice
+        .process_recording_consent_message(&tampered_bytes, &bob_ed_public)
+        .is_err());
+
+    let alice_ed_secret = alice_id.get_identity_ed25519_private_key_copy().unwrap();
+    let wrong_signer_message = bob
+        .build_recording_consent_message(1, timestamp_unix + 1, &alice_ed_secret)
+        .unwrap();
+    assert!(alice
+        .process_recording_consent_message(&wrong_signer_message, &bob_ed_public)
+        .is_err());
+}
+
 // ════════════════════════════════════════════════════════════════════
 // § 7  Relay-side VoIP validation
 // ════════════════════════════════════════════════════════════════════
@@ -1722,7 +1896,9 @@ impl VoipCallStore for InMemoryCallStore {
         }
 
         let mut calls = self.calls.lock().unwrap();
-        let pos = calls.iter().position(|existing| existing.call_id == call_id);
+        let pos = calls
+            .iter()
+            .position(|existing| existing.call_id == call_id);
         match (current, next, pos) {
             (None, Some(replacement), None) => {
                 calls.push(replacement.clone());
@@ -2324,6 +2500,217 @@ fn voip_sealed_state_header_body_counter_mismatch_rejected() {
 
     let result = VoipSession::from_sealed_state(&forged, &key, 0);
     assert!(result.is_err());
+}
+
+#[test]
+fn voip_sealed_state_persists_extended_metadata_and_created_at() {
+    init();
+    let (alice_id, bob_id, alice, bob) = setup_voip_session_pair_with_identities(false);
+
+    alice
+        .set_screen_share_meta(1920, 1080, 30, Some("av1"))
+        .unwrap();
+
+    let local_consent_timestamp_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let alice_ed_secret = alice_id.get_identity_ed25519_private_key_copy().unwrap();
+    alice
+        .build_recording_consent_message(1, local_consent_timestamp_unix, &alice_ed_secret)
+        .unwrap();
+
+    let consent_timestamp_unix = local_consent_timestamp_unix + 1;
+    let bob_ed_secret = bob_id.get_identity_ed25519_private_key_copy().unwrap();
+    let bob_ed_public = bob_id.get_identity_ed25519_public();
+    let consent_message = bob
+        .build_recording_consent_message(1, consent_timestamp_unix, &bob_ed_secret)
+        .unwrap();
+    alice
+        .process_recording_consent_message(&consent_message, &bob_ed_public)
+        .unwrap();
+
+    for i in 0u16..2 {
+        let enc = alice
+            .encrypt_frame(
+                &FrameHeader {
+                    payload_type: 111,
+                    ssrc: alice.ssrc(),
+                    timestamp: 160 * u32::from(i + 1),
+                    sequence_number: i + 1,
+                },
+                b"alice-frame",
+            )
+            .unwrap();
+        bob.decrypt_frame(&enc).unwrap();
+    }
+
+    let replay_candidate = bob
+        .encrypt_frame(
+            &FrameHeader {
+                payload_type: 111,
+                ssrc: bob.ssrc(),
+                timestamp: 480,
+                sequence_number: 1,
+            },
+            b"bob-frame-1",
+        )
+        .unwrap();
+    alice.decrypt_frame(&replay_candidate).unwrap();
+
+    let next_from_bob = bob
+        .encrypt_frame(
+            &FrameHeader {
+                payload_type: 111,
+                ssrc: bob.ssrc(),
+                timestamp: 640,
+                sequence_number: 2,
+            },
+            b"bob-frame-2",
+        )
+        .unwrap();
+    alice.decrypt_frame(&next_from_bob).unwrap();
+    assert!(alice.decrypt_frame(&replay_candidate).is_err());
+
+    let stats_before = alice.get_call_statistics().unwrap();
+    assert_eq!(stats_before.frames_sent, 2);
+    assert_eq!(stats_before.frames_received, 2);
+    assert_eq!(stats_before.frames_dropped, 1);
+
+    let key = CryptoInterop::get_random_bytes(AES_KEY_BYTES);
+    let sealed = alice.export_sealed_state(&key, 17).unwrap();
+
+    let nonce_offset = 8;
+    let mac_offset = nonce_offset + AES_GCM_NONCE_BYTES;
+    let ct_offset = mac_offset + HMAC_BYTES;
+    let external_counter = u64::from_le_bytes(sealed[0..8].try_into().unwrap());
+    let nonce = &sealed[nonce_offset..mac_offset];
+    let ciphertext = &sealed[ct_offset..];
+
+    let state_bytes = AesGcm::decrypt(&key, nonce, ciphertext, &[]).unwrap();
+    let mut state = VoipSessionState::decode(state_bytes.as_slice()).unwrap();
+    assert_eq!(state.local_recording_consent, Some(1));
+    assert_eq!(state.remote_recording_consent, Some(1));
+    assert_eq!(
+        state.local_recording_consent_timestamp_unix,
+        local_consent_timestamp_unix
+    );
+    assert_eq!(
+        state.remote_recording_consent_timestamp_unix,
+        consent_timestamp_unix
+    );
+    assert_eq!(state.frames_sent, 2);
+    assert_eq!(state.frames_received, 2);
+    assert_eq!(state.frames_dropped, 1);
+    assert_eq!(state.total_rekey_count, alice.ratchet_generation());
+    let screen_share = state.screen_share_meta.as_ref().unwrap();
+    assert_eq!(screen_share.width, 1920);
+    assert_eq!(screen_share.height, 1080);
+    assert_eq!(screen_share.frame_rate, 30);
+    assert_eq!(screen_share.codec_hint.as_deref(), Some("av1"));
+
+    state.created_at_unix = state.created_at_unix.saturating_sub(45);
+    let mut modified_state = Vec::new();
+    state.encode(&mut modified_state).unwrap();
+    let modified_ct = AesGcm::encrypt(&key, nonce, &modified_state, &[]).unwrap();
+
+    let hmac_key = HkdfSha256::derive_key_bytes(
+        &key,
+        HMAC_BYTES,
+        &external_counter.to_le_bytes(),
+        b"Ecliptix-VoIP-StateHMAC",
+    )
+    .unwrap();
+    let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(&hmac_key).unwrap();
+    mac.update(&modified_ct);
+    mac.update(nonce);
+    let hmac_tag = mac.finalize().into_bytes();
+
+    let mut forged = Vec::new();
+    forged.extend_from_slice(&external_counter.to_le_bytes());
+    forged.extend_from_slice(nonce);
+    forged.extend_from_slice(&hmac_tag);
+    forged.extend_from_slice(&modified_ct);
+
+    let restored = VoipSession::from_sealed_state(&forged, &key, 0).unwrap();
+    let restored_stats = restored.get_call_statistics().unwrap();
+    assert_eq!(restored_stats.frames_sent, 2);
+    assert_eq!(restored_stats.frames_received, 2);
+    assert_eq!(restored_stats.frames_dropped, 1);
+    assert!(restored_stats.call_duration_secs >= 45);
+    assert_eq!(restored.get_local_recording_consent().unwrap(), 1);
+    assert_eq!(restored.get_remote_recording_consent().unwrap(), 1);
+    assert!(restored.both_consented_to_recording().unwrap());
+    assert!(restored
+        .build_recording_consent_message(0, local_consent_timestamp_unix, &alice_ed_secret)
+        .is_err());
+    let revoke = restored
+        .build_recording_consent_message(0, local_consent_timestamp_unix + 2, &alice_ed_secret)
+        .unwrap();
+    assert_eq!(restored.get_local_recording_consent().unwrap(), 0);
+    assert_eq!(
+        RecordingConsentMessage::decode(revoke.as_slice())
+            .unwrap()
+            .consent,
+        0
+    );
+    assert_eq!(
+        restored.get_screen_share_meta().unwrap(),
+        Some((1920, 1080, 30, Some(String::from("av1"))))
+    );
+}
+
+#[test]
+fn voip_sealed_state_rejects_future_recording_consent_timestamps() {
+    init();
+    let (alice_id, _bob_id, alice, _bob) = setup_voip_session_pair_with_identities(false);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let alice_ed_secret = alice_id.get_identity_ed25519_private_key_copy().unwrap();
+    alice
+        .build_recording_consent_message(1, now, &alice_ed_secret)
+        .unwrap();
+
+    let key = CryptoInterop::get_random_bytes(AES_KEY_BYTES);
+    let sealed = alice.export_sealed_state(&key, 9).unwrap();
+
+    let nonce_offset = 8;
+    let mac_offset = nonce_offset + AES_GCM_NONCE_BYTES;
+    let ct_offset = mac_offset + HMAC_BYTES;
+    let external_counter = u64::from_le_bytes(sealed[0..8].try_into().unwrap());
+    let nonce = &sealed[nonce_offset..mac_offset];
+    let ciphertext = &sealed[ct_offset..];
+
+    let state_bytes = AesGcm::decrypt(&key, nonce, ciphertext, &[]).unwrap();
+    let mut state = VoipSessionState::decode(state_bytes.as_slice()).unwrap();
+    state.local_recording_consent_timestamp_unix = now + MAX_FUTURE_TIMESTAMP_SKEW_SECS + 1;
+
+    let mut modified_state = Vec::new();
+    state.encode(&mut modified_state).unwrap();
+    let modified_ct = AesGcm::encrypt(&key, nonce, &modified_state, &[]).unwrap();
+
+    let hmac_key = HkdfSha256::derive_key_bytes(
+        &key,
+        HMAC_BYTES,
+        &external_counter.to_le_bytes(),
+        b"Ecliptix-VoIP-StateHMAC",
+    )
+    .unwrap();
+    let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(&hmac_key).unwrap();
+    mac.update(&modified_ct);
+    mac.update(nonce);
+    let hmac_tag = mac.finalize().into_bytes();
+
+    let mut forged = Vec::new();
+    forged.extend_from_slice(&external_counter.to_le_bytes());
+    forged.extend_from_slice(nonce);
+    forged.extend_from_slice(&hmac_tag);
+    forged.extend_from_slice(&modified_ct);
+
+    assert!(VoipSession::from_sealed_state(&forged, &key, 0).is_err());
 }
 
 // ════════════════════════════════════════════════════════════════════

@@ -111,6 +111,8 @@ pub const WELCOME_KEY_BYTES: usize = 32;
 pub const CONFIRMATION_KEY_BYTES: usize = 32;
 pub const REUSE_GUARD_BYTES: usize = 4;
 pub const GROUP_PROTOCOL_VERSION: u32 = 1;
+pub const GROUP_EXTERNAL_JOIN_AUTH_FORMAT_VERSION: u32 = 1;
+pub const GROUP_SEALED_STATE_VERSION: u32 = 1;
 
 pub const GROUP_EPOCH_SECRET_INFO: &[u8] = b"Ecliptix-Group-EpochSecret";
 pub const GROUP_SENDER_KEY_INFO: &[u8] = b"Ecliptix-Group-SenderKey";
@@ -166,6 +168,8 @@ pub const MESSAGE_ID_BYTES: usize = 32;
 pub const GROUP_MSG_ID_INFO: &[u8] = b"Ecliptix-Group-MsgId";
 
 pub const MAX_TTL_SECONDS: u32 = 7 * 24 * 3600;
+pub const MAX_FUTURE_TIMESTAMP_SKEW_SECS: u64 = 300;
+pub const EXTERNAL_JOIN_AUTH_VALIDITY_SECS: u64 = 600;
 
 pub const MESSAGE_PADDING_BLOCK_SIZE: usize = 64;
 

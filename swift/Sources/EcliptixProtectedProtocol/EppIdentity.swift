@@ -184,6 +184,23 @@ public final class EppIdentity {
         )
     }
 
+    /// Bind this identity to a manual or application-managed clock.
+    ///
+    /// Pass `nil` to reset the identity back to the native system clock.
+    public func setTimeProvider(_ timeProvider: EppTimeProvider?) throws {
+        guard handle != nil else { throw EppError.objectDisposed }
+        var outError = NativeEppError(code: 0, message: nil)
+        let result = native_epp_identity_set_time_provider(
+            handle,
+            timeProvider?.handle,
+            &outError
+        )
+        defer { native_epp_error_free(&outError) }
+        guard result == EPP_SUCCESS else {
+            throw EppError.from(code: result, nativeError: outError)
+        }
+    }
+
     public func ed25519FingerprintHex() throws -> String {
         try ed25519PublicKey.eppHexString
     }

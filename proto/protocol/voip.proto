@@ -154,6 +154,13 @@ message VoipSessionState {
   optional RecordingConsent local_recording_consent = 31;
   optional RecordingConsent remote_recording_consent = 32;
   uint32 total_rekey_count = 33;
+  uint64 created_at_unix = 34;
+  uint64 frames_sent = 35;
+  uint64 frames_received = 36;
+  uint64 frames_dropped = 37;
+  uint64 last_metrics_timestamp = 38;
+  uint64 remote_recording_consent_timestamp_unix = 39;
+  uint64 local_recording_consent_timestamp_unix = 40;
 }
 
 message CallQualityMetrics {

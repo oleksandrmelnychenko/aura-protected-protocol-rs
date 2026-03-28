@@ -40,6 +40,7 @@ struct IdentityKeysInner {
     signed_pre_key_public: Vec<u8>,
     signed_pre_key_signature: Vec<u8>,
     one_time_pre_keys: Vec<OneTimePreKey>,
+    one_time_pre_key_capacity: u32,
     kyber_secret_key: SecureMemoryHandle,
     kyber_public: Vec<u8>,
     pending_kyber_handshake: Option<HybridHandshakeArtifacts>,
@@ -62,6 +63,8 @@ impl IdentityKeys {
         let (spk_sk, spk_pk, spk_sig) = material.signed_pre_key.take();
         let (ed_sk, ed_pk) = material.ed25519.take();
         let (x_sk, x_pk) = material.identity_x25519.take();
+        let one_time_pre_key_capacity =
+            u32::try_from(material.one_time_pre_keys.len()).unwrap_or(u32::MAX);
         Self {
             inner: RwLock::new(IdentityKeysInner {
                 identity_ed25519_secret_key: ed_sk,
@@ -74,6 +77,7 @@ impl IdentityKeys {
                 signed_pre_key_public: spk_pk,
                 signed_pre_key_signature: spk_sig,
                 one_time_pre_keys: material.one_time_pre_keys,
+                one_time_pre_key_capacity,
                 kyber_secret_key: material.kyber_secret_key,
                 kyber_public: material.kyber_public,
                 pending_kyber_handshake: None,
@@ -512,6 +516,7 @@ impl IdentityKeys {
             .write()
             .map_err(|_| ProtocolError::invalid_state("IdentityKeys write lock poisoned"))?;
         inner.one_time_pre_keys.extend(new_opks);
+        inner.one_time_pre_key_capacity = inner.one_time_pre_key_capacity.saturating_add(count);
         Ok(pairs)
     }
 
@@ -534,8 +539,10 @@ impl IdentityKeys {
         inner.one_time_pre_keys.remove(pos);
 
         let remaining = u32::try_from(inner.one_time_pre_keys.len()).unwrap_or(u32::MAX);
-        let max_capacity = DEFAULT_ONE_TIME_KEY_COUNT;
-        let threshold = max_capacity * OTK_EXHAUSTION_WARNING_PERCENT / 100;
+        let max_capacity = inner.one_time_pre_key_capacity;
+        let threshold = max_capacity
+            .saturating_mul(OTK_EXHAUSTION_WARNING_PERCENT)
+            .div_ceil(100);
         if remaining <= threshold {
             if let Some(ref handler) = inner.event_handler {
                 handler.on_otk_exhaustion_warning(remaining, max_capacity);

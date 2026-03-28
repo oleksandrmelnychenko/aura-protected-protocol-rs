@@ -19,24 +19,28 @@ use prost::Message;
 use std::ffi::CString;
 use std::mem::size_of;
 use std::os::raw::{c_char, c_void};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use crate::api::{SealedStateCounterTracker, SealedStateSlot};
 use crate::core::constants::{
     AES_GCM_NONCE_BYTES, AES_KEY_BYTES, ATTACHMENT_FILE_KEY_BYTES, ATTACHMENT_HASH_BYTES,
-    ATTACHMENT_ID_BYTES, ATTACHMENT_PROTOCOL_VERSION, CALL_ID_BYTES,
-    DEFAULT_ONE_TIME_KEY_COUNT, ED25519_PUBLIC_KEY_BYTES, HMAC_BYTES,
-    KYBER_PUBLIC_KEY_BYTES, MAX_ATTACHMENT_CHUNK_SIZE, MAX_ATTACHMENT_ENCRYPTED_FILE_KEY_SIZE,
+    ATTACHMENT_ID_BYTES, ATTACHMENT_PROTOCOL_VERSION, CALL_ID_BYTES, DEFAULT_ONE_TIME_KEY_COUNT,
+    DEVICE_ID_BYTES, ED25519_PUBLIC_KEY_BYTES, HMAC_BYTES, KYBER_PUBLIC_KEY_BYTES,
+    MAX_ATTACHMENT_CHUNK_SIZE, MAX_ATTACHMENT_ENCRYPTED_FILE_KEY_SIZE,
     MAX_ATTACHMENT_MANIFEST_SIZE, MAX_ATTACHMENT_THUMBNAIL_SIZE, MAX_BUFFER_SIZE,
     MAX_COLLAGE_MANIFEST_SIZE, MAX_ENVELOPE_MESSAGE_SIZE, MAX_GROUP_MESSAGE_SIZE,
     MAX_HANDSHAKE_MESSAGE_SIZE, MAX_VOIP_ENCRYPTED_HEADER_SIZE, MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE,
-    DEVICE_ID_BYTES, MAX_VOIP_SIGNAL_MESSAGE_SIZE, MESSAGE_ID_BYTES, PROTOCOL_VERSION, PSK_BYTES,
-    ROOT_KEY_BYTES, X25519_PUBLIC_KEY_BYTES,
+    MAX_VOIP_SIGNAL_MESSAGE_SIZE, MESSAGE_ID_BYTES, PROTOCOL_VERSION, PSK_BYTES, ROOT_KEY_BYTES,
+    X25519_PUBLIC_KEY_BYTES,
 };
 use crate::core::errors::ProtocolError;
 use crate::crypto::SecureMemoryHandle;
 use crate::crypto::{CryptoInterop, KyberInterop};
 use crate::identity::IdentityKeys;
-use crate::interfaces::{IGroupEventHandler, IIdentityEventHandler, IProtocolEventHandler};
+use crate::interfaces::{
+    IGroupEventHandler, IIdentityEventHandler, IProtocolEventHandler, ITimeProvider,
+    SystemTimeProvider,
+};
 use crate::proto::{
     AttachmentManifest, AttachmentReference, ChunkProgress, CollageManifest, ContactCard,
     ContentPolicy, InlineAttachment, LinkPreview, LocationAttachment, OneTimePreKey, PreKeyBundle,
@@ -106,11 +110,48 @@ pub enum EppEnvelopeType {
     EppEnvelopeErrorResponse = 4,
 }
 
-pub struct EppIdentityHandle(pub Option<IdentityKeys>);
+pub struct EppIdentityState {
+    pub keys: IdentityKeys,
+    pub time_provider: Arc<dyn ITimeProvider>,
+}
+
+struct ManualTimeProvider {
+    now_unix: Mutex<u64>,
+}
+
+impl ITimeProvider for ManualTimeProvider {
+    fn now_unix_secs(&self) -> Result<u64, ProtocolError> {
+        self.now_unix
+            .lock()
+            .map(|guard| *guard)
+            .map_err(|_| ProtocolError::invalid_state("manual time provider mutex poisoned"))
+    }
+}
+
+enum EppTimeProvider {
+    Manual(Arc<ManualTimeProvider>),
+}
+
+impl EppTimeProvider {
+    fn as_trait_arc(&self) -> Arc<dyn ITimeProvider> {
+        match self {
+            Self::Manual(provider) => provider.clone(),
+        }
+    }
+}
+
+fn default_time_provider() -> Arc<dyn ITimeProvider> {
+    Arc::new(SystemTimeProvider)
+}
+
+pub struct EppIdentityHandle(pub Option<EppIdentityState>);
+pub struct EppTimeProviderHandle(Option<EppTimeProvider>);
 pub struct EppSessionHandle(pub Option<Session>);
 pub struct EppHandshakeInitiatorHandle(pub Option<HandshakeInitiator>);
 pub struct EppHandshakeResponderHandle(pub Option<HandshakeResponder>);
 pub struct EppGroupSessionHandle(pub Option<GroupSession>);
+pub struct EppSealedStateCounterTrackerHandle(pub Option<SealedStateCounterTracker>);
+pub struct EppSealedStateSlotHandle(pub Option<SealedStateSlot>);
 
 pub struct EppVoipSessionHandle(pub Option<crate::protocol::voip::VoipSession>);
 
@@ -137,6 +178,37 @@ pub struct EppDecryptedFrame {
     pub sequence_number: u16,
     pub frame_counter: u64,
     pub ratchet_generation: u32,
+}
+
+unsafe fn clear_encrypted_frame(frame: *mut EppEncryptedFrame) {
+    if frame.is_null() {
+        return;
+    }
+    (*frame).call_id.data = std::ptr::null_mut();
+    (*frame).call_id.length = 0;
+    (*frame).ssrc = 0;
+    (*frame).frame_counter = 0;
+    (*frame).ratchet_generation = 0;
+    (*frame).encrypted_payload.data = std::ptr::null_mut();
+    (*frame).encrypted_payload.length = 0;
+    (*frame).nonce.data = std::ptr::null_mut();
+    (*frame).nonce.length = 0;
+    (*frame).encrypted_header.data = std::ptr::null_mut();
+    (*frame).encrypted_header.length = 0;
+}
+
+unsafe fn clear_decrypted_frame(frame: *mut EppDecryptedFrame) {
+    if frame.is_null() {
+        return;
+    }
+    (*frame).payload.data = std::ptr::null_mut();
+    (*frame).payload.length = 0;
+    (*frame).payload_type = 0;
+    (*frame).ssrc = 0;
+    (*frame).timestamp = 0;
+    (*frame).sequence_number = 0;
+    (*frame).frame_counter = 0;
+    (*frame).ratchet_generation = 0;
 }
 
 pub struct EppKeyPackageSecretsHandle {
@@ -236,9 +308,14 @@ unsafe fn write_protocol_error(out_error: *mut EppError, e: &ProtocolError) -> E
 
 /// # Safety
 /// `out` must be null or point to a valid, writable `EppBuffer`.
+/// If it already contains an FFI-owned allocation from a previous call, that
+/// allocation is released before the new buffer is written.
 unsafe fn write_buffer(out: *mut EppBuffer, bytes: Vec<u8>) {
     if out.is_null() {
         return;
+    }
+    if !(*out).data.is_null() || (*out).length != 0 {
+        epp_buffer_release(out);
     }
     if bytes.is_empty() {
         (*out).data = std::ptr::null_mut();
@@ -249,6 +326,24 @@ unsafe fn write_buffer(out: *mut EppBuffer, bytes: Vec<u8>) {
     let boxed: Box<[u8]> = bytes.into_boxed_slice();
     (*out).data = Box::into_raw(boxed).cast::<u8>();
     (*out).length = len;
+}
+
+/// # Safety
+/// `out` must be null or point to a valid writable `*mut T`. `new_handle` must
+/// be a heap allocation previously created by `Box::into_raw` for `T`, or null.
+/// If `out` already stores an FFI-owned handle, it is destroyed before the new
+/// handle is written.
+unsafe fn replace_out_handle<T>(out: *mut *mut T, new_handle: *mut T) {
+    if out.is_null() {
+        if !new_handle.is_null() {
+            drop(Box::from_raw(new_handle));
+        }
+        return;
+    }
+    let old = std::ptr::replace(out, new_handle);
+    if !old.is_null() {
+        drop(Box::from_raw(old));
+    }
 }
 
 /// # Safety
@@ -265,11 +360,59 @@ unsafe fn require_identity_ref<'a>(
         );
         return Err(EppErrorCode::EppErrorNullPointer);
     }
-    (*handle).0.as_ref().ok_or_else(|| {
+    (*handle)
+        .0
+        .as_ref()
+        .map(|state| &state.keys)
+        .ok_or_else(|| {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorObjectDisposed,
+                "handle already destroyed",
+            );
+            EppErrorCode::EppErrorObjectDisposed
+        })
+}
+
+unsafe fn require_counter_tracker_mut<'a>(
+    handle: *mut EppSealedStateCounterTrackerHandle,
+    out_error: *mut EppError,
+) -> Result<&'a mut SealedStateCounterTracker, EppErrorCode> {
+    if handle.is_null() {
+        write_error(
+            out_error,
+            EppErrorCode::EppErrorNullPointer,
+            "counter tracker handle is null",
+        );
+        return Err(EppErrorCode::EppErrorNullPointer);
+    }
+    (*handle).0.as_mut().ok_or_else(|| {
         write_error(
             out_error,
             EppErrorCode::EppErrorObjectDisposed,
-            "handle already destroyed",
+            "counter tracker handle already destroyed",
+        );
+        EppErrorCode::EppErrorObjectDisposed
+    })
+}
+
+unsafe fn require_sealed_state_slot_mut<'a>(
+    handle: *mut EppSealedStateSlotHandle,
+    out_error: *mut EppError,
+) -> Result<&'a mut SealedStateSlot, EppErrorCode> {
+    if handle.is_null() {
+        write_error(
+            out_error,
+            EppErrorCode::EppErrorNullPointer,
+            "sealed-state slot handle is null",
+        );
+        return Err(EppErrorCode::EppErrorNullPointer);
+    }
+    (*handle).0.as_mut().ok_or_else(|| {
+        write_error(
+            out_error,
+            EppErrorCode::EppErrorObjectDisposed,
+            "sealed-state slot handle already destroyed",
         );
         EppErrorCode::EppErrorObjectDisposed
     })
@@ -289,14 +432,128 @@ unsafe fn require_identity_mut<'a>(
         );
         return Err(EppErrorCode::EppErrorNullPointer);
     }
-    (*handle).0.as_mut().ok_or_else(|| {
+    (*handle)
+        .0
+        .as_mut()
+        .map(|state| &mut state.keys)
+        .ok_or_else(|| {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorObjectDisposed,
+                "handle already destroyed",
+            );
+            EppErrorCode::EppErrorObjectDisposed
+        })
+}
+
+/// # Safety
+/// `handle` must be null or point to a live `EppIdentityHandle`.
+unsafe fn clone_identity_time_provider(
+    handle: *const EppIdentityHandle,
+    out_error: *mut EppError,
+) -> Result<Arc<dyn ITimeProvider>, EppErrorCode> {
+    if handle.is_null() {
         write_error(
             out_error,
-            EppErrorCode::EppErrorObjectDisposed,
-            "handle already destroyed",
+            EppErrorCode::EppErrorNullPointer,
+            "handle is null",
         );
-        EppErrorCode::EppErrorObjectDisposed
-    })
+        return Err(EppErrorCode::EppErrorNullPointer);
+    }
+    (*handle)
+        .0
+        .as_ref()
+        .map(|state| state.time_provider.clone())
+        .ok_or_else(|| {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorObjectDisposed,
+                "handle already destroyed",
+            );
+            EppErrorCode::EppErrorObjectDisposed
+        })
+}
+
+/// # Safety
+/// `handle` must be null or point to a live, exclusively-owned `EppIdentityHandle`.
+unsafe fn replace_identity_time_provider(
+    handle: *mut EppIdentityHandle,
+    time_provider: Arc<dyn ITimeProvider>,
+    out_error: *mut EppError,
+) -> Result<(), EppErrorCode> {
+    if handle.is_null() {
+        write_error(
+            out_error,
+            EppErrorCode::EppErrorNullPointer,
+            "handle is null",
+        );
+        return Err(EppErrorCode::EppErrorNullPointer);
+    }
+    match (*handle).0.as_mut() {
+        Some(state) => {
+            state.time_provider = time_provider;
+            Ok(())
+        }
+        None => {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorObjectDisposed,
+                "handle already destroyed",
+            );
+            Err(EppErrorCode::EppErrorObjectDisposed)
+        }
+    }
+}
+
+/// # Safety
+/// `handle` must be null or point to a live `EppTimeProviderHandle`. A null
+/// handle means "use the default system clock".
+unsafe fn clone_time_provider_or_default(
+    handle: *const EppTimeProviderHandle,
+    out_error: *mut EppError,
+) -> Result<Arc<dyn ITimeProvider>, EppErrorCode> {
+    if handle.is_null() {
+        return Ok(default_time_provider());
+    }
+    (*handle)
+        .0
+        .as_ref()
+        .map(EppTimeProvider::as_trait_arc)
+        .ok_or_else(|| {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorObjectDisposed,
+                "time provider handle already destroyed",
+            );
+            EppErrorCode::EppErrorObjectDisposed
+        })
+}
+
+/// # Safety
+/// `handle` must be null or point to a live `EppTimeProviderHandle`.
+unsafe fn require_manual_time_provider<'a>(
+    handle: *mut EppTimeProviderHandle,
+    out_error: *mut EppError,
+) -> Result<&'a Arc<ManualTimeProvider>, EppErrorCode> {
+    if handle.is_null() {
+        write_error(
+            out_error,
+            EppErrorCode::EppErrorNullPointer,
+            "time provider handle is null",
+        );
+        return Err(EppErrorCode::EppErrorNullPointer);
+    }
+    match (*handle).0.as_ref() {
+        Some(EppTimeProvider::Manual(provider)) => Ok(provider),
+        None => {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorObjectDisposed,
+                "time provider handle already destroyed",
+            );
+            Err(EppErrorCode::EppErrorObjectDisposed)
+        }
+    }
 }
 
 /// # Safety
@@ -394,7 +651,13 @@ pub unsafe extern "C" fn epp_identity_create(
         }
         match IdentityKeys::create(DEFAULT_ONE_TIME_KEY_COUNT) {
             Ok(keys) => {
-                *out_handle = Box::into_raw(Box::new(EppIdentityHandle(Some(keys))));
+                replace_out_handle(
+                    out_handle,
+                    Box::into_raw(Box::new(EppIdentityHandle(Some(EppIdentityState {
+                        keys,
+                        time_provider: default_time_provider(),
+                    })))),
+                );
                 EppErrorCode::EppSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
@@ -444,7 +707,13 @@ pub unsafe extern "C" fn epp_identity_create_from_seed(
             DEFAULT_ONE_TIME_KEY_COUNT,
         ) {
             Ok(keys) => {
-                *out_handle = Box::into_raw(Box::new(EppIdentityHandle(Some(keys))));
+                replace_out_handle(
+                    out_handle,
+                    Box::into_raw(Box::new(EppIdentityHandle(Some(EppIdentityState {
+                        keys,
+                        time_provider: default_time_provider(),
+                    })))),
+                );
                 EppErrorCode::EppSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
@@ -521,10 +790,96 @@ pub unsafe extern "C" fn epp_identity_create_with_context(
         match IdentityKeys::create_from_master_key(seed_slice, mid_str, DEFAULT_ONE_TIME_KEY_COUNT)
         {
             Ok(keys) => {
-                *out_handle = Box::into_raw(Box::new(EppIdentityHandle(Some(keys))));
+                replace_out_handle(
+                    out_handle,
+                    Box::into_raw(Box::new(EppIdentityHandle(Some(EppIdentityState {
+                        keys,
+                        time_provider: default_time_provider(),
+                    })))),
+                );
                 EppErrorCode::EppSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+/// # Safety
+/// See module-level FFI safety contract. `out_handle` must point to writable
+/// `*mut EppTimeProviderHandle`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_time_provider_manual_create(
+    initial_now_unix: u64,
+    out_handle: *mut *mut EppTimeProviderHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_handle.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_handle is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let provider = EppTimeProvider::Manual(Arc::new(ManualTimeProvider {
+            now_unix: Mutex::new(initial_now_unix),
+        }));
+        replace_out_handle(
+            out_handle,
+            Box::into_raw(Box::new(EppTimeProviderHandle(Some(provider)))),
+        );
+        EppErrorCode::EppSuccess
+    })
+}
+
+/// # Safety
+/// See module-level FFI safety contract.
+#[no_mangle]
+pub unsafe extern "C" fn epp_time_provider_manual_set_now_unix(
+    handle: *mut EppTimeProviderHandle,
+    now_unix: u64,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        let provider = match require_manual_time_provider(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        match provider.now_unix.lock() {
+            Ok(mut guard) => {
+                *guard = now_unix;
+                EppErrorCode::EppSuccess
+            }
+            Err(_) => {
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorInvalidState,
+                    "manual time provider mutex poisoned",
+                );
+                EppErrorCode::EppErrorInvalidState
+            }
+        }
+    })
+}
+
+/// # Safety
+/// See module-level FFI safety contract. Passing NULL as `time_provider_handle`
+/// resets the identity to the default system clock.
+#[no_mangle]
+pub unsafe extern "C" fn epp_identity_set_time_provider(
+    handle: *mut EppIdentityHandle,
+    time_provider_handle: *const EppTimeProviderHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        let time_provider = match clone_time_provider_or_default(time_provider_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        match replace_identity_time_provider(handle, time_provider, out_error) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(code) => code,
         }
     })
 }
@@ -654,6 +1009,22 @@ pub unsafe extern "C" fn epp_identity_destroy(handle_ptr: *mut *mut EppIdentityH
 }
 
 /// # Safety
+/// See module-level FFI safety contract. `handle_ptr` must point to a handle
+/// from `epp_time_provider_manual_create`, or be null.
+#[no_mangle]
+pub unsafe extern "C" fn epp_time_provider_destroy(handle_ptr: *mut *mut EppTimeProviderHandle) {
+    ffi_catch_panic_value!((), unsafe {
+        if handle_ptr.is_null() {
+            return;
+        }
+        let handle = std::ptr::replace(handle_ptr, std::ptr::null_mut());
+        if !handle.is_null() {
+            drop(Box::from_raw(handle));
+        }
+    });
+}
+
+/// # Safety
 /// See module-level FFI safety contract.
 #[no_mangle]
 pub unsafe extern "C" fn epp_prekey_bundle_create(
@@ -770,14 +1141,26 @@ pub unsafe extern "C" fn epp_handshake_initiator_start(
             (*config).max_messages_per_chain
         };
 
+        let time_provider = match clone_identity_time_provider(identity_keys, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
         let ik = match require_identity_mut(identity_keys, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
-        match HandshakeInitiator::start(ik, &peer_bundle, max_msgs) {
+        match HandshakeInitiator::start_with_time_provider(
+            ik,
+            &peer_bundle,
+            max_msgs,
+            time_provider,
+        ) {
             Ok(initiator) => {
                 write_buffer(out_handshake_init, initiator.encoded_message().to_vec());
-                *out_handle = Box::into_raw(Box::new(EppHandshakeInitiatorHandle(Some(initiator))));
+                replace_out_handle(
+                    out_handle,
+                    Box::into_raw(Box::new(EppHandshakeInitiatorHandle(Some(initiator)))),
+                );
                 EppErrorCode::EppSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
@@ -835,7 +1218,10 @@ pub unsafe extern "C" fn epp_handshake_initiator_finish(
         let ack_bytes = std::slice::from_raw_parts(handshake_ack, handshake_ack_length);
         match initiator.finish(ack_bytes) {
             Ok(session) => {
-                *out_session = Box::into_raw(Box::new(EppSessionHandle(Some(session))));
+                replace_out_handle(
+                    out_session,
+                    Box::into_raw(Box::new(EppSessionHandle(Some(session)))),
+                );
                 EppErrorCode::EppSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
@@ -925,14 +1311,28 @@ pub unsafe extern "C" fn epp_handshake_responder_start(
             (*config).max_messages_per_chain
         };
 
+        let time_provider = match clone_identity_time_provider(identity_keys, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
         let ik = match require_identity_mut(identity_keys, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
-        match HandshakeResponder::process(ik, &local_bundle, init_bytes, max_msgs) {
+        match HandshakeResponder::process_with_replay_guard_and_time_provider(
+            ik,
+            &local_bundle,
+            init_bytes,
+            max_msgs,
+            None,
+            time_provider,
+        ) {
             Ok(responder) => {
                 write_buffer(out_handshake_ack, responder.encoded_ack().to_vec());
-                *out_handle = Box::into_raw(Box::new(EppHandshakeResponderHandle(Some(responder))));
+                replace_out_handle(
+                    out_handle,
+                    Box::into_raw(Box::new(EppHandshakeResponderHandle(Some(responder)))),
+                );
                 EppErrorCode::EppSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
@@ -969,7 +1369,10 @@ pub unsafe extern "C" fn epp_handshake_responder_finish(
 
         match responder.finish() {
             Ok(session) => {
-                *out_session = Box::into_raw(Box::new(EppSessionHandle(Some(session))));
+                replace_out_handle(
+                    out_session,
+                    Box::into_raw(Box::new(EppSessionHandle(Some(session)))),
+                );
                 EppErrorCode::EppSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
@@ -1259,7 +1662,7 @@ pub unsafe extern "C" fn epp_derive_root_key(
 
         match crate::api::EcliptixProtocol::derive_root_key(ikm, ctx, out_root_key_length) {
             Ok(key) => {
-                std::ptr::copy_nonoverlapping(key.as_ptr(), out_root_key, ROOT_KEY_BYTES);
+                std::ptr::copy_nonoverlapping(key.as_ptr(), out_root_key, key.len());
                 EppErrorCode::EppSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
@@ -1506,7 +1909,10 @@ pub unsafe extern "C" fn epp_attachment_generate_file_key(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        write_buffer(out_file_key, crate::protocol::attachment::generate_file_key());
+        write_buffer(
+            out_file_key,
+            crate::protocol::attachment::generate_file_key(),
+        );
         EppErrorCode::EppSuccess
     })
 }
@@ -1733,7 +2139,8 @@ pub unsafe extern "C" fn epp_attachment_manifest_create(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        if attachment_id_length != ATTACHMENT_ID_BYTES || file_sha256_length != ATTACHMENT_HASH_BYTES
+        if attachment_id_length != ATTACHMENT_ID_BYTES
+            || file_sha256_length != ATTACHMENT_HASH_BYTES
         {
             write_error(
                 out_error,
@@ -2000,6 +2407,325 @@ pub const extern "C" fn epp_error_string(code: EppErrorCode) -> *const c_char {
 }
 
 /// # Safety
+/// `out_handle` must point to writable `*mut EppSealedStateCounterTrackerHandle`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_sealed_state_counter_tracker_create(
+    out_handle: *mut *mut EppSealedStateCounterTrackerHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_handle.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_handle is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        replace_out_handle(
+            out_handle,
+            Box::into_raw(Box::new(EppSealedStateCounterTrackerHandle(Some(
+                SealedStateCounterTracker::new(),
+            )))),
+        );
+        EppErrorCode::EppSuccess
+    })
+}
+
+/// # Safety
+/// `(data, data_length)` must form a valid readable slice. `out_handle` must
+/// point to writable `*mut EppSealedStateCounterTrackerHandle`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_sealed_state_counter_tracker_create_from_serialized(
+    data: *const u8,
+    data_length: usize,
+    out_handle: *mut *mut EppSealedStateCounterTrackerHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if data.is_null() || out_handle.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let data = std::slice::from_raw_parts(data, data_length);
+        let tracker = match SealedStateCounterTracker::deserialize(data) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        replace_out_handle(
+            out_handle,
+            Box::into_raw(Box::new(EppSealedStateCounterTrackerHandle(Some(tracker)))),
+        );
+        EppErrorCode::EppSuccess
+    })
+}
+
+/// # Safety
+/// `handle` must be a live tracker handle and `out_state` must point to a
+/// writable `EppBuffer`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_sealed_state_counter_tracker_serialize(
+    handle: *mut EppSealedStateCounterTrackerHandle,
+    out_state: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_state.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_state is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let tracker = match require_counter_tracker_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        write_buffer(out_state, tracker.serialize());
+        EppErrorCode::EppSuccess
+    })
+}
+
+/// # Safety
+/// `handle` must be a live tracker handle and `out_counter` must point to a
+/// writable `uint64_t`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_sealed_state_counter_tracker_get_max_restored_counter(
+    handle: *mut EppSealedStateCounterTrackerHandle,
+    out_counter: *mut u64,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_counter.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_counter is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let tracker = match require_counter_tracker_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        *out_counter = tracker.max_restored_counter();
+        EppErrorCode::EppSuccess
+    })
+}
+
+/// # Safety
+/// `handle` must be a live tracker handle and `out_counter` must point to a
+/// writable `uint64_t`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_sealed_state_counter_tracker_get_latest_issued_counter(
+    handle: *mut EppSealedStateCounterTrackerHandle,
+    out_counter: *mut u64,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_counter.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_counter is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let tracker = match require_counter_tracker_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        *out_counter = tracker.latest_issued_counter();
+        EppErrorCode::EppSuccess
+    })
+}
+
+/// # Safety
+/// `handle_ptr` must point to a handle from
+/// `epp_sealed_state_counter_tracker_create*`, or be null. The handle must not
+/// be used after this call.
+#[no_mangle]
+pub unsafe extern "C" fn epp_sealed_state_counter_tracker_destroy(
+    handle_ptr: *mut *mut EppSealedStateCounterTrackerHandle,
+) {
+    ffi_catch_panic_value!((), unsafe {
+        if handle_ptr.is_null() {
+            return;
+        }
+        let handle = std::ptr::replace(handle_ptr, std::ptr::null_mut());
+        if !handle.is_null() {
+            drop(Box::from_raw(handle));
+        }
+    });
+}
+
+/// # Safety
+/// `out_handle` must point to writable `*mut EppSealedStateSlotHandle`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_sealed_state_slot_create(
+    out_handle: *mut *mut EppSealedStateSlotHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_handle.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_handle is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        replace_out_handle(
+            out_handle,
+            Box::into_raw(Box::new(EppSealedStateSlotHandle(Some(
+                SealedStateSlot::new(),
+            )))),
+        );
+        EppErrorCode::EppSuccess
+    })
+}
+
+/// # Safety
+/// `(data, data_length)` must form a valid readable slice. `out_handle` must
+/// point to writable `*mut EppSealedStateSlotHandle`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_sealed_state_slot_create_from_serialized(
+    data: *const u8,
+    data_length: usize,
+    out_handle: *mut *mut EppSealedStateSlotHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if data.is_null() || out_handle.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let data = std::slice::from_raw_parts(data, data_length);
+        let slot = match SealedStateSlot::deserialize(data) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        replace_out_handle(
+            out_handle,
+            Box::into_raw(Box::new(EppSealedStateSlotHandle(Some(slot)))),
+        );
+        EppErrorCode::EppSuccess
+    })
+}
+
+/// # Safety
+/// `handle` must be a live slot handle and `out_state` must point to a writable
+/// `EppBuffer`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_sealed_state_slot_serialize(
+    handle: *mut EppSealedStateSlotHandle,
+    out_state: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_state.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_state is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let slot = match require_sealed_state_slot_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let bytes = match slot.serialize() {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        write_buffer(out_state, bytes);
+        EppErrorCode::EppSuccess
+    })
+}
+
+/// # Safety
+/// `handle` must be a live slot handle and `out_counter` must point to a
+/// writable `uint64_t`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_sealed_state_slot_get_max_restored_counter(
+    handle: *mut EppSealedStateSlotHandle,
+    out_counter: *mut u64,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_counter.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_counter is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let slot = match require_sealed_state_slot_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        *out_counter = slot.max_restored_counter();
+        EppErrorCode::EppSuccess
+    })
+}
+
+/// # Safety
+/// `handle` must be a live slot handle and `out_counter` must point to a
+/// writable `uint64_t`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_sealed_state_slot_get_latest_issued_counter(
+    handle: *mut EppSealedStateSlotHandle,
+    out_counter: *mut u64,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_counter.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_counter is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let slot = match require_sealed_state_slot_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        *out_counter = slot.latest_issued_counter();
+        EppErrorCode::EppSuccess
+    })
+}
+
+/// # Safety
+/// `handle_ptr` must point to a handle from `epp_sealed_state_slot_create*`, or
+/// be null. The handle must not be used after this call.
+#[no_mangle]
+pub unsafe extern "C" fn epp_sealed_state_slot_destroy(
+    handle_ptr: *mut *mut EppSealedStateSlotHandle,
+) {
+    ffi_catch_panic_value!((), unsafe {
+        if handle_ptr.is_null() {
+            return;
+        }
+        let handle = std::ptr::replace(handle_ptr, std::ptr::null_mut());
+        if !handle.is_null() {
+            drop(Box::from_raw(handle));
+        }
+    });
+}
+
+/// # Safety
 /// `(data, length)` must form a valid, writable byte slice.
 #[no_mangle]
 pub unsafe extern "C" fn epp_secure_wipe(data: *mut u8, length: usize) -> EppErrorCode {
@@ -2071,10 +2797,13 @@ pub unsafe extern "C" fn epp_group_generate_key_package(
                     return EppErrorCode::EppErrorEncode;
                 }
                 write_buffer(out_key_package, buf);
-                *out_secrets = Box::into_raw(Box::new(EppKeyPackageSecretsHandle {
-                    x25519_private: x25519_priv,
-                    kyber_secret: kyber_sec,
-                }));
+                replace_out_handle(
+                    out_secrets,
+                    Box::into_raw(Box::new(EppKeyPackageSecretsHandle {
+                        x25519_private: x25519_priv,
+                        kyber_secret: kyber_sec,
+                    })),
+                );
                 EppErrorCode::EppSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
@@ -2126,13 +2855,25 @@ pub unsafe extern "C" fn epp_group_create(
             std::slice::from_raw_parts(credential, credential_length).to_vec()
         };
 
+        let time_provider = match clone_identity_time_provider(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
         let identity = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
-        match GroupSession::create(identity, cred) {
+        match GroupSession::create_with_policy_and_time_provider(
+            identity,
+            cred,
+            GroupSecurityPolicy::shield(),
+            time_provider,
+        ) {
             Ok(session) => {
-                *out_handle = Box::into_raw(Box::new(EppGroupSessionHandle(Some(session))));
+                replace_out_handle(
+                    out_handle,
+                    Box::into_raw(Box::new(EppGroupSessionHandle(Some(session)))),
+                );
                 EppErrorCode::EppSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
@@ -2165,13 +2906,25 @@ pub unsafe extern "C" fn epp_group_create_shielded(
             std::slice::from_raw_parts(credential, credential_length).to_vec()
         };
 
+        let time_provider = match clone_identity_time_provider(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
         let identity = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
-        match GroupSession::create_with_policy(identity, cred, GroupSecurityPolicy::shield()) {
+        match GroupSession::create_with_policy_and_time_provider(
+            identity,
+            cred,
+            GroupSecurityPolicy::shield(),
+            time_provider,
+        ) {
             Ok(session) => {
-                *out_handle = Box::into_raw(Box::new(EppGroupSessionHandle(Some(session))));
+                replace_out_handle(
+                    out_handle,
+                    Box::into_raw(Box::new(EppGroupSessionHandle(Some(session)))),
+                );
                 EppErrorCode::EppSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
@@ -2244,13 +2997,25 @@ pub unsafe extern "C" fn epp_group_create_with_policy(
             enhanced_key_schedule: p.enhanced_key_schedule != 0,
             mandatory_franking: p.mandatory_franking != 0,
         };
+        let time_provider = match clone_identity_time_provider(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
         let identity = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
-        match GroupSession::create_with_policy(identity, cred, rust_policy) {
+        match GroupSession::create_with_policy_and_time_provider(
+            identity,
+            cred,
+            rust_policy,
+            time_provider,
+        ) {
             Ok(session) => {
-                *out_handle = Box::into_raw(Box::new(EppGroupSessionHandle(Some(session))));
+                replace_out_handle(
+                    out_handle,
+                    Box::into_raw(Box::new(EppGroupSessionHandle(Some(session)))),
+                );
                 EppErrorCode::EppSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
@@ -2326,6 +3091,10 @@ pub unsafe extern "C" fn epp_group_join(
 
         let welcome_slice = std::slice::from_raw_parts(welcome_bytes, welcome_length);
 
+        let time_provider = match clone_identity_time_provider(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
         let identity = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
@@ -2358,16 +3127,20 @@ pub unsafe extern "C" fn epp_group_join(
                 return EppErrorCode::EppErrorOutOfMemory;
             }
         };
-        match GroupSession::from_welcome(
+        match GroupSession::from_welcome_with_time_provider(
             welcome_slice,
             x25519_private,
             kyber_secret,
             &identity.get_identity_ed25519_public(),
             &identity.get_identity_x25519_public(),
             ed25519_secret,
+            time_provider,
         ) {
             Ok(session) => {
-                *out_group_handle = Box::into_raw(Box::new(EppGroupSessionHandle(Some(session))));
+                replace_out_handle(
+                    out_group_handle,
+                    Box::into_raw(Box::new(EppGroupSessionHandle(Some(session)))),
+                );
                 EppErrorCode::EppSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
@@ -2802,6 +3575,10 @@ pub unsafe extern "C" fn epp_group_deserialize(
             Err(e) => return write_protocol_error(out_error, &e),
         };
 
+        let time_provider = match clone_identity_time_provider(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
         let identity = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
@@ -2811,19 +3588,305 @@ pub unsafe extern "C" fn epp_group_deserialize(
             Err(e) => return write_protocol_error(out_error, &e),
         };
 
-        match GroupSession::from_sealed_state(
+        match GroupSession::from_sealed_state_with_time_provider(
             state_slice,
             key_slice,
             ed25519_secret,
             min_external_counter,
+            time_provider,
         ) {
             Ok(session) => {
                 *out_external_counter = external_counter;
-                *out_handle = Box::into_raw(Box::new(EppGroupSessionHandle(Some(session))));
+                replace_out_handle(
+                    out_handle,
+                    Box::into_raw(Box::new(EppGroupSessionHandle(Some(session)))),
+                );
                 EppErrorCode::EppSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
+    })
+}
+
+/// # Safety
+/// See module-level FFI safety contract. `(key, key_length)` must form a valid
+/// readable slice. `tracker_handle` must be a live
+/// `EppSealedStateCounterTrackerHandle`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_group_serialize_with_tracker(
+    handle: *mut EppGroupSessionHandle,
+    key: *const u8,
+    key_length: usize,
+    tracker_handle: *mut EppSealedStateCounterTrackerHandle,
+    out_state: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if key.is_null() || out_state.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if key_length != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Key must be exactly 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let tracker = match require_counter_tracker_mut(tracker_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let external_counter = match tracker.next_export_counter() {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        let key_slice = std::slice::from_raw_parts(key, key_length);
+        let session = match require_group_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let bytes = match session.export_sealed_state(key_slice, external_counter) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        if let Err(e) = tracker.note_successful_export(external_counter) {
+            return write_protocol_error(out_error, &e);
+        }
+        write_buffer(out_state, bytes);
+        EppErrorCode::EppSuccess
+    })
+}
+
+/// # Safety
+/// See module-level FFI safety contract. `(state_bytes, state_length)` and
+/// `(key, key_length)` must form valid readable slices. `out_handle` must
+/// point to writable `*mut EppGroupSessionHandle`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_group_deserialize_with_tracker(
+    state_bytes: *const u8,
+    state_length: usize,
+    key: *const u8,
+    key_length: usize,
+    tracker_handle: *mut EppSealedStateCounterTrackerHandle,
+    identity_handle: *mut EppIdentityHandle,
+    out_handle: *mut *mut EppGroupSessionHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if state_bytes.is_null() || key.is_null() || out_handle.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if state_length > MAX_GROUP_MESSAGE_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "State blob too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if key_length != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Key must be exactly 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let tracker = match require_counter_tracker_mut(tracker_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let state_slice = std::slice::from_raw_parts(state_bytes, state_length);
+        let key_slice = std::slice::from_raw_parts(key, key_length);
+        let external_counter = match GroupSession::sealed_state_external_counter(state_slice) {
+            Ok(c) => c,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        let time_provider = match clone_identity_time_provider(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let identity = match require_identity_ref(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let ed25519_secret = match identity.get_identity_ed25519_private_key_copy() {
+            Ok(sk) => sk,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        let session = match GroupSession::from_sealed_state_with_time_provider(
+            state_slice,
+            key_slice,
+            ed25519_secret,
+            tracker.min_import_counter(),
+            time_provider,
+        ) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        if let Err(e) = tracker.note_successful_restore(external_counter) {
+            return write_protocol_error(out_error, &e);
+        }
+        replace_out_handle(
+            out_handle,
+            Box::into_raw(Box::new(EppGroupSessionHandle(Some(session)))),
+        );
+        EppErrorCode::EppSuccess
+    })
+}
+
+/// # Safety
+/// See module-level FFI safety contract. `(key, key_length)` must form a valid
+/// readable slice. `slot_handle` must be a live `EppSealedStateSlotHandle`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_group_export_persisted_state(
+    handle: *mut EppGroupSessionHandle,
+    key: *const u8,
+    key_length: usize,
+    slot_handle: *mut EppSealedStateSlotHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if key.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "key is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if key_length != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Key must be exactly 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let slot = match require_sealed_state_slot_mut(slot_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let external_counter = match slot.next_export_counter() {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        let key_slice = std::slice::from_raw_parts(key, key_length);
+        let session = match require_group_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let bytes = match session.export_sealed_state(key_slice, external_counter) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        match slot.note_successful_export(external_counter, bytes) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+/// # Safety
+/// See module-level FFI safety contract. `(key, key_length)` must form a valid
+/// readable slice. `slot_handle` must be a live `EppSealedStateSlotHandle`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_group_restore_persisted_state(
+    slot_handle: *mut EppSealedStateSlotHandle,
+    key: *const u8,
+    key_length: usize,
+    identity_handle: *mut EppIdentityHandle,
+    out_handle: *mut *mut EppGroupSessionHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if key.is_null() || out_handle.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if key_length != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Key must be exactly 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let slot = match require_sealed_state_slot_mut(slot_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if slot.is_empty() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "sealed-state slot is empty",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let state_slice = slot.sealed_state();
+        if state_slice.len() > MAX_GROUP_MESSAGE_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "State blob too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let key_slice = std::slice::from_raw_parts(key, key_length);
+        let external_counter = match GroupSession::sealed_state_external_counter(state_slice) {
+            Ok(c) => c,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        let time_provider = match clone_identity_time_provider(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let identity = match require_identity_ref(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let ed25519_secret = match identity.get_identity_ed25519_private_key_copy() {
+            Ok(sk) => sk,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        let session = match GroupSession::from_sealed_state_with_time_provider(
+            state_slice,
+            key_slice,
+            ed25519_secret,
+            slot.min_import_counter(),
+            time_provider,
+        ) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        if let Err(e) = slot.note_successful_restore(external_counter) {
+            return write_protocol_error(out_error, &e);
+        }
+        replace_out_handle(
+            out_handle,
+            Box::into_raw(Box::new(EppGroupSessionHandle(Some(session)))),
+        );
+        EppErrorCode::EppSuccess
     })
 }
 
@@ -2974,13 +4037,26 @@ pub unsafe extern "C" fn epp_group_join_external(
             std::slice::from_raw_parts(credential, credential_length).to_vec()
         };
 
+        let time_provider = match clone_identity_time_provider(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
         let identity = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
-        match GroupSession::from_external_join(state_slice, auth_slice, identity, cred) {
+        match GroupSession::from_external_join_with_time_provider(
+            state_slice,
+            auth_slice,
+            identity,
+            cred,
+            time_provider,
+        ) {
             Ok((session, commit_bytes)) => {
-                *out_group_handle = Box::into_raw(Box::new(EppGroupSessionHandle(Some(session))));
+                replace_out_handle(
+                    out_group_handle,
+                    Box::into_raw(Box::new(EppGroupSessionHandle(Some(session)))),
+                );
                 write_buffer(out_commit, commit_bytes);
                 EppErrorCode::EppSuccess
             }
@@ -3265,11 +4341,638 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed(
         match Session::from_sealed_state(state_slice, &provider, min_external_counter) {
             Ok(session) => {
                 *out_external_counter = external_counter;
-                *out_handle = Box::into_raw(Box::new(EppSessionHandle(Some(session))));
+                replace_out_handle(
+                    out_handle,
+                    Box::into_raw(Box::new(EppSessionHandle(Some(session)))),
+                );
                 EppErrorCode::EppSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
+    })
+}
+
+/// # Safety
+/// See module-level FFI safety contract. `(state_bytes, state_length)` and
+/// `(key, key_length)` must form valid readable slices. `time_provider_handle`
+/// may be NULL to use the system clock.
+#[no_mangle]
+pub unsafe extern "C" fn epp_session_deserialize_sealed_with_time_provider(
+    state_bytes: *const u8,
+    state_length: usize,
+    key: *const u8,
+    key_length: usize,
+    min_external_counter: u64,
+    time_provider_handle: *const EppTimeProviderHandle,
+    out_external_counter: *mut u64,
+    out_handle: *mut *mut EppSessionHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if state_bytes.is_null()
+            || key.is_null()
+            || out_external_counter.is_null()
+            || out_handle.is_null()
+        {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if key_length != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Key must be exactly 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if state_length > MAX_BUFFER_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Sealed state too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let time_provider = match clone_time_provider_or_default(time_provider_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let state_slice = std::slice::from_raw_parts(state_bytes, state_length);
+        let key_slice = std::slice::from_raw_parts(key, key_length);
+        let external_counter = match Session::sealed_state_external_counter(state_slice) {
+            Ok(c) => c,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        let mut smh = match SecureMemoryHandle::allocate(AES_KEY_BYTES) {
+            Ok(h) => h,
+            Err(e) => {
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorOutOfMemory,
+                    &format!("Allocate: {e}"),
+                );
+                return EppErrorCode::EppErrorOutOfMemory;
+            }
+        };
+        if let Err(e) = smh.write(key_slice) {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorGeneric,
+                &format!("Write: {e}"),
+            );
+            return EppErrorCode::EppErrorGeneric;
+        }
+
+        let provider = FfiStateKeyProvider { handle: smh };
+        match Session::from_sealed_state_with_time_provider(
+            state_slice,
+            &provider,
+            min_external_counter,
+            time_provider,
+        ) {
+            Ok(session) => {
+                *out_external_counter = external_counter;
+                replace_out_handle(
+                    out_handle,
+                    Box::into_raw(Box::new(EppSessionHandle(Some(session)))),
+                );
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+/// # Safety
+/// See module-level FFI safety contract. `(key, key_length)` must form a valid
+/// readable slice. `tracker_handle` must be a live
+/// `EppSealedStateCounterTrackerHandle`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_session_serialize_sealed_with_tracker(
+    handle: *mut EppSessionHandle,
+    key: *const u8,
+    key_length: usize,
+    tracker_handle: *mut EppSealedStateCounterTrackerHandle,
+    out_state: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if key.is_null() || out_state.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if key_length != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Key must be exactly 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let tracker = match require_counter_tracker_mut(tracker_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let external_counter = match tracker.next_export_counter() {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        let key_slice = std::slice::from_raw_parts(key, key_length);
+        let mut smh = match SecureMemoryHandle::allocate(AES_KEY_BYTES) {
+            Ok(h) => h,
+            Err(e) => {
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorOutOfMemory,
+                    &format!("Allocate: {e}"),
+                );
+                return EppErrorCode::EppErrorOutOfMemory;
+            }
+        };
+        if let Err(e) = smh.write(key_slice) {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorGeneric,
+                &format!("Write: {e}"),
+            );
+            return EppErrorCode::EppErrorGeneric;
+        }
+
+        let provider = FfiStateKeyProvider { handle: smh };
+        let session = match require_session_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let bytes = match session.export_sealed_state(&provider, external_counter) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        if let Err(e) = tracker.note_successful_export(external_counter) {
+            return write_protocol_error(out_error, &e);
+        }
+        write_buffer(out_state, bytes);
+        EppErrorCode::EppSuccess
+    })
+}
+
+/// # Safety
+/// See module-level FFI safety contract. `(state_bytes, state_length)` and
+/// `(key, key_length)` must form valid readable slices. `out_handle` must
+/// point to writable `*mut EppSessionHandle`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_session_deserialize_sealed_with_tracker(
+    state_bytes: *const u8,
+    state_length: usize,
+    key: *const u8,
+    key_length: usize,
+    tracker_handle: *mut EppSealedStateCounterTrackerHandle,
+    out_handle: *mut *mut EppSessionHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if state_bytes.is_null() || key.is_null() || out_handle.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if key_length != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Key must be exactly 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if state_length > MAX_BUFFER_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Sealed state too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let tracker = match require_counter_tracker_mut(tracker_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let state_slice = std::slice::from_raw_parts(state_bytes, state_length);
+        let key_slice = std::slice::from_raw_parts(key, key_length);
+        let external_counter = match Session::sealed_state_external_counter(state_slice) {
+            Ok(c) => c,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        let mut smh = match SecureMemoryHandle::allocate(AES_KEY_BYTES) {
+            Ok(h) => h,
+            Err(e) => {
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorOutOfMemory,
+                    &format!("Allocate: {e}"),
+                );
+                return EppErrorCode::EppErrorOutOfMemory;
+            }
+        };
+        if let Err(e) = smh.write(key_slice) {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorGeneric,
+                &format!("Write: {e}"),
+            );
+            return EppErrorCode::EppErrorGeneric;
+        }
+
+        let provider = FfiStateKeyProvider { handle: smh };
+        let session = match Session::from_sealed_state(
+            state_slice,
+            &provider,
+            tracker.min_import_counter(),
+        ) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        if let Err(e) = tracker.note_successful_restore(external_counter) {
+            return write_protocol_error(out_error, &e);
+        }
+        replace_out_handle(
+            out_handle,
+            Box::into_raw(Box::new(EppSessionHandle(Some(session)))),
+        );
+        EppErrorCode::EppSuccess
+    })
+}
+
+/// # Safety
+/// See module-level FFI safety contract. `(state_bytes, state_length)` and
+/// `(key, key_length)` must form valid readable slices. `time_provider_handle`
+/// may be NULL to use the system clock.
+#[no_mangle]
+pub unsafe extern "C" fn epp_session_deserialize_sealed_with_tracker_and_time_provider(
+    state_bytes: *const u8,
+    state_length: usize,
+    key: *const u8,
+    key_length: usize,
+    tracker_handle: *mut EppSealedStateCounterTrackerHandle,
+    time_provider_handle: *const EppTimeProviderHandle,
+    out_handle: *mut *mut EppSessionHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if state_bytes.is_null() || key.is_null() || out_handle.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if key_length != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Key must be exactly 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if state_length > MAX_BUFFER_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Sealed state too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let tracker = match require_counter_tracker_mut(tracker_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let time_provider = match clone_time_provider_or_default(time_provider_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let state_slice = std::slice::from_raw_parts(state_bytes, state_length);
+        let key_slice = std::slice::from_raw_parts(key, key_length);
+        let external_counter = match Session::sealed_state_external_counter(state_slice) {
+            Ok(c) => c,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        let mut smh = match SecureMemoryHandle::allocate(AES_KEY_BYTES) {
+            Ok(h) => h,
+            Err(e) => {
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorOutOfMemory,
+                    &format!("Allocate: {e}"),
+                );
+                return EppErrorCode::EppErrorOutOfMemory;
+            }
+        };
+        if let Err(e) = smh.write(key_slice) {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorGeneric,
+                &format!("Write: {e}"),
+            );
+            return EppErrorCode::EppErrorGeneric;
+        }
+
+        let provider = FfiStateKeyProvider { handle: smh };
+        let session = match Session::from_sealed_state_with_time_provider(
+            state_slice,
+            &provider,
+            tracker.min_import_counter(),
+            time_provider,
+        ) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        if let Err(e) = tracker.note_successful_restore(external_counter) {
+            return write_protocol_error(out_error, &e);
+        }
+        replace_out_handle(
+            out_handle,
+            Box::into_raw(Box::new(EppSessionHandle(Some(session)))),
+        );
+        EppErrorCode::EppSuccess
+    })
+}
+
+/// # Safety
+/// See module-level FFI safety contract. `(key, key_length)` must form a valid
+/// readable slice. `slot_handle` must be a live `EppSealedStateSlotHandle`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_session_export_persisted_state(
+    handle: *mut EppSessionHandle,
+    key: *const u8,
+    key_length: usize,
+    slot_handle: *mut EppSealedStateSlotHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if key.is_null() {
+            write_error(out_error, EppErrorCode::EppErrorNullPointer, "key is null");
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if key_length != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Key must be exactly 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let slot = match require_sealed_state_slot_mut(slot_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let external_counter = match slot.next_export_counter() {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        let key_slice = std::slice::from_raw_parts(key, key_length);
+        let mut smh = match SecureMemoryHandle::allocate(AES_KEY_BYTES) {
+            Ok(h) => h,
+            Err(e) => {
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorOutOfMemory,
+                    &format!("Allocate: {e}"),
+                );
+                return EppErrorCode::EppErrorOutOfMemory;
+            }
+        };
+        if let Err(e) = smh.write(key_slice) {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorGeneric,
+                &format!("Write: {e}"),
+            );
+            return EppErrorCode::EppErrorGeneric;
+        }
+        let provider = FfiStateKeyProvider { handle: smh };
+        let session = match require_session_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let bytes = match session.export_sealed_state(&provider, external_counter) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        match slot.note_successful_export(external_counter, bytes) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+/// # Safety
+/// See module-level FFI safety contract. `(key, key_length)` must form a valid
+/// readable slice. `slot_handle` must be a live `EppSealedStateSlotHandle`.
+#[no_mangle]
+pub unsafe extern "C" fn epp_session_restore_persisted_state(
+    slot_handle: *mut EppSealedStateSlotHandle,
+    key: *const u8,
+    key_length: usize,
+    out_handle: *mut *mut EppSessionHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if key.is_null() || out_handle.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if key_length != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Key must be exactly 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let slot = match require_sealed_state_slot_mut(slot_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if slot.is_empty() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "sealed-state slot is empty",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let key_slice = std::slice::from_raw_parts(key, key_length);
+        let state_slice = slot.sealed_state();
+        if state_slice.len() > MAX_BUFFER_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Sealed state too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let external_counter = match Session::sealed_state_external_counter(state_slice) {
+            Ok(c) => c,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        let mut smh = match SecureMemoryHandle::allocate(AES_KEY_BYTES) {
+            Ok(h) => h,
+            Err(e) => {
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorOutOfMemory,
+                    &format!("Allocate: {e}"),
+                );
+                return EppErrorCode::EppErrorOutOfMemory;
+            }
+        };
+        if let Err(e) = smh.write(key_slice) {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorGeneric,
+                &format!("Write: {e}"),
+            );
+            return EppErrorCode::EppErrorGeneric;
+        }
+
+        let provider = FfiStateKeyProvider { handle: smh };
+        let session =
+            match Session::from_sealed_state(state_slice, &provider, slot.min_import_counter()) {
+                Ok(v) => v,
+                Err(e) => return write_protocol_error(out_error, &e),
+            };
+        if let Err(e) = slot.note_successful_restore(external_counter) {
+            return write_protocol_error(out_error, &e);
+        }
+        replace_out_handle(
+            out_handle,
+            Box::into_raw(Box::new(EppSessionHandle(Some(session)))),
+        );
+        EppErrorCode::EppSuccess
+    })
+}
+
+/// # Safety
+/// See module-level FFI safety contract. `(key, key_length)` must form a valid
+/// readable slice. `time_provider_handle` may be NULL to use the system clock.
+#[no_mangle]
+pub unsafe extern "C" fn epp_session_restore_persisted_state_with_time_provider(
+    slot_handle: *mut EppSealedStateSlotHandle,
+    key: *const u8,
+    key_length: usize,
+    time_provider_handle: *const EppTimeProviderHandle,
+    out_handle: *mut *mut EppSessionHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if key.is_null() || out_handle.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if key_length != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Key must be exactly 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let slot = match require_sealed_state_slot_mut(slot_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if slot.is_empty() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "sealed-state slot is empty",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let time_provider = match clone_time_provider_or_default(time_provider_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let key_slice = std::slice::from_raw_parts(key, key_length);
+        let state_slice = slot.sealed_state();
+        if state_slice.len() > MAX_BUFFER_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Sealed state too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let external_counter = match Session::sealed_state_external_counter(state_slice) {
+            Ok(c) => c,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        let mut smh = match SecureMemoryHandle::allocate(AES_KEY_BYTES) {
+            Ok(h) => h,
+            Err(e) => {
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorOutOfMemory,
+                    &format!("Allocate: {e}"),
+                );
+                return EppErrorCode::EppErrorOutOfMemory;
+            }
+        };
+        if let Err(e) = smh.write(key_slice) {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorGeneric,
+                &format!("Write: {e}"),
+            );
+            return EppErrorCode::EppErrorGeneric;
+        }
+
+        let provider = FfiStateKeyProvider { handle: smh };
+        let session = match Session::from_sealed_state_with_time_provider(
+            state_slice,
+            &provider,
+            slot.min_import_counter(),
+            time_provider,
+        ) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        if let Err(e) = slot.note_successful_restore(external_counter) {
+            return write_protocol_error(out_error, &e);
+        }
+        replace_out_handle(
+            out_handle,
+            Box::into_raw(Box::new(EppSessionHandle(Some(session)))),
+        );
+        EppErrorCode::EppSuccess
     })
 }
 
@@ -3539,6 +5242,28 @@ pub struct EppGroupDecryptResult {
     pub reply_to_message_id: EppBuffer,
 }
 
+unsafe fn clear_group_decrypt_result(result: *mut EppGroupDecryptResult) {
+    if result.is_null() {
+        return;
+    }
+    (*result).plaintext.data = std::ptr::null_mut();
+    (*result).plaintext.length = 0;
+    (*result).sender_leaf_index = 0;
+    (*result).generation = 0;
+    (*result).content_type = 0;
+    (*result).ttl_seconds = 0;
+    (*result).sent_timestamp = 0;
+    (*result).message_id.data = std::ptr::null_mut();
+    (*result).message_id.length = 0;
+    (*result).referenced_message_id.data = std::ptr::null_mut();
+    (*result).referenced_message_id.length = 0;
+    (*result).has_sealed_payload = 0;
+    (*result).has_franking_data = 0;
+    (*result).mentions_count = 0;
+    (*result).reply_to_message_id.data = std::ptr::null_mut();
+    (*result).reply_to_message_id.length = 0;
+}
+
 /// # Safety
 /// `result` must be null or point to a value previously written by this FFI layer.
 #[no_mangle]
@@ -3550,6 +5275,7 @@ pub unsafe extern "C" fn epp_group_decrypt_result_free(result: *mut EppGroupDecr
     epp_buffer_release(std::ptr::addr_of_mut!((*result).message_id));
     epp_buffer_release(std::ptr::addr_of_mut!((*result).referenced_message_id));
     epp_buffer_release(std::ptr::addr_of_mut!((*result).reply_to_message_id));
+    clear_group_decrypt_result(result);
 }
 
 /// # Safety
@@ -3572,6 +5298,7 @@ pub unsafe extern "C" fn epp_group_decrypt_ex(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
+        clear_group_decrypt_result(out_result);
         if ciphertext_length > MAX_GROUP_MESSAGE_SIZE {
             write_error(
                 out_error,
@@ -3787,7 +5514,10 @@ pub unsafe extern "C" fn epp_group_encrypt_read_receipt(
         } else {
             &[]
         };
-        let ids: Vec<Vec<u8>> = flat.chunks_exact(MESSAGE_ID_BYTES).map(<[u8]>::to_vec).collect();
+        let ids: Vec<Vec<u8>> = flat
+            .chunks_exact(MESSAGE_ID_BYTES)
+            .map(<[u8]>::to_vec)
+            .collect();
         let session = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
@@ -4081,6 +5811,18 @@ pub unsafe extern "C" fn epp_voip_accept_call(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
+        if out_accept_bytes.is_null() || out_session.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let time_provider = match clone_identity_time_provider(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
         let identity = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
@@ -4191,21 +5933,23 @@ pub unsafe extern "C" fn epp_voip_accept_call(
         }
         write_buffer(out_accept_bytes, buf);
 
-        let session = match crate::protocol::voip::VoipSession::from_key_material(
+        let session = match crate::protocol::voip::VoipSession::from_key_material_with_time_provider(
             call_init.call_id,
             crate::protocol::voip::CallRole::Callee,
             accept_output.key_material,
             call_init.ratchet_interval_frames,
             call_init.pq_rekey_interval_secs,
             call_init.shield_mode,
+            time_provider,
         ) {
             Ok(v) => v,
             Err(e) => return write_protocol_error(out_error, &e),
         };
 
-        if !out_session.is_null() {
-            *out_session = Box::into_raw(Box::new(EppVoipSessionHandle(Some(session))));
-        }
+        replace_out_handle(
+            out_session,
+            Box::into_raw(Box::new(EppVoipSessionHandle(Some(session)))),
+        );
         EppErrorCode::EppSuccess
     })
 }
@@ -4223,6 +5967,17 @@ pub unsafe extern "C" fn epp_voip_encrypt_frame(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
+        unsafe {
+            clear_encrypted_frame(out_frame);
+        }
+        if out_frame.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_frame is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
         let session = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
@@ -4248,18 +6003,16 @@ pub unsafe extern "C" fn epp_voip_encrypt_frame(
             Err(e) => return write_protocol_error(out_error, &e),
         };
 
-        if !out_frame.is_null() {
-            write_buffer(&raw mut (*out_frame).call_id, enc.call_id);
-            (*out_frame).ssrc = enc.ssrc;
-            (*out_frame).frame_counter = enc.frame_counter;
-            (*out_frame).ratchet_generation = enc.ratchet_generation;
-            write_buffer(
-                &raw mut (*out_frame).encrypted_payload,
-                enc.encrypted_payload,
-            );
-            write_buffer(&raw mut (*out_frame).nonce, enc.nonce);
-            write_buffer(&raw mut (*out_frame).encrypted_header, enc.encrypted_header);
-        }
+        write_buffer(&raw mut (*out_frame).call_id, enc.call_id);
+        (*out_frame).ssrc = enc.ssrc;
+        (*out_frame).frame_counter = enc.frame_counter;
+        (*out_frame).ratchet_generation = enc.ratchet_generation;
+        write_buffer(
+            &raw mut (*out_frame).encrypted_payload,
+            enc.encrypted_payload,
+        );
+        write_buffer(&raw mut (*out_frame).nonce, enc.nonce);
+        write_buffer(&raw mut (*out_frame).encrypted_header, enc.encrypted_header);
         EppErrorCode::EppSuccess
     })
 }
@@ -4282,6 +6035,17 @@ pub unsafe extern "C" fn epp_voip_decrypt_frame(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
+        unsafe {
+            clear_decrypted_frame(out_frame);
+        }
+        if out_frame.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_frame is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
         let session = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
@@ -4355,15 +6119,13 @@ pub unsafe extern "C" fn epp_voip_decrypt_frame(
             Err(e) => return write_protocol_error(out_error, &e),
         };
 
-        if !out_frame.is_null() {
-            write_buffer(&raw mut (*out_frame).payload, dec.payload);
-            (*out_frame).payload_type = dec.header.payload_type;
-            (*out_frame).ssrc = dec.header.ssrc;
-            (*out_frame).timestamp = dec.header.timestamp;
-            (*out_frame).sequence_number = dec.header.sequence_number;
-            (*out_frame).frame_counter = dec.frame_counter;
-            (*out_frame).ratchet_generation = dec.ratchet_generation;
-        }
+        write_buffer(&raw mut (*out_frame).payload, dec.payload);
+        (*out_frame).payload_type = dec.header.payload_type;
+        (*out_frame).ssrc = dec.header.ssrc;
+        (*out_frame).timestamp = dec.header.timestamp;
+        (*out_frame).sequence_number = dec.header.sequence_number;
+        (*out_frame).frame_counter = dec.frame_counter;
+        (*out_frame).ratchet_generation = dec.ratchet_generation;
         EppErrorCode::EppSuccess
     })
 }
@@ -4561,6 +6323,17 @@ pub unsafe extern "C" fn epp_voip_encrypt_call_control(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
+        unsafe {
+            clear_encrypted_frame(out_frame);
+        }
+        if out_frame.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_frame is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
         let session = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
@@ -4584,18 +6357,16 @@ pub unsafe extern "C" fn epp_voip_encrypt_call_control(
             Ok(v) => v,
             Err(e) => return write_protocol_error(out_error, &e),
         };
-        if !out_frame.is_null() {
-            write_buffer(&raw mut (*out_frame).call_id, enc.call_id);
-            (*out_frame).ssrc = enc.ssrc;
-            (*out_frame).frame_counter = enc.frame_counter;
-            (*out_frame).ratchet_generation = enc.ratchet_generation;
-            write_buffer(
-                &raw mut (*out_frame).encrypted_payload,
-                enc.encrypted_payload,
-            );
-            write_buffer(&raw mut (*out_frame).nonce, enc.nonce);
-            write_buffer(&raw mut (*out_frame).encrypted_header, enc.encrypted_header);
-        }
+        write_buffer(&raw mut (*out_frame).call_id, enc.call_id);
+        (*out_frame).ssrc = enc.ssrc;
+        (*out_frame).frame_counter = enc.frame_counter;
+        (*out_frame).ratchet_generation = enc.ratchet_generation;
+        write_buffer(
+            &raw mut (*out_frame).encrypted_payload,
+            enc.encrypted_payload,
+        );
+        write_buffer(&raw mut (*out_frame).nonce, enc.nonce);
+        write_buffer(&raw mut (*out_frame).encrypted_header, enc.encrypted_header);
         EppErrorCode::EppSuccess
     })
 }
@@ -4633,12 +6404,105 @@ pub unsafe extern "C" fn epp_voip_export_sealed_state(
     })
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_export_sealed_state_with_tracker(
+    handle: *const EppVoipSessionHandle,
+    state_key: *const u8,
+    state_key_len: usize,
+    tracker_handle: *mut EppSealedStateCounterTrackerHandle,
+    out_buf: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        if out_buf.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_buf is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if state_key.is_null() || state_key_len != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "state key must be 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let tracker = match require_counter_tracker_mut(tracker_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let external_counter = match tracker.next_export_counter() {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        let key = std::slice::from_raw_parts(state_key, state_key_len);
+        let data = match session.export_sealed_state(key, external_counter) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        if let Err(e) = tracker.note_successful_export(external_counter) {
+            return write_protocol_error(out_error, &e);
+        }
+        write_buffer(out_buf, data);
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_export_persisted_state(
+    handle: *const EppVoipSessionHandle,
+    state_key: *const u8,
+    state_key_len: usize,
+    slot_handle: *mut EppSealedStateSlotHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if state_key.is_null() || state_key_len != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "state key must be 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let slot = match require_sealed_state_slot_mut(slot_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let external_counter = match slot.next_export_counter() {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        let key = std::slice::from_raw_parts(state_key, state_key_len);
+        let data = match session.export_sealed_state(key, external_counter) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        match slot.note_successful_export(external_counter, data) {
+            Ok(()) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
 pub struct EppVoipCallInitiatorHandle {
     pub init_output: Option<crate::protocol::voip::CallInitOutput>,
     pub call_id: Vec<u8>,
     pub shield_mode: bool,
     pub ratchet_interval_frames: u32,
     pub pq_rekey_interval_secs: u32,
+    pub time_provider: Arc<dyn ITimeProvider>,
 }
 
 #[no_mangle]
@@ -4654,6 +6518,18 @@ pub unsafe extern "C" fn epp_voip_call_init(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
+        if out_init_bytes.is_null() || out_initiator.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        let time_provider = match clone_identity_time_provider(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
         let identity = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
@@ -4726,10 +6602,9 @@ pub unsafe extern "C" fn epp_voip_call_init(
             shield_mode: is_shield,
             ratchet_interval_frames,
             pq_rekey_interval_secs,
+            time_provider,
         });
-        if !out_initiator.is_null() {
-            *out_initiator = Box::into_raw(initiator);
-        }
+        replace_out_handle(out_initiator, Box::into_raw(initiator));
 
         EppErrorCode::EppSuccess
     })
@@ -4775,6 +6650,14 @@ pub unsafe extern "C" fn epp_voip_call_init_complete(
                 out_error,
                 EppErrorCode::EppErrorNullPointer,
                 "null initiator handle",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if out_session.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_session is null",
             );
             return EppErrorCode::EppErrorNullPointer;
         }
@@ -4859,21 +6742,23 @@ pub unsafe extern "C" fn epp_voip_call_init_complete(
                 Err(e) => return write_protocol_error(out_error, &e),
             };
 
-        let session = match crate::protocol::voip::VoipSession::from_key_material(
+        let session = match crate::protocol::voip::VoipSession::from_key_material_with_time_provider(
             initiator.call_id.clone(),
             crate::protocol::voip::CallRole::Caller,
             key_material,
             initiator.ratchet_interval_frames,
             initiator.pq_rekey_interval_secs,
             initiator.shield_mode,
+            initiator.time_provider.clone(),
         ) {
             Ok(v) => v,
             Err(e) => return write_protocol_error(out_error, &e),
         };
 
-        if !out_session.is_null() {
-            *out_session = Box::into_raw(Box::new(EppVoipSessionHandle(Some(session))));
-        }
+        replace_out_handle(
+            out_session,
+            Box::into_raw(Box::new(EppVoipSessionHandle(Some(session)))),
+        );
         EppErrorCode::EppSuccess
     })
 }
@@ -5080,6 +6965,14 @@ pub unsafe extern "C" fn epp_voip_import_sealed_state(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
+        if out_session.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_session is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
         if data.is_null() || data_len == 0 {
             write_error(
                 out_error,
@@ -5117,9 +7010,384 @@ pub unsafe extern "C" fn epp_voip_import_sealed_state(
             Err(e) => return write_protocol_error(out_error, &e),
         };
 
-        if !out_session.is_null() {
-            *out_session = Box::into_raw(Box::new(EppVoipSessionHandle(Some(session))));
+        replace_out_handle(
+            out_session,
+            Box::into_raw(Box::new(EppVoipSessionHandle(Some(session)))),
+        );
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_import_sealed_state_with_time_provider(
+    data: *const u8,
+    data_len: usize,
+    state_key: *const u8,
+    state_key_len: usize,
+    min_external_counter: u64,
+    time_provider_handle: *const EppTimeProviderHandle,
+    out_session: *mut *mut EppVoipSessionHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        if out_session.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_session is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
         }
+        if data.is_null() || data_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null sealed state data",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if data_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE + MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "sealed state too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if state_key.is_null() || state_key_len != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "state key must be 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let time_provider = match clone_time_provider_or_default(time_provider_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let state_data = std::slice::from_raw_parts(data, data_len);
+        let key = std::slice::from_raw_parts(state_key, state_key_len);
+
+        let session = match crate::protocol::voip::VoipSession::from_sealed_state_with_time_provider(
+            state_data,
+            key,
+            min_external_counter,
+            time_provider,
+        ) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        replace_out_handle(
+            out_session,
+            Box::into_raw(Box::new(EppVoipSessionHandle(Some(session)))),
+        );
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_import_sealed_state_with_tracker(
+    data: *const u8,
+    data_len: usize,
+    state_key: *const u8,
+    state_key_len: usize,
+    tracker_handle: *mut EppSealedStateCounterTrackerHandle,
+    out_session: *mut *mut EppVoipSessionHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        if out_session.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_session is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if data.is_null() || data_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null sealed state data",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if data_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE + MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "sealed state too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if state_key.is_null() || state_key_len != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "state key must be 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let tracker = match require_counter_tracker_mut(tracker_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let state_data = std::slice::from_raw_parts(data, data_len);
+        let key = std::slice::from_raw_parts(state_key, state_key_len);
+        let external_counter =
+            match crate::protocol::voip::VoipSession::sealed_state_external_counter(state_data) {
+                Ok(v) => v,
+                Err(e) => return write_protocol_error(out_error, &e),
+            };
+
+        let session = match crate::protocol::voip::VoipSession::from_sealed_state(
+            state_data,
+            key,
+            tracker.min_import_counter(),
+        ) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        if let Err(e) = tracker.note_successful_restore(external_counter) {
+            return write_protocol_error(out_error, &e);
+        }
+        replace_out_handle(
+            out_session,
+            Box::into_raw(Box::new(EppVoipSessionHandle(Some(session)))),
+        );
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_import_sealed_state_with_tracker_and_time_provider(
+    data: *const u8,
+    data_len: usize,
+    state_key: *const u8,
+    state_key_len: usize,
+    tracker_handle: *mut EppSealedStateCounterTrackerHandle,
+    time_provider_handle: *const EppTimeProviderHandle,
+    out_session: *mut *mut EppVoipSessionHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        if out_session.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_session is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if data.is_null() || data_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null sealed state data",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if data_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE + MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "sealed state too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if state_key.is_null() || state_key_len != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "state key must be 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+
+        let tracker = match require_counter_tracker_mut(tracker_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let time_provider = match clone_time_provider_or_default(time_provider_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let state_data = std::slice::from_raw_parts(data, data_len);
+        let key = std::slice::from_raw_parts(state_key, state_key_len);
+        let external_counter =
+            match crate::protocol::voip::VoipSession::sealed_state_external_counter(state_data) {
+                Ok(v) => v,
+                Err(e) => return write_protocol_error(out_error, &e),
+            };
+
+        let session = match crate::protocol::voip::VoipSession::from_sealed_state_with_time_provider(
+            state_data,
+            key,
+            tracker.min_import_counter(),
+            time_provider,
+        ) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        if let Err(e) = tracker.note_successful_restore(external_counter) {
+            return write_protocol_error(out_error, &e);
+        }
+        replace_out_handle(
+            out_session,
+            Box::into_raw(Box::new(EppVoipSessionHandle(Some(session)))),
+        );
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_restore_persisted_state(
+    slot_handle: *mut EppSealedStateSlotHandle,
+    state_key: *const u8,
+    state_key_len: usize,
+    out_session: *mut *mut EppVoipSessionHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        if out_session.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_session is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if state_key.is_null() || state_key_len != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "state key must be 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let slot = match require_sealed_state_slot_mut(slot_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if slot.is_empty() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "sealed-state slot is empty",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let state_data = slot.sealed_state();
+        if state_data.len() > MAX_VOIP_SIGNAL_MESSAGE_SIZE + MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "sealed state too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let key = std::slice::from_raw_parts(state_key, state_key_len);
+        let external_counter =
+            match crate::protocol::voip::VoipSession::sealed_state_external_counter(state_data) {
+                Ok(v) => v,
+                Err(e) => return write_protocol_error(out_error, &e),
+            };
+        let session = match crate::protocol::voip::VoipSession::from_sealed_state(
+            state_data,
+            key,
+            slot.min_import_counter(),
+        ) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        if let Err(e) = slot.note_successful_restore(external_counter) {
+            return write_protocol_error(out_error, &e);
+        }
+        replace_out_handle(
+            out_session,
+            Box::into_raw(Box::new(EppVoipSessionHandle(Some(session)))),
+        );
+        EppErrorCode::EppSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_restore_persisted_state_with_time_provider(
+    slot_handle: *mut EppSealedStateSlotHandle,
+    state_key: *const u8,
+    state_key_len: usize,
+    time_provider_handle: *const EppTimeProviderHandle,
+    out_session: *mut *mut EppVoipSessionHandle,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        if out_session.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_session is null",
+            );
+            return EppErrorCode::EppErrorNullPointer;
+        }
+        if state_key.is_null() || state_key_len != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "state key must be 32 bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let slot = match require_sealed_state_slot_mut(slot_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if slot.is_empty() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "sealed-state slot is empty",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let time_provider = match clone_time_provider_or_default(time_provider_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let state_data = slot.sealed_state();
+        if state_data.len() > MAX_VOIP_SIGNAL_MESSAGE_SIZE + MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "sealed state too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let key = std::slice::from_raw_parts(state_key, state_key_len);
+        let external_counter =
+            match crate::protocol::voip::VoipSession::sealed_state_external_counter(state_data) {
+                Ok(v) => v,
+                Err(e) => return write_protocol_error(out_error, &e),
+            };
+        let session = match crate::protocol::voip::VoipSession::from_sealed_state_with_time_provider(
+            state_data,
+            key,
+            slot.min_import_counter(),
+            time_provider,
+        ) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        if let Err(e) = slot.note_successful_restore(external_counter) {
+            return write_protocol_error(out_error, &e);
+        }
+        replace_out_handle(
+            out_session,
+            Box::into_raw(Box::new(EppVoipSessionHandle(Some(session)))),
+        );
         EppErrorCode::EppSuccess
     })
 }
@@ -5384,6 +7652,85 @@ pub unsafe extern "C" fn epp_voip_both_consented_to_recording(
             return false;
         };
         session.both_consented_to_recording().unwrap_or(false)
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_build_recording_consent_message(
+    handle: *const EppVoipSessionHandle,
+    identity_handle: *const EppIdentityHandle,
+    consent: i32,
+    timestamp_unix: u64,
+    out_message: *mut EppBuffer,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let identity = match require_identity_ref(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let ed25519_secret = match identity.get_identity_ed25519_private_key_copy() {
+            Ok(secret) => secret,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        match session.build_recording_consent_message(consent, timestamp_unix, &ed25519_secret) {
+            Ok(message) => {
+                write_buffer(out_message, message);
+                EppErrorCode::EppSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn epp_voip_process_recording_consent_message(
+    handle: *const EppVoipSessionHandle,
+    peer_ed25519_public: *const u8,
+    peer_ed25519_public_len: usize,
+    message_bytes: *const u8,
+    message_len: usize,
+    out_error: *mut EppError,
+) -> EppErrorCode {
+    ffi_catch_panic!(out_error, {
+        let session = match require_voip_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if peer_ed25519_public.is_null() || peer_ed25519_public_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null peer ed25519 public key",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if message_bytes.is_null() || message_len == 0 {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "null recording consent message bytes",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if message_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "RecordingConsentMessage too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        let peer_public = std::slice::from_raw_parts(peer_ed25519_public, peer_ed25519_public_len);
+        let message = std::slice::from_raw_parts(message_bytes, message_len);
+        match session.process_recording_consent_message(message, peer_public) {
+            Ok(_) => EppErrorCode::EppSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
     })
 }
 
@@ -5962,27 +8309,50 @@ pub unsafe extern "C" fn epp_attachment_encrypt_thumbnail(
             || out_nonce.is_null()
             || out_ciphertext.is_null()
         {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         if file_key_length != ATTACHMENT_FILE_KEY_BYTES {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "file_key must be 32 bytes");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "file_key must be 32 bytes",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         }
         if attachment_id_length != ATTACHMENT_ID_BYTES {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "attachment_id must be 32 bytes");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "attachment_id must be 32 bytes",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         }
-        if thumbnail_plaintext_length == 0 || thumbnail_plaintext_length > MAX_ATTACHMENT_THUMBNAIL_SIZE {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "Thumbnail size is out of range");
+        if thumbnail_plaintext_length == 0
+            || thumbnail_plaintext_length > MAX_ATTACHMENT_THUMBNAIL_SIZE
+        {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Thumbnail size is out of range",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         }
 
         let fk = std::slice::from_raw_parts(file_key, file_key_length);
         let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
-        let mime_bytes = std::slice::from_raw_parts(thumbnail_mime_type, thumbnail_mime_type_length);
+        let mime_bytes =
+            std::slice::from_raw_parts(thumbnail_mime_type, thumbnail_mime_type_length);
         let Ok(mime) = std::str::from_utf8(mime_bytes) else {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "Invalid UTF-8 mime_type");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Invalid UTF-8 mime_type",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         };
         let plaintext = std::slice::from_raw_parts(thumbnail_plaintext, thumbnail_plaintext_length);
@@ -6021,27 +8391,48 @@ pub unsafe extern "C" fn epp_attachment_decrypt_thumbnail(
             || ciphertext.is_null()
             || out_plaintext.is_null()
         {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         if file_key_length != ATTACHMENT_FILE_KEY_BYTES {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "file_key must be 32 bytes");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "file_key must be 32 bytes",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         }
         if attachment_id_length != ATTACHMENT_ID_BYTES {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "attachment_id must be 32 bytes");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "attachment_id must be 32 bytes",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         }
         if nonce_length != AES_GCM_NONCE_BYTES {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "nonce must be 12 bytes");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "nonce must be 12 bytes",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         }
 
         let fk = std::slice::from_raw_parts(file_key, file_key_length);
         let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
-        let mime_bytes = std::slice::from_raw_parts(thumbnail_mime_type, thumbnail_mime_type_length);
+        let mime_bytes =
+            std::slice::from_raw_parts(thumbnail_mime_type, thumbnail_mime_type_length);
         let Ok(mime) = std::str::from_utf8(mime_bytes) else {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "Invalid UTF-8 mime_type");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Invalid UTF-8 mime_type",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         };
         let nonce_slice = std::slice::from_raw_parts(nonce, nonce_length);
@@ -6093,11 +8484,19 @@ pub unsafe extern "C" fn epp_attachment_progress_create(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if attachment_id.is_null() || out_progress.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         if attachment_id_length != ATTACHMENT_ID_BYTES {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "attachment_id must be 32 bytes");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "attachment_id must be 32 bytes",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         }
 
@@ -6131,7 +8530,11 @@ pub unsafe extern "C" fn epp_attachment_progress_mark_completed(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if progress_bytes.is_null() || out_updated_progress.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
 
@@ -6177,7 +8580,11 @@ pub unsafe extern "C" fn epp_attachment_progress_get_remaining(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if progress_bytes.is_null() || out_remaining.is_null() || out_remaining_count.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
 
@@ -6210,7 +8617,9 @@ pub unsafe extern "C" fn epp_attachment_progress_is_complete(
             return false;
         }
         let pbytes = unsafe { std::slice::from_raw_parts(progress_bytes, progress_length) };
-        let Ok(progress) = ChunkProgress::decode(pbytes) else { return false };
+        let Ok(progress) = ChunkProgress::decode(pbytes) else {
+            return false;
+        };
         crate::protocol::attachment::is_transfer_complete(&progress)
     })
 }
@@ -6224,10 +8633,17 @@ pub unsafe extern "C" fn epp_attachment_generate_collage_id(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_collage_id.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "out_collage_id is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_collage_id is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
-        write_buffer(out_collage_id, crate::protocol::attachment::generate_collage_id());
+        write_buffer(
+            out_collage_id,
+            crate::protocol::attachment::generate_collage_id(),
+        );
         EppErrorCode::EppSuccess
     })
 }
@@ -6242,11 +8658,19 @@ pub unsafe extern "C" fn epp_attachment_collage_create(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if manifest_array.is_null() || manifest_lengths.is_null() || out_collage.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         if manifest_count == 0 {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "manifest_count must be > 0");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "manifest_count must be > 0",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         }
 
@@ -6256,7 +8680,11 @@ pub unsafe extern "C" fn epp_attachment_collage_create(
         let mut manifests = Vec::with_capacity(manifest_count);
         for i in 0..manifest_count {
             if ptrs[i].is_null() {
-                write_error(out_error, EppErrorCode::EppErrorNullPointer, "manifest pointer is null");
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorNullPointer,
+                    "manifest pointer is null",
+                );
                 return EppErrorCode::EppErrorNullPointer;
             }
             let bytes = std::slice::from_raw_parts(ptrs[i], lens[i]);
@@ -6297,11 +8725,19 @@ pub unsafe extern "C" fn epp_attachment_collage_validate(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if collage_bytes.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "collage_bytes is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "collage_bytes is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         if collage_length == 0 || collage_length > MAX_COLLAGE_MANIFEST_SIZE {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "Collage size is out of range");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Collage size is out of range",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         }
 
@@ -6344,7 +8780,11 @@ pub unsafe extern "C" fn epp_attachment_streaming_encryptor_create(
             || mime_type.is_null()
             || out_handle.is_null()
         {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
 
@@ -6352,7 +8792,11 @@ pub unsafe extern "C" fn epp_attachment_streaming_encryptor_create(
         let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length).to_vec();
         let mime_bytes = std::slice::from_raw_parts(mime_type, mime_type_length);
         let Ok(mime_str) = std::str::from_utf8(mime_bytes) else {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "Invalid UTF-8 mime_type");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Invalid UTF-8 mime_type",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         };
         let mime = mime_str.to_string();
@@ -6360,7 +8804,7 @@ pub unsafe extern "C" fn epp_attachment_streaming_encryptor_create(
         match StreamingEncryptor::new(fk, aid, mime, total_size, chunk_size, chunk_count) {
             Ok(enc) => {
                 let handle = Box::new(EppStreamingEncryptorHandle(Some(enc)));
-                *out_handle = Box::into_raw(handle);
+                replace_out_handle(out_handle, Box::into_raw(handle));
                 EppErrorCode::EppSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
@@ -6379,12 +8823,20 @@ pub unsafe extern "C" fn epp_attachment_streaming_encryptor_write(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if handle.is_null() || data.is_null() || out_chunks.is_null() || out_chunk_count.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
 
         let Some(enc) = (*handle).0.as_mut() else {
-            write_error(out_error, EppErrorCode::EppErrorObjectDisposed, "Encryptor disposed");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorObjectDisposed,
+                "Encryptor disposed",
+            );
             return EppErrorCode::EppErrorObjectDisposed;
         };
 
@@ -6410,12 +8862,20 @@ pub unsafe extern "C" fn epp_attachment_streaming_encryptor_finish(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if handle.is_null() || out_chunk.is_null() || out_has_chunk.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
 
         let Some(enc) = (*handle).0.take() else {
-            write_error(out_error, EppErrorCode::EppErrorObjectDisposed, "Encryptor disposed");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorObjectDisposed,
+                "Encryptor disposed",
+            );
             return EppErrorCode::EppErrorObjectDisposed;
         };
 
@@ -6476,7 +8936,11 @@ pub unsafe extern "C" fn epp_attachment_streaming_decryptor_create(
             || mime_type.is_null()
             || out_handle.is_null()
         {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
 
@@ -6484,7 +8948,11 @@ pub unsafe extern "C" fn epp_attachment_streaming_decryptor_create(
         let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length).to_vec();
         let mime_bytes = std::slice::from_raw_parts(mime_type, mime_type_length);
         let Ok(mime_str) = std::str::from_utf8(mime_bytes) else {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "Invalid UTF-8 mime_type");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Invalid UTF-8 mime_type",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         };
         let mime = mime_str.to_string();
@@ -6492,7 +8960,7 @@ pub unsafe extern "C" fn epp_attachment_streaming_decryptor_create(
         match StreamingDecryptor::new(fk, aid, mime, total_size, chunk_size, chunk_count) {
             Ok(dec) => {
                 let handle = Box::new(EppStreamingDecryptorHandle(Some(dec)));
-                *out_handle = Box::into_raw(handle);
+                replace_out_handle(out_handle, Box::into_raw(handle));
                 EppErrorCode::EppSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
@@ -6512,17 +8980,21 @@ pub unsafe extern "C" fn epp_attachment_streaming_decryptor_write(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
-        if handle.is_null()
-            || nonce.is_null()
-            || ciphertext.is_null()
-            || out_plaintext.is_null()
-        {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+        if handle.is_null() || nonce.is_null() || ciphertext.is_null() || out_plaintext.is_null() {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
 
         let Some(dec) = (*handle).0.as_mut() else {
-            write_error(out_error, EppErrorCode::EppErrorObjectDisposed, "Decryptor disposed");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorObjectDisposed,
+                "Decryptor disposed",
+            );
             return EppErrorCode::EppErrorObjectDisposed;
         };
 
@@ -6596,26 +9068,42 @@ pub unsafe extern "C" fn epp_attachment_manifest_create_v2(
             || encrypted_file_key.is_null()
             || out_manifest.is_null()
         {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         if attachment_id_length != ATTACHMENT_ID_BYTES
             || file_sha256_length != ATTACHMENT_HASH_BYTES
         {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "ID and SHA-256 must be 32 bytes");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "ID and SHA-256 must be 32 bytes",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         }
         if encrypted_file_key_length == 0
             || encrypted_file_key_length > MAX_ATTACHMENT_ENCRYPTED_FILE_KEY_SIZE
         {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "encrypted_file_key size is out of range");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "encrypted_file_key size is out of range",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         }
 
         let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
         let mime_bytes = std::slice::from_raw_parts(mime_type, mime_type_length);
         let Ok(mime_s) = std::str::from_utf8(mime_bytes) else {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "Invalid UTF-8 mime_type");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Invalid UTF-8 mime_type",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         };
         let mime_str = mime_s.to_string();
@@ -6635,9 +9123,16 @@ pub unsafe extern "C" fn epp_attachment_manifest_create_v2(
             file_sha256: sha.to_vec(),
             encrypted_file_key: efk.to_vec(),
             encryption_scheme: "AES-256-GCM-SIV".to_string(),
-            collage_index: if collage_index >= 0 { Some(u32::try_from(collage_index).unwrap_or(0)) } else { None },
+            collage_index: if collage_index >= 0 {
+                Some(u32::try_from(collage_index).unwrap_or(0))
+            } else {
+                None
+            },
             encrypted_thumbnail: if has_thumbnail {
-                Some(std::slice::from_raw_parts(thumbnail_ciphertext, thumbnail_ciphertext_length).to_vec())
+                Some(
+                    std::slice::from_raw_parts(thumbnail_ciphertext, thumbnail_ciphertext_length)
+                        .to_vec(),
+                )
             } else {
                 None
             },
@@ -6647,12 +9142,17 @@ pub unsafe extern "C" fn epp_attachment_manifest_create_v2(
                 None
             },
             thumbnail_mime_type: if has_thumbnail && !thumbnail_mime_type.is_null() {
-                let tb = std::slice::from_raw_parts(thumbnail_mime_type, thumbnail_mime_type_length);
+                let tb =
+                    std::slice::from_raw_parts(thumbnail_mime_type, thumbnail_mime_type_length);
                 Some(std::str::from_utf8(tb).unwrap_or("image/jpeg").to_string())
             } else {
                 None
             },
-            thumbnail_size: if has_thumbnail { Some(thumbnail_original_size) } else { None },
+            thumbnail_size: if has_thumbnail {
+                Some(thumbnail_original_size)
+            } else {
+                None
+            },
             ttl_seconds: if has_ttl { Some(ttl_seconds) } else { None },
             created_at_unix: if has_ttl { Some(created_at_unix) } else { None },
             original_filename: None,
@@ -6698,20 +9198,36 @@ pub unsafe extern "C" fn epp_attachment_encrypt_file_key(
             || attachment_id.is_null()
             || out_encrypted_file_key.is_null()
         {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         if file_key_length != ATTACHMENT_FILE_KEY_BYTES {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "file_key must be 32 bytes");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "file_key must be 32 bytes",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         }
         if attachment_id_length != ATTACHMENT_ID_BYTES {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "attachment_id must be 32 bytes");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "attachment_id must be 32 bytes",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         }
 
         let Some(session) = (*handle).0.as_ref() else {
-            write_error(out_error, EppErrorCode::EppErrorObjectDisposed, "Session disposed");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorObjectDisposed,
+                "Session disposed",
+            );
             return EppErrorCode::EppErrorObjectDisposed;
         };
 
@@ -6744,16 +9260,28 @@ pub unsafe extern "C" fn epp_attachment_decrypt_file_key(
             || attachment_id.is_null()
             || out_file_key.is_null()
         {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         if attachment_id_length != ATTACHMENT_ID_BYTES {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "attachment_id must be 32 bytes");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "attachment_id must be 32 bytes",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         }
 
         let Some(session) = (*handle).0.as_ref() else {
-            write_error(out_error, EppErrorCode::EppErrorObjectDisposed, "Session disposed");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorObjectDisposed,
+                "Session disposed",
+            );
             return EppErrorCode::EppErrorObjectDisposed;
         };
 
@@ -6780,13 +9308,21 @@ pub unsafe extern "C" fn epp_attachment_validate_magic_bytes(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if header.is_null() || mime_type.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         let header_slice = std::slice::from_raw_parts(header, header_length);
         let mime_bytes = std::slice::from_raw_parts(mime_type, mime_type_length);
         let Ok(mime_str) = std::str::from_utf8(mime_bytes) else {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "mime_type is not valid UTF-8");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "mime_type is not valid UTF-8",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         };
         match crate::protocol::attachment::validate_magic_bytes(header_slice, mime_str) {
@@ -6805,7 +9341,11 @@ pub unsafe extern "C" fn epp_attachment_detect_mime(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if header.is_null() || out_mime.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         let header_slice = std::slice::from_raw_parts(header, header_length);
@@ -6829,7 +9369,11 @@ pub unsafe extern "C" fn epp_attachment_validate_filename(
         }
         let name_bytes = std::slice::from_raw_parts(name, name_length);
         let Ok(name_str) = std::str::from_utf8(name_bytes) else {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "name is not valid UTF-8");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "name is not valid UTF-8",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         };
         match crate::protocol::attachment::validate_filename(name_str) {
@@ -6848,12 +9392,20 @@ pub unsafe extern "C" fn epp_attachment_sanitize_filename(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if name.is_null() || out_sanitized.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         let name_bytes = std::slice::from_raw_parts(name, name_length);
         let Ok(name_str) = std::str::from_utf8(name_bytes) else {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "name is not valid UTF-8");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "name is not valid UTF-8",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         };
         let sanitized = crate::protocol::attachment::sanitize_filename(name_str);
@@ -6877,11 +9429,19 @@ pub unsafe extern "C" fn epp_attachment_collage_create_with_metadata(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if manifest_array.is_null() || manifest_lengths.is_null() || out_collage.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         if manifest_count == 0 {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "manifest_count must be > 0");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "manifest_count must be > 0",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         }
 
@@ -6891,7 +9451,11 @@ pub unsafe extern "C" fn epp_attachment_collage_create_with_metadata(
         let mut manifests = Vec::with_capacity(manifest_count);
         for i in 0..manifest_count {
             if ptrs[i].is_null() {
-                write_error(out_error, EppErrorCode::EppErrorNullPointer, "manifest pointer is null");
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorNullPointer,
+                    "manifest pointer is null",
+                );
                 return EppErrorCode::EppErrorNullPointer;
             }
             let bytes = std::slice::from_raw_parts(ptrs[i], lens[i]);
@@ -6907,7 +9471,11 @@ pub unsafe extern "C" fn epp_attachment_collage_create_with_metadata(
         let name_opt = if !name.is_null() && name_length > 0 {
             let nb = std::slice::from_raw_parts(name, name_length);
             let Ok(s) = std::str::from_utf8(nb) else {
-                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "name is not valid UTF-8");
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorInvalidInput,
+                    "name is not valid UTF-8",
+                );
                 return EppErrorCode::EppErrorInvalidInput;
             };
             Some(s)
@@ -6917,7 +9485,11 @@ pub unsafe extern "C" fn epp_attachment_collage_create_with_metadata(
         let desc_opt = if !description.is_null() && description_length > 0 {
             let db = std::slice::from_raw_parts(description, description_length);
             let Ok(s) = std::str::from_utf8(db) else {
-                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "description is not valid UTF-8");
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorInvalidInput,
+                    "description is not valid UTF-8",
+                );
                 return EppErrorCode::EppErrorInvalidInput;
             };
             Some(s)
@@ -6953,7 +9525,11 @@ pub unsafe extern "C" fn epp_attachment_inline_validate(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if bytes.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "bytes is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "bytes is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         let slice = std::slice::from_raw_parts(bytes, length);
@@ -6988,21 +9564,34 @@ pub unsafe extern "C" fn epp_attachment_inline_create(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
-        if attachment_id.is_null() || mime_type.is_null() || data.is_null() || out_buffer.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+        if attachment_id.is_null() || mime_type.is_null() || data.is_null() || out_buffer.is_null()
+        {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
         let mime_bytes = std::slice::from_raw_parts(mime_type, mime_type_length);
         let Ok(mime_str) = std::str::from_utf8(mime_bytes) else {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "mime_type is not valid UTF-8");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "mime_type is not valid UTF-8",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         };
         let data_slice = std::slice::from_raw_parts(data, data_length);
         let filename = if !original_filename.is_null() && original_filename_length > 0 {
             let fb = std::slice::from_raw_parts(original_filename, original_filename_length);
             let Ok(fs) = std::str::from_utf8(fb) else {
-                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "filename is not valid UTF-8");
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorInvalidInput,
+                    "filename is not valid UTF-8",
+                );
                 return EppErrorCode::EppErrorInvalidInput;
             };
             Some(fs.to_string())
@@ -7049,7 +9638,11 @@ pub unsafe extern "C" fn epp_attachment_reference_validate(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if bytes.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "bytes is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "bytes is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         let slice = std::slice::from_raw_parts(bytes, length);
@@ -7078,7 +9671,11 @@ pub unsafe extern "C" fn epp_attachment_reference_create(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if attachment_id.is_null() || out_buffer.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
@@ -7116,7 +9713,11 @@ pub unsafe extern "C" fn epp_attachment_voice_meta_validate(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if bytes.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "bytes is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "bytes is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         let slice = std::slice::from_raw_parts(bytes, length);
@@ -7147,7 +9748,11 @@ pub unsafe extern "C" fn epp_attachment_voice_meta_create(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_buffer.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "out_buffer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_buffer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         let waveform = if !waveform_samples.is_null() && waveform_count > 0 {
@@ -7158,7 +9763,11 @@ pub unsafe extern "C" fn epp_attachment_voice_meta_create(
         let transcript_opt = if !transcript.is_null() && transcript_length > 0 {
             let tb = std::slice::from_raw_parts(transcript, transcript_length);
             let Ok(ts) = std::str::from_utf8(tb) else {
-                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "transcript is not valid UTF-8");
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorInvalidInput,
+                    "transcript is not valid UTF-8",
+                );
                 return EppErrorCode::EppErrorInvalidInput;
             };
             Some(ts.to_string())
@@ -7200,7 +9809,11 @@ pub unsafe extern "C" fn epp_attachment_location_validate(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if bytes.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "bytes is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "bytes is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         let slice = std::slice::from_raw_parts(bytes, length);
@@ -7232,21 +9845,37 @@ pub unsafe extern "C" fn epp_attachment_location_create(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_buffer.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "out_buffer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "out_buffer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let accuracy = if has_accuracy != 0 { Some(accuracy_meters) } else { None };
+        let accuracy = if has_accuracy != 0 {
+            Some(accuracy_meters)
+        } else {
+            None
+        };
         let label_opt = if !label.is_null() && label_length > 0 {
             let lb = std::slice::from_raw_parts(label, label_length);
             let Ok(ls) = std::str::from_utf8(lb) else {
-                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "label is not valid UTF-8");
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorInvalidInput,
+                    "label is not valid UTF-8",
+                );
                 return EppErrorCode::EppErrorInvalidInput;
             };
             Some(ls.to_string())
         } else {
             None
         };
-        let ts = if has_timestamp != 0 { Some(timestamp_unix) } else { None };
+        let ts = if has_timestamp != 0 {
+            Some(timestamp_unix)
+        } else {
+            None
+        };
         match crate::protocol::attachment::create_location_attachment(
             latitude, longitude, accuracy, label_opt, ts,
         ) {
@@ -7274,7 +9903,11 @@ pub unsafe extern "C" fn epp_attachment_contact_card_validate(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if bytes.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "bytes is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "bytes is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         let slice = std::slice::from_raw_parts(bytes, length);
@@ -7308,18 +9941,30 @@ pub unsafe extern "C" fn epp_attachment_contact_card_create(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if display_name.is_null() || out_buffer.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         let dn_bytes = std::slice::from_raw_parts(display_name, display_name_length);
         let Ok(dn_str) = std::str::from_utf8(dn_bytes) else {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "display_name is not valid UTF-8");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "display_name is not valid UTF-8",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         };
         let phone_opt = if !phone.is_null() && phone_length > 0 {
             let pb = std::slice::from_raw_parts(phone, phone_length);
             let Ok(ps) = std::str::from_utf8(pb) else {
-                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "phone is not valid UTF-8");
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorInvalidInput,
+                    "phone is not valid UTF-8",
+                );
                 return EppErrorCode::EppErrorInvalidInput;
             };
             Some(ps.to_string())
@@ -7329,7 +9974,11 @@ pub unsafe extern "C" fn epp_attachment_contact_card_create(
         let email_opt = if !email.is_null() && email_length > 0 {
             let eb = std::slice::from_raw_parts(email, email_length);
             let Ok(es) = std::str::from_utf8(eb) else {
-                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "email is not valid UTF-8");
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorInvalidInput,
+                    "email is not valid UTF-8",
+                );
                 return EppErrorCode::EppErrorInvalidInput;
             };
             Some(es.to_string())
@@ -7344,7 +9993,11 @@ pub unsafe extern "C" fn epp_attachment_contact_card_create(
         let org_opt = if !organization.is_null() && organization_length > 0 {
             let ob = std::slice::from_raw_parts(organization, organization_length);
             let Ok(os) = std::str::from_utf8(ob) else {
-                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "organization is not valid UTF-8");
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorInvalidInput,
+                    "organization is not valid UTF-8",
+                );
                 return EppErrorCode::EppErrorInvalidInput;
             };
             Some(os.to_string())
@@ -7382,7 +10035,11 @@ pub unsafe extern "C" fn epp_attachment_link_preview_validate(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if bytes.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "bytes is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "bytes is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         let slice = std::slice::from_raw_parts(bytes, length);
@@ -7418,18 +10075,30 @@ pub unsafe extern "C" fn epp_attachment_link_preview_create(
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if url.is_null() || out_buffer.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "A required pointer is null");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorNullPointer,
+                "A required pointer is null",
+            );
             return EppErrorCode::EppErrorNullPointer;
         }
         let url_bytes = std::slice::from_raw_parts(url, url_length);
         let Ok(url_str) = std::str::from_utf8(url_bytes) else {
-            write_error(out_error, EppErrorCode::EppErrorInvalidInput, "url is not valid UTF-8");
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "url is not valid UTF-8",
+            );
             return EppErrorCode::EppErrorInvalidInput;
         };
         let title_opt = if !title.is_null() && title_length > 0 {
             let tb = std::slice::from_raw_parts(title, title_length);
             let Ok(ts) = std::str::from_utf8(tb) else {
-                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "title is not valid UTF-8");
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorInvalidInput,
+                    "title is not valid UTF-8",
+                );
                 return EppErrorCode::EppErrorInvalidInput;
             };
             Some(ts.to_string())
@@ -7439,7 +10108,11 @@ pub unsafe extern "C" fn epp_attachment_link_preview_create(
         let desc_opt = if !description.is_null() && description_length > 0 {
             let db = std::slice::from_raw_parts(description, description_length);
             let Ok(ds) = std::str::from_utf8(db) else {
-                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "description is not valid UTF-8");
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorInvalidInput,
+                    "description is not valid UTF-8",
+                );
                 return EppErrorCode::EppErrorInvalidInput;
             };
             Some(ds.to_string())
@@ -7454,7 +10127,11 @@ pub unsafe extern "C" fn epp_attachment_link_preview_create(
         let image_mime_opt = if !preview_image_mime.is_null() && preview_image_mime_length > 0 {
             let mb = std::slice::from_raw_parts(preview_image_mime, preview_image_mime_length);
             let Ok(ms) = std::str::from_utf8(mb) else {
-                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "preview_image_mime is not valid UTF-8");
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorInvalidInput,
+                    "preview_image_mime is not valid UTF-8",
+                );
                 return EppErrorCode::EppErrorInvalidInput;
             };
             Some(ms.to_string())
@@ -7464,7 +10141,11 @@ pub unsafe extern "C" fn epp_attachment_link_preview_create(
         let domain_opt = if !domain.is_null() && domain_length > 0 {
             let db = std::slice::from_raw_parts(domain, domain_length);
             let Ok(ds) = std::str::from_utf8(db) else {
-                write_error(out_error, EppErrorCode::EppErrorInvalidInput, "domain is not valid UTF-8");
+                write_error(
+                    out_error,
+                    EppErrorCode::EppErrorInvalidInput,
+                    "domain is not valid UTF-8",
+                );
                 return EppErrorCode::EppErrorInvalidInput;
             };
             Some(ds.to_string())
@@ -7549,9 +10230,7 @@ pub unsafe extern "C" fn epp_session_get_metadata(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_is_expired(
-    handle: *mut EppSessionHandle,
-) -> bool {
+pub unsafe extern "C" fn epp_session_is_expired(handle: *mut EppSessionHandle) -> bool {
     ffi_catch_panic_value!(false, {
         if handle.is_null() {
             return false;

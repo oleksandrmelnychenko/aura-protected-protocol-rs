@@ -10,11 +10,28 @@ The protocol is designed for production use with clear cryptographic guarantees.
 
 ### Sealed state anti-rollback (external counter)
 
-Sealed session state is bound to an **external monotonic counter** in AAD. The **application must**:
+Sealed session state is bound to an **external monotonic counter** in AAD, but a single persisted number is not enough to use it safely. The correct state model needs **two counters per persisted slot**:
 
-1. Use a strictly increasing `external_counter` for each `export_sealed_state` (e.g. from persistent storage).
-2. Persist the last accepted counter and pass it as `min_external_counter` when calling `from_sealed_state`.
-3. After a successful import, persist the sealed blob’s `external_counter` (e.g. via `sealed_state_external_counter`) for the next import check.
+1. `max_restored_counter`
+   The highest sealed-state counter that has already been successfully restored/imported. This is the value passed as `min_external_counter` on the next restore.
+2. `latest_issued_counter`
+   The highest counter already used for a local sealed export. The next export must use `latest_issued_counter + 1`.
+
+Why this matters:
+
+- If you persist only one counter and set it equal to the newest blob's counter, you can no longer restore that newest blob because imports require `sealed_counter > min_external_counter`.
+- If you persist only the previous accepted counter, you can restore the newest blob, but you no longer know what the next export counter should be after restart.
+
+The safe pattern is therefore:
+
+1. On export, issue `next = latest_issued_counter + 1`, seal the state with that counter, then persist the blob and update `latest_issued_counter = next`.
+2. On restore, pass `max_restored_counter` as `min_external_counter`. If restore succeeds, update `max_restored_counter = sealed_counter` and also raise `latest_issued_counter` to at least that value.
+
+The public Rust API now exposes `api::SealedStateCounterTracker` plus managed helpers for session/group/VoIP sealed-state flows, and the C/Swift surfaces expose the same model via `epp_sealed_state_counter_tracker_*` and tracker-based `*_with_tracker` sealed-state APIs, so applications do not have to hand-roll this state machine.
+
+For crash consistency, the API also exposes a higher-level `SealedStateSlot` / `epp_sealed_state_slot_*` abstraction that stores the tracker and sealed blob together in one serialized record. This removes the "blob and tracker persisted separately" footgun.
+
+That higher-level slot improves atomicity, but it does **not** eliminate the fundamental rollback assumption by itself. If an attacker can replace the entire serialized slot with an older serialized slot, the library still cannot distinguish that from a legitimate older snapshot unless the application also relies on trusted monotonic storage outside the slot.
 
 Import is accepted only when `sealed_counter > min_external_counter` (strictly greater; equality is rejected as rollback) across session/group/VoIP sealed-state paths.
 
@@ -28,6 +45,19 @@ Expiry is enforced as: `sent_timestamp + ttl_seconds > recipient SystemTime::now
 - A sender can backdate `sent_timestamp` so that messages expire before being read, or set a far-future timestamp for a de facto infinite TTL.
 
 This is a fundamental limitation of any disappearing-message design without a trusted time source. The protocol provides the check; the environment (clock trust) is the integrator’s responsibility.
+
+The Rust API now exposes an injectable `interfaces::ITimeProvider`, and the core session/group/VoIP entrypoints have `*_with_time_provider` variants plus `api::EcliptixProtocol::new_with_time_provider(...)`. The C/Swift surfaces now expose the same capability via `epp_time_provider_manual_*`, `epp_identity_set_time_provider(...)`, and explicit `*_with_time_provider` sealed-state restore APIs. Integrators that have a server-synchronized or otherwise trusted time source should pass it explicitly instead of relying on local wall-clock reads inside the protocol.
+
+### External join authorization freshness
+
+External join authorizations are cryptographically bound to the exported public state and are short-lived. Freshness is enforced by the **joiner bootstrap** path as: `issued_at_unix <= now + MAX_FUTURE_TIMESTAMP_SKEW_SECS` and `now <= expires_at_unix`.
+
+- A joiner with a badly skewed clock can reject a still-valid authorization or accept one slightly earlier/later than intended.
+- The short validity window limits relay replay of previously valid `public_state + authorization` pairs, but the environment still needs a reasonably correct clock for that guarantee to hold.
+- Existing members do **not** re-apply wall-clock freshness when processing an already-created `ExternalInit` Commit. They validate the commit against the exact pre-commit group state (`group_id`, `epoch`, `group_context_hash`, external init public keys, joiner identity, and authorizer signature), which preserves asynchronous/offline commit delivery.
+- Operationally, ExternalInit should be treated as a same-version feature during rollout: the authorization payload now carries an explicit signed auth-format version plus additional signed bindings/timestamps, so mixed-version deployments can reject external joins until all participants are upgraded.
+
+As with TTL enforcement, Rust integrators can inject a trusted `ITimeProvider` into the protocol/session/group/VoIP constructors, and C/Swift integrators can bind identities/restores to explicit time-provider handles, so freshness checks use a product-defined time source rather than hidden `SystemTime::now()` reads.
 
 ### Group protocol: post-compromise security per epoch
 

@@ -89,6 +89,15 @@ fn run_group_longevity_simulation(
     let mut delivered = 0u64;
     let mut rotations = 0u64;
     let total_days = years * days_per_year;
+    let warning_threshold = u32::try_from(
+        (u64::from(max_messages_per_epoch)
+            * u64::from(ecliptix_protocol::core::constants::SENDER_KEY_EXHAUSTION_WARNING_PERCENT))
+        .div_ceil(100),
+    )
+    .unwrap();
+    let rotate_after_generation = max_messages_per_epoch.saturating_sub(warning_threshold);
+    assert!(rotate_after_generation > 0);
+    let mut generation_in_epoch = 0u32;
 
     for day in 0..total_days {
         for m in 0..messages_per_day {
@@ -99,14 +108,16 @@ fn run_group_longevity_simulation(
             let result = bob.decrypt(&ct).unwrap();
             assert_eq!(result.plaintext, msg);
             delivered += 1;
+            generation_in_epoch += 1;
 
-            if alice.should_rotate_epoch().unwrap() {
+            if generation_in_epoch >= rotate_after_generation {
                 let rotate_commit = alice.rotate_epoch_if_needed().unwrap();
                 let Some(rotate_commit) = rotate_commit else {
                     panic!("rotation was expected");
                 };
                 bob.process_commit(&rotate_commit).unwrap();
                 rotations += 1;
+                generation_in_epoch = 0;
             }
         }
     }
@@ -138,6 +149,46 @@ fn authorize_and_join_external(
         credential.to_vec(),
     )
     .unwrap()
+}
+
+fn resign_external_join_authorization_for_test(
+    authorization: &mut ecliptix_protocol::proto::GroupExternalJoinAuthorization,
+    signer: &IdentityKeys,
+) -> Vec<u8> {
+    authorization.authorizer_signature.clear();
+
+    let mut auth_for_sig = Vec::new();
+    authorization.encode(&mut auth_for_sig).unwrap();
+
+    let sk = signer.get_identity_ed25519_private_key_copy().unwrap();
+    let sk_arr: [u8; 64] = sk.as_slice().try_into().unwrap();
+    let signing_key = ed25519_dalek::SigningKey::from_keypair_bytes(&sk_arr).unwrap();
+    use ed25519_dalek::Signer;
+    authorization.authorizer_signature = signing_key.sign(&auth_for_sig).to_bytes().to_vec();
+
+    let mut signed = Vec::new();
+    authorization.encode(&mut signed).unwrap();
+    signed
+}
+
+fn resign_group_commit_for_test(
+    commit: &mut ecliptix_protocol::proto::GroupCommit,
+    signer: &IdentityKeys,
+) -> Vec<u8> {
+    commit.committer_signature.clear();
+
+    let mut commit_for_sig = Vec::new();
+    commit.encode(&mut commit_for_sig).unwrap();
+
+    let sk = signer.get_identity_ed25519_private_key_copy().unwrap();
+    let sk_arr: [u8; 64] = sk.as_slice().try_into().unwrap();
+    let signing_key = ed25519_dalek::SigningKey::from_keypair_bytes(&sk_arr).unwrap();
+    use ed25519_dalek::Signer;
+    commit.committer_signature = signing_key.sign(&commit_for_sig).to_bytes().to_vec();
+
+    let mut signed = Vec::new();
+    commit.encode(&mut signed).unwrap();
+    signed
 }
 
 #[test]
@@ -1559,6 +1610,84 @@ fn replay_nonces_persist_multiple() {
         .unwrap();
     let dec = bob_restored.decrypt(&env_fresh).unwrap();
     assert_eq!(dec.plaintext, b"after-all-replays");
+}
+
+#[test]
+fn attachment_file_key_decrypt_rejects_wrong_attachment_id() {
+    init();
+
+    let mut alice = IdentityKeys::create(5).unwrap();
+    let mut bob = IdentityKeys::create(5).unwrap();
+    let bob_bundle = PreKeyBundle::decode(build_proto_bundle(&bob).as_slice()).unwrap();
+    let initiator = HandshakeInitiator::start(&mut alice, &bob_bundle, 1000).unwrap();
+    let init_bytes = initiator.encoded_message().to_vec();
+    let responder = HandshakeResponder::process(&mut bob, &bob_bundle, &init_bytes, 1000).unwrap();
+    let ack_bytes = responder.encoded_ack().to_vec();
+    let bob_session = responder.finish().unwrap();
+    let alice_session = initiator.finish(&ack_bytes).unwrap();
+
+    let file_key = CryptoInterop::get_random_bytes(
+        ecliptix_protocol::core::constants::ATTACHMENT_FILE_KEY_BYTES,
+    );
+    let attachment_id = ecliptix_protocol::protocol::attachment::generate_attachment_id();
+    let encrypted = ecliptix_protocol::protocol::attachment::encrypt_file_key_for_session(
+        &alice_session,
+        &file_key,
+        &attachment_id,
+    )
+    .unwrap();
+
+    let decrypted = ecliptix_protocol::protocol::attachment::decrypt_file_key_from_session(
+        &bob_session,
+        &encrypted,
+        &attachment_id,
+    )
+    .unwrap();
+    assert_eq!(decrypted, file_key);
+
+    let encrypted_wrong = ecliptix_protocol::protocol::attachment::encrypt_file_key_for_session(
+        &alice_session,
+        &file_key,
+        &attachment_id,
+    )
+    .unwrap();
+
+    let mut wrong_attachment_id = attachment_id;
+    wrong_attachment_id[0] ^= 0xFF;
+    let result = ecliptix_protocol::protocol::attachment::decrypt_file_key_from_session(
+        &bob_session,
+        &encrypted_wrong,
+        &wrong_attachment_id,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn attachment_inline_rejects_invalid_mime_characters() {
+    let inline = ecliptix_protocol::proto::InlineAttachment {
+        attachment_id: ecliptix_protocol::protocol::attachment::generate_attachment_id(),
+        mime_type: "image/png; charset=binary".to_string(),
+        data: vec![0xAA],
+        original_filename: None,
+        content_policy: None,
+    };
+
+    let result = ecliptix_protocol::protocol::attachment::validate_inline_attachment(&inline);
+    assert!(result.is_err());
+}
+
+#[test]
+fn attachment_filename_rejects_windows_normalized_reserved_and_dot_segments() {
+    for name in [".", "CON.", "LPT1 ", "aux. "] {
+        let result = ecliptix_protocol::protocol::attachment::validate_filename(name);
+        assert!(result.is_err(), "name={name}");
+    }
+}
+
+#[test]
+fn attachment_sanitize_filename_normalizes_windows_edge_cases() {
+    let sanitized = ecliptix_protocol::protocol::attachment::sanitize_filename("CON. ");
+    assert_eq!(sanitized, "_CON");
 }
 
 #[test]
@@ -4041,10 +4170,10 @@ use ecliptix_protocol::protocol::group::{self, GroupSession};
 fn group_tree_navigation_parent_child_sibling() {
     use ecliptix_protocol::protocol::group::tree;
 
-    assert_eq!(tree::leaf_to_node(0), 0);
-    assert_eq!(tree::leaf_to_node(1), 2);
-    assert_eq!(tree::leaf_to_node(2), 4);
-    assert_eq!(tree::leaf_to_node(3), 6);
+    assert_eq!(tree::leaf_to_node(0).unwrap(), 0);
+    assert_eq!(tree::leaf_to_node(1).unwrap(), 2);
+    assert_eq!(tree::leaf_to_node(2).unwrap(), 4);
+    assert_eq!(tree::leaf_to_node(3).unwrap(), 6);
 
     assert_eq!(tree::node_to_leaf(0), Some(0));
     assert_eq!(tree::node_to_leaf(2), Some(1));
@@ -4703,6 +4832,59 @@ fn group_api_rotation_helpers_follow_policy_threshold() {
 }
 
 #[test]
+fn group_session_sender_key_warning_uses_ceil_threshold_for_non_round_budget() {
+    use ecliptix_protocol::interfaces::IGroupEventHandler;
+    use std::sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    };
+
+    struct WarningTracker {
+        count: AtomicU32,
+        last_remaining: AtomicU32,
+    }
+
+    impl WarningTracker {
+        fn new() -> Self {
+            Self {
+                count: AtomicU32::new(0),
+                last_remaining: AtomicU32::new(0),
+            }
+        }
+    }
+
+    impl IGroupEventHandler for WarningTracker {
+        fn on_member_added(&self, _leaf_index: u32, _identity_ed25519: &[u8]) {}
+        fn on_member_removed(&self, _leaf_index: u32) {}
+        fn on_epoch_advanced(&self, _new_epoch: u64, _member_count: u32) {}
+        fn on_sender_key_exhaustion_warning(&self, remaining: u32, _max_capacity: u32) {
+            self.count.fetch_add(1, Ordering::SeqCst);
+            self.last_remaining.store(remaining, Ordering::SeqCst);
+        }
+        fn on_reinit_proposed(&self, _new_group_id: &[u8], _new_version: u32) {}
+    }
+
+    init();
+
+    let identity = IdentityKeys::create(0).unwrap();
+    let mut policy = ecliptix_protocol::protocol::group::GroupSecurityPolicy::shield();
+    policy.max_messages_per_epoch = 19;
+    let session = GroupSession::create_with_policy(&identity, b"alice".to_vec(), policy).unwrap();
+
+    let tracker = Arc::new(WarningTracker::new());
+    session.set_event_handler(tracker.clone());
+
+    for _ in 0..16 {
+        session.encrypt(b"m").unwrap();
+    }
+    assert_eq!(tracker.count.load(Ordering::SeqCst), 0);
+
+    session.encrypt(b"m").unwrap();
+    assert_eq!(tracker.count.load(Ordering::SeqCst), 1);
+    assert_eq!(tracker.last_remaining.load(Ordering::SeqCst), 2);
+}
+
+#[test]
 fn group_api_rotate_epoch_if_needed_advances_epoch() {
     init();
 
@@ -4722,6 +4904,96 @@ fn group_api_rotate_epoch_if_needed_advances_epoch() {
         session.epoch_messages_remaining().unwrap(),
         ecliptix_protocol::core::constants::SHIELD_MIN_MESSAGES_PER_EPOCH
     );
+}
+
+#[test]
+fn group_session_bidirectional_rotation_and_sealed_roundtrip_remains_in_sync() {
+    init();
+
+    let mut policy = ecliptix_protocol::protocol::group::GroupSecurityPolicy::shield();
+    policy.max_messages_per_epoch = 25;
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let bob_id = IdentityKeys::create(10).unwrap();
+
+    let mut alice = GroupSession::create_with_policy(&alice_id, b"alice".to_vec(), policy).unwrap();
+    let (bob_kp, bob_x25519_priv, bob_kyber_sec) =
+        group::key_package::create_key_package(&bob_id, b"bob".to_vec()).unwrap();
+    let (_commit, welcome) = alice.add_member(&bob_kp).unwrap();
+    let mut bob = GroupSession::from_welcome(
+        &welcome,
+        bob_x25519_priv,
+        bob_kyber_sec,
+        &bob_id.get_identity_ed25519_public(),
+        &bob_id.get_identity_x25519_public(),
+        bob_id.get_identity_ed25519_private_key_copy().unwrap(),
+    )
+    .unwrap();
+
+    let key = CryptoInterop::get_random_bytes(32);
+    let mut alice_counter = 1u64;
+    let mut bob_counter = 1u64;
+
+    for day in 0..180u32 {
+        for slot in 0..2u32 {
+            let alice_msg = format!("alice-{day}-{slot}");
+            let ct = alice.encrypt(alice_msg.as_bytes()).unwrap();
+            let pt = bob.decrypt(&ct).unwrap();
+            assert_eq!(pt.plaintext, alice_msg.as_bytes());
+
+            if alice.should_rotate_epoch().unwrap() {
+                let commit = alice.rotate_epoch_if_needed().unwrap().unwrap();
+                bob.process_commit(&commit).unwrap();
+            }
+
+            let bob_msg = format!("bob-{day}-{slot}");
+            let ct = bob.encrypt(bob_msg.as_bytes()).unwrap();
+            let pt = alice.decrypt(&ct).unwrap();
+            assert_eq!(pt.plaintext, bob_msg.as_bytes());
+
+            if bob.should_rotate_epoch().unwrap() {
+                let commit = bob.rotate_epoch_if_needed().unwrap().unwrap();
+                alice.process_commit(&commit).unwrap();
+            }
+        }
+
+        if day > 0 && day % 30 == 0 {
+            let alice_epoch_before = alice.epoch().unwrap();
+            let bob_epoch_before = bob.epoch().unwrap();
+
+            let alice_sealed = alice.export_sealed_state(&key, alice_counter).unwrap();
+            alice = GroupSession::from_sealed_state(
+                &alice_sealed,
+                &key,
+                alice_id.get_identity_ed25519_private_key_copy().unwrap(),
+                alice_counter.saturating_sub(1),
+            )
+            .unwrap();
+            assert_eq!(alice.epoch().unwrap(), alice_epoch_before);
+            alice_counter += 1;
+
+            let bob_sealed = bob.export_sealed_state(&key, bob_counter).unwrap();
+            bob = GroupSession::from_sealed_state(
+                &bob_sealed,
+                &key,
+                bob_id.get_identity_ed25519_private_key_copy().unwrap(),
+                bob_counter.saturating_sub(1),
+            )
+            .unwrap();
+            assert_eq!(bob.epoch().unwrap(), bob_epoch_before);
+            bob_counter += 1;
+        }
+    }
+
+    assert_eq!(alice.epoch().unwrap(), bob.epoch().unwrap());
+
+    let ct = alice.encrypt(b"after-long-roundtrip").unwrap();
+    let pt = bob.decrypt(&ct).unwrap();
+    assert_eq!(pt.plaintext, b"after-long-roundtrip");
+
+    let reply = bob.encrypt(b"after-long-roundtrip-reply").unwrap();
+    let pt = alice.decrypt(&reply).unwrap();
+    assert_eq!(pt.plaintext, b"after-long-roundtrip-reply");
 }
 
 #[test]
@@ -5230,6 +5502,8 @@ fn relay_apply_commit_to_roster() {
         new_epoch: 1,
         added_identities: vec![vec![0xCC; 32]],
         removed_leaves: vec![],
+        kind: RelayCommitKind::Standard,
+        validation_scope: RelayCommitValidationScope::StructuralSenderBound,
     };
 
     let new_member = GroupMemberRecord {
@@ -5239,7 +5513,7 @@ fn relay_apply_commit_to_roster() {
         credential: b"bob".to_vec(),
     };
 
-    apply_commit_to_roster(&mut roster, &info, vec![new_member]).unwrap();
+    apply_commit_to_roster_tentative(&mut roster, &info, vec![new_member]).unwrap();
     assert_eq!(roster.epoch, 1);
     assert_eq!(roster.member_count(), 2);
     assert!(roster.find_member(1).is_some());
@@ -5264,6 +5538,8 @@ fn relay_apply_commit_to_roster_rejects_added_identity_mismatch() {
         new_epoch: 1,
         added_identities: vec![vec![0xCC; 32]],
         removed_leaves: vec![],
+        kind: RelayCommitKind::Standard,
+        validation_scope: RelayCommitValidationScope::StructuralSenderBound,
     };
 
     let wrong_member = GroupMemberRecord {
@@ -5273,7 +5549,7 @@ fn relay_apply_commit_to_roster_rejects_added_identity_mismatch() {
         credential: b"bob".to_vec(),
     };
 
-    let result = apply_commit_to_roster(&mut roster, &info, vec![wrong_member]);
+    let result = apply_commit_to_roster_tentative(&mut roster, &info, vec![wrong_member]);
     assert!(result.is_err());
 }
 
@@ -5302,6 +5578,8 @@ fn relay_apply_commit_to_roster_error_does_not_mutate_roster() {
         new_epoch: 1,
         added_identities: vec![vec![0xCC; 32], vec![0xDD; 32]],
         removed_leaves: vec![1],
+        kind: RelayCommitKind::Standard,
+        validation_scope: RelayCommitValidationScope::StructuralSenderBound,
     };
 
     let added_members = vec![
@@ -5319,7 +5597,7 @@ fn relay_apply_commit_to_roster_error_does_not_mutate_roster() {
         },
     ];
 
-    let result = apply_commit_to_roster(&mut roster, &info, added_members);
+    let result = apply_commit_to_roster_tentative(&mut roster, &info, added_members);
     assert!(result.is_err());
     assert_eq!(roster.epoch, 0);
     assert_eq!(roster.member_count(), 2);
@@ -5439,7 +5717,15 @@ fn relay_validate_commit_for_relay_strict_checks_signature_and_sender_binding() 
     );
 
     let alice_identity = alice.identity_ed25519_public();
-    validate_commit_for_relay_strict(&commit_bytes, &roster, &alice_identity).unwrap();
+    let info = validate_commit_for_relay_strict(&commit_bytes, &roster, &alice_identity).unwrap();
+    assert_eq!(
+        info.kind,
+        ecliptix_protocol::api::relay::RelayCommitKind::Standard
+    );
+    assert_eq!(
+        info.validation_scope,
+        ecliptix_protocol::api::relay::RelayCommitValidationScope::StructuralSenderBound
+    );
 
     let mut tampered = commit_bytes.clone();
     let last = tampered.len() - 1;
@@ -5449,6 +5735,98 @@ fn relay_validate_commit_for_relay_strict_checks_signature_and_sender_binding() 
     let charlie = EcliptixProtocol::new(10).unwrap();
     let charlie_identity = charlie.identity_ed25519_public();
     assert!(validate_commit_for_relay_strict(&commit_bytes, &roster, &charlie_identity).is_err());
+}
+
+#[test]
+fn relay_validate_external_join_commit_for_relay_strict_accepts_joiner_identity_binding() {
+    use ecliptix_protocol::api::relay::{
+        validate_commit_for_relay_strict, GroupMemberRecord, GroupRoster, RelayCommitKind,
+        RelayCommitValidationScope,
+    };
+
+    init();
+
+    let alice = EcliptixProtocol::new(10).unwrap();
+    let charlie = EcliptixProtocol::new(10).unwrap();
+    let alice_group = alice
+        .create_group_with_policy(b"alice".to_vec(), external_join_enabled_policy())
+        .unwrap();
+    let group_id = alice_group.group_id().unwrap();
+
+    let authorization = alice_group
+        .authorize_external_join(
+            &charlie.identity_ed25519_public(),
+            &charlie.identity_x25519_public(),
+            b"charlie",
+        )
+        .unwrap();
+    let public_state = alice_group.export_public_state().unwrap();
+    let (_charlie_group, ext_commit) = charlie
+        .join_group_external(&public_state, &authorization, b"charlie".to_vec())
+        .unwrap();
+
+    let roster = GroupRoster::new(
+        group_id,
+        GroupMemberRecord {
+            leaf_index: 0,
+            identity_ed25519_public: alice.identity_ed25519_public(),
+            identity_x25519_public: alice.identity_x25519_public(),
+            credential: b"alice".to_vec(),
+        },
+    );
+
+    let charlie_identity = charlie.identity_ed25519_public();
+    let info = validate_commit_for_relay_strict(&ext_commit, &roster, &charlie_identity).unwrap();
+    assert_eq!(info.kind, RelayCommitKind::ExternalJoin);
+    assert_eq!(
+        info.validation_scope,
+        RelayCommitValidationScope::StructuralSenderBound
+    );
+    assert_eq!(info.committer_leaf_index, 1);
+    assert_eq!(info.added_identities, vec![charlie_identity]);
+}
+
+#[test]
+fn relay_validate_external_join_commit_for_relay_strict_rejects_wrong_sender_identity() {
+    use ecliptix_protocol::api::relay::{
+        validate_commit_for_relay_strict, GroupMemberRecord, GroupRoster,
+    };
+
+    init();
+
+    let alice = EcliptixProtocol::new(10).unwrap();
+    let charlie = EcliptixProtocol::new(10).unwrap();
+    let mallory = EcliptixProtocol::new(10).unwrap();
+    let alice_group = alice
+        .create_group_with_policy(b"alice".to_vec(), external_join_enabled_policy())
+        .unwrap();
+    let group_id = alice_group.group_id().unwrap();
+
+    let authorization = alice_group
+        .authorize_external_join(
+            &charlie.identity_ed25519_public(),
+            &charlie.identity_x25519_public(),
+            b"charlie",
+        )
+        .unwrap();
+    let public_state = alice_group.export_public_state().unwrap();
+    let (_charlie_group, ext_commit) = charlie
+        .join_group_external(&public_state, &authorization, b"charlie".to_vec())
+        .unwrap();
+
+    let roster = GroupRoster::new(
+        group_id,
+        GroupMemberRecord {
+            leaf_index: 0,
+            identity_ed25519_public: alice.identity_ed25519_public(),
+            identity_x25519_public: alice.identity_x25519_public(),
+            credential: b"alice".to_vec(),
+        },
+    );
+
+    let mallory_identity = mallory.identity_ed25519_public();
+    let result = validate_commit_for_relay_strict(&ext_commit, &roster, &mallory_identity);
+    assert!(result.is_err());
 }
 
 #[test]
@@ -6159,6 +6537,418 @@ fn group_external_join_wrong_public_state_fails() {
 }
 
 #[test]
+fn group_external_join_stale_authorization_rejected_on_joiner() {
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let alice_session = create_external_joinable_group(&alice_id, b"alice");
+    let bob_id = IdentityKeys::create(20).unwrap();
+
+    let authorization = alice_session
+        .authorize_external_join(
+            &bob_id.get_identity_ed25519_public(),
+            &bob_id.get_identity_x25519_public(),
+            b"bob",
+        )
+        .unwrap();
+
+    let _commit = alice_session.update().unwrap();
+    let public_state = alice_session.export_public_state().unwrap();
+
+    let result =
+        GroupSession::from_external_join(&public_state, &authorization, &bob_id, b"bob".to_vec());
+    assert!(
+        result.is_err(),
+        "Stale authorization must be rejected by joiner"
+    );
+}
+
+#[test]
+fn group_external_join_authorization_binds_external_keys() {
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let alice_session = create_external_joinable_group(&alice_id, b"alice");
+    let bob_id = IdentityKeys::create(20).unwrap();
+
+    let authorization = alice_session
+        .authorize_external_join(
+            &bob_id.get_identity_ed25519_public(),
+            &bob_id.get_identity_x25519_public(),
+            b"bob",
+        )
+        .unwrap();
+
+    let mut public_state = ecliptix_protocol::proto::GroupPublicState::decode(
+        alice_session.export_public_state().unwrap().as_slice(),
+    )
+    .unwrap();
+    let (_forged_private, forged_external_x25519_public) =
+        CryptoInterop::generate_x25519_keypair("test-ext-join-forged").unwrap();
+    public_state.external_x25519_public = forged_external_x25519_public;
+
+    let mut tampered_public_state = Vec::new();
+    public_state.encode(&mut tampered_public_state).unwrap();
+
+    let result = GroupSession::from_external_join(
+        &tampered_public_state,
+        &authorization,
+        &bob_id,
+        b"bob".to_vec(),
+    );
+    assert!(
+        result.is_err(),
+        "Authorization must be bound to exported external init keys"
+    );
+}
+
+#[test]
+fn group_external_join_tampered_authorization_signature_rejected_on_joiner() {
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let alice_session = create_external_joinable_group(&alice_id, b"alice");
+    let bob_id = IdentityKeys::create(20).unwrap();
+    let public_state = alice_session.export_public_state().unwrap();
+
+    let mut authorization = ecliptix_protocol::proto::GroupExternalJoinAuthorization::decode(
+        alice_session
+            .authorize_external_join(
+                &bob_id.get_identity_ed25519_public(),
+                &bob_id.get_identity_x25519_public(),
+                b"bob",
+            )
+            .unwrap()
+            .as_slice(),
+    )
+    .unwrap();
+    authorization.authorizer_signature[0] ^= 0xFF;
+    let mut tampered_authorization = Vec::new();
+    authorization.encode(&mut tampered_authorization).unwrap();
+
+    let result = GroupSession::from_external_join(
+        &public_state,
+        &tampered_authorization,
+        &bob_id,
+        b"bob".to_vec(),
+    );
+    assert!(
+        result.is_err(),
+        "Tampered external-join authorization signature must be rejected by joiner"
+    );
+}
+
+#[test]
+fn group_external_join_unsupported_authorization_format_rejected_on_joiner() {
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let alice_session = create_external_joinable_group(&alice_id, b"alice");
+    let bob_id = IdentityKeys::create(20).unwrap();
+    let public_state = alice_session.export_public_state().unwrap();
+
+    let mut authorization = ecliptix_protocol::proto::GroupExternalJoinAuthorization::decode(
+        alice_session
+            .authorize_external_join(
+                &bob_id.get_identity_ed25519_public(),
+                &bob_id.get_identity_x25519_public(),
+                b"bob",
+            )
+            .unwrap()
+            .as_slice(),
+    )
+    .unwrap();
+    authorization.auth_format_version = 0;
+    let tampered_authorization =
+        resign_external_join_authorization_for_test(&mut authorization, &alice_id);
+
+    let result = GroupSession::from_external_join(
+        &public_state,
+        &tampered_authorization,
+        &bob_id,
+        b"bob".to_vec(),
+    );
+    let Err(err) = result else {
+        panic!("Unsupported external-join authorization format must be rejected");
+    };
+    let err = err.to_string();
+    assert!(
+        err.contains("Unsupported external join authorization format version"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn group_external_join_expired_authorization_rejected_on_joiner() {
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let alice_session = create_external_joinable_group(&alice_id, b"alice");
+    let bob_id = IdentityKeys::create(20).unwrap();
+    let public_state = alice_session.export_public_state().unwrap();
+
+    let mut authorization = ecliptix_protocol::proto::GroupExternalJoinAuthorization::decode(
+        alice_session
+            .authorize_external_join(
+                &bob_id.get_identity_ed25519_public(),
+                &bob_id.get_identity_x25519_public(),
+                b"bob",
+            )
+            .unwrap()
+            .as_slice(),
+    )
+    .unwrap();
+    authorization.issued_at_unix = 1;
+    authorization.expires_at_unix = 2;
+    authorization.authorizer_signature.clear();
+
+    let mut auth_for_sig = Vec::new();
+    authorization.encode(&mut auth_for_sig).unwrap();
+    let sk = alice_id.get_identity_ed25519_private_key_copy().unwrap();
+    let sk_arr: [u8; 64] = sk.as_slice().try_into().unwrap();
+    let signing_key = ed25519_dalek::SigningKey::from_keypair_bytes(&sk_arr).unwrap();
+    use ed25519_dalek::Signer;
+    authorization.authorizer_signature = signing_key.sign(&auth_for_sig).to_bytes().to_vec();
+
+    let mut expired_authorization = Vec::new();
+    authorization.encode(&mut expired_authorization).unwrap();
+
+    let result = GroupSession::from_external_join(
+        &public_state,
+        &expired_authorization,
+        &bob_id,
+        b"bob".to_vec(),
+    );
+    assert!(
+        result.is_err(),
+        "Expired external-join authorization must be rejected by joiner"
+    );
+}
+
+#[test]
+fn group_external_join_commit_with_unsupported_authorization_format_rejected_by_existing_member() {
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let alice_session = create_external_joinable_group(&alice_id, b"alice");
+    let carol_id = IdentityKeys::create(30).unwrap();
+    let authorization = alice_session
+        .authorize_external_join(
+            &carol_id.get_identity_ed25519_public(),
+            &carol_id.get_identity_x25519_public(),
+            b"carol",
+        )
+        .unwrap();
+    let public_state = alice_session.export_public_state().unwrap();
+    let (_carol_session, ext_commit_bytes) = GroupSession::from_external_join(
+        &public_state,
+        &authorization,
+        &carol_id,
+        b"carol".to_vec(),
+    )
+    .unwrap();
+
+    let mut commit =
+        ecliptix_protocol::proto::GroupCommit::decode(ext_commit_bytes.as_slice()).unwrap();
+    let external_init = commit
+        .proposals
+        .iter_mut()
+        .find_map(|proposal| match proposal.proposal.as_mut() {
+            Some(ecliptix_protocol::proto::group_proposal::Proposal::ExternalInit(ext)) => {
+                Some(ext)
+            }
+            _ => None,
+        })
+        .unwrap();
+
+    let mut auth = ecliptix_protocol::proto::GroupExternalJoinAuthorization::decode(
+        external_init.authorization.as_slice(),
+    )
+    .unwrap();
+    auth.auth_format_version = 0;
+    external_init.authorization = resign_external_join_authorization_for_test(&mut auth, &alice_id);
+
+    let tampered_commit = resign_group_commit_for_test(&mut commit, &carol_id);
+
+    let result = alice_session.process_commit(&tampered_commit);
+    let Err(err) = result else {
+        panic!(
+            "Unsupported external-join authorization format must be rejected by existing members"
+        );
+    };
+    let err = err.to_string();
+    assert!(
+        err.contains("Unsupported external join authorization format version"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn group_external_join_commit_remains_processible_after_authorization_expiry() {
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let alice_session = create_external_joinable_group(&alice_id, b"alice");
+
+    let bob_id = IdentityKeys::create(20).unwrap();
+    let (bob_kp, bob_x25519_priv, bob_kyber_sec) =
+        ecliptix_protocol::protocol::group::key_package::create_key_package(
+            &bob_id,
+            b"bob".to_vec(),
+        )
+        .unwrap();
+    let (_add_commit, welcome) = alice_session.add_member(&bob_kp).unwrap();
+    let bob_session = GroupSession::from_welcome(
+        &welcome,
+        bob_x25519_priv,
+        bob_kyber_sec,
+        &bob_id.get_identity_ed25519_public(),
+        &bob_id.get_identity_x25519_public(),
+        bob_id.get_identity_ed25519_private_key_copy().unwrap(),
+    )
+    .unwrap();
+
+    let carol_id = IdentityKeys::create(30).unwrap();
+    let authorization = alice_session
+        .authorize_external_join(
+            &carol_id.get_identity_ed25519_public(),
+            &carol_id.get_identity_x25519_public(),
+            b"carol",
+        )
+        .unwrap();
+    let public_state = alice_session.export_public_state().unwrap();
+    let (carol_session, ext_commit_bytes) = GroupSession::from_external_join(
+        &public_state,
+        &authorization,
+        &carol_id,
+        b"carol".to_vec(),
+    )
+    .unwrap();
+
+    let mut commit =
+        ecliptix_protocol::proto::GroupCommit::decode(ext_commit_bytes.as_slice()).unwrap();
+    let external_init = commit
+        .proposals
+        .iter_mut()
+        .find_map(|proposal| match proposal.proposal.as_mut() {
+            Some(ecliptix_protocol::proto::group_proposal::Proposal::ExternalInit(ext)) => {
+                Some(ext)
+            }
+            _ => None,
+        })
+        .unwrap();
+
+    let mut auth = ecliptix_protocol::proto::GroupExternalJoinAuthorization::decode(
+        external_init.authorization.as_slice(),
+    )
+    .unwrap();
+    auth.issued_at_unix = 1;
+    auth.expires_at_unix = 2;
+    external_init.authorization = resign_external_join_authorization_for_test(&mut auth, &alice_id);
+
+    let expired_commit = resign_group_commit_for_test(&mut commit, &carol_id);
+
+    alice_session.process_commit(&expired_commit).unwrap();
+    bob_session.process_commit(&expired_commit).unwrap();
+
+    let ct = carol_session
+        .encrypt(b"carol after delayed external join")
+        .unwrap();
+    let pt_alice = alice_session.decrypt(&ct).unwrap();
+    let pt_bob = bob_session.decrypt(&ct).unwrap();
+    assert_eq!(pt_alice.plaintext, b"carol after delayed external join");
+    assert_eq!(pt_bob.plaintext, b"carol after delayed external join");
+}
+
+#[test]
+fn group_external_join_offline_member_restore_processes_delayed_commit_after_expiry() {
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let alice_session = create_external_joinable_group(&alice_id, b"alice");
+
+    let bob_id = IdentityKeys::create(20).unwrap();
+    let (bob_kp, bob_x25519_priv, bob_kyber_sec) =
+        ecliptix_protocol::protocol::group::key_package::create_key_package(
+            &bob_id,
+            b"bob".to_vec(),
+        )
+        .unwrap();
+    let (_add_commit, welcome) = alice_session.add_member(&bob_kp).unwrap();
+    let bob_session = GroupSession::from_welcome(
+        &welcome,
+        bob_x25519_priv,
+        bob_kyber_sec,
+        &bob_id.get_identity_ed25519_public(),
+        &bob_id.get_identity_x25519_public(),
+        bob_id.get_identity_ed25519_private_key_copy().unwrap(),
+    )
+    .unwrap();
+
+    let state_key = CryptoInterop::get_random_bytes(32);
+    let bob_sealed = bob_session.export_sealed_state(&state_key, 1).unwrap();
+
+    let carol_id = IdentityKeys::create(30).unwrap();
+    let authorization = alice_session
+        .authorize_external_join(
+            &carol_id.get_identity_ed25519_public(),
+            &carol_id.get_identity_x25519_public(),
+            b"carol",
+        )
+        .unwrap();
+    let public_state = alice_session.export_public_state().unwrap();
+    let (carol_session, ext_commit_bytes) = GroupSession::from_external_join(
+        &public_state,
+        &authorization,
+        &carol_id,
+        b"carol".to_vec(),
+    )
+    .unwrap();
+
+    let mut commit =
+        ecliptix_protocol::proto::GroupCommit::decode(ext_commit_bytes.as_slice()).unwrap();
+    let external_init = commit
+        .proposals
+        .iter_mut()
+        .find_map(|proposal| match proposal.proposal.as_mut() {
+            Some(ecliptix_protocol::proto::group_proposal::Proposal::ExternalInit(ext)) => {
+                Some(ext)
+            }
+            _ => None,
+        })
+        .unwrap();
+
+    let mut auth = ecliptix_protocol::proto::GroupExternalJoinAuthorization::decode(
+        external_init.authorization.as_slice(),
+    )
+    .unwrap();
+    auth.issued_at_unix = 1;
+    auth.expires_at_unix = 2;
+    external_init.authorization = resign_external_join_authorization_for_test(&mut auth, &alice_id);
+
+    let expired_commit = resign_group_commit_for_test(&mut commit, &carol_id);
+
+    alice_session.process_commit(&expired_commit).unwrap();
+
+    let bob_restored = GroupSession::from_sealed_state(
+        &bob_sealed,
+        &state_key,
+        bob_id.get_identity_ed25519_private_key_copy().unwrap(),
+        0,
+    )
+    .unwrap();
+    bob_restored.process_commit(&expired_commit).unwrap();
+
+    let ct = carol_session
+        .encrypt(b"carol after offline member restore")
+        .unwrap();
+    let pt_alice = alice_session.decrypt(&ct).unwrap();
+    let pt_bob = bob_restored.decrypt(&ct).unwrap();
+    assert_eq!(pt_alice.plaintext, b"carol after offline member restore");
+    assert_eq!(pt_bob.plaintext, b"carol after offline member restore");
+}
+
+#[test]
 fn group_tree_max_members() {
     use ecliptix_protocol::protocol::group::tree::RatchetTree;
 
@@ -6710,6 +7500,33 @@ fn group_sealed_state_wrong_key_rejected() {
 }
 
 #[test]
+fn group_sealed_state_wrong_identity_secret_rejected() {
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let mallory_id = IdentityKeys::create(10).unwrap();
+    let session = GroupSession::create(&alice_id, b"alice".to_vec()).unwrap();
+
+    let key = CryptoInterop::get_random_bytes(32);
+    let sealed = session.export_sealed_state(&key, 1).unwrap();
+
+    let result = GroupSession::from_sealed_state(
+        &sealed,
+        &key,
+        mallory_id.get_identity_ed25519_private_key_copy().unwrap(),
+        0,
+    );
+    let Err(err) = result else {
+        panic!("Mismatched identity secret must be rejected");
+    };
+    let err = err.to_string();
+    assert!(
+        err.contains("does not match sealed group state"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn group_sealed_state_tampered_data_rejected() {
     init();
 
@@ -6730,6 +7547,183 @@ fn group_sealed_state_tampered_data_rejected() {
         0,
     );
     assert!(result.is_err(), "Tampered state must be rejected");
+}
+
+#[test]
+fn group_sealed_state_invalid_nonce_size_rejected() {
+    use ecliptix_protocol::proto::SealedGroupState;
+
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let session = GroupSession::create(&alice_id, b"alice".to_vec()).unwrap();
+
+    let key = CryptoInterop::get_random_bytes(32);
+    let sealed = session.export_sealed_state(&key, 1).unwrap();
+    let mut parsed = SealedGroupState::decode(sealed.as_slice()).unwrap();
+    parsed.dek_nonce.pop();
+
+    let mut tampered = Vec::new();
+    parsed.encode(&mut tampered).unwrap();
+
+    let result = GroupSession::from_sealed_state(
+        &tampered,
+        &key,
+        alice_id.get_identity_ed25519_private_key_copy().unwrap(),
+        0,
+    );
+    let Err(err) = result else {
+        panic!("Invalid nonce size must be rejected");
+    };
+    let err = err.to_string();
+    assert!(
+        err.contains("Invalid nonce size in sealed group state"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn group_sealed_state_unsupported_wrapper_version_rejected() {
+    use ecliptix_protocol::proto::SealedGroupState;
+
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let session = GroupSession::create(&alice_id, b"alice".to_vec()).unwrap();
+
+    let key = CryptoInterop::get_random_bytes(32);
+    let sealed = session.export_sealed_state(&key, 1).unwrap();
+    let original = SealedGroupState::decode(sealed.as_slice()).unwrap();
+    let mut parsed = original.clone();
+
+    let mut dek_aad = Vec::with_capacity(12);
+    dek_aad.extend_from_slice(&original.version.to_le_bytes());
+    dek_aad.extend_from_slice(&original.external_counter.to_le_bytes());
+    let dek =
+        AesGcm::decrypt(&key, &original.dek_nonce, &original.encrypted_dek, &dek_aad).unwrap();
+
+    let mut old_state_aad =
+        Vec::with_capacity(dek_aad.len() + original.dek_nonce.len() + original.encrypted_dek.len());
+    old_state_aad.extend_from_slice(&dek_aad);
+    old_state_aad.extend_from_slice(&original.dek_nonce);
+    old_state_aad.extend_from_slice(&original.encrypted_dek);
+    let plaintext_state = AesGcm::decrypt(
+        &dek,
+        &original.state_nonce,
+        &original.encrypted_state,
+        &old_state_aad,
+    )
+    .unwrap();
+
+    parsed.version = ecliptix_protocol::core::constants::GROUP_SEALED_STATE_VERSION + 1;
+    let mut new_dek_aad = Vec::with_capacity(12);
+    new_dek_aad.extend_from_slice(&parsed.version.to_le_bytes());
+    new_dek_aad.extend_from_slice(&parsed.external_counter.to_le_bytes());
+    parsed.encrypted_dek = AesGcm::encrypt(&key, &parsed.dek_nonce, &dek, &new_dek_aad).unwrap();
+
+    let mut state_aad =
+        Vec::with_capacity(new_dek_aad.len() + parsed.dek_nonce.len() + parsed.encrypted_dek.len());
+    state_aad.extend_from_slice(&new_dek_aad);
+    state_aad.extend_from_slice(&parsed.dek_nonce);
+    state_aad.extend_from_slice(&parsed.encrypted_dek);
+    parsed.encrypted_state =
+        AesGcm::encrypt(&dek, &parsed.state_nonce, &plaintext_state, &state_aad).unwrap();
+
+    let mut tampered = Vec::new();
+    parsed.encode(&mut tampered).unwrap();
+
+    let result = GroupSession::from_sealed_state(
+        &tampered,
+        &key,
+        alice_id.get_identity_ed25519_private_key_copy().unwrap(),
+        0,
+    );
+    let Err(err) = result else {
+        panic!("Unsupported sealed wrapper version must be rejected");
+    };
+    let err = err.to_string();
+    assert!(
+        err.contains("Unsupported sealed group state version"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn group_sealed_state_unsupported_internal_state_version_rejected() {
+    use ecliptix_protocol::core::constants::{
+        GROUP_PROTOCOL_VERSION, GROUP_STATE_HMAC_INFO, HMAC_BYTES,
+    };
+    use ecliptix_protocol::proto::{GroupProtocolState, SealedGroupState};
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let session = GroupSession::create(&alice_id, b"alice".to_vec()).unwrap();
+
+    let key = CryptoInterop::get_random_bytes(32);
+    let sealed = session.export_sealed_state(&key, 1).unwrap();
+    let parsed = SealedGroupState::decode(sealed.as_slice()).unwrap();
+
+    let mut dek_aad = Vec::with_capacity(12);
+    dek_aad.extend_from_slice(&parsed.version.to_le_bytes());
+    dek_aad.extend_from_slice(&parsed.external_counter.to_le_bytes());
+    let dek = AesGcm::decrypt(&key, &parsed.dek_nonce, &parsed.encrypted_dek, &dek_aad).unwrap();
+
+    let mut state_aad =
+        Vec::with_capacity(dek_aad.len() + parsed.dek_nonce.len() + parsed.encrypted_dek.len());
+    state_aad.extend_from_slice(&dek_aad);
+    state_aad.extend_from_slice(&parsed.dek_nonce);
+    state_aad.extend_from_slice(&parsed.encrypted_dek);
+    let plaintext_state = AesGcm::decrypt(
+        &dek,
+        &parsed.state_nonce,
+        &parsed.encrypted_state,
+        &state_aad,
+    )
+    .unwrap();
+
+    let mut state = GroupProtocolState::decode(plaintext_state.as_slice()).unwrap();
+    state.version = GROUP_PROTOCOL_VERSION + 1;
+    state.state_hmac.clear();
+
+    let mut hmac_input = Vec::new();
+    state.encode(&mut hmac_input).unwrap();
+    let hmac_key = HkdfSha256::expand(&key, GROUP_STATE_HMAC_INFO, HMAC_BYTES).unwrap();
+    let mut mac = Hmac::<Sha256>::new_from_slice(&hmac_key).unwrap();
+    mac.update(&hmac_input);
+    state.state_hmac = mac.finalize().into_bytes().to_vec();
+
+    let mut new_plaintext_state = Vec::new();
+    state.encode(&mut new_plaintext_state).unwrap();
+
+    let mut tampered = parsed.clone();
+    tampered.encrypted_state = AesGcm::encrypt(
+        &dek,
+        &tampered.state_nonce,
+        &new_plaintext_state,
+        &state_aad,
+    )
+    .unwrap();
+
+    let mut tampered_bytes = Vec::new();
+    tampered.encode(&mut tampered_bytes).unwrap();
+
+    let result = GroupSession::from_sealed_state(
+        &tampered_bytes,
+        &key,
+        alice_id.get_identity_ed25519_private_key_copy().unwrap(),
+        0,
+    );
+    let Err(err) = result else {
+        panic!("Unsupported internal group state version must be rejected");
+    };
+    let err = err.to_string();
+    assert!(
+        err.contains("Unsupported group protocol state version"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
@@ -6857,7 +7851,11 @@ fn group_psk_commit_derives_epoch_keys_from_psk_and_requires_resolver() {
         .unwrap();
     assert_eq!(bob_leaf_idx, 1);
     base_tree
-        .set_node_private_keys(leaf_to_node(bob_leaf_idx), bob_x_priv, bob_kyber_sec)
+        .set_node_private_keys(
+            leaf_to_node(bob_leaf_idx).unwrap(),
+            bob_x_priv,
+            bob_kyber_sec,
+        )
         .unwrap();
 
     let mut creator_tree = base_tree.try_clone().unwrap();
@@ -9975,14 +10973,12 @@ fn group_tree_parent_of_root_returns_error() {
 #[test]
 fn group_tree_checked_leaf_to_node_overflow() {
     use ecliptix_protocol::protocol::group::tree;
-    let result = tree::checked_leaf_to_node(u32::MAX);
-    assert!(
-        result.is_err(),
-        "checked_leaf_to_node(u32::MAX) must return Err"
-    );
-    let ok = tree::checked_leaf_to_node(0);
+    let result = tree::leaf_to_node(u32::MAX);
+    assert!(result.is_err(), "leaf_to_node(u32::MAX) must return Err");
+    let ok = tree::leaf_to_node(0);
     assert!(ok.is_ok());
     assert_eq!(ok.unwrap(), 0);
+    assert!(tree::checked_leaf_to_node(u32::MAX).is_err());
 }
 
 #[test]
@@ -10222,16 +11218,83 @@ fn group_role_set_get_roundtrip() {
     init();
     let (alice, _bob) = create_two_member_group();
 
-    assert_eq!(alice.get_member_role(0).unwrap(), 0);
-    assert!(!alice.is_admin(0).unwrap());
+    assert!(alice.set_member_role(0, 2).is_err());
+    assert!(alice.get_member_role(0).is_err());
+    assert!(alice.is_admin(0).is_err());
+}
 
-    alice.set_member_role(0, 2).unwrap();
-    assert_eq!(alice.get_member_role(0).unwrap(), 2);
-    assert!(alice.is_admin(0).unwrap());
+#[test]
+fn group_set_member_role_rejects_invalid_or_inactive_leaf() {
+    init();
+    let (alice, bob) = create_two_member_group();
 
-    alice.set_member_role(0, 1).unwrap();
-    assert_eq!(alice.get_member_role(0).unwrap(), 1);
-    assert!(!alice.is_admin(0).unwrap());
+    assert!(alice.set_member_role(0, 3).is_err());
+    assert!(alice.get_member_role(0).is_err());
+    assert!(alice.is_admin(0).is_err());
+
+    let bob_leaf = bob.my_leaf_index().unwrap();
+    let _remove_commit = alice.remove_member(bob_leaf).unwrap();
+
+    assert!(alice.set_member_role(bob_leaf, 2).is_err());
+    assert!(alice.get_member_role(bob_leaf).is_err());
+    assert!(alice.is_admin(bob_leaf).is_err());
+}
+
+#[test]
+fn group_removed_leaf_role_is_pruned_before_reuse_on_owner() {
+    init();
+
+    let (alice, bob) = create_two_member_group();
+    let bob_leaf = bob.my_leaf_index().unwrap();
+
+    assert!(alice.set_member_role(bob_leaf, 2).is_err());
+    let _remove_commit = alice.remove_member(bob_leaf).unwrap();
+
+    assert!(alice.get_member_role(bob_leaf).is_err());
+
+    let bob2_id = IdentityKeys::create(10).unwrap();
+    let (bob2_kp, bob2_x25519_priv, bob2_kyber_sec) =
+        group::key_package::create_key_package(&bob2_id, b"bob-v2".to_vec()).unwrap();
+    let (_add_commit, welcome2) = alice.add_member(&bob2_kp).unwrap();
+
+    let bob2 = GroupSession::from_welcome(
+        &welcome2,
+        bob2_x25519_priv,
+        bob2_kyber_sec,
+        &bob2_id.get_identity_ed25519_public(),
+        &bob2_id.get_identity_x25519_public(),
+        bob2_id.get_identity_ed25519_private_key_copy().unwrap(),
+    )
+    .unwrap();
+
+    let bob2_leaf = bob2.my_leaf_index().unwrap();
+    assert_eq!(bob2_leaf, bob_leaf);
+    assert!(alice.get_member_role(bob2_leaf).is_err());
+    assert!(alice.is_admin(bob2_leaf).is_err());
+}
+
+#[test]
+fn group_removed_leaf_role_is_pruned_on_process_commit_before_reuse() {
+    init();
+
+    let (alice, bob) = create_two_member_group();
+    let carol = add_member_to_group(&alice, &[&bob]);
+    let carol_leaf = carol.my_leaf_index().unwrap();
+
+    assert!(bob.set_member_role(carol_leaf, 2).is_err());
+
+    let remove_commit = alice.remove_member(carol_leaf).unwrap();
+    bob.process_commit(&remove_commit).unwrap();
+
+    assert!(bob.get_member_role(carol_leaf).is_err());
+    assert!(bob.is_admin(carol_leaf).is_err());
+
+    let dave = add_member_to_group(&alice, &[&bob]);
+    let dave_leaf = dave.my_leaf_index().unwrap();
+
+    assert_eq!(dave_leaf, carol_leaf);
+    assert!(bob.get_member_role(dave_leaf).is_err());
+    assert!(bob.is_admin(dave_leaf).is_err());
 }
 
 #[test]
@@ -10247,7 +11310,8 @@ fn group_encrypt_decrypt_reaction() {
         result.content_type,
         ecliptix_protocol::protocol::group::ContentType::Reaction
     );
-    let reaction = ecliptix_protocol::proto::GroupReaction::decode(result.plaintext.as_slice()).unwrap();
+    let reaction =
+        ecliptix_protocol::proto::GroupReaction::decode(result.plaintext.as_slice()).unwrap();
     assert_eq!(reaction.message_id, msg_id);
     assert_eq!(reaction.emoji, "\u{1F44D}");
     assert!(!reaction.remove);
@@ -10259,7 +11323,7 @@ fn group_encrypt_decrypt_read_receipt() {
     let (alice, bob) = create_two_member_group();
 
     let ids: Vec<Vec<u8>> = (0..3).map(|i| vec![i; 32]).collect();
-    let ts = 1700000000_u64;
+    let ts = 1_700_000_000_u64;
     let ct = alice.encrypt_read_receipt(&ids, ts).unwrap();
     let result = bob.decrypt(&ct).unwrap();
 
@@ -10286,7 +11350,8 @@ fn group_encrypt_decrypt_typing() {
         ecliptix_protocol::protocol::group::ContentType::Typing
     );
     let indicator =
-        ecliptix_protocol::proto::GroupTypingIndicator::decode(result.plaintext.as_slice()).unwrap();
+        ecliptix_protocol::proto::GroupTypingIndicator::decode(result.plaintext.as_slice())
+            .unwrap();
     assert!(indicator.is_typing);
 }
 
@@ -10308,7 +11373,9 @@ fn group_mentions_in_message() {
         ..MessagePolicy::default()
     };
 
-    let ct = alice.encrypt_with_policy(b"hey @bob @alice", &policy).unwrap();
+    let ct = alice
+        .encrypt_with_policy(b"hey @bob @alice", &policy)
+        .unwrap();
     let result = bob.decrypt(&ct).unwrap();
 
     assert_eq!(result.mentions.len(), 2);
@@ -10319,6 +11386,54 @@ fn group_mentions_in_message() {
     assert_eq!(rc.reply_to_message_id, vec![0xBB_u8; 32]);
     assert_eq!(rc.thread_root_id.as_ref().unwrap(), &vec![0xCC_u8; 32]);
     assert_eq!(rc.depth, Some(3));
+}
+
+#[test]
+fn group_encrypt_with_policy_rejects_invalid_mentions_and_reply_context() {
+    init();
+    use ecliptix_protocol::protocol::group::{ContentType, MessagePolicy, ReplyContext};
+
+    let (alice, _bob) = create_two_member_group();
+
+    let out_of_bounds_mentions = MessagePolicy {
+        content_type: ContentType::Normal,
+        mentions: vec![(1, 0, 32)],
+        ..MessagePolicy::default()
+    };
+    assert!(alice
+        .encrypt_with_policy(b"short", &out_of_bounds_mentions)
+        .is_err());
+
+    let overlapping_mentions = MessagePolicy {
+        content_type: ContentType::Normal,
+        mentions: vec![(1, 0, 3), (0, 2, 2)],
+        ..MessagePolicy::default()
+    };
+    assert!(alice
+        .encrypt_with_policy(b"hello", &overlapping_mentions)
+        .is_err());
+
+    let inactive_leaf_mentions = MessagePolicy {
+        content_type: ContentType::Normal,
+        mentions: vec![(99, 0, 1)],
+        ..MessagePolicy::default()
+    };
+    assert!(alice
+        .encrypt_with_policy(b"hello", &inactive_leaf_mentions)
+        .is_err());
+
+    let invalid_reply_context = MessagePolicy {
+        content_type: ContentType::Normal,
+        reply_context: Some(ReplyContext {
+            reply_to_message_id: vec![0xAA_u8; 32],
+            thread_root_id: None,
+            depth: Some(1),
+        }),
+        ..MessagePolicy::default()
+    };
+    assert!(alice
+        .encrypt_with_policy(b"hello", &invalid_reply_context)
+        .is_err());
 }
 
 #[test]
@@ -10395,7 +11510,9 @@ fn session_ttl_validation() {
     let alice_session = initiator.finish(&ack_bytes).unwrap();
 
     assert!(alice_session.set_session_ttl(Some(1)).is_err());
-    assert!(alice_session.set_session_ttl(Some(400 * 24 * 3600)).is_err());
+    assert!(alice_session
+        .set_session_ttl(Some(400 * 24 * 3600))
+        .is_err());
     assert!(alice_session.set_session_ttl(Some(60)).is_ok());
     assert!(alice_session.set_session_ttl(None).is_ok());
 }

@@ -152,6 +152,27 @@ internal func native_epp_identity_create_with_context(
     _ out_error: UnsafeMutablePointer<NativeEppError>?
 ) -> UInt32
 
+@_silgen_name("epp_time_provider_manual_create")
+internal func native_epp_time_provider_manual_create(
+    _ initial_now_unix: UInt64,
+    _ out_handle: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_time_provider_manual_set_now_unix")
+internal func native_epp_time_provider_manual_set_now_unix(
+    _ handle: UnsafeMutableRawPointer?,
+    _ now_unix: UInt64,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_identity_set_time_provider")
+internal func native_epp_identity_set_time_provider(
+    _ handle: UnsafeMutableRawPointer?,
+    _ time_provider_handle: UnsafeMutableRawPointer?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
 @_silgen_name("epp_identity_get_x25519_public")
 internal func native_epp_identity_get_x25519_public(
     _ handle: UnsafeMutableRawPointer?,
@@ -178,6 +199,11 @@ internal func native_epp_identity_get_kyber_public(
 
 @_silgen_name("epp_identity_destroy")
 internal func native_epp_identity_destroy(
+    _ handle_ptr: UnsafeMutablePointer<UnsafeMutableRawPointer?>?
+)
+
+@_silgen_name("epp_time_provider_destroy")
+internal func native_epp_time_provider_destroy(
     _ handle_ptr: UnsafeMutablePointer<UnsafeMutableRawPointer?>?
 )
 
@@ -312,6 +338,80 @@ internal func native_epp_session_deserialize_sealed(
     _ out_error: UnsafeMutablePointer<NativeEppError>?
 ) -> UInt32
 
+@_silgen_name("epp_session_deserialize_sealed_with_time_provider")
+internal func native_epp_session_deserialize_sealed_with_time_provider(
+    _ state_bytes: UnsafePointer<UInt8>?,
+    _ state_length: Int,
+    _ key: UnsafePointer<UInt8>?,
+    _ key_length: Int,
+    _ min_external_counter: UInt64,
+    _ time_provider_handle: UnsafeMutableRawPointer?,
+    _ out_external_counter: UnsafeMutablePointer<UInt64>?,
+    _ out_handle: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_session_serialize_sealed_with_tracker")
+internal func native_epp_session_serialize_sealed_with_tracker(
+    _ handle: UnsafeMutableRawPointer?,
+    _ key: UnsafePointer<UInt8>?,
+    _ key_length: Int,
+    _ trackerHandle: UnsafeMutableRawPointer?,
+    _ out_state: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_session_deserialize_sealed_with_tracker")
+internal func native_epp_session_deserialize_sealed_with_tracker(
+    _ state_bytes: UnsafePointer<UInt8>?,
+    _ state_length: Int,
+    _ key: UnsafePointer<UInt8>?,
+    _ key_length: Int,
+    _ trackerHandle: UnsafeMutableRawPointer?,
+    _ out_handle: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_session_deserialize_sealed_with_tracker_and_time_provider")
+internal func native_epp_session_deserialize_sealed_with_tracker_and_time_provider(
+    _ state_bytes: UnsafePointer<UInt8>?,
+    _ state_length: Int,
+    _ key: UnsafePointer<UInt8>?,
+    _ key_length: Int,
+    _ trackerHandle: UnsafeMutableRawPointer?,
+    _ time_provider_handle: UnsafeMutableRawPointer?,
+    _ out_handle: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_session_export_persisted_state")
+internal func native_epp_session_export_persisted_state(
+    _ handle: UnsafeMutableRawPointer?,
+    _ key: UnsafePointer<UInt8>?,
+    _ key_length: Int,
+    _ slotHandle: UnsafeMutableRawPointer?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_session_restore_persisted_state")
+internal func native_epp_session_restore_persisted_state(
+    _ slotHandle: UnsafeMutableRawPointer?,
+    _ key: UnsafePointer<UInt8>?,
+    _ key_length: Int,
+    _ out_handle: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_session_restore_persisted_state_with_time_provider")
+internal func native_epp_session_restore_persisted_state_with_time_provider(
+    _ slotHandle: UnsafeMutableRawPointer?,
+    _ key: UnsafePointer<UInt8>?,
+    _ key_length: Int,
+    _ time_provider_handle: UnsafeMutableRawPointer?,
+    _ out_handle: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
 @_silgen_name("epp_session_nonce_remaining")
 internal func native_epp_session_nonce_remaining(
     _ handle: UnsafeMutableRawPointer?,
@@ -429,6 +529,88 @@ internal func native_epp_error_free(
 internal func native_epp_error_string(
     _ code: UInt32
 ) -> UnsafePointer<CChar>?
+
+// MARK: - Managed sealed-state counter tracker
+
+@_silgen_name("epp_sealed_state_counter_tracker_create")
+internal func native_epp_sealed_state_counter_tracker_create(
+    _ outHandle: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_sealed_state_counter_tracker_create_from_serialized")
+internal func native_epp_sealed_state_counter_tracker_create_from_serialized(
+    _ data: UnsafePointer<UInt8>?,
+    _ dataLength: Int,
+    _ outHandle: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_sealed_state_counter_tracker_serialize")
+internal func native_epp_sealed_state_counter_tracker_serialize(
+    _ handle: UnsafeMutableRawPointer?,
+    _ outState: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_sealed_state_counter_tracker_get_max_restored_counter")
+internal func native_epp_sealed_state_counter_tracker_get_max_restored_counter(
+    _ handle: UnsafeMutableRawPointer?,
+    _ outCounter: UnsafeMutablePointer<UInt64>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_sealed_state_counter_tracker_get_latest_issued_counter")
+internal func native_epp_sealed_state_counter_tracker_get_latest_issued_counter(
+    _ handle: UnsafeMutableRawPointer?,
+    _ outCounter: UnsafeMutablePointer<UInt64>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_sealed_state_counter_tracker_destroy")
+internal func native_epp_sealed_state_counter_tracker_destroy(
+    _ handlePtr: UnsafeMutablePointer<UnsafeMutableRawPointer?>?
+)
+
+@_silgen_name("epp_sealed_state_slot_create")
+internal func native_epp_sealed_state_slot_create(
+    _ outHandle: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_sealed_state_slot_create_from_serialized")
+internal func native_epp_sealed_state_slot_create_from_serialized(
+    _ data: UnsafePointer<UInt8>?,
+    _ dataLength: Int,
+    _ outHandle: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_sealed_state_slot_serialize")
+internal func native_epp_sealed_state_slot_serialize(
+    _ handle: UnsafeMutableRawPointer?,
+    _ outState: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_sealed_state_slot_get_max_restored_counter")
+internal func native_epp_sealed_state_slot_get_max_restored_counter(
+    _ handle: UnsafeMutableRawPointer?,
+    _ outCounter: UnsafeMutablePointer<UInt64>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_sealed_state_slot_get_latest_issued_counter")
+internal func native_epp_sealed_state_slot_get_latest_issued_counter(
+    _ handle: UnsafeMutableRawPointer?,
+    _ outCounter: UnsafeMutablePointer<UInt64>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_sealed_state_slot_destroy")
+internal func native_epp_sealed_state_slot_destroy(
+    _ handlePtr: UnsafeMutablePointer<UnsafeMutableRawPointer?>?
+)
 
 // MARK: - Group: key package
 
@@ -705,6 +887,47 @@ internal func native_epp_group_deserialize(
     _ out_error: UnsafeMutablePointer<NativeEppError>?
 ) -> UInt32
 
+@_silgen_name("epp_group_serialize_with_tracker")
+internal func native_epp_group_serialize_with_tracker(
+    _ handle: UnsafeMutableRawPointer?,
+    _ key: UnsafePointer<UInt8>?,
+    _ key_length: Int,
+    _ trackerHandle: UnsafeMutableRawPointer?,
+    _ out_state: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_group_deserialize_with_tracker")
+internal func native_epp_group_deserialize_with_tracker(
+    _ state_bytes: UnsafePointer<UInt8>?,
+    _ state_length: Int,
+    _ key: UnsafePointer<UInt8>?,
+    _ key_length: Int,
+    _ trackerHandle: UnsafeMutableRawPointer?,
+    _ identityHandle: UnsafeMutableRawPointer?,
+    _ out_handle: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_group_export_persisted_state")
+internal func native_epp_group_export_persisted_state(
+    _ handle: UnsafeMutableRawPointer?,
+    _ key: UnsafePointer<UInt8>?,
+    _ key_length: Int,
+    _ slotHandle: UnsafeMutableRawPointer?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_group_restore_persisted_state")
+internal func native_epp_group_restore_persisted_state(
+    _ slotHandle: UnsafeMutableRawPointer?,
+    _ key: UnsafePointer<UInt8>?,
+    _ key_length: Int,
+    _ identityHandle: UnsafeMutableRawPointer?,
+    _ out_handle: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ out_error: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
 @_silgen_name("epp_group_export_public_state")
 internal func native_epp_group_export_public_state(
     _ handle: UnsafeMutableRawPointer?,
@@ -805,6 +1028,15 @@ internal struct NativeEppDecryptedFrame {
     var sequence_number: UInt16
     var frame_counter: UInt64
     var ratchet_generation: UInt32
+}
+
+internal struct NativeEppCallStatistics {
+    var frames_sent: UInt64
+    var frames_received: UInt64
+    var frames_dropped: UInt64
+    var rekey_count: UInt32
+    var ratchet_generation: UInt32
+    var call_duration_secs: UInt64
 }
 
 @_silgen_name("epp_voip_accept_call")
@@ -962,6 +1194,25 @@ internal func native_epp_voip_export_sealed_state(
     _ outError: UnsafeMutablePointer<NativeEppError>?
 ) -> UInt32
 
+@_silgen_name("epp_voip_export_sealed_state_with_tracker")
+internal func native_epp_voip_export_sealed_state_with_tracker(
+    _ handle: UnsafeRawPointer?,
+    _ stateKey: UnsafePointer<UInt8>?,
+    _ stateKeyLen: Int,
+    _ trackerHandle: UnsafeMutableRawPointer?,
+    _ outBuf: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_export_persisted_state")
+internal func native_epp_voip_export_persisted_state(
+    _ handle: UnsafeRawPointer?,
+    _ stateKey: UnsafePointer<UInt8>?,
+    _ stateKeyLen: Int,
+    _ slotHandle: UnsafeMutableRawPointer?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
 @_silgen_name("epp_voip_initiate_rekey")
 internal func native_epp_voip_initiate_rekey(
     _ handle: UnsafeRawPointer?,
@@ -1008,6 +1259,60 @@ internal func native_epp_voip_import_sealed_state(
     _ outError: UnsafeMutablePointer<NativeEppError>?
 ) -> UInt32
 
+@_silgen_name("epp_voip_import_sealed_state_with_time_provider")
+internal func native_epp_voip_import_sealed_state_with_time_provider(
+    _ data: UnsafePointer<UInt8>?,
+    _ dataLen: Int,
+    _ stateKey: UnsafePointer<UInt8>?,
+    _ stateKeyLen: Int,
+    _ minExternalCounter: UInt64,
+    _ time_provider_handle: UnsafeMutableRawPointer?,
+    _ outSession: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_import_sealed_state_with_tracker")
+internal func native_epp_voip_import_sealed_state_with_tracker(
+    _ data: UnsafePointer<UInt8>?,
+    _ dataLen: Int,
+    _ stateKey: UnsafePointer<UInt8>?,
+    _ stateKeyLen: Int,
+    _ trackerHandle: UnsafeMutableRawPointer?,
+    _ outSession: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_import_sealed_state_with_tracker_and_time_provider")
+internal func native_epp_voip_import_sealed_state_with_tracker_and_time_provider(
+    _ data: UnsafePointer<UInt8>?,
+    _ dataLen: Int,
+    _ stateKey: UnsafePointer<UInt8>?,
+    _ stateKeyLen: Int,
+    _ trackerHandle: UnsafeMutableRawPointer?,
+    _ time_provider_handle: UnsafeMutableRawPointer?,
+    _ outSession: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_restore_persisted_state")
+internal func native_epp_voip_restore_persisted_state(
+    _ slotHandle: UnsafeMutableRawPointer?,
+    _ stateKey: UnsafePointer<UInt8>?,
+    _ stateKeyLen: Int,
+    _ outSession: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_restore_persisted_state_with_time_provider")
+internal func native_epp_voip_restore_persisted_state_with_time_provider(
+    _ slotHandle: UnsafeMutableRawPointer?,
+    _ stateKey: UnsafePointer<UInt8>?,
+    _ stateKeyLen: Int,
+    _ time_provider_handle: UnsafeMutableRawPointer?,
+    _ outSession: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
 @_silgen_name("epp_voip_sealed_state_external_counter")
 internal func native_epp_voip_sealed_state_external_counter(
     _ data: UnsafePointer<UInt8>?,
@@ -1020,6 +1325,82 @@ internal func native_epp_voip_sealed_state_external_counter(
 internal func native_epp_voip_session_destroy(
     _ handle: UnsafeMutableRawPointer?
 )
+
+@_silgen_name("epp_voip_set_screen_share_meta")
+internal func native_epp_voip_set_screen_share_meta(
+    _ handle: UnsafeRawPointer?,
+    _ width: UInt32,
+    _ height: UInt32,
+    _ frameRate: UInt32,
+    _ codecHint: UnsafePointer<UInt8>?,
+    _ codecHintLength: Int,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_get_screen_share_meta")
+internal func native_epp_voip_get_screen_share_meta(
+    _ handle: UnsafeRawPointer?,
+    _ outWidth: UnsafeMutablePointer<UInt32>?,
+    _ outHeight: UnsafeMutablePointer<UInt32>?,
+    _ outFrameRate: UnsafeMutablePointer<UInt32>?,
+    _ outCodecHint: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_clear_screen_share_meta")
+internal func native_epp_voip_clear_screen_share_meta(
+    _ handle: UnsafeRawPointer?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_get_call_statistics")
+internal func native_epp_voip_get_call_statistics(
+    _ handle: UnsafeRawPointer?,
+    _ outStats: UnsafeMutablePointer<NativeEppCallStatistics>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_set_recording_consent")
+internal func native_epp_voip_set_recording_consent(
+    _ handle: UnsafeRawPointer?,
+    _ consent: Int32,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_get_local_recording_consent")
+internal func native_epp_voip_get_local_recording_consent(
+    _ handle: UnsafeRawPointer?
+) -> Int32
+
+@_silgen_name("epp_voip_get_remote_recording_consent")
+internal func native_epp_voip_get_remote_recording_consent(
+    _ handle: UnsafeRawPointer?
+) -> Int32
+
+@_silgen_name("epp_voip_both_consented_to_recording")
+internal func native_epp_voip_both_consented_to_recording(
+    _ handle: UnsafeRawPointer?
+) -> Bool
+
+@_silgen_name("epp_voip_build_recording_consent_message")
+internal func native_epp_voip_build_recording_consent_message(
+    _ handle: UnsafeRawPointer?,
+    _ identity: UnsafeRawPointer?,
+    _ consent: Int32,
+    _ timestampUnix: UInt64,
+    _ outMessage: UnsafeMutablePointer<NativeEppBuffer>?,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
+
+@_silgen_name("epp_voip_process_recording_consent_message")
+internal func native_epp_voip_process_recording_consent_message(
+    _ handle: UnsafeRawPointer?,
+    _ peerEd25519Public: UnsafePointer<UInt8>?,
+    _ peerEd25519PublicLen: Int,
+    _ messageBytes: UnsafePointer<UInt8>?,
+    _ messageLen: Int,
+    _ outError: UnsafeMutablePointer<NativeEppError>?
+) -> UInt32
 
 internal func checkResult(_ code: UInt32, _ nativeError: inout NativeEppError) throws {
     guard code == EPP_SUCCESS else {

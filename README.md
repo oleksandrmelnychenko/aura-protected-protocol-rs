@@ -419,9 +419,9 @@ The server never decrypts traffic — it validates format, routes by `group_id`,
 All relay functions are in `ecliptix_protocol::api::relay`:
 
 - `validate_crypto_envelope()` — validate 1:1 envelope structure
-- `validate_commit_for_relay_strict()` — validate group commit + bind sender identity from auth context
+- `validate_commit_for_relay_strict()` — structural group-commit validation + sender identity binding from auth context
 - `validate_group_message_for_relay_strict()` — validate group message + sender signature + auth-context identity binding
-- `apply_commit_to_roster()` — update group membership
+- `apply_commit_to_roster_tentative()` — update tentative relay membership state
 - `extract_welcome_target()` — find welcome recipient
 - `commit_recipients()` / `message_recipients()` / `crypto_envelope_recipients()` — delivery targets
 - `validate_voip_envelope()` / `process_voip_signal()` — VoIP relay validation and call-state-safe routing via atomic `VoipCallStore::compare_exchange_call()`

@@ -5,6 +5,7 @@ use crate::core::constants::*;
 use crate::core::errors::ProtocolError;
 use crate::crypto::{CryptoInterop, HkdfSha256, KyberInterop};
 use crate::identity::IdentityKeys;
+use crate::interfaces::{ITimeProvider, SystemTimeProvider};
 use crate::models::key_materials::Ed25519KeyPair;
 use crate::proto::{HandshakeAck, HandshakeInit, PreKeyBundle};
 use crate::protocol::nonce::NonceGenerator;
@@ -13,6 +14,7 @@ use crate::security::DhValidator;
 use hmac::{Hmac, Mac};
 use prost::Message;
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
@@ -318,6 +320,7 @@ pub struct HandshakeInitiator {
     init_message: HandshakeInit,
     init_bytes: Vec<u8>,
     state: Option<InitiatorState>,
+    time_provider: Arc<dyn ITimeProvider>,
 }
 
 impl HandshakeInitiator {
@@ -325,6 +328,20 @@ impl HandshakeInitiator {
         identity_keys: &mut IdentityKeys,
         peer_bundle: &PreKeyBundle,
         max_messages_per_chain: u32,
+    ) -> Result<Self, ProtocolError> {
+        Self::start_with_time_provider(
+            identity_keys,
+            peer_bundle,
+            max_messages_per_chain,
+            Arc::new(SystemTimeProvider),
+        )
+    }
+
+    pub fn start_with_time_provider(
+        identity_keys: &mut IdentityKeys,
+        peer_bundle: &PreKeyBundle,
+        max_messages_per_chain: u32,
+        time_provider: Arc<dyn ITimeProvider>,
     ) -> Result<Self, ProtocolError> {
         validate_bundle(peer_bundle)?;
         validate_max_messages_per_chain(max_messages_per_chain)?;
@@ -571,6 +588,7 @@ impl HandshakeInitiator {
                 ProtocolError::from_crypto(e)
             })?;
 
+        let created_at_unix = time_provider.now_unix_secs()?;
         let proto_state = build_protocol_state(
             true,
             &root_key,
@@ -587,6 +605,7 @@ impl HandshakeInitiator {
             max_messages_per_chain,
             MAX_NONCE_COUNTER,
             nonce_generator,
+            created_at_unix,
             &ed_public,
             &id_public,
             &peer_bundle.identity_ed25519_public,
@@ -620,6 +639,7 @@ impl HandshakeInitiator {
                 }),
                 expected_ack_mac,
             }),
+            time_provider,
         })
     }
 
@@ -666,7 +686,7 @@ impl HandshakeInitiator {
             .take()
             .ok_or_else(|| ProtocolError::invalid_state("InitiatorState already consumed"))?;
         CryptoInterop::secure_wipe(&mut st.expected_ack_mac);
-        Session::from_handshake_state(session_state)
+        Session::from_handshake_state_with_time_provider(session_state, self.time_provider)
     }
 }
 
@@ -802,6 +822,7 @@ pub struct HandshakeResponder {
     ack_message: HandshakeAck,
     ack_bytes: Vec<u8>,
     state: Option<ResponderState>,
+    time_provider: Arc<dyn ITimeProvider>,
 }
 
 impl HandshakeResponder {
@@ -826,6 +847,24 @@ impl HandshakeResponder {
         init_message_bytes: &[u8],
         max_messages_per_chain: u32,
         replay_guard: Option<&dyn HandshakeInitReplayGuard>,
+    ) -> Result<Self, ProtocolError> {
+        Self::process_with_replay_guard_and_time_provider(
+            identity_keys,
+            local_bundle,
+            init_message_bytes,
+            max_messages_per_chain,
+            replay_guard,
+            Arc::new(SystemTimeProvider),
+        )
+    }
+
+    pub fn process_with_replay_guard_and_time_provider(
+        identity_keys: &mut IdentityKeys,
+        local_bundle: &PreKeyBundle,
+        init_message_bytes: &[u8],
+        max_messages_per_chain: u32,
+        replay_guard: Option<&dyn HandshakeInitReplayGuard>,
+        time_provider: Arc<dyn ITimeProvider>,
     ) -> Result<Self, ProtocolError> {
         validate_bundle(local_bundle)?;
         validate_max_messages_per_chain(max_messages_per_chain)?;
@@ -1118,6 +1157,7 @@ impl HandshakeResponder {
         let init_ed_pub = init_message.initiator_identity_ed25519_public.clone();
         let init_x25519_pub = init_message.initiator_identity_x25519_public;
 
+        let created_at_unix = time_provider.now_unix_secs()?;
         let proto_state = build_protocol_state(
             false,
             &root_key,
@@ -1134,6 +1174,7 @@ impl HandshakeResponder {
             max_messages_per_chain,
             MAX_NONCE_COUNTER,
             nonce_generator,
+            created_at_unix,
             &local_ed_pub,
             &local_x25519_pub,
             &init_ed_pub,
@@ -1172,6 +1213,7 @@ impl HandshakeResponder {
                     kyber_shared_secret: Zeroizing::new(kyber_shared_secret),
                 },
             }),
+            time_provider,
         })
     }
 
@@ -1188,6 +1230,6 @@ impl HandshakeResponder {
             .state
             .take()
             .ok_or_else(|| ProtocolError::invalid_state("Handshake responder not initialized"))?;
-        Session::from_handshake_state(st.session_state)
+        Session::from_handshake_state_with_time_provider(st.session_state, self.time_provider)
     }
 }

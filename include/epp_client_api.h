@@ -14,9 +14,13 @@ extern "C" {
  * OWNERSHIP RULES (apply to every function in this file):
  *   - Parameters named `out_handle` write a newly allocated opaque handle.
  *     The caller owns the handle and MUST destroy it with the matching
- *     _destroy() function when done.
+ *     _destroy() function when done. Reusing the same output slot across
+ *     successful calls is allowed; the FFI layer replaces any previous
+ *     FFI-owned handle before writing the new one.
  *   - Parameters named `out_*` of type EppBuffer* write a heap-allocated
  *     buffer owned by the caller. Release it with epp_buffer_release().
+ *     Reusing the same EppBuffer across successful calls is allowed; the FFI
+ *     layer replaces any previous FFI-owned contents before writing new data.
  *   - Parameters named `out_error` receive an optional error detail struct.
  *     If non-NULL and an error occurs the struct is populated; free it with
  *     epp_error_free() after use.  Pass NULL to ignore error details.
@@ -36,10 +40,15 @@ extern "C" {
 
 typedef struct EppIdentityHandle          EppIdentityHandle;
 typedef struct EppSessionHandle           EppSessionHandle;
+typedef struct EppVoipSessionHandle       EppVoipSessionHandle;
 typedef struct EppGroupSessionHandle      EppGroupSessionHandle;
 typedef struct EppKeyPackageSecretsHandle EppKeyPackageSecretsHandle;
 typedef struct EppHandshakeInitiatorHandle EppHandshakeInitiatorHandle;
 typedef struct EppHandshakeResponderHandle EppHandshakeResponderHandle;
+typedef struct EppVoipCallInitiatorHandle EppVoipCallInitiatorHandle;
+typedef struct EppSealedStateCounterTrackerHandle EppSealedStateCounterTrackerHandle;
+typedef struct EppSealedStateSlotHandle EppSealedStateSlotHandle;
+typedef struct EppTimeProviderHandle EppTimeProviderHandle;
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Configuration structs
@@ -90,6 +99,95 @@ typedef struct EppGroupSecurityPolicy {
     uint8_t  enhanced_key_schedule;
     uint8_t  mandatory_franking;
 } EppGroupSecurityPolicy;
+
+/*
+ * epp_sealed_state_counter_tracker_* — managed anti-rollback helper for sealed
+ * session/group/VoIP state slots.
+ *
+ * This tracker persists the two values required to use sealed-state rollback
+ * protection correctly:
+ *   - max_restored_counter: highest blob counter already accepted on restore.
+ *   - latest_issued_counter: highest counter already used for export.
+ *
+ * Prefer epp_sealed_state_slot_* plus the `*_persisted_state` APIs for new
+ * clients. The tracker APIs are the lower-level managed surface when the
+ * application still wants to store the sealed blob separately.
+ */
+EPP_API EppErrorCode epp_sealed_state_counter_tracker_create(
+    EppSealedStateCounterTrackerHandle** out_handle,
+    EppError*                            out_error);
+
+/*
+ * Recreate a tracker from bytes previously returned by
+ * epp_sealed_state_counter_tracker_serialize().
+ */
+EPP_API EppErrorCode epp_sealed_state_counter_tracker_create_from_serialized(
+    const uint8_t*                       data,
+    size_t                               data_length,
+    EppSealedStateCounterTrackerHandle** out_handle,
+    EppError*                            out_error);
+
+/*
+ * Serialize the tracker so it can be persisted next to the sealed blob for
+ * the same slot.
+ */
+EPP_API EppErrorCode epp_sealed_state_counter_tracker_serialize(
+    EppSealedStateCounterTrackerHandle* handle,
+    EppBuffer*                          out_state,
+    EppError*                           out_error);
+
+EPP_API EppErrorCode epp_sealed_state_counter_tracker_get_max_restored_counter(
+    EppSealedStateCounterTrackerHandle* handle,
+    uint64_t*                           out_counter,
+    EppError*                           out_error);
+
+EPP_API EppErrorCode epp_sealed_state_counter_tracker_get_latest_issued_counter(
+    EppSealedStateCounterTrackerHandle* handle,
+    uint64_t*                           out_counter,
+    EppError*                           out_error);
+
+EPP_API void epp_sealed_state_counter_tracker_destroy(
+    EppSealedStateCounterTrackerHandle** handle);
+
+/*
+ * epp_sealed_state_slot_* — single-record sealed-state persistence helper.
+ *
+ * A slot bundles the latest sealed blob together with the tracker state in one
+ * serializable object. This removes the "blob and tracker stored separately"
+ * crash-consistency footgun. Persist the serialized slot as a single record.
+ *
+ * IMPORTANT: this improves atomicity, not the fundamental rollback model. A
+ * storage attacker who can replace the entire slot with an older serialized
+ * slot still defeats rollback protection unless the application also relies on
+ * trusted monotonic storage outside that slot.
+ */
+EPP_API EppErrorCode epp_sealed_state_slot_create(
+    EppSealedStateSlotHandle** out_handle,
+    EppError*                  out_error);
+
+EPP_API EppErrorCode epp_sealed_state_slot_create_from_serialized(
+    const uint8_t*             data,
+    size_t                     data_length,
+    EppSealedStateSlotHandle** out_handle,
+    EppError*                  out_error);
+
+EPP_API EppErrorCode epp_sealed_state_slot_serialize(
+    EppSealedStateSlotHandle* handle,
+    EppBuffer*                out_state,
+    EppError*                 out_error);
+
+EPP_API EppErrorCode epp_sealed_state_slot_get_max_restored_counter(
+    EppSealedStateSlotHandle* handle,
+    uint64_t*                 out_counter,
+    EppError*                 out_error);
+
+EPP_API EppErrorCode epp_sealed_state_slot_get_latest_issued_counter(
+    EppSealedStateSlotHandle* handle,
+    uint64_t*                 out_counter,
+    EppError*                 out_error);
+
+EPP_API void epp_sealed_state_slot_destroy(
+    EppSealedStateSlotHandle** handle);
 
 /*
  * EppGroupDecryptResult — full metadata returned by epp_group_decrypt_ex().
@@ -239,6 +337,41 @@ EPP_API EppErrorCode epp_identity_create_with_context(
     EppError*           out_error);
 
 /*
+ * epp_time_provider_manual_create — create a mutable manual clock handle.
+ *
+ * Manual time providers are intended for tests, deterministic replay, or
+ * environments that want to drive time-sensitive protocol checks from an
+ * application-managed trusted clock. Identity handles use the system clock by
+ * default until epp_identity_set_time_provider() is called.
+ */
+EPP_API EppErrorCode epp_time_provider_manual_create(
+    uint64_t                initial_now_unix,
+    EppTimeProviderHandle** out_handle,
+    EppError*               out_error);
+
+/*
+ * epp_time_provider_manual_set_now_unix — advance or rewind a manual clock.
+ *
+ * Fails if handle is NULL, destroyed, or not a manual provider.
+ */
+EPP_API EppErrorCode epp_time_provider_manual_set_now_unix(
+    EppTimeProviderHandle* handle,
+    uint64_t               now_unix,
+    EppError*              out_error);
+
+/*
+ * epp_identity_set_time_provider — bind an identity handle to a clock.
+ *
+ * Identity-bound operations such as handshake start/finish, group create/join,
+ * ExternalInit join, and VoIP call establishment inherit this provider. Pass
+ * NULL as time_provider_handle to reset the identity back to the system clock.
+ */
+EPP_API EppErrorCode epp_identity_set_time_provider(
+    EppIdentityHandle*          handle,
+    const EppTimeProviderHandle* time_provider_handle,
+    EppError*                   out_error);
+
+/*
  * epp_identity_get_x25519_public — copy the X25519 public key into a
  * caller-allocated buffer.
  *
@@ -304,6 +437,12 @@ EPP_API EppErrorCode epp_identity_get_kyber_public(
  *   handle — pointer-to-pointer returned by an epp_identity_create* call.
  */
 EPP_API void epp_identity_destroy(EppIdentityHandle** handle);
+
+/*
+ * epp_time_provider_destroy — free a manual time provider handle. Safe to call
+ * with NULL.
+ */
+EPP_API void epp_time_provider_destroy(EppTimeProviderHandle** handle_ptr);
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -639,16 +778,25 @@ EPP_API EppErrorCode epp_session_decrypt(
  * epp_session_serialize_sealed — persist the session state to an encrypted
  * blob for storage (e.g. on-disk or in a secure enclave).
  *
- * The state is encrypted with AES-256-GCM using the provided key, and an
- * external_counter is mixed into the AAD to prevent rollback attacks.
- * Always increment external_counter before writing the new blob.
+ * LOW-LEVEL API: the state is encrypted with AES-256-GCM using the provided
+ * key, and an external_counter is mixed into the AAD to prevent rollback
+ * attacks. New clients should prefer
+ * epp_session_export_persisted_state() when they can store one serialized slot
+ * record, or otherwise
+ * epp_session_serialize_sealed_with_tracker().
+ *
+ * To use raw sealed-state APIs safely, persist two values per storage slot:
+ *   - max_restored_counter: highest counter already accepted on restore.
+ *   - latest_issued_counter: highest counter already used for export.
+ *
+ * The external_counter passed here must be latest_issued_counter + 1.
  *
  * Parameters:
  *   handle           — active session handle (not consumed; remains usable).
  *   key              — 32-byte AES-256 encryption key (borrowed).
  *   key_length       — must be exactly 32.
- *   external_counter — monotonic counter persisted alongside the blob.
- *                      Increment it on each successful serialisation.
+ *   external_counter — next export counter for this slot
+ *                      (latest_issued_counter + 1).
  *   out_state        — receives the sealed blob (release with
  *                      epp_buffer_release()).
  *   out_error        — optional error detail.
@@ -664,20 +812,55 @@ EPP_API EppErrorCode epp_session_serialize_sealed(
     EppError*           out_error);
 
 /*
+ * epp_session_serialize_sealed_with_tracker — managed sealed-state export.
+ *
+ * Uses the supplied tracker to allocate the next export counter and advances
+ * the tracker only after a successful export. Persist the resulting sealed
+ * blob and serialized tracker together for the same storage slot.
+ */
+EPP_API EppErrorCode epp_session_serialize_sealed_with_tracker(
+    EppSessionHandle*                    handle,
+    const uint8_t*                       key,
+    size_t                               key_length,
+    EppSealedStateCounterTrackerHandle*  tracker_handle,
+    EppBuffer*                           out_state,
+    EppError*                            out_error);
+
+/*
+ * epp_session_export_persisted_state — export session state into a managed
+ * sealed-state slot.
+ *
+ * The slot is mutated in place: it allocates the next export counter, stores
+ * the new sealed blob, and updates the tracker in one in-memory object. Persist
+ * slot_handle via epp_sealed_state_slot_serialize() as a single record.
+ */
+EPP_API EppErrorCode epp_session_export_persisted_state(
+    EppSessionHandle*          handle,
+    const uint8_t*             key,
+    size_t                     key_length,
+    EppSealedStateSlotHandle*  slot_handle,
+    EppError*                  out_error);
+
+/*
  * epp_session_deserialize_sealed — restore a session from a sealed blob.
  *
- * Decrypts and validates the blob.  Rejects it if the stored counter is
- * less than min_external_counter (rollback protection).
+ * LOW-LEVEL API: decrypts and validates the blob. Rejects it unless the stored
+ * counter is strictly greater than min_external_counter. New clients should
+ * prefer epp_session_restore_persisted_state() when restoring from one
+ * serialized slot record, or otherwise
+ * epp_session_deserialize_sealed_with_tracker().
  *
  * Parameters:
  *   state_bytes          — sealed blob bytes (borrowed).
  *   state_length         — byte length of state_bytes.
  *   key                  — 32-byte AES-256 decryption key (borrowed).
  *   key_length           — must be exactly 32.
- *   min_external_counter — minimum acceptable counter value; pass the last
- *                          known good counter to prevent rollback.
+ *   min_external_counter — restore watermark for this slot
+ *                          (max_restored_counter).
  *   out_external_counter — receives the counter embedded in the blob.
- *                          Update your persistent counter to this value.
+ *                          After a successful restore, persist it as the new
+ *                          max_restored_counter and raise
+ *                          latest_issued_counter to at least this value.
  *   out_handle           — receives the restored EppSessionHandle.
  *                          Destroy with epp_session_destroy() when done.
  *   out_error            — optional error detail.
@@ -694,6 +877,81 @@ EPP_API EppErrorCode epp_session_deserialize_sealed(
     uint64_t*           out_external_counter,
     EppSessionHandle**  out_handle,
     EppError*           out_error);
+
+/*
+ * epp_session_deserialize_sealed_with_time_provider — same as
+ * epp_session_deserialize_sealed(), but the restored session uses the supplied
+ * time provider for TTL / expiry checks. Pass NULL to use the system clock.
+ */
+EPP_API EppErrorCode epp_session_deserialize_sealed_with_time_provider(
+    const uint8_t*             state_bytes,
+    size_t                     state_length,
+    const uint8_t*             key,
+    size_t                     key_length,
+    uint64_t                   min_external_counter,
+    const EppTimeProviderHandle* time_provider_handle,
+    uint64_t*                  out_external_counter,
+    EppSessionHandle**         out_handle,
+    EppError*                  out_error);
+
+/*
+ * epp_session_deserialize_sealed_with_tracker — managed sealed-state restore.
+ *
+ * Uses tracker_handle->max_restored_counter as the restore watermark and
+ * advances the tracker only after a successful restore. The embedded blob
+ * counter is not returned separately; inspect the tracker if the caller needs
+ * the updated values.
+ */
+EPP_API EppErrorCode epp_session_deserialize_sealed_with_tracker(
+    const uint8_t*                       state_bytes,
+    size_t                               state_length,
+    const uint8_t*                       key,
+    size_t                               key_length,
+    EppSealedStateCounterTrackerHandle*  tracker_handle,
+    EppSessionHandle**                   out_handle,
+    EppError*                            out_error);
+
+/*
+ * epp_session_deserialize_sealed_with_tracker_and_time_provider — managed
+ * session restore using tracker_handle plus an optional explicit time provider.
+ * Pass NULL to use the system clock.
+ */
+EPP_API EppErrorCode epp_session_deserialize_sealed_with_tracker_and_time_provider(
+    const uint8_t*                       state_bytes,
+    size_t                               state_length,
+    const uint8_t*                       key,
+    size_t                               key_length,
+    EppSealedStateCounterTrackerHandle*  tracker_handle,
+    const EppTimeProviderHandle*         time_provider_handle,
+    EppSessionHandle**                   out_handle,
+    EppError*                            out_error);
+
+/*
+ * epp_session_restore_persisted_state — restore a session from a managed slot.
+ *
+ * The slot supplies the sealed blob plus restore watermark and is updated in
+ * place on success. After restore, re-serialize and persist the slot so the
+ * restore watermark advances inside the same record.
+ */
+EPP_API EppErrorCode epp_session_restore_persisted_state(
+    EppSealedStateSlotHandle*  slot_handle,
+    const uint8_t*             key,
+    size_t                     key_length,
+    EppSessionHandle**         out_handle,
+    EppError*                  out_error);
+
+/*
+ * epp_session_restore_persisted_state_with_time_provider — restore a session
+ * from a managed slot and bind the restored session to the supplied clock.
+ * Pass NULL to use the system clock.
+ */
+EPP_API EppErrorCode epp_session_restore_persisted_state_with_time_provider(
+    EppSealedStateSlotHandle*   slot_handle,
+    const uint8_t*              key,
+    size_t                      key_length,
+    const EppTimeProviderHandle* time_provider_handle,
+    EppSessionHandle**          out_handle,
+    EppError*                   out_error);
 
 /*
  * epp_session_nonce_remaining — query how many more messages can be encrypted
@@ -828,6 +1086,562 @@ EPP_API EppErrorCode epp_envelope_metadata_parse(
  *   meta — pointer to the EppEnvelopeMetadata to clean up.
  */
 EPP_API void epp_envelope_metadata_free(EppEnvelopeMetadata* meta);
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * VoIP calling
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * EppEncryptedFrame — encrypted media/control frame produced by
+ * epp_voip_encrypt_frame() or epp_voip_encrypt_call_control().
+ *
+ * Release every EppBuffer field with epp_buffer_release() when done.
+ * The struct itself is caller-allocated and must not be freed.
+ */
+typedef struct {
+    EppBuffer call_id;
+    uint32_t  ssrc;
+    uint64_t  frame_counter;
+    uint32_t  ratchet_generation;
+    EppBuffer encrypted_payload;
+    EppBuffer nonce;
+    EppBuffer encrypted_header;
+} EppEncryptedFrame;
+
+/*
+ * EppDecryptedFrame — decrypted frame returned by epp_voip_decrypt_frame().
+ *
+ * Release payload with epp_buffer_release() when done.  All scalar fields are
+ * plain metadata copied from the authenticated RTP-like header.
+ */
+typedef struct {
+    EppBuffer payload;
+    uint8_t   payload_type;
+    uint32_t  ssrc;
+    uint32_t  timestamp;
+    uint16_t  sequence_number;
+    uint64_t  frame_counter;
+    uint32_t  ratchet_generation;
+} EppDecryptedFrame;
+
+/*
+ * EppCallStatistics — point-in-time call counters for a VoIP session.
+ */
+typedef struct {
+    uint64_t frames_sent;
+    uint64_t frames_received;
+    uint64_t frames_dropped;
+    uint32_t rekey_count;
+    uint32_t ratchet_generation;
+    uint64_t call_duration_secs;
+} EppCallStatistics;
+
+/*
+ * EppVoipCallControlTypeCode — values accepted by epp_voip_encrypt_call_control().
+ *
+ * For EPP_VOIP_CALL_CONTROL_DTMF, pass the ASCII digit / symbol in dtmf_digit
+ * (for example '5', '*', or '#').
+ */
+typedef enum {
+    EPP_VOIP_CALL_CONTROL_MUTE = 1,
+    EPP_VOIP_CALL_CONTROL_UNMUTE = 2,
+    EPP_VOIP_CALL_CONTROL_HOLD = 3,
+    EPP_VOIP_CALL_CONTROL_UNHOLD = 4,
+    EPP_VOIP_CALL_CONTROL_DTMF = 5
+} EppVoipCallControlTypeCode;
+
+/*
+ * epp_voip_call_init — begin an outbound call and create an initiator handle.
+ *
+ * This is the base API used by epp_voip_call_init_start(); both functions
+ * have identical behavior and outputs. `out_init_bytes` and `out_initiator`
+ * are required.
+ */
+EPP_API EppErrorCode epp_voip_call_init(
+    const EppIdentityHandle*      identity_handle,
+    const uint8_t*                peer_kyber_public,
+    size_t                        peer_kyber_public_len,
+    uint8_t                       shield_mode,
+    uint32_t                      ratchet_interval_frames,
+    uint32_t                      pq_rekey_interval_secs,
+    EppBuffer*                    out_init_bytes,
+    EppVoipCallInitiatorHandle**  out_initiator,
+    EppError*                     out_error);
+
+/*
+ * epp_voip_call_init_start — alias of epp_voip_call_init().
+ */
+EPP_API EppErrorCode epp_voip_call_init_start(
+    const EppIdentityHandle*      identity_handle,
+    const uint8_t*                peer_kyber_public,
+    size_t                        peer_kyber_public_len,
+    uint8_t                       shield_mode,
+    uint32_t                      ratchet_interval_frames,
+    uint32_t                      pq_rekey_interval_secs,
+    EppBuffer*                    out_init_bytes,
+    EppVoipCallInitiatorHandle**  out_initiator,
+    EppError*                     out_error);
+
+/*
+ * epp_voip_call_init_complete — finish the caller side after receiving
+ * CallAccept bytes from the callee.
+ *
+ * On success writes a new VoIP session handle and consumes the initiator
+ * handle. `out_session` is required. On failure the initiator remains valid
+ * and must be destroyed by the caller.
+ */
+EPP_API EppErrorCode epp_voip_call_init_complete(
+    EppVoipCallInitiatorHandle*  initiator_handle,
+    const EppIdentityHandle*     identity_handle,
+    const uint8_t*               accept_bytes,
+    size_t                       accept_len,
+    EppVoipSessionHandle**       out_session,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_call_initiator_destroy — discard an in-progress outbound call
+ * initiator state.  Safe to call with NULL.
+ */
+EPP_API void epp_voip_call_initiator_destroy(EppVoipCallInitiatorHandle* handle);
+
+/*
+ * epp_voip_accept_call — process CallInit bytes as the callee, returning the
+ * CallAccept bytes to send back plus the active VoIP session handle.
+ * `out_accept_bytes` and `out_session` are required.
+ */
+EPP_API EppErrorCode epp_voip_accept_call(
+    const EppIdentityHandle*  identity_handle,
+    const uint8_t*            call_init_bytes,
+    size_t                    call_init_len,
+    const uint8_t*            peer_kyber_public,
+    size_t                    peer_kyber_public_len,
+    EppBuffer*                out_accept_bytes,
+    EppVoipSessionHandle**    out_session,
+    EppError*                 out_error);
+
+/*
+ * epp_voip_encrypt_frame — encrypt one media frame.
+ *
+ * `out_frame` is required.
+ */
+EPP_API EppErrorCode epp_voip_encrypt_frame(
+    const EppVoipSessionHandle*  handle,
+    uint8_t                      payload_type,
+    uint32_t                     ssrc,
+    uint32_t                     timestamp,
+    uint16_t                     sequence_number,
+    const uint8_t*               payload,
+    size_t                       payload_len,
+    EppEncryptedFrame*           out_frame,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_decrypt_frame — decrypt one received media/control frame.
+ *
+ * `out_frame` is required.
+ */
+EPP_API EppErrorCode epp_voip_decrypt_frame(
+    const EppVoipSessionHandle*  handle,
+    const uint8_t*               call_id,
+    size_t                       call_id_len,
+    uint32_t                     ssrc,
+    uint64_t                     frame_counter,
+    uint32_t                     ratchet_generation,
+    const uint8_t*               encrypted_payload,
+    size_t                       encrypted_payload_len,
+    const uint8_t*               nonce,
+    size_t                       nonce_len,
+    const uint8_t*               encrypted_header,
+    size_t                       encrypted_header_len,
+    EppDecryptedFrame*           out_frame,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_call_id — return the session's authenticated call identifier.
+ */
+EPP_API EppErrorCode epp_voip_call_id(
+    const EppVoipSessionHandle*  handle,
+    EppBuffer*                   out_buf,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_ssrc — return the local SSRC.  On failure returns 0 and populates
+ * out_error when non-NULL.
+ */
+EPP_API uint32_t epp_voip_ssrc(
+    const EppVoipSessionHandle*  handle,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_is_shield_mode — return 1 when the call was negotiated in shield
+ * mode, else 0.  On failure returns 0 and populates out_error when non-NULL.
+ */
+EPP_API uint8_t epp_voip_is_shield_mode(
+    const EppVoipSessionHandle*  handle,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_end_call — locally mark the call as ended.  After success, frame
+ * encryption/decryption APIs reject further traffic on this handle.
+ */
+EPP_API EppErrorCode epp_voip_end_call(
+    const EppVoipSessionHandle*  handle,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_generate_call_end_hmac — build the authenticated CallEnd HMAC for
+ * application-supplied device_id and timestamp values.
+ */
+EPP_API EppErrorCode epp_voip_generate_call_end_hmac(
+    const EppVoipSessionHandle*  handle,
+    const uint8_t*               device_id,
+    size_t                       device_id_len,
+    uint64_t                     timestamp,
+    EppBuffer*                   out_hmac,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_verify_call_end_hmac — verify a previously generated CallEnd HMAC.
+ *
+ * Writes 1 to out_valid when valid, else 0.
+ */
+EPP_API EppErrorCode epp_voip_verify_call_end_hmac(
+    const EppVoipSessionHandle*  handle,
+    const uint8_t*               device_id,
+    size_t                       device_id_len,
+    uint64_t                     timestamp,
+    const uint8_t*               hmac_value,
+    size_t                       hmac_value_len,
+    uint8_t*                     out_valid,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_build_call_end — serialize an authenticated CallEnd signal.
+ */
+EPP_API EppErrorCode epp_voip_build_call_end(
+    const EppVoipSessionHandle*  handle,
+    const uint8_t*               device_id,
+    size_t                       device_id_len,
+    uint64_t                     timestamp,
+    EppBuffer*                   out_buf,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_process_call_end — verify and apply a serialized CallEnd signal.
+ */
+EPP_API EppErrorCode epp_voip_process_call_end(
+    const EppVoipSessionHandle*  handle,
+    const uint8_t*               call_end_bytes,
+    size_t                       call_end_len,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_encrypt_call_control — encode and encrypt one call-control frame.
+ *
+ * `out_frame` is required.
+ */
+EPP_API EppErrorCode epp_voip_encrypt_call_control(
+    const EppVoipSessionHandle*  handle,
+    uint8_t                      control_type,
+    uint8_t                      dtmf_digit,
+    EppEncryptedFrame*           out_frame,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_export_sealed_state — serialize encrypted VoIP session state for
+ * persistence. LOW-LEVEL API: use external_counter as
+ * latest_issued_counter + 1 for this slot. state_key must be exactly 32 bytes.
+ * New clients should prefer epp_voip_export_persisted_state() when they can
+ * store one serialized slot record, or otherwise
+ * epp_voip_export_sealed_state_with_tracker().
+ */
+EPP_API EppErrorCode epp_voip_export_sealed_state(
+    const EppVoipSessionHandle*  handle,
+    const uint8_t*               state_key,
+    size_t                       state_key_len,
+    uint64_t                     external_counter,
+    EppBuffer*                   out_buf,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_export_sealed_state_with_tracker — managed VoIP sealed-state
+ * export. Allocates the next export counter from tracker_handle and advances
+ * the tracker only after a successful export.
+ */
+EPP_API EppErrorCode epp_voip_export_sealed_state_with_tracker(
+    const EppVoipSessionHandle*         handle,
+    const uint8_t*                      state_key,
+    size_t                              state_key_len,
+    EppSealedStateCounterTrackerHandle* tracker_handle,
+    EppBuffer*                          out_buf,
+    EppError*                           out_error);
+
+/*
+ * epp_voip_export_persisted_state — export VoIP state into a managed slot.
+ *
+ * The slot is mutated in place: it allocates the next export counter, stores
+ * the new sealed blob, and updates the tracker inside one in-memory object.
+ * Persist slot_handle via epp_sealed_state_slot_serialize().
+ */
+EPP_API EppErrorCode epp_voip_export_persisted_state(
+    const EppVoipSessionHandle* handle,
+    const uint8_t*              state_key,
+    size_t                      state_key_len,
+    EppSealedStateSlotHandle*   slot_handle,
+    EppError*                   out_error);
+
+/*
+ * epp_voip_initiate_rekey — begin a PQ rekey for an active call.
+ */
+EPP_API EppErrorCode epp_voip_initiate_rekey(
+    const EppVoipSessionHandle*  handle,
+    const EppIdentityHandle*     identity_handle,
+    const uint8_t*               peer_kyber_public,
+    size_t                       peer_kyber_public_len,
+    EppBuffer*                   out_rekey_bytes,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_process_rekey — process a peer rekey and return the rekey-ack
+ * bytes to send back.
+ */
+EPP_API EppErrorCode epp_voip_process_rekey(
+    const EppVoipSessionHandle*  handle,
+    const EppIdentityHandle*     identity_handle,
+    const uint8_t*               peer_ed25519_public,
+    size_t                       peer_ed25519_public_len,
+    const uint8_t*               rekey_bytes,
+    size_t                       rekey_len,
+    const uint8_t*               peer_kyber_public,
+    size_t                       peer_kyber_public_len,
+    EppBuffer*                   out_ack_bytes,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_process_rekey_ack — process the final ack for a previously
+ * initiated rekey.
+ */
+EPP_API EppErrorCode epp_voip_process_rekey_ack(
+    const EppVoipSessionHandle*  handle,
+    const EppIdentityHandle*     identity_handle,
+    const uint8_t*               peer_ed25519_public,
+    size_t                       peer_ed25519_public_len,
+    const uint8_t*               ack_bytes,
+    size_t                       ack_len,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_import_sealed_state — restore a VoIP session from a sealed blob.
+ *
+ * LOW-LEVEL API: pass max_restored_counter as min_external_counter, then after
+ * success persist the returned blob counter as the new restore watermark.
+ * `out_session` is required. New clients should prefer
+ * epp_voip_restore_persisted_state() when restoring from one serialized slot
+ * record, or otherwise epp_voip_import_sealed_state_with_tracker().
+ */
+EPP_API EppErrorCode epp_voip_import_sealed_state(
+    const uint8_t*             data,
+    size_t                     data_len,
+    const uint8_t*             state_key,
+    size_t                     state_key_len,
+    uint64_t                   min_external_counter,
+    EppVoipSessionHandle**     out_session,
+    EppError*                  out_error);
+
+/*
+ * epp_voip_import_sealed_state_with_time_provider — same as
+ * epp_voip_import_sealed_state(), but binds the restored session to an
+ * optional explicit clock. Pass NULL to use the system clock.
+ */
+EPP_API EppErrorCode epp_voip_import_sealed_state_with_time_provider(
+    const uint8_t*              data,
+    size_t                      data_len,
+    const uint8_t*              state_key,
+    size_t                      state_key_len,
+    uint64_t                    min_external_counter,
+    const EppTimeProviderHandle* time_provider_handle,
+    EppVoipSessionHandle**      out_session,
+    EppError*                   out_error);
+
+/*
+ * epp_voip_import_sealed_state_with_tracker — managed VoIP sealed-state
+ * restore. Uses tracker_handle->max_restored_counter as the restore
+ * watermark and advances the tracker only after a successful restore.
+ */
+EPP_API EppErrorCode epp_voip_import_sealed_state_with_tracker(
+    const uint8_t*                      data,
+    size_t                              data_len,
+    const uint8_t*                      state_key,
+    size_t                              state_key_len,
+    EppSealedStateCounterTrackerHandle* tracker_handle,
+    EppVoipSessionHandle**              out_session,
+    EppError*                           out_error);
+
+/*
+ * epp_voip_import_sealed_state_with_tracker_and_time_provider — managed VoIP
+ * restore using tracker_handle plus an optional explicit clock. Pass NULL to
+ * use the system clock.
+ */
+EPP_API EppErrorCode epp_voip_import_sealed_state_with_tracker_and_time_provider(
+    const uint8_t*                      data,
+    size_t                              data_len,
+    const uint8_t*                      state_key,
+    size_t                              state_key_len,
+    EppSealedStateCounterTrackerHandle* tracker_handle,
+    const EppTimeProviderHandle*        time_provider_handle,
+    EppVoipSessionHandle**              out_session,
+    EppError*                           out_error);
+
+/*
+ * epp_voip_restore_persisted_state — restore VoIP state from a managed slot.
+ *
+ * The slot supplies the sealed blob plus restore watermark and is updated in
+ * place on success. After restore, re-serialize and persist the slot so the
+ * restore watermark advances inside the same record.
+ */
+EPP_API EppErrorCode epp_voip_restore_persisted_state(
+    EppSealedStateSlotHandle*  slot_handle,
+    const uint8_t*             state_key,
+    size_t                     state_key_len,
+    EppVoipSessionHandle**     out_session,
+    EppError*                  out_error);
+
+/*
+ * epp_voip_restore_persisted_state_with_time_provider — restore VoIP state
+ * from a managed slot and bind it to an optional explicit clock. Pass NULL to
+ * use the system clock.
+ */
+EPP_API EppErrorCode epp_voip_restore_persisted_state_with_time_provider(
+    EppSealedStateSlotHandle*   slot_handle,
+    const uint8_t*              state_key,
+    size_t                      state_key_len,
+    const EppTimeProviderHandle* time_provider_handle,
+    EppVoipSessionHandle**      out_session,
+    EppError*                   out_error);
+
+/*
+ * epp_voip_sealed_state_external_counter — read the anti-rollback counter
+ * from a sealed VoIP state blob without decrypting it.
+ */
+EPP_API EppErrorCode epp_voip_sealed_state_external_counter(
+    const uint8_t*  data,
+    size_t          data_len,
+    uint64_t*       out_external_counter,
+    EppError*       out_error);
+
+/*
+ * epp_voip_session_destroy — free a VoIP session handle.  Safe to call with
+ * NULL.
+ */
+EPP_API void epp_voip_session_destroy(EppVoipSessionHandle* handle);
+
+/*
+ * epp_voip_set_screen_share_meta — attach optional screen-share metadata to
+ * the local session state. codec_hint is optional UTF-8.
+ */
+EPP_API EppErrorCode epp_voip_set_screen_share_meta(
+    const EppVoipSessionHandle*  handle,
+    uint32_t                     width,
+    uint32_t                     height,
+    uint32_t                     frame_rate,
+    const uint8_t*               codec_hint,
+    size_t                       codec_hint_length,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_get_screen_share_meta — fetch the currently stored screen-share
+ * metadata. When absent, width/height/frame_rate are written as 0 and
+ * out_codec_hint receives an empty buffer.
+ */
+EPP_API EppErrorCode epp_voip_get_screen_share_meta(
+    const EppVoipSessionHandle*  handle,
+    uint32_t*                    out_width,
+    uint32_t*                    out_height,
+    uint32_t*                    out_frame_rate,
+    EppBuffer*                   out_codec_hint,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_clear_screen_share_meta — remove stored screen-share metadata.
+ */
+EPP_API EppErrorCode epp_voip_clear_screen_share_meta(
+    const EppVoipSessionHandle*  handle,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_get_call_statistics — fetch current counters for a VoIP session.
+ */
+EPP_API EppErrorCode epp_voip_get_call_statistics(
+    const EppVoipSessionHandle*  handle,
+    EppCallStatistics*           out_stats,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_set_recording_consent — set the local user's recording-consent
+ * value. Accepted values are protocol-defined integers (currently 0 or 1).
+ */
+EPP_API EppErrorCode epp_voip_set_recording_consent(
+    const EppVoipSessionHandle*  handle,
+    int32_t                      consent,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_get_local_recording_consent — return the local consent value, or
+ * -1 on failure.
+ */
+EPP_API int32_t epp_voip_get_local_recording_consent(
+    const EppVoipSessionHandle*  handle);
+
+/*
+ * epp_voip_set_remote_recording_consent — legacy API retained for ABI
+ * compatibility. New code must not use this: remote consent is only valid
+ * when updated via a signed RecordingConsentMessage.
+ */
+EPP_API EppErrorCode epp_voip_set_remote_recording_consent(
+    const EppVoipSessionHandle*  handle,
+    int32_t                      consent,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_get_remote_recording_consent — return the last authenticated
+ * remote consent value, or -1 on failure.
+ */
+EPP_API int32_t epp_voip_get_remote_recording_consent(
+    const EppVoipSessionHandle*  handle);
+
+/*
+ * epp_voip_both_consented_to_recording — return true only when both local and
+ * authenticated remote consent values allow recording.
+ */
+EPP_API bool epp_voip_both_consented_to_recording(
+    const EppVoipSessionHandle*  handle);
+
+/*
+ * epp_voip_build_recording_consent_message — create a signed
+ * RecordingConsentMessage that can be sent to the peer. On success this also
+ * updates the session's local consent state and advances its outbound consent
+ * timestamp monotonically.
+ */
+EPP_API EppErrorCode epp_voip_build_recording_consent_message(
+    const EppVoipSessionHandle*  handle,
+    const EppIdentityHandle*     identity_handle,
+    int32_t                      consent,
+    uint64_t                     timestamp_unix,
+    EppBuffer*                   out_message,
+    EppError*                    out_error);
+
+/*
+ * epp_voip_process_recording_consent_message — verify and apply a peer's
+ * signed RecordingConsentMessage.
+ */
+EPP_API EppErrorCode epp_voip_process_recording_consent_message(
+    const EppVoipSessionHandle*  handle,
+    const uint8_t*               peer_ed25519_public,
+    size_t                       peer_ed25519_public_len,
+    const uint8_t*               message_bytes,
+    size_t                       message_len,
+    EppError*                    out_error);
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1196,6 +2010,10 @@ EPP_API EppErrorCode epp_attachment_encrypt_file_key(
     EppBuffer*        out_encrypted_file_key,
     EppError*         out_error);
 
+/*
+ * Decrypts an attachment file key and verifies that the decrypted envelope is
+ * bound to the supplied attachment_id.
+ */
 EPP_API EppErrorCode epp_attachment_decrypt_file_key(
     EppSessionHandle* handle,
     const uint8_t*    encrypted_file_key,
@@ -1205,6 +2023,10 @@ EPP_API EppErrorCode epp_attachment_decrypt_file_key(
     EppBuffer*        out_file_key,
     EppError*         out_error);
 
+/*
+ * Validates magic bytes for a supported MIME type. Unsupported MIME strings
+ * are rejected rather than treated as implicitly valid.
+ */
 EPP_API EppErrorCode epp_attachment_validate_magic_bytes(
     const uint8_t* header,
     size_t         header_length,
@@ -1838,14 +2660,21 @@ EPP_API EppErrorCode epp_group_get_member_leaf_indices(
  * blob (including private ratchet tree keys).
  *
  * Uses the same sealed-blob format as epp_session_serialize_sealed().
- * Always increment external_counter before writing; use the stored counter
- * as min_external_counter on load to prevent rollback.
+ * LOW-LEVEL API: persist two values per slot:
+ *   - max_restored_counter: highest counter already accepted on restore.
+ *   - latest_issued_counter: highest counter already used for export.
+ * New clients should prefer epp_group_export_persisted_state() when they can
+ * store one serialized slot record, or otherwise
+ * epp_group_serialize_with_tracker().
+ *
+ * external_counter here must be latest_issued_counter + 1.
  *
  * Parameters:
  *   handle           — active group session handle (not consumed).
  *   key              — 32-byte AES-256 encryption key (borrowed).
  *   key_length       — must be exactly 32.
- *   external_counter — monotonic counter embedded in the blob.
+ *   external_counter — next export counter for this slot
+ *                      (latest_issued_counter + 1).
  *   out_state        — receives the encrypted blob
  *                      (release with epp_buffer_release()).
  *   out_error        — optional error detail.
@@ -1861,21 +2690,57 @@ EPP_API EppErrorCode epp_group_serialize(
     EppError*               out_error);
 
 /*
+ * epp_group_serialize_with_tracker — managed group sealed-state export.
+ *
+ * Uses tracker_handle to allocate the next export counter and advances the
+ * tracker only after a successful export.
+ */
+EPP_API EppErrorCode epp_group_serialize_with_tracker(
+    EppGroupSessionHandle*               handle,
+    const uint8_t*                       key,
+    size_t                               key_length,
+    EppSealedStateCounterTrackerHandle*  tracker_handle,
+    EppBuffer*                           out_state,
+    EppError*                            out_error);
+
+/*
+ * epp_group_export_persisted_state — export group state into a managed slot.
+ *
+ * The slot is mutated in place: it allocates the next export counter, stores
+ * the new sealed blob, and updates the tracker inside one in-memory object.
+ * Persist slot_handle via epp_sealed_state_slot_serialize().
+ */
+EPP_API EppErrorCode epp_group_export_persisted_state(
+    EppGroupSessionHandle*      handle,
+    const uint8_t*              key,
+    size_t                      key_length,
+    EppSealedStateSlotHandle*   slot_handle,
+    EppError*                   out_error);
+
+/*
  * epp_group_deserialize — restore a group session from an encrypted blob.
+ * New clients should prefer epp_group_restore_persisted_state() when
+ * restoring from one serialized slot record, or otherwise
+ * epp_group_deserialize_with_tracker().
  *
  * Parameters:
  *   state_bytes          — sealed blob bytes (borrowed).
  *   state_length         — byte length of state_bytes.
  *   key                  — 32-byte AES-256 decryption key (borrowed).
  *   key_length           — must be exactly 32.
- *   min_external_counter — minimum acceptable counter (rollback protection).
+ *   min_external_counter — restore watermark for this slot
+ *                          (max_restored_counter).
  *   out_external_counter — receives the counter stored in the blob.
+ *                          After successful restore, persist it as the new
+ *                          max_restored_counter and raise
+ *                          latest_issued_counter to at least this value.
  *   identity_handle      — long-term identity to re-attach to the session
  *                          (not consumed; the session borrows it logically
  *                          so keep the identity alive while the session is
- *                          in use).
+ *                          in use). Its Ed25519 identity keypair must match
+ *                          the identity embedded in the sealed group state.
  *   out_handle           — receives the restored EppGroupSessionHandle.
- *                          Destroy with epp_group_destroy().
+ *                          Destroy with epp_group_destroy(). 
  *   out_error            — optional error detail.
  *
  * Returns: EPP_SUCCESS, EPP_ERROR_DECRYPTION, EPP_ERROR_DECODE,
@@ -1891,6 +2756,38 @@ EPP_API EppErrorCode epp_group_deserialize(
     EppIdentityHandle*      identity_handle,
     EppGroupSessionHandle** out_handle,
     EppError*               out_error);
+
+/*
+ * epp_group_deserialize_with_tracker — managed group sealed-state restore.
+ *
+ * Uses tracker_handle->max_restored_counter as the restore watermark and
+ * advances the tracker only after a successful restore.
+ */
+EPP_API EppErrorCode epp_group_deserialize_with_tracker(
+    const uint8_t*                       state_bytes,
+    size_t                               state_length,
+    const uint8_t*                       key,
+    size_t                               key_length,
+    EppSealedStateCounterTrackerHandle*  tracker_handle,
+    EppIdentityHandle*                   identity_handle,
+    EppGroupSessionHandle**              out_handle,
+    EppError*                            out_error);
+
+/*
+ * epp_group_restore_persisted_state — restore a group session from a managed
+ * slot.
+ *
+ * The slot supplies the sealed blob plus restore watermark and is updated in
+ * place on success. After restore, re-serialize and persist the slot so the
+ * restore watermark advances inside the same record.
+ */
+EPP_API EppErrorCode epp_group_restore_persisted_state(
+    EppSealedStateSlotHandle*  slot_handle,
+    const uint8_t*             key,
+    size_t                     key_length,
+    EppIdentityHandle*         identity_handle,
+    EppGroupSessionHandle**    out_handle,
+    EppError*                  out_error);
 
 /*
  * epp_group_export_public_state — export the group's public state for
@@ -1920,8 +2817,14 @@ EPP_API EppErrorCode epp_group_export_public_state(
  *
  * Existing members call this after verifying the joiner's identity out of
  * band.  The returned bytes are bound to group_id + current epoch + joiner
- * identity + joiner credential, and must be supplied to
- * epp_group_join_external().
+ * identity + joiner credential + an explicit signed auth-format version + the
+ * current exported public state (group_context_hash + external init public
+ * keys), and must be supplied to epp_group_join_external().  Authorizations
+ * are short-lived and joiners reject expired artifacts during bootstrap;
+ * existing members validate the resulting ExternalInit Commit against the exact
+ * pre-commit group state rather than their local wall clock. During rollout,
+ * use ExternalInit only between peers that support the same authorization
+ * payload format.
  */
 EPP_API EppErrorCode epp_group_authorize_external_join(
     EppGroupSessionHandle*  handle,
@@ -1949,9 +2852,14 @@ EPP_API EppErrorCode epp_group_authorize_external_join(
  *   identity_handle    — caller's long-term identity (not consumed).
  *   public_state       — PublicGroupState bytes (from epp_group_export_public_state
  *                        of an existing member, or fetched from relay). Borrowed.
+ *                        The joiner verifies that authorization is signed by a
+ *                        current member and cryptographically bound to this
+ *                        exact public_state.
  *   public_state_length — byte length of public_state.
  *   authorization      — authorization bytes from
- *                        epp_group_authorize_external_join(). Borrowed.
+ *                        epp_group_authorize_external_join(). Borrowed. The
+ *                        joiner enforces the authorization freshness window
+ *                        here before creating an ExternalInit Commit.
  *   authorization_length — byte length of authorization.
  *   credential         — caller's application credential to embed in the tree
  *                        (borrowed).
@@ -2293,7 +3201,7 @@ typedef void (*EppOnSessionError)(
 
 /*
  * EppOnNonceExhaustionWarning — fired when the current chain's nonce budget
- * drops below ~20 %.  The next outgoing or incoming message will trigger a
+ * drops below ~10 %.  The next outgoing or incoming message will trigger a
  * DH ratchet step automatically, but calling the callback gives the app a
  * chance to schedule a proactive message.
  *

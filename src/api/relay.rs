@@ -58,6 +58,17 @@ impl GroupRoster {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelayCommitKind {
+    Standard,
+    ExternalJoin,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelayCommitValidationScope {
+    StructuralSenderBound,
+}
+
 fn validate_commit_for_relay_core(
     commit_bytes: &[u8],
     roster: &GroupRoster,
@@ -69,18 +80,14 @@ fn validate_commit_for_relay_core(
     let commit = GroupCommit::decode(commit_bytes)
         .map_err(|e| ProtocolError::decode(format!("Commit decode: {e}")))?;
 
-    if commit.epoch != roster.epoch + 1 {
+    let expected_epoch = roster
+        .epoch
+        .checked_add(1)
+        .ok_or_else(|| ProtocolError::group_protocol("Roster epoch overflow"))?;
+    if commit.epoch != expected_epoch {
         return Err(ProtocolError::group_protocol(format!(
             "Commit epoch mismatch: expected {}, got {}",
-            roster.epoch + 1,
-            commit.epoch
-        )));
-    }
-
-    if roster.find_member(commit.committer_leaf_index).is_none() {
-        return Err(ProtocolError::group_membership(format!(
-            "Committer leaf {} is not a group member",
-            commit.committer_leaf_index
+            expected_epoch, commit.epoch
         )));
     }
 
@@ -100,14 +107,7 @@ fn validate_commit_for_relay_core(
         return Err(ProtocolError::group_protocol("Commit missing update_path"));
     }
 
-    let committer = roster
-        .find_member(commit.committer_leaf_index)
-        .ok_or_else(|| {
-            ProtocolError::group_membership(format!(
-                "Committer leaf {} is not a group member",
-                commit.committer_leaf_index
-            ))
-        })?;
+    let (committer_identity_ed25519, kind) = relay_commit_sender_identity(&commit, roster)?;
     let mut commit_for_verify = commit.clone();
     let signature = std::mem::take(&mut commit_for_verify.committer_signature);
     let mut commit_bytes_for_verify = Vec::new();
@@ -115,7 +115,7 @@ fn validate_commit_for_relay_core(
         .encode(&mut commit_bytes_for_verify)
         .map_err(|e| ProtocolError::encode(format!("Commit encode for verify: {e}")))?;
     verify_ed25519_message(
-        &committer.identity_ed25519_public,
+        &committer_identity_ed25519,
         &signature,
         &commit_bytes_for_verify,
         "Committer Ed25519 signature verification failed",
@@ -147,9 +147,9 @@ fn validate_commit_for_relay_core(
                 }
                 removed_leaves.push(remove.removed_leaf_index);
             }
+            Some(crate::proto::group_proposal::Proposal::ExternalInit(_)) => {}
             Some(
                 crate::proto::group_proposal::Proposal::Update(_)
-                | crate::proto::group_proposal::Proposal::ExternalInit(_)
                 | crate::proto::group_proposal::Proposal::Psk(_)
                 | crate::proto::group_proposal::Proposal::ReInit(_),
             ) => {}
@@ -164,7 +164,119 @@ fn validate_commit_for_relay_core(
         new_epoch: commit.epoch,
         added_identities,
         removed_leaves,
+        kind,
+        validation_scope: RelayCommitValidationScope::StructuralSenderBound,
     })
+}
+
+fn relay_commit_sender_identity(
+    commit: &GroupCommit,
+    roster: &GroupRoster,
+) -> Result<(Vec<u8>, RelayCommitKind), ProtocolError> {
+    let is_external_join = commit.proposals.iter().any(|proposal| {
+        matches!(
+            proposal.proposal,
+            Some(crate::proto::group_proposal::Proposal::ExternalInit(_))
+        )
+    });
+
+    if !is_external_join {
+        let committer = roster
+            .find_member(commit.committer_leaf_index)
+            .ok_or_else(|| {
+                ProtocolError::group_membership(format!(
+                    "Committer leaf {} is not a group member",
+                    commit.committer_leaf_index
+                ))
+            })?;
+        return Ok((
+            committer.identity_ed25519_public.clone(),
+            RelayCommitKind::Standard,
+        ));
+    }
+
+    validate_external_join_structure_for_relay(&commit.proposals)?;
+    if roster.find_member(commit.committer_leaf_index).is_some() {
+        return Err(ProtocolError::group_membership(
+            "External join committer leaf is already present in roster",
+        ));
+    }
+    let add_key_package = commit
+        .proposals
+        .iter()
+        .find_map(|proposal| match &proposal.proposal {
+            Some(crate::proto::group_proposal::Proposal::Add(add)) => add.key_package.as_ref(),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            ProtocolError::group_membership(
+                "External join commit missing Add proposal with KeyPackage",
+            )
+        })?;
+    key_package::validate_key_package(add_key_package)?;
+    Ok((
+        add_key_package.identity_ed25519_public.clone(),
+        RelayCommitKind::ExternalJoin,
+    ))
+}
+
+fn validate_external_join_structure_for_relay(
+    proposals: &[crate::proto::GroupProposal],
+) -> Result<(), ProtocolError> {
+    let mut external_init_count = 0usize;
+    let mut add_count = 0usize;
+
+    for proposal in proposals {
+        match &proposal.proposal {
+            Some(crate::proto::group_proposal::Proposal::ExternalInit(ext)) => {
+                external_init_count += 1;
+                if ext.authorization.is_empty() {
+                    return Err(ProtocolError::group_protocol(
+                        "External join authorization is required",
+                    ));
+                }
+            }
+            Some(crate::proto::group_proposal::Proposal::Add(_)) => {
+                add_count += 1;
+            }
+            Some(crate::proto::group_proposal::Proposal::Remove(_)) => {
+                return Err(ProtocolError::group_protocol(
+                    "External join commit must not contain Remove proposals",
+                ));
+            }
+            Some(crate::proto::group_proposal::Proposal::Update(_)) => {
+                return Err(ProtocolError::group_protocol(
+                    "External join commit must not contain Update proposals",
+                ));
+            }
+            Some(crate::proto::group_proposal::Proposal::Psk(_)) => {
+                return Err(ProtocolError::group_protocol(
+                    "External join commit must not contain PSK proposals",
+                ));
+            }
+            Some(crate::proto::group_proposal::Proposal::ReInit(_)) => {
+                return Err(ProtocolError::group_protocol(
+                    "External join commit must not contain ReInit proposals",
+                ));
+            }
+            None => {
+                return Err(ProtocolError::group_membership("Empty proposal"));
+            }
+        }
+    }
+
+    if external_init_count != 1 {
+        return Err(ProtocolError::group_protocol(format!(
+            "External join commit must contain exactly 1 ExternalInit, got {external_init_count}"
+        )));
+    }
+    if add_count != 1 {
+        return Err(ProtocolError::group_protocol(format!(
+            "External join commit must contain exactly 1 Add proposal, got {add_count}"
+        )));
+    }
+
+    Ok(())
 }
 
 fn validate_group_message_for_relay_core(
@@ -211,16 +323,31 @@ pub fn validate_commit_for_relay_strict(
     expected_sender_identity_ed25519: &[u8],
 ) -> Result<RelayCommitInfo, ProtocolError> {
     let info = validate_commit_for_relay_core(commit_bytes, roster)?;
-    let committer = roster
-        .find_member(info.committer_leaf_index)
-        .ok_or_else(|| {
-            ProtocolError::group_membership(format!(
-                "Committer leaf {} is not a group member",
-                info.committer_leaf_index
-            ))
-        })?;
-
-    bind_sender_identity(committer, expected_sender_identity_ed25519)?;
+    match info.kind {
+        RelayCommitKind::Standard => {
+            let committer = roster
+                .find_member(info.committer_leaf_index)
+                .ok_or_else(|| {
+                    ProtocolError::group_membership(format!(
+                        "Committer leaf {} is not a group member",
+                        info.committer_leaf_index
+                    ))
+                })?;
+            bind_sender_identity(committer, expected_sender_identity_ed25519)?;
+        }
+        RelayCommitKind::ExternalJoin => {
+            let joiner_identity = info.added_identities.first().ok_or_else(|| {
+                ProtocolError::group_membership(
+                    "External join relay validation is missing the added joiner identity",
+                )
+            })?;
+            if joiner_identity != expected_sender_identity_ed25519 {
+                return Err(ProtocolError::group_membership(
+                    "Sender identity does not match external join Add proposal",
+                ));
+            }
+        }
+    }
 
     Ok(info)
 }
@@ -248,7 +375,7 @@ pub fn validate_group_message_for_relay_strict(
 
     let mut app_for_verify = app.clone();
     let signature = std::mem::take(&mut app_for_verify.sender_signature);
-    let signature_input = build_app_signature_input(&msg.group_id, msg.epoch, &app_for_verify);
+    let signature_input = build_app_signature_input(&msg.group_id, msg.epoch, &app_for_verify)?;
     verify_ed25519_message(
         &sender.identity_ed25519_public,
         &signature,
@@ -289,6 +416,8 @@ pub struct RelayCommitInfo {
     pub new_epoch: u64,
     pub added_identities: Vec<Vec<u8>>,
     pub removed_leaves: Vec<u32>,
+    pub kind: RelayCommitKind,
+    pub validation_scope: RelayCommitValidationScope,
 }
 
 pub fn commit_recipients(roster: &GroupRoster, committer_leaf_index: u32) -> Vec<u32> {
@@ -304,7 +433,7 @@ pub fn message_recipients(roster: &GroupRoster) -> Vec<u32> {
     roster.leaf_indices()
 }
 
-pub fn apply_commit_to_roster(
+pub fn apply_commit_to_roster_tentative(
     roster: &mut GroupRoster,
     info: &RelayCommitInfo,
     added_members: Vec<GroupMemberRecord>,
@@ -410,6 +539,18 @@ pub fn apply_commit_to_roster(
     Ok(())
 }
 
+#[allow(deprecated)]
+#[deprecated(
+    note = "Relay-side commit validation is structural only; roster mutation here is tentative and not proof that members accepted the commit. Prefer apply_commit_to_roster_tentative()."
+)]
+pub fn apply_commit_to_roster(
+    roster: &mut GroupRoster,
+    info: &RelayCommitInfo,
+    added_members: Vec<GroupMemberRecord>,
+) -> Result<(), ProtocolError> {
+    apply_commit_to_roster_tentative(roster, info, added_members)
+}
+
 pub fn extract_welcome_target(welcome_bytes: &[u8]) -> Result<(Vec<u8>, u64, u32), ProtocolError> {
     if welcome_bytes.len() > MAX_GROUP_MESSAGE_SIZE {
         return Err(ProtocolError::invalid_input("Welcome too large"));
@@ -441,7 +582,7 @@ fn build_app_signature_input(
     group_id: &[u8],
     epoch: u64,
     app_msg: &GroupApplicationMessage,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, ProtocolError> {
     const LEN_PREFIX_COUNT: usize = 6;
     let mut input = Vec::with_capacity(
         GROUP_MESSAGE_SIGNATURE_INFO.len()
@@ -458,19 +599,21 @@ fn build_app_signature_input(
     input.extend_from_slice(GROUP_MESSAGE_SIGNATURE_INFO);
     input.extend_from_slice(&GROUP_PROTOCOL_VERSION.to_le_bytes());
     input.extend_from_slice(&epoch.to_le_bytes());
-    append_len_prefixed(&mut input, group_id);
-    append_len_prefixed(&mut input, &app_msg.encrypted_sender_data);
-    append_len_prefixed(&mut input, &app_msg.sender_data_nonce);
-    append_len_prefixed(&mut input, &app_msg.encrypted_payload);
-    append_len_prefixed(&mut input, &app_msg.payload_nonce);
-    append_len_prefixed(&mut input, &app_msg.franking_tag);
-    input
+    append_len_prefixed(&mut input, group_id)?;
+    append_len_prefixed(&mut input, &app_msg.encrypted_sender_data)?;
+    append_len_prefixed(&mut input, &app_msg.sender_data_nonce)?;
+    append_len_prefixed(&mut input, &app_msg.encrypted_payload)?;
+    append_len_prefixed(&mut input, &app_msg.payload_nonce)?;
+    append_len_prefixed(&mut input, &app_msg.franking_tag)?;
+    Ok(input)
 }
 
-fn append_len_prefixed(buf: &mut Vec<u8>, bytes: &[u8]) {
-    let len = u32::try_from(bytes.len()).expect("length prefix exceeds u32");
+fn append_len_prefixed(buf: &mut Vec<u8>, bytes: &[u8]) -> Result<(), ProtocolError> {
+    let len = u32::try_from(bytes.len())
+        .map_err(|_| ProtocolError::invalid_input("length prefix exceeds u32"))?;
     buf.extend_from_slice(&len.to_le_bytes());
     buf.extend_from_slice(bytes);
+    Ok(())
 }
 
 fn verify_ed25519_message(
