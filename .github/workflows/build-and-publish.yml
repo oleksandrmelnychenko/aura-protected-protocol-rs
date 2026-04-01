@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version override (e.g., 1.0.1)'
+        description: 'Version override (e.g., 1.2.0)'
         required: false
         type: string
 
@@ -105,7 +105,7 @@ jobs:
             ### Swift Package Manager
             ```swift
             .binaryTarget(
-                name: "EcliptixProtectedProtocolBinary",
+                name: "EcliptixProtectedProtocol",
                 url: "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/ecliptix-protected-protocol.xcframework.zip",
                 checksum: "$(cat artifacts/apple-xcframework/ecliptix-protected-protocol.xcframework.zip.sha256 | cut -d' ' -f1)"
             )

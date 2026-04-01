@@ -10,11 +10,11 @@ extern "C" {
 #include <stdbool.h>
 
 #define EPP_API_VERSION_MAJOR 1
-#define EPP_API_VERSION_MINOR 1
-#define EPP_API_VERSION_PATCH 1
+#define EPP_API_VERSION_MINOR 2
+#define EPP_API_VERSION_PATCH 0
 
 #define EPP_DEFAULT_ONE_TIME_KEY_COUNT 100
-#define EPP_LIBRARY_VERSION "1.1.1"
+#define EPP_LIBRARY_VERSION "1.2.0"
 
 typedef enum {
     EPP_SUCCESS = 0,

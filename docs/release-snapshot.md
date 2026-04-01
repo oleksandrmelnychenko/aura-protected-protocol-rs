@@ -4,6 +4,8 @@ Date: 2026-04-01
 
 This document records the current integration/documentation snapshot for the repository HEAD. It is intentionally short and release-facing: use it to keep README, headers, Swift wrappers, tests, and release notes aligned.
 
+Intended release tag: `v1.2.0`
+
 ## Contract Snapshot
 
 - Low-level VoIP destroy entry points now take `**handle`, set `*handle = NULL`, and are idempotent on repeated destroy.
@@ -15,6 +17,7 @@ This document records the current integration/documentation snapshot for the rep
 
 - `cargo fmt --check`
 - `cargo test --features ffi --tests --no-run`
+- local Apple XCFramework rebuild + SHA-256 checksum refresh for the `v1.2.0` package snapshot
 - Targeted regressions added for:
   - backward manual-clock rejection
   - `EPP_ERROR_BUSY` on session/group/VoIP handle contention
