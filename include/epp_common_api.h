@@ -45,7 +45,8 @@ typedef enum {
     EPP_ERROR_FRANKING = 25,
     EPP_ERROR_VOIP_CALL = 26,
     EPP_ERROR_VOIP_MEDIA = 27,
-    EPP_ERROR_VOIP_REKEY = 28
+    EPP_ERROR_VOIP_REKEY = 28,
+    EPP_ERROR_BUSY = 29
 } EppErrorCode;
 
 typedef struct EppError {

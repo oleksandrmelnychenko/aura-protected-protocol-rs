@@ -350,9 +350,10 @@ EPP_API EppErrorCode epp_time_provider_manual_create(
     EppError*               out_error);
 
 /*
- * epp_time_provider_manual_set_now_unix — advance or rewind a manual clock.
+ * epp_time_provider_manual_set_now_unix — advance a manual clock.
  *
- * Fails if handle is NULL, destroyed, or not a manual provider.
+ * Fails if handle is NULL, destroyed, not a manual provider, or `now_unix`
+ * would move the clock backwards.
  */
 EPP_API EppErrorCode epp_time_provider_manual_set_now_unix(
     EppTimeProviderHandle* handle,
@@ -1201,9 +1202,11 @@ EPP_API EppErrorCode epp_voip_call_init_complete(
 
 /*
  * epp_voip_call_initiator_destroy — discard an in-progress outbound call
- * initiator state.  Safe to call with NULL.
+ * initiator state.
+ *
+ * Sets *handle to NULL. Safe to call with `handle == NULL` or `*handle == NULL`.
  */
-EPP_API void epp_voip_call_initiator_destroy(EppVoipCallInitiatorHandle* handle);
+EPP_API void epp_voip_call_initiator_destroy(EppVoipCallInitiatorHandle** handle);
 
 /*
  * epp_voip_accept_call — process CallInit bytes as the callee, returning the
@@ -1531,10 +1534,11 @@ EPP_API EppErrorCode epp_voip_sealed_state_external_counter(
     EppError*       out_error);
 
 /*
- * epp_voip_session_destroy — free a VoIP session handle.  Safe to call with
- * NULL.
+ * epp_voip_session_destroy — free a VoIP session handle.
+ *
+ * Sets *handle to NULL. Safe to call with `handle == NULL` or `*handle == NULL`.
  */
-EPP_API void epp_voip_session_destroy(EppVoipSessionHandle* handle);
+EPP_API void epp_voip_session_destroy(EppVoipSessionHandle** handle);
 
 /*
  * epp_voip_set_screen_share_meta — attach optional screen-share metadata to

@@ -862,13 +862,13 @@ The Kyber-768 integration addresses several practical challenges:
 
 \subsection{C Foreign Function Interface}
 
-The library exports a C-compatible API via \texttt{include/epp\_api.h}, enabling integration with iOS (Swift/Objective-C), Android (JNI), and other platforms. The FFI layer provides:
+The library exports a C-compatible API via the umbrella header \texttt{include/epp\_api.h} (which includes the split client/common headers), enabling integration with iOS (Swift/Objective-C), Android (JNI), and other platforms. The FFI layer provides:
 
 \begin{itemize}
-  \item Opaque handle types (\texttt{EppIdentityHandle}, \texttt{EppSessionHandle}) with create/destroy lifecycle.
+  \item Opaque handle types (\texttt{EppIdentityHandle}, \texttt{EppSessionHandle}, group/VoIP variants) with explicit create/destroy lifecycle.
   \item Panic guard macro that catches Rust panics and converts them to error codes, preventing undefined behavior across the FFI boundary.
   \item Buffer management via \texttt{EppBuffer} with explicit allocation and deallocation.
-  \item Uniform error reporting via 15 \texttt{EppErrorCode} variants with human-readable error strings.
+  \item Uniform error reporting via \texttt{EppErrorCode} with human-readable error strings, including lifecycle and concurrency failures such as busy handles.
 \end{itemize}
 
 Build targets: \texttt{staticlib} (C linking), \texttt{cdylib} (dynamic library), \texttt{rlib} (Rust crate).

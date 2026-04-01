@@ -106,6 +106,7 @@ internal let EPP_ERROR_FRANKING: UInt32 = 25
 internal let EPP_ERROR_VOIP_CALL: UInt32 = 26
 internal let EPP_ERROR_VOIP_MEDIA: UInt32 = 27
 internal let EPP_ERROR_VOIP_REKEY: UInt32 = 28
+internal let EPP_ERROR_BUSY: UInt32 = 29
 
 // MARK: - Envelope type constants
 
@@ -1076,7 +1077,7 @@ internal func native_epp_voip_call_init_complete(
 
 @_silgen_name("epp_voip_call_initiator_destroy")
 internal func native_epp_voip_call_initiator_destroy(
-    _ handle: UnsafeMutableRawPointer?
+    _ handle_ptr: UnsafeMutablePointer<UnsafeMutableRawPointer?>?
 )
 
 @_silgen_name("epp_voip_encrypt_frame")
@@ -1323,7 +1324,7 @@ internal func native_epp_voip_sealed_state_external_counter(
 
 @_silgen_name("epp_voip_session_destroy")
 internal func native_epp_voip_session_destroy(
-    _ handle: UnsafeMutableRawPointer?
+    _ handle_ptr: UnsafeMutablePointer<UnsafeMutableRawPointer?>?
 )
 
 @_silgen_name("epp_voip_set_screen_share_meta")

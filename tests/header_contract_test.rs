@@ -34,6 +34,10 @@ fn common_header_exports_current_version_and_voip_errors() {
         COMMON_HEADER.contains("EPP_ERROR_VOIP_REKEY = 28"),
         "common header must expose VoIP rekey error code"
     );
+    assert!(
+        COMMON_HEADER.contains("EPP_ERROR_BUSY = 29"),
+        "common header must expose busy-handle error code"
+    );
 }
 
 #[test]
@@ -70,6 +74,8 @@ fn client_header_exports_voip_handles_types_and_critical_functions() {
         "epp_voip_accept_call(",
         "epp_voip_encrypt_frame(",
         "epp_voip_decrypt_frame(",
+        "epp_voip_call_initiator_destroy(EppVoipCallInitiatorHandle** handle);",
+        "epp_voip_session_destroy(EppVoipSessionHandle** handle);",
         "epp_session_serialize_sealed_with_tracker(",
         "epp_session_deserialize_sealed_with_tracker(",
         "epp_session_deserialize_sealed_with_time_provider(",

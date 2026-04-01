@@ -22,6 +22,9 @@ use std::os::raw::{c_char, c_void};
 use std::sync::{Arc, Mutex};
 
 use crate::api::{SealedStateCounterTracker, SealedStateSlot};
+use std::sync::atomic::{AtomicBool, Ordering};
+use zeroize::Zeroize;
+
 use crate::core::constants::{
     AES_GCM_NONCE_BYTES, AES_KEY_BYTES, ATTACHMENT_FILE_KEY_BYTES, ATTACHMENT_HASH_BYTES,
     ATTACHMENT_ID_BYTES, ATTACHMENT_PROTOCOL_VERSION, CALL_ID_BYTES, DEFAULT_ONE_TIME_KEY_COUNT,
@@ -49,6 +52,32 @@ use crate::proto::{
 use crate::protocol::attachment::{StreamingDecryptor, StreamingEncryptor};
 use crate::protocol::group::{GroupSecurityPolicy, GroupSession};
 use crate::protocol::{HandshakeInitiator, HandshakeResponder, Session};
+
+/// Upper bound for message-ID count accepted via FFI (prevents overflow in
+/// `message_id_count * MESSAGE_ID_BYTES` and limits total allocation size).
+const MAX_READ_RECEIPT_IDS_FFI: usize = 10_000;
+
+/// RAII guard that resets an `AtomicBool` busy-flag on drop.
+struct BusyGuard<'a>(&'a AtomicBool);
+
+impl Drop for BusyGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+/// Try to acquire the busy-flag on a handle.  Returns `Ok(BusyGuard)` on
+/// success or `Err(())` if the handle is already in use by another call.
+fn try_acquire_busy(flag: &AtomicBool) -> Result<BusyGuard<'_>, ()> {
+    if flag
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_ok()
+    {
+        Ok(BusyGuard(flag))
+    } else {
+        Err(())
+    }
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,6 +111,7 @@ pub enum EppErrorCode {
     EppErrorVoipCall = 26,
     EppErrorVoipMedia = 27,
     EppErrorVoipRekey = 28,
+    EppErrorBusy = 29,
 }
 
 #[repr(C)]
@@ -144,16 +174,28 @@ fn default_time_provider() -> Arc<dyn ITimeProvider> {
     Arc::new(SystemTimeProvider)
 }
 
-pub struct EppIdentityHandle(pub Option<EppIdentityState>);
+pub struct EppIdentityHandle {
+    pub inner: Option<EppIdentityState>,
+    pub in_use: AtomicBool,
+}
 pub struct EppTimeProviderHandle(Option<EppTimeProvider>);
-pub struct EppSessionHandle(pub Option<Session>);
+pub struct EppSessionHandle {
+    pub inner: Option<Session>,
+    pub in_use: AtomicBool,
+}
 pub struct EppHandshakeInitiatorHandle(pub Option<HandshakeInitiator>);
 pub struct EppHandshakeResponderHandle(pub Option<HandshakeResponder>);
-pub struct EppGroupSessionHandle(pub Option<GroupSession>);
+pub struct EppGroupSessionHandle {
+    pub inner: Option<GroupSession>,
+    pub in_use: AtomicBool,
+}
 pub struct EppSealedStateCounterTrackerHandle(pub Option<SealedStateCounterTracker>);
 pub struct EppSealedStateSlotHandle(pub Option<SealedStateSlot>);
 
-pub struct EppVoipSessionHandle(pub Option<crate::protocol::voip::VoipSession>);
+pub struct EppVoipSessionHandle {
+    pub inner: Option<crate::protocol::voip::VoipSession>,
+    pub in_use: AtomicBool,
+}
 
 pub struct EppStreamingEncryptorHandle(pub Option<StreamingEncryptor>);
 pub struct EppStreamingDecryptorHandle(pub Option<StreamingDecryptor>);
@@ -225,6 +267,15 @@ pub struct EppGroupSecurityPolicy {
     pub mandatory_franking: u8,
 }
 
+/// Catches Rust panics at the FFI boundary and converts them to error codes.
+///
+/// **Limitation (MEM-005):** After catching a panic the handle's inner `Option`
+/// is *not* automatically poisoned (set to `None`), because this macro does not
+/// have access to the handle pointer.  Callers that resume using the same handle
+/// after a panic-triggered error will be caught by the state-machine checks in
+/// `require_session_mut`, `require_group_mut`, etc., which return
+/// `EppErrorObjectDisposed` when the inner value is inconsistent.  A future
+/// refactor may add per-handle poison flags for stronger safety guarantees.
 macro_rules! ffi_catch_panic {
     ($out_error:expr, $body:expr) => {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $body)) {
@@ -361,7 +412,7 @@ unsafe fn require_identity_ref<'a>(
         return Err(EppErrorCode::EppErrorNullPointer);
     }
     (*handle)
-        .0
+        .inner
         .as_ref()
         .map(|state| &state.keys)
         .ok_or_else(|| {
@@ -433,7 +484,7 @@ unsafe fn require_identity_mut<'a>(
         return Err(EppErrorCode::EppErrorNullPointer);
     }
     (*handle)
-        .0
+        .inner
         .as_mut()
         .map(|state| &mut state.keys)
         .ok_or_else(|| {
@@ -461,7 +512,7 @@ unsafe fn clone_identity_time_provider(
         return Err(EppErrorCode::EppErrorNullPointer);
     }
     (*handle)
-        .0
+        .inner
         .as_ref()
         .map(|state| state.time_provider.clone())
         .ok_or_else(|| {
@@ -489,7 +540,7 @@ unsafe fn replace_identity_time_provider(
         );
         return Err(EppErrorCode::EppErrorNullPointer);
     }
-    match (*handle).0.as_mut() {
+    match (*handle).inner.as_mut() {
         Some(state) => {
             state.time_provider = time_provider;
             Ok(())
@@ -558,10 +609,13 @@ unsafe fn require_manual_time_provider<'a>(
 
 /// # Safety
 /// `handle` must be null or point to a live, exclusively-owned `EppSessionHandle`.
+///
+/// Acquires the handle's busy-flag; the returned [`BusyGuard`] releases it on
+/// drop, preventing concurrent access from multiple FFI calls.
 unsafe fn require_session_mut<'a>(
     handle: *mut EppSessionHandle,
     out_error: *mut EppError,
-) -> Result<&'a mut Session, EppErrorCode> {
+) -> Result<(BusyGuard<'a>, &'a mut Session), EppErrorCode> {
     if handle.is_null() {
         write_error(
             out_error,
@@ -570,22 +624,34 @@ unsafe fn require_session_mut<'a>(
         );
         return Err(EppErrorCode::EppErrorNullPointer);
     }
-    (*handle).0.as_mut().ok_or_else(|| {
+    let guard = try_acquire_busy(&(*handle).in_use).map_err(|()| {
+        write_error(
+            out_error,
+            EppErrorCode::EppErrorBusy,
+            "session handle is already in use by another call",
+        );
+        EppErrorCode::EppErrorBusy
+    })?;
+    let inner = (*handle).inner.as_mut().ok_or_else(|| {
         write_error(
             out_error,
             EppErrorCode::EppErrorObjectDisposed,
             "handle already destroyed",
         );
         EppErrorCode::EppErrorObjectDisposed
-    })
+    })?;
+    Ok((guard, inner))
 }
 
 /// # Safety
 /// `handle` must be null or point to a live, exclusively-owned `EppGroupSessionHandle`.
+///
+/// Acquires the handle's busy-flag; the returned [`BusyGuard`] releases it on
+/// drop, preventing concurrent access from multiple FFI calls.
 unsafe fn require_group_mut<'a>(
     handle: *mut EppGroupSessionHandle,
     out_error: *mut EppError,
-) -> Result<&'a mut GroupSession, EppErrorCode> {
+) -> Result<(BusyGuard<'a>, &'a mut GroupSession), EppErrorCode> {
     if handle.is_null() {
         write_error(
             out_error,
@@ -594,14 +660,23 @@ unsafe fn require_group_mut<'a>(
         );
         return Err(EppErrorCode::EppErrorNullPointer);
     }
-    (*handle).0.as_mut().ok_or_else(|| {
+    let guard = try_acquire_busy(&(*handle).in_use).map_err(|()| {
+        write_error(
+            out_error,
+            EppErrorCode::EppErrorBusy,
+            "group session handle is already in use by another call",
+        );
+        EppErrorCode::EppErrorBusy
+    })?;
+    let inner = (*handle).inner.as_mut().ok_or_else(|| {
         write_error(
             out_error,
             EppErrorCode::EppErrorObjectDisposed,
             "handle already destroyed",
         );
         EppErrorCode::EppErrorObjectDisposed
-    })
+    })?;
+    Ok((guard, inner))
 }
 
 /// # Safety
@@ -612,7 +687,7 @@ const unsafe fn group_ref_or_none<'a>(
     if handle.is_null() {
         return None;
     }
-    (*handle).0.as_ref()
+    (*handle).inner.as_ref()
 }
 
 #[no_mangle]
@@ -653,10 +728,13 @@ pub unsafe extern "C" fn epp_identity_create(
             Ok(keys) => {
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppIdentityHandle(Some(EppIdentityState {
-                        keys,
-                        time_provider: default_time_provider(),
-                    })))),
+                    Box::into_raw(Box::new(EppIdentityHandle {
+                        inner: Some(EppIdentityState {
+                            keys,
+                            time_provider: default_time_provider(),
+                        }),
+                        in_use: AtomicBool::new(false),
+                    })),
                 );
                 EppErrorCode::EppSuccess
             }
@@ -709,10 +787,13 @@ pub unsafe extern "C" fn epp_identity_create_from_seed(
             Ok(keys) => {
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppIdentityHandle(Some(EppIdentityState {
-                        keys,
-                        time_provider: default_time_provider(),
-                    })))),
+                    Box::into_raw(Box::new(EppIdentityHandle {
+                        inner: Some(EppIdentityState {
+                            keys,
+                            time_provider: default_time_provider(),
+                        }),
+                        in_use: AtomicBool::new(false),
+                    })),
                 );
                 EppErrorCode::EppSuccess
             }
@@ -792,10 +873,13 @@ pub unsafe extern "C" fn epp_identity_create_with_context(
             Ok(keys) => {
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppIdentityHandle(Some(EppIdentityState {
-                        keys,
-                        time_provider: default_time_provider(),
-                    })))),
+                    Box::into_raw(Box::new(EppIdentityHandle {
+                        inner: Some(EppIdentityState {
+                            keys,
+                            time_provider: default_time_provider(),
+                        }),
+                        in_use: AtomicBool::new(false),
+                    })),
                 );
                 EppErrorCode::EppSuccess
             }
@@ -848,6 +932,14 @@ pub unsafe extern "C" fn epp_time_provider_manual_set_now_unix(
         };
         match provider.now_unix.lock() {
             Ok(mut guard) => {
+                if now_unix < *guard {
+                    write_error(
+                        out_error,
+                        EppErrorCode::EppErrorInvalidInput,
+                        "manual time provider: clock must not go backwards",
+                    );
+                    return EppErrorCode::EppErrorInvalidInput;
+                }
                 *guard = now_unix;
                 EppErrorCode::EppSuccess
             }
@@ -1220,7 +1312,10 @@ pub unsafe extern "C" fn epp_handshake_initiator_finish(
             Ok(session) => {
                 replace_out_handle(
                     out_session,
-                    Box::into_raw(Box::new(EppSessionHandle(Some(session)))),
+                    Box::into_raw(Box::new(EppSessionHandle {
+                        inner: Some(session),
+                        in_use: AtomicBool::new(false),
+                    })),
                 );
                 EppErrorCode::EppSuccess
             }
@@ -1371,7 +1466,10 @@ pub unsafe extern "C" fn epp_handshake_responder_finish(
             Ok(session) => {
                 replace_out_handle(
                     out_session,
-                    Box::into_raw(Box::new(EppSessionHandle(Some(session)))),
+                    Box::into_raw(Box::new(EppSessionHandle {
+                        inner: Some(session),
+                        in_use: AtomicBool::new(false),
+                    })),
                 );
                 EppErrorCode::EppSuccess
             }
@@ -1461,7 +1559,7 @@ pub unsafe extern "C" fn epp_session_encrypt(
 
         let env_type_i32 = envelope_type as i32;
 
-        let session = match require_session_mut(handle, out_error) {
+        let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -1514,7 +1612,7 @@ pub unsafe extern "C" fn epp_session_decrypt(
             );
             return EppErrorCode::EppErrorInvalidInput;
         }
-        let session = match require_session_mut(handle, out_error) {
+        let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -1569,7 +1667,7 @@ pub unsafe extern "C" fn epp_session_nonce_remaining(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_session_mut(handle, out_error) {
+        let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -1617,6 +1715,14 @@ pub unsafe extern "C" fn epp_envelope_validate(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
+        if encrypted_envelope_length > MAX_ENVELOPE_MESSAGE_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "Envelope exceeds maximum allowed size",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
         let bytes = std::slice::from_raw_parts(encrypted_envelope, encrypted_envelope_length);
         match crate::api::EcliptixProtocol::validate_envelope(bytes) {
             Ok(()) => EppErrorCode::EppSuccess,
@@ -1655,6 +1761,22 @@ pub unsafe extern "C" fn epp_derive_root_key(
                 "Output buffer too small for derived root key",
             );
             return EppErrorCode::EppErrorBufferTooSmall;
+        }
+        if opaque_session_key_length > MAX_BUFFER_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "opaque_session_key too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
+        if user_context_length > MAX_BUFFER_SIZE {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "user_context too large",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
         }
 
         let ikm = std::slice::from_raw_parts(opaque_session_key, opaque_session_key_length);
@@ -2316,13 +2438,12 @@ pub unsafe extern "C" fn epp_buffer_release(buffer: *mut EppBuffer) {
         return;
     }
     let buf = &mut *buffer;
-    if !buf.data.is_null() && buf.length > 0 {
-        std::ptr::write_bytes(buf.data, 0, buf.length);
-        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
-        let slice = std::slice::from_raw_parts_mut(buf.data, buf.length);
+    let old_data = std::ptr::replace(&mut buf.data, std::ptr::null_mut());
+    let old_len = std::mem::replace(&mut buf.length, 0);
+    if !old_data.is_null() && old_len > 0 {
+        let slice = std::slice::from_raw_parts_mut(old_data, old_len);
+        slice.zeroize();
         drop(Box::from_raw(std::ptr::from_mut::<[u8]>(slice)));
-        buf.data = std::ptr::null_mut();
-        buf.length = 0;
     }
 }
 
@@ -2347,12 +2468,13 @@ pub unsafe extern "C" fn epp_buffer_free(buffer: *mut EppBuffer) {
     if buffer.is_null() {
         return;
     }
-    let buf = Box::from_raw(buffer);
+    let mut buf = Box::from_raw(buffer);
     if !buf.data.is_null() && buf.length > 0 {
-        std::ptr::write_bytes(buf.data, 0, buf.length);
-        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
         let slice = std::slice::from_raw_parts_mut(buf.data, buf.length);
+        slice.zeroize();
         drop(Box::from_raw(std::ptr::from_mut::<[u8]>(slice)));
+        buf.data = std::ptr::null_mut();
+        buf.length = 0;
     }
 }
 
@@ -2402,6 +2524,7 @@ pub const extern "C" fn epp_error_string(code: EppErrorCode) -> *const c_char {
         EppErrorCode::EppErrorVoipCall => b"VoIP call error\0",
         EppErrorCode::EppErrorVoipMedia => b"VoIP media error\0",
         EppErrorCode::EppErrorVoipRekey => b"VoIP rekey error\0",
+        EppErrorCode::EppErrorBusy => b"Handle is already in use by another call\0",
     };
     s.as_ptr().cast::<c_char>()
 }
@@ -2872,7 +2995,10 @@ pub unsafe extern "C" fn epp_group_create(
             Ok(session) => {
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppGroupSessionHandle(Some(session)))),
+                    Box::into_raw(Box::new(EppGroupSessionHandle {
+                        inner: Some(session),
+                        in_use: AtomicBool::new(false),
+                    })),
                 );
                 EppErrorCode::EppSuccess
             }
@@ -2923,7 +3049,10 @@ pub unsafe extern "C" fn epp_group_create_shielded(
             Ok(session) => {
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppGroupSessionHandle(Some(session)))),
+                    Box::into_raw(Box::new(EppGroupSessionHandle {
+                        inner: Some(session),
+                        in_use: AtomicBool::new(false),
+                    })),
                 );
                 EppErrorCode::EppSuccess
             }
@@ -2949,7 +3078,7 @@ pub unsafe extern "C" fn epp_group_is_shielded(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -3014,7 +3143,10 @@ pub unsafe extern "C" fn epp_group_create_with_policy(
             Ok(session) => {
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppGroupSessionHandle(Some(session)))),
+                    Box::into_raw(Box::new(EppGroupSessionHandle {
+                        inner: Some(session),
+                        in_use: AtomicBool::new(false),
+                    })),
                 );
                 EppErrorCode::EppSuccess
             }
@@ -3041,7 +3173,7 @@ pub unsafe extern "C" fn epp_group_get_security_policy(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -3139,7 +3271,10 @@ pub unsafe extern "C" fn epp_group_join(
             Ok(session) => {
                 replace_out_handle(
                     out_group_handle,
-                    Box::into_raw(Box::new(EppGroupSessionHandle(Some(session)))),
+                    Box::into_raw(Box::new(EppGroupSessionHandle {
+                        inner: Some(session),
+                        in_use: AtomicBool::new(false),
+                    })),
                 );
                 EppErrorCode::EppSuccess
             }
@@ -3191,7 +3326,7 @@ pub unsafe extern "C" fn epp_group_add_member(
             }
         };
 
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -3225,7 +3360,7 @@ pub unsafe extern "C" fn epp_group_remove_member(
             return EppErrorCode::EppErrorNullPointer;
         }
 
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -3257,7 +3392,7 @@ pub unsafe extern "C" fn epp_group_update(
             return EppErrorCode::EppErrorNullPointer;
         }
 
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -3300,7 +3435,7 @@ pub unsafe extern "C" fn epp_group_process_commit(
         }
 
         let slice = std::slice::from_raw_parts(commit_bytes, commit_length);
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -3341,7 +3476,7 @@ pub unsafe extern "C" fn epp_group_encrypt(
         }
 
         let pt = std::slice::from_raw_parts(plaintext, plaintext_length);
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -3391,7 +3526,7 @@ pub unsafe extern "C" fn epp_group_decrypt(
         }
 
         let ct = std::slice::from_raw_parts(ciphertext, ciphertext_length);
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -3424,7 +3559,7 @@ pub unsafe extern "C" fn epp_group_get_id(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -3509,7 +3644,7 @@ pub unsafe extern "C" fn epp_group_serialize(
         }
 
         let key_slice = std::slice::from_raw_parts(key, key_length);
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -3599,7 +3734,10 @@ pub unsafe extern "C" fn epp_group_deserialize(
                 *out_external_counter = external_counter;
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppGroupSessionHandle(Some(session)))),
+                    Box::into_raw(Box::new(EppGroupSessionHandle {
+                        inner: Some(session),
+                        in_use: AtomicBool::new(false),
+                    })),
                 );
                 EppErrorCode::EppSuccess
             }
@@ -3649,7 +3787,7 @@ pub unsafe extern "C" fn epp_group_serialize_with_tracker(
         };
 
         let key_slice = std::slice::from_raw_parts(key, key_length);
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -3745,7 +3883,10 @@ pub unsafe extern "C" fn epp_group_deserialize_with_tracker(
         }
         replace_out_handle(
             out_handle,
-            Box::into_raw(Box::new(EppGroupSessionHandle(Some(session)))),
+            Box::into_raw(Box::new(EppGroupSessionHandle {
+                inner: Some(session),
+                in_use: AtomicBool::new(false),
+            })),
         );
         EppErrorCode::EppSuccess
     })
@@ -3785,7 +3926,7 @@ pub unsafe extern "C" fn epp_group_export_persisted_state(
             Err(e) => return write_protocol_error(out_error, &e),
         };
         let key_slice = std::slice::from_raw_parts(key, key_length);
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -3884,7 +4025,10 @@ pub unsafe extern "C" fn epp_group_restore_persisted_state(
         }
         replace_out_handle(
             out_handle,
-            Box::into_raw(Box::new(EppGroupSessionHandle(Some(session)))),
+            Box::into_raw(Box::new(EppGroupSessionHandle {
+                inner: Some(session),
+                in_use: AtomicBool::new(false),
+            })),
         );
         EppErrorCode::EppSuccess
     })
@@ -3908,7 +4052,7 @@ pub unsafe extern "C" fn epp_group_export_public_state(
             return EppErrorCode::EppErrorNullPointer;
         }
 
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -3950,7 +4094,7 @@ pub unsafe extern "C" fn epp_group_authorize_external_join(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -4055,7 +4199,10 @@ pub unsafe extern "C" fn epp_group_join_external(
             Ok((session, commit_bytes)) => {
                 replace_out_handle(
                     out_group_handle,
-                    Box::into_raw(Box::new(EppGroupSessionHandle(Some(session)))),
+                    Box::into_raw(Box::new(EppGroupSessionHandle {
+                        inner: Some(session),
+                        in_use: AtomicBool::new(false),
+                    })),
                 );
                 write_buffer(out_commit, commit_bytes);
                 EppErrorCode::EppSuccess
@@ -4115,7 +4262,7 @@ pub unsafe extern "C" fn epp_group_set_psk(
             psk_id: id_slice.to_vec(),
             psk: psk_slice.to_vec(),
         });
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(s) => s,
             Err(code) => return code,
         };
@@ -4143,7 +4290,7 @@ pub unsafe extern "C" fn epp_group_get_member_leaf_indices(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -4253,7 +4400,7 @@ pub unsafe extern "C" fn epp_session_serialize_sealed(
         }
 
         let provider = FfiStateKeyProvider { handle: smh };
-        let session = match require_session_mut(handle, out_error) {
+        let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -4343,7 +4490,10 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed(
                 *out_external_counter = external_counter;
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppSessionHandle(Some(session)))),
+                    Box::into_raw(Box::new(EppSessionHandle {
+                        inner: Some(session),
+                        in_use: AtomicBool::new(false),
+                    })),
                 );
                 EppErrorCode::EppSuccess
             }
@@ -4439,7 +4589,10 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed_with_time_provider(
                 *out_external_counter = external_counter;
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppSessionHandle(Some(session)))),
+                    Box::into_raw(Box::new(EppSessionHandle {
+                        inner: Some(session),
+                        in_use: AtomicBool::new(false),
+                    })),
                 );
                 EppErrorCode::EppSuccess
             }
@@ -4510,7 +4663,7 @@ pub unsafe extern "C" fn epp_session_serialize_sealed_with_tracker(
         }
 
         let provider = FfiStateKeyProvider { handle: smh };
-        let session = match require_session_mut(handle, out_error) {
+        let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -4611,7 +4764,10 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed_with_tracker(
         }
         replace_out_handle(
             out_handle,
-            Box::into_raw(Box::new(EppSessionHandle(Some(session)))),
+            Box::into_raw(Box::new(EppSessionHandle {
+                inner: Some(session),
+                in_use: AtomicBool::new(false),
+            })),
         );
         EppErrorCode::EppSuccess
     })
@@ -4708,7 +4864,10 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed_with_tracker_and_time_pr
         }
         replace_out_handle(
             out_handle,
-            Box::into_raw(Box::new(EppSessionHandle(Some(session)))),
+            Box::into_raw(Box::new(EppSessionHandle {
+                inner: Some(session),
+                in_use: AtomicBool::new(false),
+            })),
         );
         EppErrorCode::EppSuccess
     })
@@ -4768,7 +4927,7 @@ pub unsafe extern "C" fn epp_session_export_persisted_state(
             return EppErrorCode::EppErrorGeneric;
         }
         let provider = FfiStateKeyProvider { handle: smh };
-        let session = match require_session_mut(handle, out_error) {
+        let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -4869,7 +5028,10 @@ pub unsafe extern "C" fn epp_session_restore_persisted_state(
         }
         replace_out_handle(
             out_handle,
-            Box::into_raw(Box::new(EppSessionHandle(Some(session)))),
+            Box::into_raw(Box::new(EppSessionHandle {
+                inner: Some(session),
+                in_use: AtomicBool::new(false),
+            })),
         );
         EppErrorCode::EppSuccess
     })
@@ -4970,7 +5132,10 @@ pub unsafe extern "C" fn epp_session_restore_persisted_state_with_time_provider(
         }
         replace_out_handle(
             out_handle,
-            Box::into_raw(Box::new(EppSessionHandle(Some(session)))),
+            Box::into_raw(Box::new(EppSessionHandle {
+                inner: Some(session),
+                in_use: AtomicBool::new(false),
+            })),
         );
         EppErrorCode::EppSuccess
     })
@@ -5024,7 +5189,7 @@ pub unsafe extern "C" fn epp_group_encrypt_sealed(
             std::slice::from_raw_parts(hint, hint_length)
         };
 
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -5069,7 +5234,7 @@ pub unsafe extern "C" fn epp_group_encrypt_disappearing(
         }
 
         let pt = std::slice::from_raw_parts(plaintext, plaintext_length);
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -5113,7 +5278,7 @@ pub unsafe extern "C" fn epp_group_encrypt_frankable(
         }
 
         let pt = std::slice::from_raw_parts(plaintext, plaintext_length);
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -5168,7 +5333,7 @@ pub unsafe extern "C" fn epp_group_encrypt_edit(
 
         let content = std::slice::from_raw_parts(new_content, new_content_length);
         let target_id = std::slice::from_raw_parts(target_message_id, target_message_id_length);
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -5212,7 +5377,7 @@ pub unsafe extern "C" fn epp_group_encrypt_delete(
         }
 
         let target_id = std::slice::from_raw_parts(target_message_id, target_message_id_length);
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -5309,7 +5474,7 @@ pub unsafe extern "C" fn epp_group_decrypt_ex(
         }
 
         let ct = std::slice::from_raw_parts(ciphertext, ciphertext_length);
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -5390,7 +5555,7 @@ pub unsafe extern "C" fn epp_group_set_member_role(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -5417,7 +5582,7 @@ pub unsafe extern "C" fn epp_group_get_member_role(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -5469,7 +5634,7 @@ pub unsafe extern "C" fn epp_group_encrypt_reaction(
             );
             return EppErrorCode::EppErrorInvalidInput;
         };
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -5509,8 +5674,27 @@ pub unsafe extern "C" fn epp_group_encrypt_read_receipt(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
+        if message_id_count > MAX_READ_RECEIPT_IDS_FFI {
+            write_error(
+                out_error,
+                EppErrorCode::EppErrorInvalidInput,
+                "message_id_count exceeds upper bound",
+            );
+            return EppErrorCode::EppErrorInvalidInput;
+        }
         let flat = if message_id_count > 0 {
-            std::slice::from_raw_parts(message_ids_flat, message_id_count * MESSAGE_ID_BYTES)
+            let total_bytes = match message_id_count.checked_mul(MESSAGE_ID_BYTES) {
+                Some(n) => n,
+                None => {
+                    write_error(
+                        out_error,
+                        EppErrorCode::EppErrorInvalidInput,
+                        "message_id_count * MESSAGE_ID_BYTES overflow",
+                    );
+                    return EppErrorCode::EppErrorInvalidInput;
+                }
+            };
+            std::slice::from_raw_parts(message_ids_flat, total_bytes)
         } else {
             &[]
         };
@@ -5518,7 +5702,7 @@ pub unsafe extern "C" fn epp_group_encrypt_read_receipt(
             .chunks_exact(MESSAGE_ID_BYTES)
             .map(<[u8]>::to_vec)
             .collect();
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -5548,7 +5732,7 @@ pub unsafe extern "C" fn epp_group_encrypt_typing(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -5755,7 +5939,7 @@ pub unsafe extern "C" fn epp_group_get_pending_reinit(
             return EppErrorCode::EppErrorNullPointer;
         }
 
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -5774,10 +5958,12 @@ pub unsafe extern "C" fn epp_group_get_pending_reinit(
     })
 }
 
+/// Acquires the handle's busy-flag; the returned [`BusyGuard`] releases it on
+/// drop, preventing concurrent access from multiple FFI calls.
 unsafe fn require_voip_ref<'a>(
     handle: *const EppVoipSessionHandle,
     out_error: *mut EppError,
-) -> Result<&'a crate::protocol::voip::VoipSession, EppErrorCode> {
+) -> Result<(BusyGuard<'a>, &'a crate::protocol::voip::VoipSession), EppErrorCode> {
     if handle.is_null() {
         write_error(
             out_error,
@@ -5786,17 +5972,25 @@ unsafe fn require_voip_ref<'a>(
         );
         return Err(EppErrorCode::EppErrorNullPointer);
     }
-    (*handle).0.as_ref().map_or_else(
-        || {
-            write_error(
-                out_error,
-                EppErrorCode::EppErrorObjectDisposed,
-                "VoIP session disposed",
-            );
-            Err(EppErrorCode::EppErrorObjectDisposed)
-        },
-        Ok,
-    )
+    // Safety: we only read the `in_use` field; we need a *const → *const cast
+    // which is sound because `AtomicBool` access is through atomic ops.
+    let guard = try_acquire_busy(&(*handle).in_use).map_err(|()| {
+        write_error(
+            out_error,
+            EppErrorCode::EppErrorBusy,
+            "VoIP session handle is already in use by another call",
+        );
+        EppErrorCode::EppErrorBusy
+    })?;
+    let inner = (*handle).inner.as_ref().ok_or_else(|| {
+        write_error(
+            out_error,
+            EppErrorCode::EppErrorObjectDisposed,
+            "VoIP session disposed",
+        );
+        EppErrorCode::EppErrorObjectDisposed
+    })?;
+    Ok((guard, inner))
 }
 
 #[no_mangle]
@@ -5948,7 +6142,10 @@ pub unsafe extern "C" fn epp_voip_accept_call(
 
         replace_out_handle(
             out_session,
-            Box::into_raw(Box::new(EppVoipSessionHandle(Some(session)))),
+            Box::into_raw(Box::new(EppVoipSessionHandle {
+                inner: Some(session),
+                in_use: AtomicBool::new(false),
+            })),
         );
         EppErrorCode::EppSuccess
     })
@@ -5978,7 +6175,7 @@ pub unsafe extern "C" fn epp_voip_encrypt_frame(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -6046,7 +6243,7 @@ pub unsafe extern "C" fn epp_voip_decrypt_frame(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -6137,7 +6334,7 @@ pub unsafe extern "C" fn epp_voip_call_id(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -6152,7 +6349,7 @@ pub unsafe extern "C" fn epp_voip_ssrc(
     out_error: *mut EppError,
 ) -> u32 {
     ffi_catch_panic_value!(0, {
-        let Ok(session) = require_voip_ref(handle, out_error) else {
+        let Ok((_guard, session)) = require_voip_ref(handle, out_error) else {
             return 0;
         };
         session.ssrc()
@@ -6165,7 +6362,7 @@ pub unsafe extern "C" fn epp_voip_is_shield_mode(
     out_error: *mut EppError,
 ) -> u8 {
     ffi_catch_panic_value!(0, {
-        let Ok(session) = require_voip_ref(handle, out_error) else {
+        let Ok((_guard, session)) = require_voip_ref(handle, out_error) else {
             return 0;
         };
         u8::from(session.is_shield_mode())
@@ -6178,7 +6375,7 @@ pub unsafe extern "C" fn epp_voip_end_call(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -6199,7 +6396,7 @@ pub unsafe extern "C" fn epp_voip_generate_call_end_hmac(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -6230,7 +6427,7 @@ pub unsafe extern "C" fn epp_voip_verify_call_end_hmac(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -6266,7 +6463,7 @@ pub unsafe extern "C" fn epp_voip_build_call_end(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -6293,7 +6490,7 @@ pub unsafe extern "C" fn epp_voip_process_call_end(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -6334,7 +6531,7 @@ pub unsafe extern "C" fn epp_voip_encrypt_call_control(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -6381,7 +6578,7 @@ pub unsafe extern "C" fn epp_voip_export_sealed_state(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -6422,7 +6619,7 @@ pub unsafe extern "C" fn epp_voip_export_sealed_state_with_tracker(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -6464,7 +6661,7 @@ pub unsafe extern "C" fn epp_voip_export_persisted_state(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -6757,17 +6954,28 @@ pub unsafe extern "C" fn epp_voip_call_init_complete(
 
         replace_out_handle(
             out_session,
-            Box::into_raw(Box::new(EppVoipSessionHandle(Some(session)))),
+            Box::into_raw(Box::new(EppVoipSessionHandle {
+                inner: Some(session),
+                in_use: AtomicBool::new(false),
+            })),
         );
         EppErrorCode::EppSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_call_initiator_destroy(handle: *mut EppVoipCallInitiatorHandle) {
-    if !handle.is_null() {
-        drop(Box::from_raw(handle));
-    }
+pub unsafe extern "C" fn epp_voip_call_initiator_destroy(
+    handle_ptr: *mut *mut EppVoipCallInitiatorHandle,
+) {
+    ffi_catch_panic_value!((), unsafe {
+        if handle_ptr.is_null() {
+            return;
+        }
+        let handle = std::ptr::replace(handle_ptr, std::ptr::null_mut());
+        if !handle.is_null() {
+            drop(Box::from_raw(handle));
+        }
+    });
 }
 
 #[no_mangle]
@@ -6780,7 +6988,7 @@ pub unsafe extern "C" fn epp_voip_initiate_rekey(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -6827,7 +7035,7 @@ pub unsafe extern "C" fn epp_voip_process_rekey(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -6907,7 +7115,7 @@ pub unsafe extern "C" fn epp_voip_process_rekey_ack(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -7012,7 +7220,10 @@ pub unsafe extern "C" fn epp_voip_import_sealed_state(
 
         replace_out_handle(
             out_session,
-            Box::into_raw(Box::new(EppVoipSessionHandle(Some(session)))),
+            Box::into_raw(Box::new(EppVoipSessionHandle {
+                inner: Some(session),
+                in_use: AtomicBool::new(false),
+            })),
         );
         EppErrorCode::EppSuccess
     })
@@ -7082,7 +7293,10 @@ pub unsafe extern "C" fn epp_voip_import_sealed_state_with_time_provider(
 
         replace_out_handle(
             out_session,
-            Box::into_raw(Box::new(EppVoipSessionHandle(Some(session)))),
+            Box::into_raw(Box::new(EppVoipSessionHandle {
+                inner: Some(session),
+                in_use: AtomicBool::new(false),
+            })),
         );
         EppErrorCode::EppSuccess
     })
@@ -7157,7 +7371,10 @@ pub unsafe extern "C" fn epp_voip_import_sealed_state_with_tracker(
         }
         replace_out_handle(
             out_session,
-            Box::into_raw(Box::new(EppVoipSessionHandle(Some(session)))),
+            Box::into_raw(Box::new(EppVoipSessionHandle {
+                inner: Some(session),
+                in_use: AtomicBool::new(false),
+            })),
         );
         EppErrorCode::EppSuccess
     })
@@ -7238,7 +7455,10 @@ pub unsafe extern "C" fn epp_voip_import_sealed_state_with_tracker_and_time_prov
         }
         replace_out_handle(
             out_session,
-            Box::into_raw(Box::new(EppVoipSessionHandle(Some(session)))),
+            Box::into_raw(Box::new(EppVoipSessionHandle {
+                inner: Some(session),
+                in_use: AtomicBool::new(false),
+            })),
         );
         EppErrorCode::EppSuccess
     })
@@ -7309,7 +7529,10 @@ pub unsafe extern "C" fn epp_voip_restore_persisted_state(
         }
         replace_out_handle(
             out_session,
-            Box::into_raw(Box::new(EppVoipSessionHandle(Some(session)))),
+            Box::into_raw(Box::new(EppVoipSessionHandle {
+                inner: Some(session),
+                in_use: AtomicBool::new(false),
+            })),
         );
         EppErrorCode::EppSuccess
     })
@@ -7386,7 +7609,10 @@ pub unsafe extern "C" fn epp_voip_restore_persisted_state_with_time_provider(
         }
         replace_out_handle(
             out_session,
-            Box::into_raw(Box::new(EppVoipSessionHandle(Some(session)))),
+            Box::into_raw(Box::new(EppVoipSessionHandle {
+                inner: Some(session),
+                in_use: AtomicBool::new(false),
+            })),
         );
         EppErrorCode::EppSuccess
     })
@@ -7423,10 +7649,16 @@ pub unsafe extern "C" fn epp_voip_sealed_state_external_counter(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_session_destroy(handle: *mut EppVoipSessionHandle) {
-    if !handle.is_null() {
-        drop(Box::from_raw(handle));
-    }
+pub unsafe extern "C" fn epp_voip_session_destroy(handle_ptr: *mut *mut EppVoipSessionHandle) {
+    ffi_catch_panic_value!((), unsafe {
+        if handle_ptr.is_null() {
+            return;
+        }
+        let handle = std::ptr::replace(handle_ptr, std::ptr::null_mut());
+        if !handle.is_null() {
+            drop(Box::from_raw(handle));
+        }
+    });
 }
 
 #[repr(C)]
@@ -7450,7 +7682,7 @@ pub unsafe extern "C" fn epp_voip_set_screen_share_meta(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -7486,7 +7718,7 @@ pub unsafe extern "C" fn epp_voip_get_screen_share_meta(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -7533,7 +7765,7 @@ pub unsafe extern "C" fn epp_voip_clear_screen_share_meta(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -7551,7 +7783,7 @@ pub unsafe extern "C" fn epp_voip_get_call_statistics(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -7581,7 +7813,7 @@ pub unsafe extern "C" fn epp_voip_set_recording_consent(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -7600,7 +7832,7 @@ pub unsafe extern "C" fn epp_voip_get_local_recording_consent(
         if handle.is_null() {
             return -1;
         }
-        let Some(ref session) = (*handle).0 else {
+        let Some(ref session) = (*handle).inner else {
             return -1;
         };
         session.get_local_recording_consent().unwrap_or(-1)
@@ -7614,7 +7846,7 @@ pub unsafe extern "C" fn epp_voip_set_remote_recording_consent(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -7633,7 +7865,7 @@ pub unsafe extern "C" fn epp_voip_get_remote_recording_consent(
         if handle.is_null() {
             return -1;
         }
-        let Some(ref session) = (*handle).0 else {
+        let Some(ref session) = (*handle).inner else {
             return -1;
         };
         session.get_remote_recording_consent().unwrap_or(-1)
@@ -7648,7 +7880,7 @@ pub unsafe extern "C" fn epp_voip_both_consented_to_recording(
         if handle.is_null() {
             return false;
         }
-        let Some(ref session) = (*handle).0 else {
+        let Some(ref session) = (*handle).inner else {
             return false;
         };
         session.both_consented_to_recording().unwrap_or(false)
@@ -7665,7 +7897,7 @@ pub unsafe extern "C" fn epp_voip_build_recording_consent_message(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -7697,7 +7929,7 @@ pub unsafe extern "C" fn epp_voip_process_recording_consent_message(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, {
-        let session = match require_voip_ref(handle, out_error) {
+        let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -7757,7 +7989,7 @@ pub unsafe extern "C" fn epp_session_get_id(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_session_mut(handle, out_error) {
+        let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -7781,7 +8013,7 @@ pub unsafe extern "C" fn epp_session_get_identity_binding_hash(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_session_mut(handle, out_error) {
+        let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -7805,7 +8037,7 @@ pub unsafe extern "C" fn epp_session_get_peer_identity(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_session_mut(handle, out_error) {
+        let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -7846,7 +8078,7 @@ pub unsafe extern "C" fn epp_session_get_local_identity(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_session_mut(handle, out_error) {
+        let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -8103,7 +8335,7 @@ pub unsafe extern "C" fn epp_session_set_event_handler(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_session_mut(handle, out_error) {
+        let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -8221,7 +8453,7 @@ pub unsafe extern "C" fn epp_group_set_event_handler(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_group_mut(handle, out_error) {
+        let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -9222,7 +9454,7 @@ pub unsafe extern "C" fn epp_attachment_encrypt_file_key(
             return EppErrorCode::EppErrorInvalidInput;
         }
 
-        let Some(session) = (*handle).0.as_ref() else {
+        let Some(session) = (*handle).inner.as_ref() else {
             write_error(
                 out_error,
                 EppErrorCode::EppErrorObjectDisposed,
@@ -9276,7 +9508,7 @@ pub unsafe extern "C" fn epp_attachment_decrypt_file_key(
             return EppErrorCode::EppErrorInvalidInput;
         }
 
-        let Some(session) = (*handle).0.as_ref() else {
+        let Some(session) = (*handle).inner.as_ref() else {
             write_error(
                 out_error,
                 EppErrorCode::EppErrorObjectDisposed,
@@ -10191,7 +10423,7 @@ pub unsafe extern "C" fn epp_session_get_metadata(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_session_mut(handle, out_error) {
+        let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -10235,7 +10467,7 @@ pub unsafe extern "C" fn epp_session_is_expired(handle: *mut EppSessionHandle) -
         if handle.is_null() {
             return false;
         }
-        let Some(session) = (unsafe { (*handle).0.as_ref() }) else {
+        let Some(session) = (unsafe { (*handle).inner.as_ref() }) else {
             return false;
         };
         session.is_expired().unwrap_or(false)
@@ -10250,7 +10482,7 @@ pub unsafe extern "C" fn epp_session_set_device_id(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
-        let session = match require_session_mut(handle, out_error) {
+        let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -10285,7 +10517,7 @@ pub unsafe extern "C" fn epp_session_get_device_id(
             );
             return EppErrorCode::EppErrorNullPointer;
         }
-        let session = match require_session_mut(handle, out_error) {
+        let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -10311,7 +10543,7 @@ pub unsafe extern "C" fn epp_session_set_ttl(
     out_error: *mut EppError,
 ) -> EppErrorCode {
     ffi_catch_panic!(out_error, unsafe {
-        let session = match require_session_mut(handle, out_error) {
+        let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };

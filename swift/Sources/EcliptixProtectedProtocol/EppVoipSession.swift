@@ -52,8 +52,8 @@ public final class EppVoipCallInitiator {
     }
 
     deinit {
-        if let h = handle {
-            native_epp_voip_call_initiator_destroy(h)
+        if handle != nil {
+            native_epp_voip_call_initiator_destroy(&handle)
         }
     }
 
@@ -127,8 +127,8 @@ public final class EppVoipSession: @unchecked Sendable {
     }
 
     deinit {
-        if let h = handle {
-            native_epp_voip_session_destroy(h)
+        if handle != nil {
+            native_epp_voip_session_destroy(&handle)
         }
     }
 

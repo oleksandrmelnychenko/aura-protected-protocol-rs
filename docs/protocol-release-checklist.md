@@ -16,6 +16,7 @@
 ## 2. Git Hygiene
 
 - Переконатися, що в робочому дереві немає випадкових generated drift файлів.
+- Не тягнути в snapshot локальні `.build/` / `dist/` outputs, якщо вони не є свідомо згенерованими release artifacts для публікації.
 - Не включати тимчасові audit notes або локальні build артефакти.
 - Окремо перевірити, що видалення legacy/stale файлів дійсно intentional.
 
@@ -42,6 +43,8 @@
 
 - які саме protocol size/count limits додані або змінені;
 - чи є зміни FFI surface (нові функції / змінені сигнатури) або лише behavioral hardening;
+- чи змінились low-level lifecycle контракти (`**handle` destroy, nulling, idempotence);
+- чи з'явились нові public error codes (`EPP_ERROR_BUSY`) або нові rejection rules (наприклад forward-only manual clock);
 - які нові rejection paths з'явились (`invalid_input`, `invalid_state`) і як інтеграторам їх обробляти.
 
 Окремо варто дати migration notes для:
@@ -77,6 +80,9 @@
 - sealed/franking decrypt artifacts
 - session identity/binding getters
 - external join authorization flow
+- `EPP_ERROR_BUSY` surface у headers + Swift mapping
+- forward-only manual time provider semantics
+- nulling/idempotent destroy для VoIP/session-style handle-ів
 
 ## 7. Security Review Before Tag
 
@@ -86,7 +92,7 @@
 - чи не залишився legacy permissive path
 - чи немає checked-in stale PoC/docs, які суперечать поточному коду
 - чи backend/client docs не ведуть інтеграторів у небезпечний flow
-- чи FFI/Swift docs описують нову поведінку без зміни API surface (якщо surface не змінювався)
+- чи FFI/Swift docs описують нову поведінку і нові сигнатури там, де surface таки змінився
 
 ## 8. CI / Reproducibility
 

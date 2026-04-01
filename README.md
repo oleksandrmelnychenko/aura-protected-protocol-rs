@@ -170,11 +170,12 @@ cargo build --release
 ### Test
 
 ```bash
-cargo test --release                # 391 tests (server context)
-cargo test --release --features ffi # 421 tests (client + FFI)
+cargo test --release
+cargo test --release --features ffi
+cargo test --all-features
 ```
 
-421 tests covering: crypto primitives, protocol correctness, adversarial inputs, replay protection, post-compromise security, out-of-order delivery, property-based testing (proptest), concurrent stress tests, group protocol (TreeKEM, Commit/Welcome, External Join, sender keys, epoch advancement, Shield mode), FFI bindings, sealed/disappearing/frankable/edit/delete messages, attack PoCs.
+Coverage spans Rust API, integration, FFI, VoIP, attack-PoC, and property-based tests. The current verification snapshot is tracked in [`docs/release-snapshot.md`](docs/release-snapshot.md).
 
 ### Benchmarks
 
@@ -282,7 +283,7 @@ cargo +nightly fuzz run <target> -- -max_total_time=300
 
 ```
 src/
-  core/           Constants (92), error types (14 variants)
+  core/           Constants, error types, shared protocol limits
   crypto/         AES-GCM-SIV, HKDF, Kyber-768, SecureMemory, Shamir SSS, padding
   identity/       Key generation, bundle creation, SPK signatures
   models/         Key material types (Ed25519, X25519, OPK)
@@ -301,18 +302,23 @@ src/
       membership.rs    Proposal validation/application (Add, Remove, Update, ExternalInit)
       sender_key.rs    Per-member symmetric hash ratchet (O(1) encrypt/decrypt)
   security/       DH validation (small-order point rejection)
-  ffi/            C FFI layer (69 epp_* functions, feature-gated)
+  ffi/            C FFI layer, owned buffers/errors, lifecycle + rollback helpers
   api/
     mod.rs        Client Rust API facade
     relay.rs      Server relay API (validation + routing)
 swift/
   Sources/EcliptixProtectedProtocol/
-    Shim.swift          @_silgen_name declarations (69 FFI bindings)
-    EppError.swift      Error types (26 cases)
+    Shim.swift          @_silgen_name symbol bindings + native struct mirrors
+    EppError.swift      Swift error mapping for native FFI codes
     EppIdentity.swift   Identity (create, seed, keys, prekey bundle)
     EppSession.swift    1:1 session (encrypt, decrypt, serialize, nonce)
     EppHandshake.swift  Handshake (initiator, responder) + namespace
     EppGroupSession.swift  Group session (full API + Shield mode)
+    EppTimeProvider.swift  Manual clock / trusted-time binding
+    EppSealedStateCounterTracker.swift  Managed anti-rollback tracker
+    EppSealedStateSlot.swift  Single-record sealed-state persistence helper
+    EppVoipSession.swift  VoIP call setup, media, rekey, persistence
+    EppAttachment.swift  Attachment/media manifests, chunk crypto, streaming
     EppCrypto.swift     Shamir SSS + envelope validation
 formal/
   tamarin/        Tamarin models (handshake 6/6, ratchet 4/4)
@@ -335,23 +341,17 @@ benches/
 fuzz/
   fuzz_targets/        32 libfuzzer targets
 tests/
-  api_test.rs          Rust API tests (46)
-  ffi_test.rs          FFI tests (30, feature-gated)
-  integration_test.rs  Integration tests (307)
-  attack_poc.rs        Attack proof-of-concept tests (38)
+  api_test.rs          Rust API regression coverage
+  ffi_test.rs          FFI contract and lifecycle coverage
+  integration_test.rs  End-to-end and protocol-state coverage
+  attack_poc.rs        Attack proof-of-concept regressions
 ```
 
 ## Swift (iOS / macOS)
 
-Swift Package Manager — add to your `Package.swift`:
+Use a tagged release that ships a matching XCFramework snapshot. The checked-in [`Package.swift`](Package.swift) is the source of truth for the current binary target URL, checksum, and minimum platform versions.
 
-```swift
-dependencies: [
-    .package(url: "https://github.com/oleksandrmelnychenko/ecliptix-protected-protocol-rs.git", from: "1.1.1")
-]
-```
-
-The Swift wrapper uses `@_silgen_name` to call Rust FFI exports directly — no C headers or modulemaps needed at compile time. All 69 FFI functions are wrapped with full documentation.
+The Swift package manifest currently targets iOS 18+ and macOS 15+. The high-level Swift layer binds exported Rust symbols via `@_silgen_name`, while the XCFramework still ships `epp_api.h` / `module.modulemap` for C and Objective-C consumers.
 
 ### Quick Start
 
@@ -410,6 +410,10 @@ let delete = try group.encryptDelete(targetMessageId: msgId)
 | **Group State** | groupId, epoch, myLeafIndex, memberCount, memberLeafIndices, isShielded, securityPolicy |
 | **Serialization** | serialize/deserialize (group + 1:1), exportPublicState |
 | **Shield Mode** | EppGroupSecurityPolicy, .shield preset, createShielded, isShielded |
+| **Managed State** | EppSealedStateCounterTracker, EppSealedStateSlot, persisted-state export/restore |
+| **Time Provider** | EppTimeProvider.manual, setNowUnix, identity/session/VoIP trusted-time binding |
+| **VoIP** | call init/accept/finish, media encrypt/decrypt, rekey, sealed/persisted state |
+| **Attachments** | manifest/chunk helpers, thumbnails, TTL, collages, streaming encrypt/decrypt |
 | **Utilities** | initialize, shutdown, version, deriveRootKey, secureWipe, validateEnvelope, shamirSplit/Reconstruct |
 
 ## Relay (Server)
@@ -437,7 +441,7 @@ GitHub Actions pipeline with 8 jobs:
 | Job | What it does |
 |-----|-------------|
 | **Check & Clippy** | `cargo check` + `cargo clippy -- -D warnings` (with and without `ffi` feature) |
-| **Test** | `cargo test --release` on Linux, macOS, Windows (421 tests with FFI) |
+| **Test** | Release and feature-matrix test runs on Linux, macOS, Windows; see [`docs/release-snapshot.md`](docs/release-snapshot.md) for the latest verified snapshot |
 | **Formal Verification** | Tamarin Prover (10 lemmas) + ProVerif (6 queries) |
 | **MSRV** | Minimum supported Rust version (1.86) |
 | **Fuzz Smoke Test** | All 32 libfuzzer targets (10s each) |

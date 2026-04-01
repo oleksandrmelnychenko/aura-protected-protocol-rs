@@ -283,9 +283,9 @@ fn build_voip_sealed_state() -> Vec<u8> {
         epp_buffer_release(&mut init_buf);
         epp_buffer_release(&mut accept_buf);
         epp_buffer_release(&mut sealed);
-        epp_voip_call_initiator_destroy(init_h);
-        epp_voip_session_destroy(alice_session_h);
-        epp_voip_session_destroy(bob_session_h);
+        epp_voip_call_initiator_destroy(&mut init_h);
+        epp_voip_session_destroy(&mut alice_session_h);
+        epp_voip_session_destroy(&mut bob_session_h);
         epp_identity_destroy(&mut alice_h);
         epp_identity_destroy(&mut bob_h);
         epp_error_free(&mut err);
@@ -365,7 +365,7 @@ proptest! {
             prop_assert_ne!(code, EppErrorCode::EppSuccess);
 
             if !restored_h.is_null() {
-                epp_voip_session_destroy(restored_h);
+                epp_voip_session_destroy(&mut restored_h);
             }
             epp_time_provider_destroy(&mut provider_h);
             epp_error_free(&mut err);

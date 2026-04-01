@@ -36,6 +36,7 @@ public enum EppError: Error, LocalizedError {
     case voipCall(String)
     case voipMedia(String)
     case voipRekey(String)
+    case busy(String)
     case unknown(UInt32)
 
     /// Creates an `EppError` from a native error code and error struct.
@@ -82,6 +83,7 @@ public enum EppError: Error, LocalizedError {
         case EPP_ERROR_VOIP_CALL: return .voipCall(message)
         case EPP_ERROR_VOIP_MEDIA: return .voipMedia(message)
         case EPP_ERROR_VOIP_REKEY: return .voipRekey(message)
+        case EPP_ERROR_BUSY: return .busy(message)
         default: return .unknown(code)
         }
     }
@@ -116,6 +118,7 @@ public enum EppError: Error, LocalizedError {
         case .voipCall(let msg): return "VoIP call: \(msg)"
         case .voipMedia(let msg): return "VoIP media: \(msg)"
         case .voipRekey(let msg): return "VoIP rekey: \(msg)"
+        case .busy(let msg): return "Handle busy: \(msg)"
         case .unknown(let code): return "Unknown EPP error (code: \(code))"
         }
     }

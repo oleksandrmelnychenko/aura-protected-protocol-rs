@@ -4,6 +4,17 @@
 use crate::core::constants::MESSAGE_PADDING_BLOCK_SIZE;
 use crate::core::errors::ProtocolError;
 
+/// Constant-time "greater than" mask: returns `0xFF` when `a > b`, `0x00` otherwise.
+/// Uses wrapping arithmetic to avoid branches entirely.
+#[inline]
+fn ct_gt_mask(a: usize, b: usize) -> u8 {
+    // If a > b then b.wrapping_sub(a) has its MSB set (underflow).
+    // Arithmetic shift right fills with the sign bit.
+    let diff = b.wrapping_sub(a) as isize;
+    // Right-shift by (bits - 1) produces all-ones (-1) when negative, 0 otherwise.
+    (diff >> (usize::BITS - 1)) as u8
+}
+
 pub struct MessagePadding;
 
 impl MessagePadding {
@@ -24,6 +35,7 @@ impl MessagePadding {
             return Err(ProtocolError::decode("Invalid padding: not block-aligned"));
         }
 
+        // ── Phase 1: find the *last* sentinel byte (0x01) in constant time ──
         let mut found_pos: usize = 0;
         let mut found: usize = 0;
 
@@ -42,9 +54,15 @@ impl MessagePadding {
             ));
         }
 
+        // ── Phase 2: constant-time check that all bytes after sentinel are 0x00 ──
+        // Iterate the *entire* buffer so the loop trip-count is independent of
+        // `found_pos`, preventing timing side-channels.
         let mut non_zero_after_sentinel: u8 = 0;
-        for &byte in &padded[found_pos + 1..] {
-            non_zero_after_sentinel |= byte;
+        for i in 0..padded.len() {
+            // `after_sentinel` is 0xFF when `i > found_pos`, 0x00 otherwise.
+            // Computed with branchless arithmetic to avoid data-dependent branches.
+            let after_sentinel = ct_gt_mask(i, found_pos);
+            non_zero_after_sentinel |= padded[i] & after_sentinel;
         }
         if non_zero_after_sentinel != 0 {
             return Err(ProtocolError::decode(

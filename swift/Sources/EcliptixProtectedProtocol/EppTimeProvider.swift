@@ -36,6 +36,9 @@ public final class EppTimeProvider {
         return EppTimeProvider(handle: handle)
     }
 
+    /// Advances the manual clock.
+    ///
+    /// The native FFI rejects values older than the current clock.
     public func setNowUnix(_ nowUnix: UInt64) throws {
         guard handle != nil else { throw EppError.objectDisposed }
         var outError = NativeEppError(code: 0, message: nil)

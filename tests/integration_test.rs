@@ -7744,6 +7744,30 @@ fn padding_roundtrip_various_sizes() {
 }
 
 #[test]
+fn padding_rejects_malformed_inputs() {
+    use ecliptix_protocol::crypto::MessagePadding;
+
+    let err = MessagePadding::unpad(&[]).unwrap_err().to_string();
+    assert!(err.contains("empty input"), "unexpected error: {err}");
+
+    let err = MessagePadding::unpad(&[0u8; 63]).unwrap_err().to_string();
+    assert!(err.contains("not block-aligned"), "unexpected error: {err}");
+
+    let err = MessagePadding::unpad(&[0u8; 64]).unwrap_err().to_string();
+    assert!(err.contains("no sentinel"), "unexpected error: {err}");
+
+    let mut invalid = [0u8; 64];
+    invalid[0] = 0x41;
+    invalid[1] = 0x01;
+    invalid[2] = 0x02;
+    let err = MessagePadding::unpad(&invalid).unwrap_err().to_string();
+    assert!(
+        err.contains("non-zero bytes after sentinel"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn padding_ciphertext_length_is_uniform() {
     use ecliptix_protocol::crypto::MessagePadding;
 

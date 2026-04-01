@@ -2,7 +2,7 @@
 
 C API для інтеграції Ecliptix Protocol у будь-яку мову (Swift, Kotlin, C#, Python, C++, Go, etc.).
 
-Header: `include/epp_api.h`
+Headers: `include/epp_api.h` (umbrella), `include/epp_client_api.h`, `include/epp_common_api.h`
 Бібліотека: `libecliptix_protocol.a` (staticlib) або `.dylib`/`.so`/`.dll` (cdylib)
 
 ---
@@ -35,6 +35,10 @@ API розрахований на три ролі:
 | `epp_identity_get_ed25519_public` | + | + | - | Отримати Ed25519 public key |
 | `epp_identity_get_kyber_public` | + | + | - | Отримати Kyber public key |
 | `epp_identity_destroy` | + | + | - | Знищити identity |
+| `epp_time_provider_manual_create` | + | + | - | Створити manual clock |
+| `epp_time_provider_manual_set_now_unix` | + | + | - | Пересунути manual clock вперед |
+| `epp_identity_set_time_provider` | + | + | - | Прив'язати identity до explicit clock |
+| `epp_time_provider_destroy` | + | + | - | Знищити manual clock |
 | **Pre-Key Bundle** | | | |
 | `epp_prekey_bundle_create` | + | + | - | Створити PreKey bundle |
 | **Handshake — Initiator** | | | |
@@ -155,21 +159,23 @@ epp_secure_wipe
 
 При збірці з `EPP_SERVER_BUILD` handshake initiator функції та тип `EppHandshakeInitiatorHandle` не компілюються. Сервер приймає з'єднання через responder.
 
-## Hardening update (limits)
+Примітка: low-level VoIP, managed sealed-state helpers і attachment streaming surface теж задекларовані в `include/epp_client_api.h`; для цих підрозділів header лишається найповнішим списком прототипів.
 
-FFI surface оновлено: додано attachment/media FFI виклики без зміни існуючих сигнатур session/group/voip API.
+## Current snapshot contract updates
 
-Зміни в поведінці стосуються stricter validation у вже існуючих викликах:
+Поточний HEAD містить такі інтеграторсько-видимі зміни поверх hardening cycle:
 
-- більшість вхідних буферів мають жорсткі розмірні ліміти;
-- перевищення ліміту повертає `EPP_ERROR_INVALID_INPUT`;
-- у handshake path додано додаткові захисти від resource amplification на рівні protocol validation.
+- більшість вхідних буферів мають жорсткі розмірні ліміти, а oversized input повертає `EPP_ERROR_INVALID_INPUT`;
+- manual time provider тепер тільки forward-only: спроба відкотити clock назад також повертає `EPP_ERROR_INVALID_INPUT`;
+- low-level VoIP destroy entry points працюють через `**handle`, зануляють слот і безпечні при повторному destroy;
+- конкурентний доступ до одного й того самого native handle повертає `EPP_ERROR_BUSY` замість блокування.
 
 Практичні дії для інтегратора:
 
 1. На клієнті перевіряти розміри payload локально до FFI-виклику (`encrypt/decrypt/handshake`), щоб уникати зайвих алокацій.
 2. На сервері ставити transport-level body limits (HTTP/WebSocket frame caps) не вище протокольних.
-3. Якщо отримали `EPP_ERROR_INVALID_INPUT` через розмір, трактувати як policy rejection (не як retryable transport failure).
+3. Якщо отримали `EPP_ERROR_INVALID_INPUT` через розмір або rewind manual clock, трактувати як policy/usage rejection (не як retryable transport failure).
+4. Якщо отримали `EPP_ERROR_BUSY`, не reuse-ити той самий handle паралельно без зовнішньої синхронізації.
 
 ## Зміст
 
@@ -177,6 +183,7 @@ FFI surface оновлено: додано attachment/media FFI виклики �
 - [Коди помилок](#коди-помилок)
 - [Ініціалізація](#ініціалізація)
 - [Identity (ідентичність)](#identity)
+- [Manual Time Provider](#manual-time-provider)
 - [Pre-Key Bundle](#pre-key-bundle)
 - [Handshake — Initiator (Client only)](#handshake--initiator)
 - [Handshake — Responder (Client + Server)](#handshake--responder)
@@ -207,10 +214,15 @@ FFI surface оновлено: додано attachment/media FFI виклики �
 // Opaque handles — не дивитися всередину, тільки передавати у функції
 typedef struct EppIdentityHandle EppIdentityHandle;
 typedef struct EppSessionHandle EppSessionHandle;
+typedef struct EppVoipSessionHandle EppVoipSessionHandle;
 typedef struct EppGroupSessionHandle EppGroupSessionHandle;
 typedef struct EppKeyPackageSecretsHandle EppKeyPackageSecretsHandle;
 typedef struct EppHandshakeInitiatorHandle EppHandshakeInitiatorHandle;  // #ifndef EPP_SERVER_BUILD
 typedef struct EppHandshakeResponderHandle EppHandshakeResponderHandle;
+typedef struct EppVoipCallInitiatorHandle EppVoipCallInitiatorHandle;
+typedef struct EppSealedStateCounterTrackerHandle EppSealedStateCounterTrackerHandle;
+typedef struct EppSealedStateSlotHandle EppSealedStateSlotHandle;
+typedef struct EppTimeProviderHandle EppTimeProviderHandle;
 
 // Буфер для передачі бінарних даних. Звільняти через epp_buffer_release або epp_buffer_free.
 typedef struct EppBuffer {
@@ -291,7 +303,11 @@ typedef enum {
     EPP_ERROR_TREE_INTEGRITY   = 22,// TreeKEM цілісність порушена
     EPP_ERROR_WELCOME          = 23,// Помилка обробки Welcome
     EPP_ERROR_MESSAGE_EXPIRED  = 24,// Повідомлення прострочене (TTL)
-    EPP_ERROR_FRANKING         = 25 // Franking-верифікація невдала
+    EPP_ERROR_FRANKING         = 25,// Franking-верифікація невдала
+    EPP_ERROR_VOIP_CALL        = 26,// Помилка VoIP call lifecycle
+    EPP_ERROR_VOIP_MEDIA       = 27,// Помилка VoIP media decrypt/encrypt
+    EPP_ERROR_VOIP_REKEY       = 28,// Помилка VoIP rekey
+    EPP_ERROR_BUSY             = 29 // Handle уже використовується іншим викликом
 } EppErrorCode;
 ```
 
@@ -422,6 +438,57 @@ void epp_identity_destroy(EppIdentityHandle** handle);
 ```
 
 Знищує identity handle. Зануляє `*handle` в NULL. Безпечно при `handle == NULL` або `*handle == NULL`. Секретні ключі wiped з пам'яті.
+
+---
+
+## Manual Time Provider
+> Ролі: **Client** + **Server**
+
+Manual clock потрібен для deterministic tests, trusted-time restore flow та TTL/expiry перевірок без покладання на локальний wall clock.
+
+### `epp_time_provider_manual_create`
+
+```c
+EppErrorCode epp_time_provider_manual_create(
+    uint64_t                 initial_now_unix,
+    EppTimeProviderHandle**  out_handle,
+    EppError*                out_error
+);
+```
+
+Створює mutable clock handle з початковим Unix timestamp.
+
+### `epp_time_provider_manual_set_now_unix`
+
+```c
+EppErrorCode epp_time_provider_manual_set_now_unix(
+    EppTimeProviderHandle* handle,
+    uint64_t               now_unix,
+    EppError*              out_error
+);
+```
+
+Пересуває manual clock тільки вперед. Значення, менші за поточний clock, відхиляються з `EPP_ERROR_INVALID_INPUT`.
+
+### `epp_identity_set_time_provider`
+
+```c
+EppErrorCode epp_identity_set_time_provider(
+    EppIdentityHandle*           identity_handle,
+    const EppTimeProviderHandle* time_provider_handle,
+    EppError*                    out_error
+);
+```
+
+Прив'язує identity до explicit clock. Передайте `NULL`, щоб повернутися до системного часу.
+
+### `epp_time_provider_destroy`
+
+```c
+void epp_time_provider_destroy(EppTimeProviderHandle** handle);
+```
+
+Знищує manual clock handle та зануляє `*handle`.
 
 ---
 
@@ -1867,6 +1934,12 @@ const char* epp_error_string(EppErrorCode code);
 
 Повертає людиночитабельний опис коду помилки (статичний рядок, не звільняти).
 
+Практично важливо:
+
+- `EPP_ERROR_INVALID_INPUT` покриває oversize input, malformed payload і rewind manual clock;
+- `EPP_ERROR_BUSY` означає, що той самий native handle уже використовується іншим викликом;
+- VoIP-specific помилки мапляться в `EPP_ERROR_VOIP_CALL`, `EPP_ERROR_VOIP_MEDIA`, `EPP_ERROR_VOIP_REKEY`.
+
 ### Патерн обробки помилок
 
 ```c
@@ -1893,7 +1966,7 @@ epp_buffer_release(&buf);
 
 ### Правила ownership
 
-1. **Handle** — caller owns. Завжди знищувати через відповідний `_destroy`
+1. **Handle** — caller owns. Завжди знищувати через відповідний `_destroy(Epp*Handle** handle)`; destroy зануляє `*handle`
 2. **EppBuffer.data** — caller owns. Звільняти через `epp_buffer_release` (stack) або `epp_buffer_free` (heap)
 3. **EppError.message** — caller owns. Звільняти через `epp_error_free`
 4. **Consumed handles** — `_finish` забирає ownership, handle стає порожнім
@@ -1962,6 +2035,6 @@ Relay **ніколи не бачить plaintext** — працює виключ
 ## Thread Safety
 
 - **Різні** handle можна використовувати з різних потоків одночасно
-- **Один і той самий** handle — НЕ thread-safe, синхронізація на стороні caller
+- **Один і той самий** handle — НЕ thread-safe; конкурентний доступ може повернути `EPP_ERROR_BUSY`
 - `epp_init` / `epp_shutdown` — викликати з одного потоку
 - `epp_version`, `epp_error_string` — thread-safe (статичні дані)

@@ -1,5 +1,7 @@
 # Ecliptix Protected Protocol v1.0.1
 
+Historical note: this file documents the original v1.0.1 hardening release. Current HEAD contains additional FFI/Swift alignment changes after that release; see `docs/release-snapshot.md` for the latest repository snapshot.
+
 ## Security Hardening Update
 
 This patch release focuses on resource-exhaustion and input-validation hardening.
@@ -32,8 +34,9 @@ Attachment/media FFI APIs were introduced in this release:
 - `epp_attachment_manifest_validate`
 - `epp_attachment_chunk_validate`
 
-Existing C/Swift session/group APIs keep backward-compatible signatures.
+Most existing session/group entry points kept their signatures for this hardening release.
 - Behavior is stricter: oversized inputs are rejected earlier by existing calls.
+- Later repository snapshots additionally changed the low-level VoIP destroy contract to `**handle`, exported `EPP_ERROR_BUSY`, and made manual clocks forward-only.
 
 ## Attachment Contract (transport out of scope)
 

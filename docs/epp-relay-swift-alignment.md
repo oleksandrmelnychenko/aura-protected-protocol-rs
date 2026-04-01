@@ -100,7 +100,7 @@ Shield mode є властивістю групової сесії та roster/po
 
 - README та `docs/relay-server.md` не містять legacy API назв замість strict path;
 - Swift guide і FFI guide описують `external_counter` invariant;
+- Swift guide і FFI guide описують `EPP_ERROR_BUSY`, forward-only manual clock та nulling destroy semantics для low-level handle-ів;
 - relay integration не оминає strict validation виклики;
 - handshake replay/OPK invariant не порушено.
 - для VoIP relay у multi-instance режимі є пер-`call_id` атомарність у store (lock/CAS/transaction).
-

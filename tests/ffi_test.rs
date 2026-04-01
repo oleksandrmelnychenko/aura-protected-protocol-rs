@@ -14,6 +14,7 @@ mod ffi {
     use ecliptix_protocol::proto::{AttachmentManifest, CallAccept};
     use prost::Message;
     use std::ptr;
+    use std::sync::atomic::Ordering;
 
     const fn null_error() -> EppError {
         EppError {
@@ -57,6 +58,101 @@ mod ffi {
         epp_init();
     }
 
+    fn setup_session_pair() -> (
+        *mut EppIdentityHandle,
+        *mut EppIdentityHandle,
+        *mut EppSessionHandle,
+        *mut EppSessionHandle,
+        EppBuffer,
+        EppBuffer,
+        EppBuffer,
+    ) {
+        let mut alice_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut bob_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut err = null_error();
+        unsafe {
+            assert_eq!(
+                epp_identity_create(&mut alice_h, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_identity_create(&mut bob_h, &mut err),
+                EppErrorCode::EppSuccess
+            );
+        }
+
+        let mut bob_bundle_buf = null_buffer();
+        unsafe {
+            assert_eq!(
+                epp_prekey_bundle_create(bob_h, &mut bob_bundle_buf, &mut err),
+                EppErrorCode::EppSuccess
+            );
+        }
+
+        let config = EppSessionConfig {
+            max_messages_per_chain: 1000,
+        };
+        let mut init_h: *mut EppHandshakeInitiatorHandle = ptr::null_mut();
+        let mut init_msg = null_buffer();
+        let mut resp_h: *mut EppHandshakeResponderHandle = ptr::null_mut();
+        let mut ack_msg = null_buffer();
+        let mut bob_session_h: *mut EppSessionHandle = ptr::null_mut();
+        let mut alice_session_h: *mut EppSessionHandle = ptr::null_mut();
+
+        unsafe {
+            assert_eq!(
+                epp_handshake_initiator_start(
+                    alice_h,
+                    bob_bundle_buf.data,
+                    bob_bundle_buf.length,
+                    &config,
+                    &mut init_h,
+                    &mut init_msg,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_handshake_responder_start(
+                    bob_h,
+                    bob_bundle_buf.data,
+                    bob_bundle_buf.length,
+                    init_msg.data,
+                    init_msg.length,
+                    &config,
+                    &mut resp_h,
+                    &mut ack_msg,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_handshake_responder_finish(resp_h, &mut bob_session_h, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_handshake_initiator_finish(
+                    init_h,
+                    ack_msg.data,
+                    ack_msg.length,
+                    &mut alice_session_h,
+                    &mut err,
+                ),
+                EppErrorCode::EppSuccess
+            );
+        }
+
+        (
+            alice_h,
+            bob_h,
+            alice_session_h,
+            bob_session_h,
+            bob_bundle_buf,
+            init_msg,
+            ack_msg,
+        )
+    }
+
     #[test]
     fn ffi_version_is_non_null() {
         init_lib();
@@ -78,7 +174,44 @@ mod ffi {
         let code = unsafe { epp_identity_create(&mut handle, &mut err) };
         assert_eq!(code, EppErrorCode::EppSuccess);
         assert!(!handle.is_null());
-        unsafe { epp_identity_destroy(&mut handle) };
+        unsafe {
+            epp_identity_destroy(&mut handle);
+            assert!(handle.is_null());
+            epp_identity_destroy(&mut handle);
+            assert!(handle.is_null());
+        };
+    }
+
+    #[test]
+    fn ffi_manual_time_provider_rejects_backwards_clock() {
+        init_lib();
+
+        let mut provider_h: *mut EppTimeProviderHandle = ptr::null_mut();
+        let mut err = null_error();
+
+        unsafe {
+            assert_eq!(
+                epp_time_provider_manual_create(1_700_000_000, &mut provider_h, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_time_provider_manual_set_now_unix(provider_h, 1_700_000_010, &mut err),
+                EppErrorCode::EppSuccess
+            );
+
+            assert_eq!(
+                epp_time_provider_manual_set_now_unix(provider_h, 1_700_000_009, &mut err),
+                EppErrorCode::EppErrorInvalidInput
+            );
+            epp_error_free(&mut err);
+
+            assert_eq!(
+                epp_time_provider_manual_set_now_unix(provider_h, 1_700_000_011, &mut err),
+                EppErrorCode::EppSuccess
+            );
+
+            epp_time_provider_destroy(&mut provider_h);
+        }
     }
 
     #[test]
@@ -482,6 +615,76 @@ mod ffi {
     }
 
     #[test]
+    fn ffi_session_get_id_returns_busy_when_handle_in_use() {
+        init_lib();
+
+        let (
+            mut alice_h,
+            mut bob_h,
+            mut alice_session_h,
+            mut bob_session_h,
+            mut bob_bundle_buf,
+            mut init_msg,
+            mut ack_msg,
+        ) = setup_session_pair();
+
+        let mut err = null_error();
+        let mut session_id = null_buffer();
+
+        unsafe {
+            (*alice_session_h).in_use.store(true, Ordering::Release);
+            let code = epp_session_get_id(alice_session_h, &mut session_id, &mut err);
+            assert_eq!(code, EppErrorCode::EppErrorBusy);
+            assert!(session_id.data.is_null());
+            assert_eq!(session_id.length, 0);
+            epp_error_free(&mut err);
+            (*alice_session_h).in_use.store(false, Ordering::Release);
+
+            epp_buffer_release(&mut bob_bundle_buf);
+            epp_buffer_release(&mut init_msg);
+            epp_buffer_release(&mut ack_msg);
+            epp_buffer_release(&mut session_id);
+            epp_session_destroy(&mut bob_session_h);
+            epp_session_destroy(&mut alice_session_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn ffi_group_get_id_returns_busy_when_handle_in_use() {
+        init_lib();
+
+        let mut identity_h: *mut EppIdentityHandle = ptr::null_mut();
+        let mut group_h: *mut EppGroupSessionHandle = ptr::null_mut();
+        let mut err = null_error();
+        let mut group_id = null_buffer();
+
+        unsafe {
+            assert_eq!(
+                epp_identity_create(&mut identity_h, &mut err),
+                EppErrorCode::EppSuccess
+            );
+            assert_eq!(
+                epp_group_create(identity_h, ptr::null(), 0, &mut group_h, &mut err),
+                EppErrorCode::EppSuccess
+            );
+
+            (*group_h).in_use.store(true, Ordering::Release);
+            let code = epp_group_get_id(group_h, &mut group_id, &mut err);
+            assert_eq!(code, EppErrorCode::EppErrorBusy);
+            assert!(group_id.data.is_null());
+            assert_eq!(group_id.length, 0);
+            epp_error_free(&mut err);
+            (*group_h).in_use.store(false, Ordering::Release);
+
+            epp_buffer_release(&mut group_id);
+            epp_group_destroy(&mut group_h);
+            epp_identity_destroy(&mut identity_h);
+        }
+    }
+
+    #[test]
     fn ffi_session_deserialize_with_time_provider_uses_manual_clock() {
         init_lib();
 
@@ -727,9 +930,9 @@ mod ffi {
         unsafe {
             epp_buffer_release(&mut init_buf);
             epp_buffer_release(&mut accept_buf);
-            epp_voip_call_initiator_destroy(init_h);
-            epp_voip_session_destroy(bob_session_h);
-            epp_voip_session_destroy(alice_session_h);
+            epp_voip_call_initiator_destroy(&mut init_h);
+            epp_voip_session_destroy(&mut bob_session_h);
+            epp_voip_session_destroy(&mut alice_session_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
         }
@@ -1008,10 +1211,10 @@ mod ffi {
             epp_buffer_release(&mut enc_frame.nonce);
             epp_buffer_release(&mut enc_frame.encrypted_header);
             epp_buffer_release(&mut dec_frame.payload);
-            epp_voip_call_initiator_destroy(init_h);
-            epp_voip_session_destroy(alice_session_h);
-            epp_voip_session_destroy(bob_session_h);
-            epp_voip_session_destroy(restored_alice_h);
+            epp_voip_call_initiator_destroy(&mut init_h);
+            epp_voip_session_destroy(&mut alice_session_h);
+            epp_voip_session_destroy(&mut bob_session_h);
+            epp_voip_session_destroy(&mut restored_alice_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
         }
@@ -5964,6 +6167,7 @@ mod attachment_v2 {
 mod voip_improvements {
     use ecliptix_protocol::ffi::api::*;
     use std::ptr;
+    use std::sync::atomic::Ordering;
 
     const fn null_error() -> EppError {
         EppError {
@@ -6092,6 +6296,79 @@ mod voip_improvements {
             init_buf,
             accept_buf,
         )
+    }
+
+    #[test]
+    fn ffi_voip_destroy_nulls_handles_and_is_idempotent() {
+        init_lib();
+        let (
+            mut alice_h,
+            mut bob_h,
+            mut alice_session_h,
+            mut bob_session_h,
+            mut init_h,
+            mut init_buf,
+            mut accept_buf,
+        ) = setup_voip_session_pair();
+
+        unsafe {
+            epp_buffer_release(&mut init_buf);
+            epp_buffer_release(&mut accept_buf);
+
+            epp_voip_call_initiator_destroy(&mut init_h);
+            assert!(init_h.is_null());
+            epp_voip_call_initiator_destroy(&mut init_h);
+            assert!(init_h.is_null());
+
+            epp_voip_session_destroy(&mut alice_session_h);
+            assert!(alice_session_h.is_null());
+            epp_voip_session_destroy(&mut alice_session_h);
+            assert!(alice_session_h.is_null());
+
+            epp_voip_session_destroy(&mut bob_session_h);
+            assert!(bob_session_h.is_null());
+            epp_voip_session_destroy(&mut bob_session_h);
+            assert!(bob_session_h.is_null());
+
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn ffi_voip_call_id_returns_busy_when_handle_in_use() {
+        init_lib();
+        let (
+            mut alice_h,
+            mut bob_h,
+            mut alice_session_h,
+            mut bob_session_h,
+            mut init_h,
+            mut init_buf,
+            mut accept_buf,
+        ) = setup_voip_session_pair();
+
+        let mut err = null_error();
+        let mut call_id = null_buffer();
+
+        unsafe {
+            (*alice_session_h).in_use.store(true, Ordering::Release);
+            let code = epp_voip_call_id(alice_session_h, &mut call_id, &mut err);
+            assert_eq!(code, EppErrorCode::EppErrorBusy);
+            assert!(call_id.data.is_null());
+            assert_eq!(call_id.length, 0);
+            epp_error_free(&mut err);
+            (*alice_session_h).in_use.store(false, Ordering::Release);
+
+            epp_buffer_release(&mut call_id);
+            epp_buffer_release(&mut init_buf);
+            epp_buffer_release(&mut accept_buf);
+            epp_voip_call_initiator_destroy(&mut init_h);
+            epp_voip_session_destroy(&mut alice_session_h);
+            epp_voip_session_destroy(&mut bob_session_h);
+            epp_identity_destroy(&mut alice_h);
+            epp_identity_destroy(&mut bob_h);
+        }
     }
 
     #[test]
@@ -6259,10 +6536,10 @@ mod voip_improvements {
             epp_buffer_release(&mut init_buf);
             epp_buffer_release(&mut accept_buf);
             epp_buffer_release(&mut sealed);
-            epp_voip_call_initiator_destroy(init_h);
-            epp_voip_session_destroy(restored_session_h);
-            epp_voip_session_destroy(alice_session_h);
-            epp_voip_session_destroy(bob_session_h);
+            epp_voip_call_initiator_destroy(&mut init_h);
+            epp_voip_session_destroy(&mut restored_session_h);
+            epp_voip_session_destroy(&mut alice_session_h);
+            epp_voip_session_destroy(&mut bob_session_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
             epp_time_provider_destroy(&mut alice_time);
@@ -6349,7 +6626,7 @@ mod voip_improvements {
             );
 
             epp_buffer_release(&mut init_buf);
-            epp_voip_call_initiator_destroy(init_h);
+            epp_voip_call_initiator_destroy(&mut init_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
         }
@@ -6458,8 +6735,8 @@ mod voip_improvements {
 
             epp_buffer_release(&mut init_buf);
             epp_buffer_release(&mut accept_buf);
-            epp_voip_call_initiator_destroy(init_h);
-            epp_voip_session_destroy(bob_session_h);
+            epp_voip_call_initiator_destroy(&mut init_h);
+            epp_voip_session_destroy(&mut bob_session_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
         }
@@ -6563,9 +6840,9 @@ mod voip_improvements {
 
             epp_buffer_release(&mut init_buf);
             epp_buffer_release(&mut accept_buf);
-            epp_voip_call_initiator_destroy(init_h);
-            epp_voip_session_destroy(alice_session_h);
-            epp_voip_session_destroy(bob_session_h);
+            epp_voip_call_initiator_destroy(&mut init_h);
+            epp_voip_session_destroy(&mut alice_session_h);
+            epp_voip_session_destroy(&mut bob_session_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
         }
@@ -6577,9 +6854,9 @@ mod voip_improvements {
         let (
             mut alice_h,
             mut bob_h,
-            alice_session_h,
-            bob_session_h,
-            init_h,
+            mut alice_session_h,
+            mut bob_session_h,
+            mut init_h,
             mut init_buf,
             mut accept_buf,
         ) = setup_voip_session_pair();
@@ -6635,9 +6912,9 @@ mod voip_improvements {
             epp_buffer_release(&mut enc.encrypted_header);
             epp_buffer_release(&mut init_buf);
             epp_buffer_release(&mut accept_buf);
-            epp_voip_session_destroy(alice_session_h);
-            epp_voip_session_destroy(bob_session_h);
-            epp_voip_call_initiator_destroy(init_h);
+            epp_voip_session_destroy(&mut alice_session_h);
+            epp_voip_session_destroy(&mut bob_session_h);
+            epp_voip_call_initiator_destroy(&mut init_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
         }
@@ -6649,9 +6926,9 @@ mod voip_improvements {
         let (
             mut alice_h,
             mut bob_h,
-            alice_session_h,
-            bob_session_h,
-            init_h,
+            mut alice_session_h,
+            mut bob_session_h,
+            mut init_h,
             mut init_buf,
             mut accept_buf,
         ) = setup_voip_session_pair();
@@ -6697,9 +6974,9 @@ mod voip_improvements {
             epp_buffer_release(&mut enc.encrypted_header);
             epp_buffer_release(&mut init_buf);
             epp_buffer_release(&mut accept_buf);
-            epp_voip_session_destroy(alice_session_h);
-            epp_voip_session_destroy(bob_session_h);
-            epp_voip_call_initiator_destroy(init_h);
+            epp_voip_session_destroy(&mut alice_session_h);
+            epp_voip_session_destroy(&mut bob_session_h);
+            epp_voip_call_initiator_destroy(&mut init_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
         }
@@ -6711,9 +6988,9 @@ mod voip_improvements {
         let (
             mut alice_h,
             mut bob_h,
-            alice_session_h,
-            bob_session_h,
-            init_h,
+            mut alice_session_h,
+            mut bob_session_h,
+            mut init_h,
             mut init_buf,
             mut accept_buf,
         ) = setup_voip_session_pair();
@@ -6800,9 +7077,9 @@ mod voip_improvements {
             epp_buffer_release(&mut dec.payload);
             epp_buffer_release(&mut init_buf);
             epp_buffer_release(&mut accept_buf);
-            epp_voip_session_destroy(alice_session_h);
-            epp_voip_session_destroy(bob_session_h);
-            epp_voip_call_initiator_destroy(init_h);
+            epp_voip_session_destroy(&mut alice_session_h);
+            epp_voip_session_destroy(&mut bob_session_h);
+            epp_voip_call_initiator_destroy(&mut init_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
         }
@@ -6814,9 +7091,9 @@ mod voip_improvements {
         let (
             mut alice_h,
             mut bob_h,
-            alice_session_h,
-            bob_session_h,
-            init_h,
+            mut alice_session_h,
+            mut bob_session_h,
+            mut init_h,
             mut init_buf,
             mut accept_buf,
         ) = setup_voip_session_pair();
@@ -6889,9 +7166,9 @@ mod voip_improvements {
             epp_buffer_release(&mut dec.payload);
             epp_buffer_release(&mut init_buf);
             epp_buffer_release(&mut accept_buf);
-            epp_voip_session_destroy(alice_session_h);
-            epp_voip_session_destroy(bob_session_h);
-            epp_voip_call_initiator_destroy(init_h);
+            epp_voip_session_destroy(&mut alice_session_h);
+            epp_voip_session_destroy(&mut bob_session_h);
+            epp_voip_call_initiator_destroy(&mut init_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
         }
@@ -6903,9 +7180,9 @@ mod voip_improvements {
         let (
             mut alice_h,
             mut bob_h,
-            alice_session_h,
-            bob_session_h,
-            init_h,
+            mut alice_session_h,
+            mut bob_session_h,
+            mut init_h,
             mut init_buf,
             mut accept_buf,
         ) = setup_voip_session_pair();
@@ -6929,9 +7206,9 @@ mod voip_improvements {
             epp_buffer_release(&mut enc.encrypted_header);
             epp_buffer_release(&mut init_buf);
             epp_buffer_release(&mut accept_buf);
-            epp_voip_session_destroy(alice_session_h);
-            epp_voip_session_destroy(bob_session_h);
-            epp_voip_call_initiator_destroy(init_h);
+            epp_voip_session_destroy(&mut alice_session_h);
+            epp_voip_session_destroy(&mut bob_session_h);
+            epp_voip_call_initiator_destroy(&mut init_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
         }
@@ -6943,9 +7220,9 @@ mod voip_improvements {
         let (
             mut alice_h,
             mut bob_h,
-            alice_session_h,
-            bob_session_h,
-            init_h,
+            mut alice_session_h,
+            mut bob_session_h,
+            mut init_h,
             mut init_buf,
             mut accept_buf,
         ) = setup_voip_session_pair();
@@ -6996,10 +7273,10 @@ mod voip_improvements {
             epp_buffer_release(&mut sealed);
             epp_buffer_release(&mut init_buf);
             epp_buffer_release(&mut accept_buf);
-            epp_voip_session_destroy(restored);
-            epp_voip_session_destroy(alice_session_h);
-            epp_voip_session_destroy(bob_session_h);
-            epp_voip_call_initiator_destroy(init_h);
+            epp_voip_session_destroy(&mut restored);
+            epp_voip_session_destroy(&mut alice_session_h);
+            epp_voip_session_destroy(&mut bob_session_h);
+            epp_voip_call_initiator_destroy(&mut init_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
         }
@@ -7011,9 +7288,9 @@ mod voip_improvements {
         let (
             mut alice_h,
             mut bob_h,
-            alice_session_h,
-            bob_session_h,
-            init_h,
+            mut alice_session_h,
+            mut bob_session_h,
+            mut init_h,
             mut init_buf,
             mut accept_buf,
         ) = setup_voip_session_pair();
@@ -7155,11 +7432,11 @@ mod voip_improvements {
             epp_buffer_release(&mut tracker_state2);
             epp_buffer_release(&mut init_buf);
             epp_buffer_release(&mut accept_buf);
-            epp_voip_session_destroy(restored1);
-            epp_voip_session_destroy(restored2);
-            epp_voip_session_destroy(alice_session_h);
-            epp_voip_session_destroy(bob_session_h);
-            epp_voip_call_initiator_destroy(init_h);
+            epp_voip_session_destroy(&mut restored1);
+            epp_voip_session_destroy(&mut restored2);
+            epp_voip_session_destroy(&mut alice_session_h);
+            epp_voip_session_destroy(&mut bob_session_h);
+            epp_voip_call_initiator_destroy(&mut init_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
             epp_sealed_state_counter_tracker_destroy(&mut tracker);
@@ -7174,9 +7451,9 @@ mod voip_improvements {
         let (
             mut alice_h,
             mut bob_h,
-            alice_session_h,
-            bob_session_h,
-            init_h,
+            mut alice_session_h,
+            mut bob_session_h,
+            mut init_h,
             mut init_buf,
             mut accept_buf,
         ) = setup_voip_session_pair();
@@ -7231,10 +7508,10 @@ mod voip_improvements {
             epp_buffer_release(&mut serialized_slot);
             epp_buffer_release(&mut init_buf);
             epp_buffer_release(&mut accept_buf);
-            epp_voip_session_destroy(restored);
-            epp_voip_session_destroy(alice_session_h);
-            epp_voip_session_destroy(bob_session_h);
-            epp_voip_call_initiator_destroy(init_h);
+            epp_voip_session_destroy(&mut restored);
+            epp_voip_session_destroy(&mut alice_session_h);
+            epp_voip_session_destroy(&mut bob_session_h);
+            epp_voip_call_initiator_destroy(&mut init_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
             epp_sealed_state_slot_destroy(&mut slot);
@@ -7248,9 +7525,9 @@ mod voip_improvements {
         let (
             mut alice_h,
             mut bob_h,
-            alice_session_h,
-            bob_session_h,
-            init_h,
+            mut alice_session_h,
+            mut bob_session_h,
+            mut init_h,
             mut init_buf,
             mut accept_buf,
         ) = setup_voip_session_pair();
@@ -7327,9 +7604,9 @@ mod voip_improvements {
 
             epp_buffer_release(&mut init_buf);
             epp_buffer_release(&mut accept_buf);
-            epp_voip_call_initiator_destroy(init_h);
-            epp_voip_session_destroy(alice_session_h);
-            epp_voip_session_destroy(bob_session_h);
+            epp_voip_call_initiator_destroy(&mut init_h);
+            epp_voip_session_destroy(&mut alice_session_h);
+            epp_voip_session_destroy(&mut bob_session_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
         }
@@ -7341,9 +7618,9 @@ mod voip_improvements {
         let (
             mut alice_h,
             mut bob_h,
-            alice_session_h,
-            bob_session_h,
-            init_h,
+            mut alice_session_h,
+            mut bob_session_h,
+            mut init_h,
             mut init_buf,
             mut accept_buf,
         ) = setup_voip_session_pair();
@@ -7420,9 +7697,9 @@ mod voip_improvements {
 
             epp_buffer_release(&mut init_buf);
             epp_buffer_release(&mut accept_buf);
-            epp_voip_call_initiator_destroy(init_h);
-            epp_voip_session_destroy(alice_session_h);
-            epp_voip_session_destroy(bob_session_h);
+            epp_voip_call_initiator_destroy(&mut init_h);
+            epp_voip_session_destroy(&mut alice_session_h);
+            epp_voip_session_destroy(&mut bob_session_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
         }
@@ -7434,9 +7711,9 @@ mod voip_improvements {
         let (
             mut alice_h,
             mut bob_h,
-            alice_session_h,
-            bob_session_h,
-            init_h,
+            mut alice_session_h,
+            mut bob_session_h,
+            mut init_h,
             mut init_buf,
             mut accept_buf,
         ) = setup_voip_session_pair();
@@ -7537,9 +7814,9 @@ mod voip_improvements {
             epp_buffer_release(&mut bob_consent);
             epp_buffer_release(&mut init_buf);
             epp_buffer_release(&mut accept_buf);
-            epp_voip_call_initiator_destroy(init_h);
-            epp_voip_session_destroy(alice_session_h);
-            epp_voip_session_destroy(bob_session_h);
+            epp_voip_call_initiator_destroy(&mut init_h);
+            epp_voip_session_destroy(&mut alice_session_h);
+            epp_voip_session_destroy(&mut bob_session_h);
             epp_identity_destroy(&mut alice_h);
             epp_identity_destroy(&mut bob_h);
         }

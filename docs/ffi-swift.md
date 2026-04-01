@@ -1,6 +1,6 @@
 # Swift FFI — виклики та параметри
 
-Swift-обгортка над C FFI бібліотеки Ecliptix Protocol. Збирається з XCFramework (Rust `staticlib` + C заголовок). Підтримка iOS 16+, macOS 13+.
+Swift-обгортка над C FFI бібліотеки Ecliptix Protocol. Публічний Swift package споживає XCFramework binary target, а високорівневий Swift layer біндить exported Rust symbols через `@_silgen_name`. Поточний `Package.swift` таргетить iOS 18+, macOS 15+.
 
 ## Ініціалізація
 
@@ -8,9 +8,21 @@ Swift-обгортка над C FFI бібліотеки Ecliptix Protocol. Зб
 
 | Що викликати | Що передавати | Повертає |
 |--------------|---------------|----------|
-| `EcliptixProtocol.initialize()` | — | `throws` — викликати один раз при старті додатку |
-| `EcliptixProtocol.shutdown()` | — | — — викликати при виході |
-| `EcliptixProtocol.version` | — | `String` — версія бібліотеки |
+| `EcliptixProtectedProtocol.initialize()` | — | `throws` — викликати один раз при старті додатку |
+| `EcliptixProtectedProtocol.shutdown()` | — | — — викликати при виході |
+| `EcliptixProtectedProtocol.version` | — | `String` — версія бібліотеки |
+
+## Manual Time Provider
+
+Swift wrapper надає `EppTimeProvider` для deterministic tests і trusted-time restore flow.
+
+| Що викликати | Що передавати | Повертає |
+|--------------|---------------|----------|
+| `EppTimeProvider.manual(initialNowUnix:)` | `UInt64` Unix timestamp | `EppTimeProvider` |
+| `timeProvider.setNowUnix(_:)` | новий Unix timestamp | `throws`; clock можна рухати тільки вперед |
+| `identity.setTimeProvider(_:)` | `EppTimeProvider?` | `throws`; `nil` повертає identity до системного часу |
+
+Важливо: rewind manual clock тепер відхиляється з `EPP_ERROR_INVALID_INPUT` / `EppError.invalidInput`.
 
 ## 1:1 сесія — повний цикл
 
@@ -92,21 +104,24 @@ Swift-обгортка:
 
 **Що передавати на Relay/сервер:** Клієнт може надсилати зашифрований envelope як є (binary). Сервер лише пересилає байти; дешифрування робить одержувач на своїй сесії.
 
-## Hardening limits (Swift/FFI)
-
-FFI API у Swift не розширювався: нових функцій не потрібно підключати.
+## Current Snapshot Contract
 
 Оновилась поведінка існуючих викликів — вони суворіше відхиляють oversized input:
 
 - `session.encrypt(...)` — payload size policy enforced.
 - `session.decrypt(...)` — envelope size policy enforced до decode.
 - handshake/bundle paths — stricter size and validation guardrails.
+- `EppTimeProvider.setNowUnix(_:)` — лише forward-only clock updates.
+- `EppError.busy(String)` — конкурентне використання одного native handle.
+
+Low-level VoIP destroy сигнатури стали pointer-to-pointer, але для Swift-клієнта це прозоро: `deinit` у `EppVoipCallInitiator` та `EppVoipSession` вже викликає правильний nulling destroy.
 
 Що робити в Swift-клієнті:
 
 1. Додати preflight size checks перед викликами (особливо для вкладень/великих payload).
 2. Мапити size-violations (`EPP_ERROR_INVALID_INPUT`) у окремий UX/classified error (`payload_too_large`, `envelope_too_large`), без retry-loop.
-3. В telemetry логувати тільки код/тип помилки та розмір payload, але не самі дані.
+3. Не використовувати один і той самий session/group/VoIP object одночасно з кількох потоків без зовнішньої синхронізації.
+4. В telemetry логувати тільки код/тип помилки та розмір payload, але не самі дані.
 
 ## Attachments / Media (через C FFI)
 
@@ -127,9 +142,9 @@ Attachment/media path реалізований як FFI crypto/validation ядр
 - великі файли не передавати через `session.encrypt(...)` payload напряму;
 - на помилках validate/decrypt не робити blind retry без зміни вхідних даних.
 
-## Групова сесія (C FFI)
+## Групова сесія
 
-Групові функції наразі доступні лише через C FFI. Типи: `EppGroupSessionHandle`, `EppKeyPackageSecretsHandle`.
+Swift wrapper надає `EppGroupSession` та `EppGroupKeyPackageSecrets`. Таблиці нижче залишають C FFI назви як low-level reference для дебагу й інтеграційного звіряння.
 
 ### Key Package (підготовка до вступу в групу)
 
@@ -213,17 +228,23 @@ Attachment/media path реалізований як FFI crypto/validation ядр
 | `epp_buffer_alloc` | `size` | Алокувати буфер заданого розміру |
 | `epp_buffer_free` | `EppBuffer*` | Звільнити буфер цілком (struct + data) |
 | `epp_error_free` | `EppError*` | Звільнити повідомлення про помилку |
-| `epp_error_string` | `EppError*` | Отримати рядок помилки |
+| `epp_error_string` | `EppErrorCode` | Отримати рядок помилки для коду |
 
 ## Помилки
 
-Усі функції, що повертають `EppErrorCode`, заповнюють `EppError` (code + message). У Swift це перетворено на `EppError` (enum/тип з кодами). Типові коди: `EPP_SUCCESS`, `EPP_ERROR_REPLAY_ATTACK`, `EPP_ERROR_DECRYPTION`, `EPP_ERROR_INVALID_STATE` тощо. Після обробки помилки викликайте `epp_error_free(&outError)`.
+Усі функції, що повертають `EppErrorCode`, заповнюють `EppError` (code + message). У Swift це перетворено на `EppError` (enum/тип з кодами).
+
+Окремо зверніть увагу на:
+
+- `EppError.invalidInput` для oversize input, malformed payload і rewind manual clock;
+- `EppError.busy` для конкурентного доступу до одного native handle;
+- `voipCall` / `voipMedia` / `voipRekey` для VoIP-specific помилок.
 
 ## Збірка Swift-пакету
 
 1. Зібрати XCFramework з Rust через локальний release flow або CI workflow.
 2. Release artifact має назву `ecliptix-protected-protocol.xcframework.zip`.
-3. Локальний Swift package використовує checked-in binary target у `swift/XCFrameworks/EcliptixProtocolC.xcframework`.
-4. У проекті додати залежність на Swift Package (шлях до папки `swift`).
+3. Оновити root `Package.swift` binary target URL + checksum під опублікований artifact.
+4. Для локальної інтеграції використовуйте root Swift package цього репозиторію як path dependency або перевіряйте тег, що ship-ить відповідний XCFramework snapshot.
 
 Клієнт (iOS/macOS) використовує цю обгортку для identity, handshake, encrypt/decrypt, групових операцій та sealed serialize/deserialize з коректним `external_counter`.

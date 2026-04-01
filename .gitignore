@@ -10,8 +10,10 @@
 .DS_Store
 
 # Swift build artifacts
+.build/
 swift/.build/
 swift/XCFrameworks/
+dist/
 
 # Generated PDFs (rebuild with pdflatex)
 docs/*.pdf
