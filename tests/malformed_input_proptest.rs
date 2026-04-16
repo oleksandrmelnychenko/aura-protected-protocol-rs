@@ -7,8 +7,8 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Once;
 
 use aura_protected_protocol::api::{
-    AuraGroupSession, AuraProtocol, AuraSession, AuraVoipSession,
-    SealedStateCounterTracker, SealedStateSlot,
+    AuraGroupSession, AuraProtocol, AuraSession, AuraVoipSession, SealedStateCounterTracker,
+    SealedStateSlot,
 };
 use aura_protected_protocol::crypto::CryptoInterop;
 use proptest::collection::vec;

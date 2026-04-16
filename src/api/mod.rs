@@ -1018,9 +1018,7 @@ impl AuraVoipSession {
             .set_screen_share_meta(width, height, frame_rate, codec_hint)
     }
 
-    pub fn get_screen_share_meta(
-        &self,
-    ) -> Result<Option<AuraVoipScreenShareMeta>, ProtocolError> {
+    pub fn get_screen_share_meta(&self) -> Result<Option<AuraVoipScreenShareMeta>, ProtocolError> {
         self.0.get_screen_share_meta()
     }
 

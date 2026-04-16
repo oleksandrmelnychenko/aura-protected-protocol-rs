@@ -226,7 +226,12 @@ fn build_voip_sealed_state() -> Vec<u8> {
             AuraErrorCode::AuraSuccess
         );
         assert_eq!(
-            aura_identity_get_kyber_public(bob_h, bob_kyber.as_mut_ptr(), bob_kyber.len(), &mut err),
+            aura_identity_get_kyber_public(
+                bob_h,
+                bob_kyber.as_mut_ptr(),
+                bob_kyber.len(),
+                &mut err
+            ),
             AuraErrorCode::AuraSuccess
         );
         assert_eq!(

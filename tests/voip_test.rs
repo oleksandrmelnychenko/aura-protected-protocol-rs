@@ -337,7 +337,8 @@ fn call_init(
     identity_ed25519_public: &[u8],
     peer_kyber_public: &[u8],
     shield_mode: bool,
-) -> Result<aura_protected_protocol::protocol::voip::call_key_exchange::CallInitOutput, ProtocolError> {
+) -> Result<aura_protected_protocol::protocol::voip::call_key_exchange::CallInitOutput, ProtocolError>
+{
     let auth_context = default_call_context(shield_mode);
     caller_init_with_context(
         identity_ed25519_secret,
@@ -360,7 +361,10 @@ fn call_accept(
     peer_signature: &[u8],
     peer_key_confirm_mac: &[u8],
     shield_mode: bool,
-) -> Result<aura_protected_protocol::protocol::voip::call_key_exchange::CallAcceptOutput, ProtocolError> {
+) -> Result<
+    aura_protected_protocol::protocol::voip::call_key_exchange::CallAcceptOutput,
+    ProtocolError,
+> {
     let auth_context = default_call_context(shield_mode);
     callee_accept_with_context(
         identity_ed25519_secret,
@@ -388,7 +392,10 @@ fn call_finish(
     peer_signature: &[u8],
     peer_key_confirm_mac: &[u8],
     shield_mode: bool,
-) -> Result<aura_protected_protocol::protocol::voip::call_key_exchange::CallKeyMaterial, ProtocolError> {
+) -> Result<
+    aura_protected_protocol::protocol::voip::call_key_exchange::CallKeyMaterial,
+    ProtocolError,
+> {
     let auth_context = default_call_context(shield_mode);
     caller_finish_with_context(
         init_output,
@@ -1405,14 +1412,15 @@ fn voip_rekey_short_ephemeral_key_rejected_without_panic() {
         .unwrap();
     let mut rekey = CallRekey::decode(rekey_bytes.as_slice()).unwrap();
     rekey.ephemeral_x25519_public = vec![0xAA; 3];
-    rekey.signature = aura_protected_protocol::protocol::voip::call_key_exchange::sign_rekey_material(
-        &alice_ed_secret,
-        &rekey.call_id,
-        rekey.rekey_generation,
-        &rekey.ephemeral_x25519_public,
-        &rekey.kyber_ciphertext,
-    )
-    .unwrap();
+    rekey.signature =
+        aura_protected_protocol::protocol::voip::call_key_exchange::sign_rekey_material(
+            &alice_ed_secret,
+            &rekey.call_id,
+            rekey.rekey_generation,
+            &rekey.ephemeral_x25519_public,
+            &rekey.kyber_ciphertext,
+        )
+        .unwrap();
     let mut tampered = Vec::new();
     rekey.encode(&mut tampered).unwrap();
 
@@ -1496,14 +1504,15 @@ fn voip_rekey_ack_short_ephemeral_key_rejected_without_panic() {
         .unwrap();
     let mut ack = CallRekeyAck::decode(ack_bytes.as_slice()).unwrap();
     ack.ephemeral_x25519_public = vec![0xBB; 5];
-    ack.signature = aura_protected_protocol::protocol::voip::call_key_exchange::sign_rekey_material(
-        &bob_ed_secret,
-        &ack.call_id,
-        ack.rekey_generation,
-        &ack.ephemeral_x25519_public,
-        &ack.kyber_ciphertext,
-    )
-    .unwrap();
+    ack.signature =
+        aura_protected_protocol::protocol::voip::call_key_exchange::sign_rekey_material(
+            &bob_ed_secret,
+            &ack.call_id,
+            ack.rekey_generation,
+            &ack.ephemeral_x25519_public,
+            &ack.kyber_ciphertext,
+        )
+        .unwrap();
     let mut tampered_ack = Vec::new();
     ack.encode(&mut tampered_ack).unwrap();
 

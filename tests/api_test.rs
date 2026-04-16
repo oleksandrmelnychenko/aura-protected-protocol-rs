@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 use aura_protected_protocol::api::{
-    AuraGroupSession, AuraProtocol, AuraSession, AuraVoipSession,
-    SealedStateCounterTracker, SealedStateSlot,
+    AuraGroupSession, AuraProtocol, AuraSession, AuraVoipSession, SealedStateCounterTracker,
+    SealedStateSlot,
 };
 use aura_protected_protocol::core::constants::{
     HMAC_BYTES, MAX_BUFFER_SIZE, MAX_ENVELOPE_MESSAGE_SIZE, MAX_GROUP_MESSAGE_SIZE,
@@ -328,12 +328,10 @@ fn api_p2p_session_counter_tracker_restores_latest_and_rejects_rollback() {
     let tracker_after_export = restart_tracker.serialize();
     let mut next_restart = SealedStateCounterTracker::deserialize(&tracker_after_export).unwrap();
     assert!(
-        AuraSession::deserialize_with_counter_tracker(&sealed1, &key, &mut next_restart)
-            .is_err()
+        AuraSession::deserialize_with_counter_tracker(&sealed1, &key, &mut next_restart).is_err()
     );
     let mut latest =
-        AuraSession::deserialize_with_counter_tracker(&sealed2, &key, &mut next_restart)
-            .unwrap();
+        AuraSession::deserialize_with_counter_tracker(&sealed2, &key, &mut next_restart).unwrap();
     assert_eq!(next_restart.max_restored_counter(), 2);
     assert_eq!(next_restart.latest_issued_counter(), 2);
 

@@ -983,7 +983,12 @@ mod ffi {
                 AuraErrorCode::AuraSuccess
             );
             assert_eq!(
-                aura_identity_get_ed25519_public(bob_h, bob_ed.as_mut_ptr(), bob_ed.len(), &mut err),
+                aura_identity_get_ed25519_public(
+                    bob_h,
+                    bob_ed.as_mut_ptr(),
+                    bob_ed.len(),
+                    &mut err
+                ),
                 AuraErrorCode::AuraSuccess
             );
         }
@@ -3954,7 +3959,8 @@ fn ffi_envelope_metadata_parse_and_free() {
             correlation_id: ptr::null_mut(),
             correlation_id_length: 0,
         };
-        let code = aura_envelope_metadata_parse(meta_raw.data, meta_raw.length, &mut meta, &mut err);
+        let code =
+            aura_envelope_metadata_parse(meta_raw.data, meta_raw.length, &mut meta, &mut err);
         assert_eq!(code, AuraErrorCode::AuraSuccess);
         assert_eq!(meta.envelope_id, 77);
         assert_eq!(meta.message_index, 0);
@@ -5303,7 +5309,8 @@ mod attachment_v2 {
         init_v2();
         let mut err = null_error();
         let name = "photo.jpg";
-        let code = unsafe { aura_attachment_validate_filename(name.as_ptr(), name.len(), &mut err) };
+        let code =
+            unsafe { aura_attachment_validate_filename(name.as_ptr(), name.len(), &mut err) };
         assert_eq!(code, AuraErrorCode::AuraSuccess);
     }
 
@@ -5312,7 +5319,8 @@ mod attachment_v2 {
         init_v2();
         let mut err = null_error();
         let name = "";
-        let code = unsafe { aura_attachment_validate_filename(name.as_ptr(), name.len(), &mut err) };
+        let code =
+            unsafe { aura_attachment_validate_filename(name.as_ptr(), name.len(), &mut err) };
         assert_ne!(code, AuraErrorCode::AuraSuccess);
     }
 
@@ -5321,7 +5329,8 @@ mod attachment_v2 {
         init_v2();
         let mut err = null_error();
         let name = "../etc/passwd";
-        let code = unsafe { aura_attachment_validate_filename(name.as_ptr(), name.len(), &mut err) };
+        let code =
+            unsafe { aura_attachment_validate_filename(name.as_ptr(), name.len(), &mut err) };
         assert_ne!(code, AuraErrorCode::AuraSuccess);
     }
 
@@ -5330,7 +5339,8 @@ mod attachment_v2 {
         init_v2();
         let mut err = null_error();
         let name = "\x01bad";
-        let code = unsafe { aura_attachment_validate_filename(name.as_ptr(), name.len(), &mut err) };
+        let code =
+            unsafe { aura_attachment_validate_filename(name.as_ptr(), name.len(), &mut err) };
         assert_ne!(code, AuraErrorCode::AuraSuccess);
     }
 
@@ -5339,7 +5349,8 @@ mod attachment_v2 {
         init_v2();
         let mut err = null_error();
         let name = "CON";
-        let code = unsafe { aura_attachment_validate_filename(name.as_ptr(), name.len(), &mut err) };
+        let code =
+            unsafe { aura_attachment_validate_filename(name.as_ptr(), name.len(), &mut err) };
         assert_ne!(code, AuraErrorCode::AuraSuccess);
 
         let name2 = "con.txt";
@@ -5834,8 +5845,9 @@ mod attachment_v2 {
         let mut tampered = Vec::new();
         parsed.encode(&mut tampered).unwrap();
 
-        let code =
-            unsafe { aura_attachment_collage_validate(tampered.as_ptr(), tampered.len(), &mut err) };
+        let code = unsafe {
+            aura_attachment_collage_validate(tampered.as_ptr(), tampered.len(), &mut err)
+        };
         assert_ne!(code, AuraErrorCode::AuraSuccess);
 
         unsafe { aura_buffer_release(&mut collage) };
@@ -5976,7 +5988,8 @@ mod attachment_v2 {
         };
         let mut buf = Vec::new();
         bad.encode(&mut buf).unwrap();
-        let code = unsafe { aura_attachment_voice_meta_validate(buf.as_ptr(), buf.len(), &mut err) };
+        let code =
+            unsafe { aura_attachment_voice_meta_validate(buf.as_ptr(), buf.len(), &mut err) };
         assert_ne!(code, AuraErrorCode::AuraSuccess);
     }
 
@@ -6237,7 +6250,12 @@ mod voip_improvements {
                 alice_kyber.len(),
                 &mut err,
             );
-            aura_identity_get_kyber_public(bob_h, bob_kyber.as_mut_ptr(), bob_kyber.len(), &mut err);
+            aura_identity_get_kyber_public(
+                bob_h,
+                bob_kyber.as_mut_ptr(),
+                bob_kyber.len(),
+                &mut err,
+            );
         }
 
         let mut init_buf = null_buffer();

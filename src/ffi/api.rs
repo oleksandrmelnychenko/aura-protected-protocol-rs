@@ -1981,11 +1981,8 @@ pub unsafe extern "C" fn aura_shamir_reconstruct(
             return AuraErrorCode::AuraErrorInvalidInput;
         }
 
-        match crate::api::AuraProtocol::shamir_reconstruct(
-            &all_shares,
-            auth_key_slice,
-            share_count,
-        ) {
+        match crate::api::AuraProtocol::shamir_reconstruct(&all_shares, auth_key_slice, share_count)
+        {
             Ok(secret) => {
                 write_buffer(out_secret, secret);
                 AuraErrorCode::AuraSuccess
@@ -3905,7 +3902,11 @@ pub unsafe extern "C" fn aura_group_export_persisted_state(
 ) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if key.is_null() {
-            write_error(out_error, AuraErrorCode::AuraErrorNullPointer, "key is null");
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "key is null",
+            );
             return AuraErrorCode::AuraErrorNullPointer;
         }
         if key_length != AES_KEY_BYTES {
@@ -4886,7 +4887,11 @@ pub unsafe extern "C" fn aura_session_export_persisted_state(
 ) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if key.is_null() {
-            write_error(out_error, AuraErrorCode::AuraErrorNullPointer, "key is null");
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "key is null",
+            );
             return AuraErrorCode::AuraErrorNullPointer;
         }
         if key_length != AES_KEY_BYTES {
@@ -8357,7 +8362,8 @@ pub type AuraOnMemberAdded = Option<
     ),
 >;
 
-pub type AuraOnMemberRemoved = Option<unsafe extern "C" fn(leaf_index: u32, user_data: *mut c_void)>;
+pub type AuraOnMemberRemoved =
+    Option<unsafe extern "C" fn(leaf_index: u32, user_data: *mut c_void)>;
 
 pub type AuraOnEpochAdvanced =
     Option<unsafe extern "C" fn(new_epoch: u64, member_count: u32, user_data: *mut c_void)>;
@@ -9596,7 +9602,11 @@ pub unsafe extern "C" fn aura_attachment_validate_filename(
 ) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if name.is_null() {
-            write_error(out_error, AuraErrorCode::AuraErrorNullPointer, "name is null");
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "name is null",
+            );
             return AuraErrorCode::AuraErrorNullPointer;
         }
         let name_bytes = std::slice::from_raw_parts(name, name_length);

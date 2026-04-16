@@ -20,7 +20,8 @@ fn init() {
     CryptoInterop::initialize().expect("crypto init");
 }
 
-const fn external_join_enabled_policy() -> aura_protected_protocol::protocol::group::GroupSecurityPolicy {
+const fn external_join_enabled_policy(
+) -> aura_protected_protocol::protocol::group::GroupSecurityPolicy {
     let mut policy = aura_protected_protocol::protocol::group::GroupSecurityPolicy::shield();
     policy.block_external_join = false;
     policy
@@ -91,7 +92,9 @@ fn run_group_longevity_simulation(
     let total_days = years * days_per_year;
     let warning_threshold = u32::try_from(
         (u64::from(max_messages_per_epoch)
-            * u64::from(aura_protected_protocol::core::constants::SENDER_KEY_EXHAUSTION_WARNING_PERCENT))
+            * u64::from(
+                aura_protected_protocol::core::constants::SENDER_KEY_EXHAUSTION_WARNING_PERCENT,
+            ))
         .div_ceil(100),
     )
     .unwrap();
@@ -133,7 +136,10 @@ fn authorize_and_join_external(
     owner: &aura_protected_protocol::protocol::group::GroupSession,
     joiner: &IdentityKeys,
     credential: &[u8],
-) -> (aura_protected_protocol::protocol::group::GroupSession, Vec<u8>) {
+) -> (
+    aura_protected_protocol::protocol::group::GroupSession,
+    Vec<u8>,
+) {
     let authorization = owner
         .authorize_external_join(
             &joiner.get_identity_ed25519_public(),
@@ -1110,7 +1116,8 @@ fn session_serialize_deserialize_roundtrip() {
 
     let provider2 = StaticStateKeyProvider::new(enc_key).unwrap();
     let bob_session2 =
-        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &provider2, 0).unwrap();
+        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &provider2, 0)
+            .unwrap();
 
     let env2 = alice_session.encrypt(b"after restore", 0, 2, None).unwrap();
     let dec = bob_session2.decrypt(&env2).unwrap();
@@ -1138,7 +1145,8 @@ fn session_serialize_wrong_key_fails() {
 
     let bad_provider = StaticStateKeyProvider::new(wrong_key).unwrap();
     assert!(
-        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &bad_provider, 0).is_err()
+        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &bad_provider, 0)
+            .is_err()
     );
 }
 
@@ -1355,12 +1363,18 @@ fn session_export_import_continued_communication() {
 
     let alice_provider2 = StaticStateKeyProvider::new(enc_key.clone()).unwrap();
     let bob_provider2 = StaticStateKeyProvider::new(enc_key).unwrap();
-    let alice_session2 =
-        aura_protected_protocol::protocol::Session::from_sealed_state(&alice_sealed, &alice_provider2, 0)
-            .unwrap();
-    let bob_session2 =
-        aura_protected_protocol::protocol::Session::from_sealed_state(&bob_sealed, &bob_provider2, 0)
-            .unwrap();
+    let alice_session2 = aura_protected_protocol::protocol::Session::from_sealed_state(
+        &alice_sealed,
+        &alice_provider2,
+        0,
+    )
+    .unwrap();
+    let bob_session2 = aura_protected_protocol::protocol::Session::from_sealed_state(
+        &bob_sealed,
+        &bob_provider2,
+        0,
+    )
+    .unwrap();
 
     for i in 5u32..10 {
         let env = alice_session2
@@ -1426,7 +1440,8 @@ fn secure_memory_handles_survive_export_import() {
 
     let provider2 = StaticStateKeyProvider::new(enc_key).unwrap();
     let bob_restored =
-        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &provider2, 0).unwrap();
+        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &provider2, 0)
+            .unwrap();
 
     let env2 = alice_session
         .encrypt(b"after restore from guarded", 0, 2, None)
@@ -1445,7 +1460,8 @@ fn secure_memory_handles_survive_export_import() {
     let sealed2 = bob_restored.export_sealed_state(&provider3, 2).unwrap();
     let provider4 = StaticStateKeyProvider::new(enc_key3).unwrap();
     let bob_re =
-        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed2, &provider4, 1).unwrap();
+        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed2, &provider4, 1)
+            .unwrap();
     let env4 = alice_session
         .encrypt(b"double sealed path", 0, 3, None)
         .unwrap();
@@ -1475,7 +1491,8 @@ fn secure_memory_double_export_import() {
     let p1 = StaticStateKeyProvider::new(enc_key.clone()).unwrap();
     let sealed1 = bob_session.export_sealed_state(&p1, 2).unwrap();
     let p2 = StaticStateKeyProvider::new(enc_key.clone()).unwrap();
-    let bob2 = aura_protected_protocol::protocol::Session::from_sealed_state(&sealed1, &p2, 0).unwrap();
+    let bob2 =
+        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed1, &p2, 0).unwrap();
 
     let env2 = alice_session.encrypt(b"msg-2", 0, 2, None).unwrap();
     bob2.decrypt(&env2).unwrap();
@@ -1483,7 +1500,8 @@ fn secure_memory_double_export_import() {
     let p3 = StaticStateKeyProvider::new(enc_key.clone()).unwrap();
     let sealed2 = bob2.export_sealed_state(&p3, 1).unwrap();
     let p4 = StaticStateKeyProvider::new(enc_key).unwrap();
-    let bob3 = aura_protected_protocol::protocol::Session::from_sealed_state(&sealed2, &p4, 0).unwrap();
+    let bob3 =
+        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed2, &p4, 0).unwrap();
 
     let env3 = alice_session
         .encrypt(b"msg-3-double-restore", 0, 3, None)
@@ -1554,7 +1572,8 @@ fn replay_nonces_persist_across_sealed_export_import() {
     let sealed = bob_session.export_sealed_state(&provider, 1).unwrap();
     let provider2 = StaticStateKeyProvider::new(enc_key).unwrap();
     let bob_restored =
-        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &provider2, 0).unwrap();
+        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &provider2, 0)
+            .unwrap();
 
     let replay_result = bob_restored.decrypt(&env1);
     assert!(
@@ -1645,12 +1664,13 @@ fn attachment_file_key_decrypt_rejects_wrong_attachment_id() {
     .unwrap();
     assert_eq!(decrypted, file_key);
 
-    let encrypted_wrong = aura_protected_protocol::protocol::attachment::encrypt_file_key_for_session(
-        &alice_session,
-        &file_key,
-        &attachment_id,
-    )
-    .unwrap();
+    let encrypted_wrong =
+        aura_protected_protocol::protocol::attachment::encrypt_file_key_for_session(
+            &alice_session,
+            &file_key,
+            &attachment_id,
+        )
+        .unwrap();
 
     let mut wrong_attachment_id = attachment_id;
     wrong_attachment_id[0] ^= 0xFF;
@@ -1927,7 +1947,8 @@ fn session_restore_preserves_pending_flag() {
 
     let provider2 = StaticStateKeyProvider::new(enc_key).unwrap();
     let bob_restored =
-        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &provider2, 0).unwrap();
+        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &provider2, 0)
+            .unwrap();
 
     let env2 = bob_restored
         .encrypt(b"reply after restore", 1, 1, None)
@@ -2312,7 +2333,8 @@ fn export_import_preserves_skipped_keys() {
 
     let provider2 = StaticStateKeyProvider::new(enc_key).unwrap();
     let bob_restored =
-        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &provider2, 0).unwrap();
+        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &provider2, 0)
+            .unwrap();
 
     for idx in [1, 2, 3] {
         let dec = bob_restored.decrypt(&envelopes[idx]).unwrap();
@@ -2358,7 +2380,8 @@ fn export_import_preserves_multi_epoch_skipped_keys() {
 
     let provider2 = StaticStateKeyProvider::new(enc_key).unwrap();
     let bob_restored =
-        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &provider2, 0).unwrap();
+        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &provider2, 0)
+            .unwrap();
 
     let dec = bob_restored.decrypt(&env_e0_2).unwrap();
     assert_eq!(
@@ -2537,7 +2560,8 @@ fn export_import_preserves_cached_metadata_keys() {
 
     let provider2 = StaticStateKeyProvider::new(enc_key).unwrap();
     let bob_restored =
-        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &provider2, 0).unwrap();
+        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &provider2, 0)
+            .unwrap();
 
     let dec = bob_restored.decrypt(&env1).unwrap();
     assert_eq!(
@@ -2907,7 +2931,8 @@ fn forward_secrecy_old_chain_keys_cannot_derive_future() {
 
     let snap_prov2 = StaticStateKeyProvider::new(snap_key).unwrap();
     let attacker =
-        aura_protected_protocol::protocol::Session::from_sealed_state(&snapshot, &snap_prov2, 0).unwrap();
+        aura_protected_protocol::protocol::Session::from_sealed_state(&snapshot, &snap_prov2, 0)
+            .unwrap();
     assert!(
         attacker.decrypt(&env_post).is_err(),
         "Pre-ratchet snapshot must not decrypt post-ratchet messages"
@@ -2976,7 +3001,8 @@ fn tampered_sealed_state_root_key_rejected() {
     }
     let provider2 = StaticStateKeyProvider::new(enc_key).unwrap();
     assert!(
-        aura_protected_protocol::protocol::Session::from_sealed_state(&tampered, &provider2, 0).is_err(),
+        aura_protected_protocol::protocol::Session::from_sealed_state(&tampered, &provider2, 0)
+            .is_err(),
         "Tampered sealed state must be rejected"
     );
 }
@@ -3428,9 +3454,12 @@ fn pcs_across_five_ratchet_steps() {
     bob_session.decrypt(&env_epoch5).unwrap();
 
     let p0_restore = StaticStateKeyProvider::new(enc_key).unwrap();
-    let bob_epoch0 =
-        aura_protected_protocol::protocol::Session::from_sealed_state(&epoch0_state, &p0_restore, 0)
-            .unwrap();
+    let bob_epoch0 = aura_protected_protocol::protocol::Session::from_sealed_state(
+        &epoch0_state,
+        &p0_restore,
+        0,
+    )
+    .unwrap();
     let result = bob_epoch0.decrypt(&env_epoch5);
     assert!(
         result.is_err(),
@@ -5614,11 +5643,12 @@ fn relay_validate_key_package_for_storage() {
     init();
 
     let identity = IdentityKeys::create(10).unwrap();
-    let (kp, _priv, _sec) = aura_protected_protocol::protocol::group::key_package::create_key_package(
-        &identity,
-        b"test".to_vec(),
-    )
-    .unwrap();
+    let (kp, _priv, _sec) =
+        aura_protected_protocol::protocol::group::key_package::create_key_package(
+            &identity,
+            b"test".to_vec(),
+        )
+        .unwrap();
 
     let mut buf = Vec::new();
     kp.encode(&mut buf).unwrap();
@@ -5986,9 +6016,13 @@ fn group_api_serialize_deserialize() {
     let key = vec![0x77u8; 32];
     let sealed = session.serialize(&key, 1).unwrap();
 
-    let (restored, restored_counter) =
-        aura_protected_protocol::api::AuraGroupSession::deserialize(&sealed, &key, ed25519_secret, 0)
-            .unwrap();
+    let (restored, restored_counter) = aura_protected_protocol::api::AuraGroupSession::deserialize(
+        &sealed,
+        &key,
+        ed25519_secret,
+        0,
+    )
+    .unwrap();
     assert_eq!(restored_counter, 1);
     assert_eq!(session.group_id().unwrap(), restored.group_id().unwrap());
     assert_eq!(session.epoch().unwrap(), restored.epoch().unwrap());
@@ -7899,12 +7933,12 @@ fn group_psk_commit_derives_epoch_keys_from_psk_and_requires_resolver() {
     };
 
     let psk_proposal = GroupProposal {
-        proposal: Some(aura_protected_protocol::proto::group_proposal::Proposal::Psk(
-            GroupPskProposal {
+        proposal: Some(
+            aura_protected_protocol::proto::group_proposal::Proposal::Psk(GroupPskProposal {
                 psk_id,
                 psk_nonce: psk_nonce.clone(),
-            },
-        )),
+            }),
+        ),
     };
 
     let mut alice_ed25519_sk = alice_id.get_identity_ed25519_private_key_copy().unwrap();
@@ -8377,32 +8411,38 @@ fn group_psk_proposal_validation() {
     .unwrap();
 
     let valid_psk = aura_protected_protocol::proto::GroupProposal {
-        proposal: Some(aura_protected_protocol::proto::group_proposal::Proposal::Psk(
-            aura_protected_protocol::proto::GroupPskProposal {
-                psk_id: b"my-psk".to_vec(),
-                psk_nonce: vec![0u8; 32],
-            },
-        )),
+        proposal: Some(
+            aura_protected_protocol::proto::group_proposal::Proposal::Psk(
+                aura_protected_protocol::proto::GroupPskProposal {
+                    psk_id: b"my-psk".to_vec(),
+                    psk_nonce: vec![0u8; 32],
+                },
+            ),
+        ),
     };
     assert!(validate_proposals(&tree, &[valid_psk], 0).is_ok());
 
     let empty_id = aura_protected_protocol::proto::GroupProposal {
-        proposal: Some(aura_protected_protocol::proto::group_proposal::Proposal::Psk(
-            aura_protected_protocol::proto::GroupPskProposal {
-                psk_id: vec![],
-                psk_nonce: vec![0u8; 32],
-            },
-        )),
+        proposal: Some(
+            aura_protected_protocol::proto::group_proposal::Proposal::Psk(
+                aura_protected_protocol::proto::GroupPskProposal {
+                    psk_id: vec![],
+                    psk_nonce: vec![0u8; 32],
+                },
+            ),
+        ),
     };
     assert!(validate_proposals(&tree, &[empty_id], 0).is_err());
 
     let bad_nonce = aura_protected_protocol::proto::GroupProposal {
-        proposal: Some(aura_protected_protocol::proto::group_proposal::Proposal::Psk(
-            aura_protected_protocol::proto::GroupPskProposal {
-                psk_id: b"my-psk".to_vec(),
-                psk_nonce: vec![0u8; 16],
-            },
-        )),
+        proposal: Some(
+            aura_protected_protocol::proto::group_proposal::Proposal::Psk(
+                aura_protected_protocol::proto::GroupPskProposal {
+                    psk_id: b"my-psk".to_vec(),
+                    psk_nonce: vec![0u8; 16],
+                },
+            ),
+        ),
     };
     assert!(validate_proposals(&tree, &[bad_nonce], 0).is_err());
 }
@@ -8428,22 +8468,26 @@ fn group_reinit_proposal_validation() {
     .unwrap();
 
     let valid_reinit = aura_protected_protocol::proto::GroupProposal {
-        proposal: Some(aura_protected_protocol::proto::group_proposal::Proposal::ReInit(
-            aura_protected_protocol::proto::GroupReInitProposal {
-                new_group_id: vec![0u8; 32],
-                new_version: 2,
-            },
-        )),
+        proposal: Some(
+            aura_protected_protocol::proto::group_proposal::Proposal::ReInit(
+                aura_protected_protocol::proto::GroupReInitProposal {
+                    new_group_id: vec![0u8; 32],
+                    new_version: 2,
+                },
+            ),
+        ),
     };
     assert!(validate_proposals(&tree, &[valid_reinit], 0).is_ok());
 
     let bad_reinit = aura_protected_protocol::proto::GroupProposal {
-        proposal: Some(aura_protected_protocol::proto::group_proposal::Proposal::ReInit(
-            aura_protected_protocol::proto::GroupReInitProposal {
-                new_group_id: vec![0u8; 16],
-                new_version: 2,
-            },
-        )),
+        proposal: Some(
+            aura_protected_protocol::proto::group_proposal::Proposal::ReInit(
+                aura_protected_protocol::proto::GroupReInitProposal {
+                    new_group_id: vec![0u8; 16],
+                    new_version: 2,
+                },
+            ),
+        ),
     };
     assert!(validate_proposals(&tree, &[bad_reinit], 0).is_err());
 }
@@ -8834,7 +8878,8 @@ fn group_context_hash_changes_each_epoch() {
         bob.process_commit(&commit).unwrap();
 
         let ps = alice.export_public_state().unwrap();
-        let state = aura_protected_protocol::proto::GroupPublicState::decode(ps.as_slice()).unwrap();
+        let state =
+            aura_protected_protocol::proto::GroupPublicState::decode(ps.as_slice()).unwrap();
         hashes.push(state.group_context_hash.clone());
     }
 
@@ -9890,7 +9935,8 @@ fn group_sender_signature_tampering_rejected() {
     let (alice, bob) = create_two_member_group();
 
     let ciphertext = alice.encrypt(b"sender-authenticated message").unwrap();
-    let mut msg = aura_protected_protocol::proto::GroupMessage::decode(ciphertext.as_slice()).unwrap();
+    let mut msg =
+        aura_protected_protocol::proto::GroupMessage::decode(ciphertext.as_slice()).unwrap();
 
     match msg.content.as_mut() {
         Some(aura_protected_protocol::proto::group_message::Content::Application(app)) => {
@@ -10143,7 +10189,8 @@ fn session_sealed_state_roundtrip_via_key() {
 
     let provider2 = StaticStateKeyProvider::new(key).unwrap();
     let restored =
-        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &provider2, 0).unwrap();
+        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &provider2, 0)
+            .unwrap();
 
     let env = restored.encrypt(b"after restore", 0, 0, None).unwrap();
     let dec = bob.decrypt(&env).unwrap();
@@ -10245,7 +10292,8 @@ fn group_pending_reinit_none_by_default() {
     init();
     let id = IdentityKeys::create(10).unwrap();
     let session =
-        aura_protected_protocol::protocol::group::GroupSession::create(&id, b"test".to_vec()).unwrap();
+        aura_protected_protocol::protocol::group::GroupSession::create(&id, b"test".to_vec())
+            .unwrap();
     assert!(session.pending_reinit().unwrap().is_none());
 }
 
@@ -10633,11 +10681,13 @@ fn group_external_join_with_remove_rejected() {
     commit
         .proposals
         .push(aura_protected_protocol::proto::GroupProposal {
-            proposal: Some(aura_protected_protocol::proto::group_proposal::Proposal::Remove(
-                aura_protected_protocol::proto::GroupRemoveProposal {
-                    removed_leaf_index: 0,
-                },
-            )),
+            proposal: Some(
+                aura_protected_protocol::proto::group_proposal::Proposal::Remove(
+                    aura_protected_protocol::proto::GroupRemoveProposal {
+                        removed_leaf_index: 0,
+                    },
+                ),
+            ),
         });
 
     commit.committer_signature.clear();
@@ -10679,19 +10729,22 @@ fn group_external_join_with_extra_add_rejected() {
         aura_protected_protocol::proto::GroupCommit::decode(ext_commit_bytes.as_slice()).unwrap();
 
     let extra_id = IdentityKeys::create(30).unwrap();
-    let (extra_kp, _, _) = aura_protected_protocol::protocol::group::key_package::create_key_package(
-        &extra_id,
-        b"extra".to_vec(),
-    )
-    .unwrap();
+    let (extra_kp, _, _) =
+        aura_protected_protocol::protocol::group::key_package::create_key_package(
+            &extra_id,
+            b"extra".to_vec(),
+        )
+        .unwrap();
     commit
         .proposals
         .push(aura_protected_protocol::proto::GroupProposal {
-            proposal: Some(aura_protected_protocol::proto::group_proposal::Proposal::Add(
-                aura_protected_protocol::proto::GroupAddProposal {
-                    key_package: Some(extra_kp),
-                },
-            )),
+            proposal: Some(
+                aura_protected_protocol::proto::group_proposal::Proposal::Add(
+                    aura_protected_protocol::proto::GroupAddProposal {
+                        key_package: Some(extra_kp),
+                    },
+                ),
+            ),
         });
 
     commit.committer_signature.clear();
@@ -10732,12 +10785,14 @@ fn group_external_join_with_psk_rejected() {
     commit
         .proposals
         .push(aura_protected_protocol::proto::GroupProposal {
-            proposal: Some(aura_protected_protocol::proto::group_proposal::Proposal::Psk(
-                aura_protected_protocol::proto::GroupPskProposal {
-                    psk_id: b"psk-1".to_vec(),
-                    psk_nonce: vec![0x42; 32],
-                },
-            )),
+            proposal: Some(
+                aura_protected_protocol::proto::group_proposal::Proposal::Psk(
+                    aura_protected_protocol::proto::GroupPskProposal {
+                        psk_id: b"psk-1".to_vec(),
+                        psk_nonce: vec![0x42; 32],
+                    },
+                ),
+            ),
         });
 
     commit.committer_signature.clear();
@@ -10775,12 +10830,14 @@ fn group_external_join_with_reinit_rejected() {
     commit
         .proposals
         .push(aura_protected_protocol::proto::GroupProposal {
-            proposal: Some(aura_protected_protocol::proto::group_proposal::Proposal::ReInit(
-                aura_protected_protocol::proto::GroupReInitProposal {
-                    new_group_id: vec![0xAB; 32],
-                    new_version: 1,
-                },
-            )),
+            proposal: Some(
+                aura_protected_protocol::proto::group_proposal::Proposal::ReInit(
+                    aura_protected_protocol::proto::GroupReInitProposal {
+                        new_group_id: vec![0xAB; 32],
+                        new_version: 1,
+                    },
+                ),
+            ),
         });
 
     commit.committer_signature.clear();
@@ -10897,18 +10954,21 @@ fn group_reinit_with_add_proposal_rejected() {
         .create_reinit_commit(vec![0xAB; 32], 1)
         .unwrap();
     let mut commit =
-        aura_protected_protocol::proto::GroupCommit::decode(reinit_commit_bytes.as_slice()).unwrap();
+        aura_protected_protocol::proto::GroupCommit::decode(reinit_commit_bytes.as_slice())
+            .unwrap();
     let extra_id = IdentityKeys::create(10).unwrap();
     let (extra_kp, _, _) =
         group::key_package::create_key_package(&extra_id, b"extra".to_vec()).unwrap();
     commit
         .proposals
         .push(aura_protected_protocol::proto::GroupProposal {
-            proposal: Some(aura_protected_protocol::proto::group_proposal::Proposal::Add(
-                aura_protected_protocol::proto::GroupAddProposal {
-                    key_package: Some(extra_kp),
-                },
-            )),
+            proposal: Some(
+                aura_protected_protocol::proto::group_proposal::Proposal::Add(
+                    aura_protected_protocol::proto::GroupAddProposal {
+                        key_package: Some(extra_kp),
+                    },
+                ),
+            ),
         });
     commit.committer_signature.clear();
     let sk = alice_id.get_identity_ed25519_private_key_copy().unwrap();
@@ -11356,7 +11416,8 @@ fn group_encrypt_decrypt_read_receipt() {
         aura_protected_protocol::protocol::group::ContentType::ReadReceipt
     );
     let receipt =
-        aura_protected_protocol::proto::GroupReadReceipt::decode(result.plaintext.as_slice()).unwrap();
+        aura_protected_protocol::proto::GroupReadReceipt::decode(result.plaintext.as_slice())
+            .unwrap();
     assert_eq!(receipt.message_ids.len(), 3);
     assert_eq!(receipt.timestamp, ts);
 }
