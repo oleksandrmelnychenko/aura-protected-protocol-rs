@@ -17,8 +17,7 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "AuraProtectedProtocol",
-            url: "https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs/releases/download/v2.0.0/aura-protected-protocol.xcframework.zip",
-            checksum: "PENDING_V2_0_0_RELEASE"
+            path: "dist/apple/AuraProtectedProtocol.xcframework"
         ),
         .target(
             name: "AuraProtectedProtocolSwift",

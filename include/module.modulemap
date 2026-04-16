@@ -1,4 +1,4 @@
-framework module AuraProtectedProtocolC {
+module AuraProtectedProtocolC {
   header "aura_api.h"
   header "aura_export.h"
   export *
