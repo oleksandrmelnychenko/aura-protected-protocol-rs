@@ -1,8 +1,8 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::crypto::CryptoInterop;
-use ecliptix_protocol::identity::IdentityKeys;
+use aura_protected_protocol::crypto::CryptoInterop;
+use aura_protected_protocol::identity::IdentityKeys;
 use std::sync::Once;
 
 static INIT: Once = Once::new();

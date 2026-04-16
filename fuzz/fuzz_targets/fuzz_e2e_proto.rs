@@ -2,7 +2,7 @@
 use libfuzzer_sys::fuzz_target;
 use prost::Message;
 
-use ecliptix_protocol::proto::e2e::{
+use aura_protected_protocol::proto::e2e::{
     AckEventsRequest, CryptoEnvelope, DeviceLinkCompleteRequest, DeviceLinkCompleteResponse,
     DeviceLinkInitRequest, FetchPendingEventsRequest, FetchPendingEventsResponse,
     GroupCommitEnvelope, KeyPackageFetchRequest, KeyPackageFetchResponse, KeyPackageUpload,

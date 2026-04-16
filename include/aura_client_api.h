@@ -1,12 +1,12 @@
 #pragma once
-#include "epp_common_api.h"
+#include "aura_common_api.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /*
- * Client-side E2E API — Ecliptix Protection Protocol
+ * Client-side E2E API — Aura Protection Protocol
  *
  * All operations here involve private key material and run entirely on the
  * client device. The relay never calls these functions.
@@ -17,20 +17,20 @@ extern "C" {
  *     _destroy() function when done. Reusing the same output slot across
  *     successful calls is allowed; the FFI layer replaces any previous
  *     FFI-owned handle before writing the new one.
- *   - Parameters named `out_*` of type EppBuffer* write a heap-allocated
- *     buffer owned by the caller. Release it with epp_buffer_release().
- *     Reusing the same EppBuffer across successful calls is allowed; the FFI
+ *   - Parameters named `out_*` of type AuraBuffer* write a heap-allocated
+ *     buffer owned by the caller. Release it with aura_buffer_release().
+ *     Reusing the same AuraBuffer across successful calls is allowed; the FFI
  *     layer replaces any previous FFI-owned contents before writing new data.
  *   - Parameters named `out_error` receive an optional error detail struct.
  *     If non-NULL and an error occurs the struct is populated; free it with
- *     epp_error_free() after use.  Pass NULL to ignore error details.
+ *     aura_error_free() after use.  Pass NULL to ignore error details.
  *   - All byte-slice inputs (`const uint8_t* foo, size_t foo_length`) are
  *     borrowed for the duration of the call only; the caller retains ownership.
  *   - Handles are NOT thread-safe. Do not share a single handle across threads
  *     without external synchronisation.
  *
  * ERROR HANDLING:
- *   Every fallible function returns EppErrorCode. Check for EPP_SUCCESS (0)
+ *   Every fallible function returns AuraErrorCode. Check for AURA_SUCCESS (0)
  *   before reading any out_* value — they are undefined on failure.
  */
 
@@ -38,24 +38,24 @@ extern "C" {
  * Opaque handle types
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-typedef struct EppIdentityHandle          EppIdentityHandle;
-typedef struct EppSessionHandle           EppSessionHandle;
-typedef struct EppVoipSessionHandle       EppVoipSessionHandle;
-typedef struct EppGroupSessionHandle      EppGroupSessionHandle;
-typedef struct EppKeyPackageSecretsHandle EppKeyPackageSecretsHandle;
-typedef struct EppHandshakeInitiatorHandle EppHandshakeInitiatorHandle;
-typedef struct EppHandshakeResponderHandle EppHandshakeResponderHandle;
-typedef struct EppVoipCallInitiatorHandle EppVoipCallInitiatorHandle;
-typedef struct EppSealedStateCounterTrackerHandle EppSealedStateCounterTrackerHandle;
-typedef struct EppSealedStateSlotHandle EppSealedStateSlotHandle;
-typedef struct EppTimeProviderHandle EppTimeProviderHandle;
+typedef struct AuraIdentityHandle          AuraIdentityHandle;
+typedef struct AuraSessionHandle           AuraSessionHandle;
+typedef struct AuraVoipSessionHandle       AuraVoipSessionHandle;
+typedef struct AuraGroupSessionHandle      AuraGroupSessionHandle;
+typedef struct AuraKeyPackageSecretsHandle AuraKeyPackageSecretsHandle;
+typedef struct AuraHandshakeInitiatorHandle AuraHandshakeInitiatorHandle;
+typedef struct AuraHandshakeResponderHandle AuraHandshakeResponderHandle;
+typedef struct AuraVoipCallInitiatorHandle AuraVoipCallInitiatorHandle;
+typedef struct AuraSealedStateCounterTrackerHandle AuraSealedStateCounterTrackerHandle;
+typedef struct AuraSealedStateSlotHandle AuraSealedStateSlotHandle;
+typedef struct AuraTimeProviderHandle AuraTimeProviderHandle;
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Configuration structs
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /*
- * EppSessionConfig — tuning parameters for a 1-to-1 Double Ratchet session.
+ * AuraSessionConfig — tuning parameters for a 1-to-1 Double Ratchet session.
  *
  *   max_messages_per_chain
  *     Maximum number of messages that may be encrypted under a single ratchet
@@ -63,12 +63,12 @@ typedef struct EppTimeProviderHandle EppTimeProviderHandle;
  *     library default (100).  Smaller values improve forward secrecy at the
  *     cost of slightly more frequent key-exchange round-trips.
  */
-typedef struct EppSessionConfig {
+typedef struct AuraSessionConfig {
     uint32_t max_messages_per_chain;
-} EppSessionConfig;
+} AuraSessionConfig;
 
 /*
- * EppGroupSecurityPolicy — per-group security constraints.
+ * AuraGroupSecurityPolicy — per-group security constraints.
  *
  *   max_messages_per_epoch
  *     Hard cap on sender-key messages before a mandatory Update commit is
@@ -89,19 +89,19 @@ typedef struct EppSessionConfig {
  *
  *   mandatory_franking
  *     Non-zero: all outgoing group messages MUST include a franking tag.
- *     Calls to epp_group_encrypt() (non-frankable) will return
- *     EPP_ERROR_INVALID_STATE when this flag is set.
+ *     Calls to aura_group_encrypt() (non-frankable) will return
+ *     AURA_ERROR_INVALID_STATE when this flag is set.
  */
-typedef struct EppGroupSecurityPolicy {
+typedef struct AuraGroupSecurityPolicy {
     uint32_t max_messages_per_epoch;
     uint32_t max_skipped_keys_per_sender;
     uint8_t  block_external_join;
     uint8_t  enhanced_key_schedule;
     uint8_t  mandatory_franking;
-} EppGroupSecurityPolicy;
+} AuraGroupSecurityPolicy;
 
 /*
- * epp_sealed_state_counter_tracker_* — managed anti-rollback helper for sealed
+ * aura_sealed_state_counter_tracker_* — managed anti-rollback helper for sealed
  * session/group/VoIP state slots.
  *
  * This tracker persists the two values required to use sealed-state rollback
@@ -109,48 +109,48 @@ typedef struct EppGroupSecurityPolicy {
  *   - max_restored_counter: highest blob counter already accepted on restore.
  *   - latest_issued_counter: highest counter already used for export.
  *
- * Prefer epp_sealed_state_slot_* plus the `*_persisted_state` APIs for new
+ * Prefer aura_sealed_state_slot_* plus the `*_persisted_state` APIs for new
  * clients. The tracker APIs are the lower-level managed surface when the
  * application still wants to store the sealed blob separately.
  */
-EPP_API EppErrorCode epp_sealed_state_counter_tracker_create(
-    EppSealedStateCounterTrackerHandle** out_handle,
-    EppError*                            out_error);
+AURA_API AuraErrorCode aura_sealed_state_counter_tracker_create(
+    AuraSealedStateCounterTrackerHandle** out_handle,
+    AuraError*                            out_error);
 
 /*
  * Recreate a tracker from bytes previously returned by
- * epp_sealed_state_counter_tracker_serialize().
+ * aura_sealed_state_counter_tracker_serialize().
  */
-EPP_API EppErrorCode epp_sealed_state_counter_tracker_create_from_serialized(
+AURA_API AuraErrorCode aura_sealed_state_counter_tracker_create_from_serialized(
     const uint8_t*                       data,
     size_t                               data_length,
-    EppSealedStateCounterTrackerHandle** out_handle,
-    EppError*                            out_error);
+    AuraSealedStateCounterTrackerHandle** out_handle,
+    AuraError*                            out_error);
 
 /*
  * Serialize the tracker so it can be persisted next to the sealed blob for
  * the same slot.
  */
-EPP_API EppErrorCode epp_sealed_state_counter_tracker_serialize(
-    EppSealedStateCounterTrackerHandle* handle,
-    EppBuffer*                          out_state,
-    EppError*                           out_error);
+AURA_API AuraErrorCode aura_sealed_state_counter_tracker_serialize(
+    AuraSealedStateCounterTrackerHandle* handle,
+    AuraBuffer*                          out_state,
+    AuraError*                           out_error);
 
-EPP_API EppErrorCode epp_sealed_state_counter_tracker_get_max_restored_counter(
-    EppSealedStateCounterTrackerHandle* handle,
+AURA_API AuraErrorCode aura_sealed_state_counter_tracker_get_max_restored_counter(
+    AuraSealedStateCounterTrackerHandle* handle,
     uint64_t*                           out_counter,
-    EppError*                           out_error);
+    AuraError*                           out_error);
 
-EPP_API EppErrorCode epp_sealed_state_counter_tracker_get_latest_issued_counter(
-    EppSealedStateCounterTrackerHandle* handle,
+AURA_API AuraErrorCode aura_sealed_state_counter_tracker_get_latest_issued_counter(
+    AuraSealedStateCounterTrackerHandle* handle,
     uint64_t*                           out_counter,
-    EppError*                           out_error);
+    AuraError*                           out_error);
 
-EPP_API void epp_sealed_state_counter_tracker_destroy(
-    EppSealedStateCounterTrackerHandle** handle);
+AURA_API void aura_sealed_state_counter_tracker_destroy(
+    AuraSealedStateCounterTrackerHandle** handle);
 
 /*
- * epp_sealed_state_slot_* — single-record sealed-state persistence helper.
+ * aura_sealed_state_slot_* — single-record sealed-state persistence helper.
  *
  * A slot bundles the latest sealed blob together with the tracker state in one
  * serializable object. This removes the "blob and tracker stored separately"
@@ -161,50 +161,50 @@ EPP_API void epp_sealed_state_counter_tracker_destroy(
  * slot still defeats rollback protection unless the application also relies on
  * trusted monotonic storage outside that slot.
  */
-EPP_API EppErrorCode epp_sealed_state_slot_create(
-    EppSealedStateSlotHandle** out_handle,
-    EppError*                  out_error);
+AURA_API AuraErrorCode aura_sealed_state_slot_create(
+    AuraSealedStateSlotHandle** out_handle,
+    AuraError*                  out_error);
 
-EPP_API EppErrorCode epp_sealed_state_slot_create_from_serialized(
+AURA_API AuraErrorCode aura_sealed_state_slot_create_from_serialized(
     const uint8_t*             data,
     size_t                     data_length,
-    EppSealedStateSlotHandle** out_handle,
-    EppError*                  out_error);
+    AuraSealedStateSlotHandle** out_handle,
+    AuraError*                  out_error);
 
-EPP_API EppErrorCode epp_sealed_state_slot_serialize(
-    EppSealedStateSlotHandle* handle,
-    EppBuffer*                out_state,
-    EppError*                 out_error);
+AURA_API AuraErrorCode aura_sealed_state_slot_serialize(
+    AuraSealedStateSlotHandle* handle,
+    AuraBuffer*                out_state,
+    AuraError*                 out_error);
 
-EPP_API EppErrorCode epp_sealed_state_slot_get_max_restored_counter(
-    EppSealedStateSlotHandle* handle,
+AURA_API AuraErrorCode aura_sealed_state_slot_get_max_restored_counter(
+    AuraSealedStateSlotHandle* handle,
     uint64_t*                 out_counter,
-    EppError*                 out_error);
+    AuraError*                 out_error);
 
-EPP_API EppErrorCode epp_sealed_state_slot_get_latest_issued_counter(
-    EppSealedStateSlotHandle* handle,
+AURA_API AuraErrorCode aura_sealed_state_slot_get_latest_issued_counter(
+    AuraSealedStateSlotHandle* handle,
     uint64_t*                 out_counter,
-    EppError*                 out_error);
+    AuraError*                 out_error);
 
-EPP_API void epp_sealed_state_slot_destroy(
-    EppSealedStateSlotHandle** handle);
+AURA_API void aura_sealed_state_slot_destroy(
+    AuraSealedStateSlotHandle** handle);
 
 /*
- * EppGroupDecryptResult — full metadata returned by epp_group_decrypt_ex().
+ * AuraGroupDecryptResult — full metadata returned by aura_group_decrypt_ex().
  *
  *   plaintext
- *     Decrypted message content.  Owned by the caller; release all EppBuffer
- *     fields inside this struct with epp_group_decrypt_result_free().
- *     Do NOT call epp_buffer_release() on individual fields manually.
+ *     Decrypted message content.  Owned by the caller; release all AuraBuffer
+ *     fields inside this struct with aura_group_decrypt_result_free().
+ *     Do NOT call aura_buffer_release() on individual fields manually.
  *
  *   sender_leaf_index
  *     Zero-based leaf index of the sending member in the ratchet tree.
- *     Use epp_group_get_member_leaf_indices() to map indices to credentials.
+ *     Use aura_group_get_member_leaf_indices() to map indices to credentials.
  *
  *   generation
  *     Per-sender message counter within the current epoch (starts at 0).
  *     Together with epoch + sender_leaf_index this uniquely identifies a
- *     message; use epp_group_compute_message_id() to derive the canonical ID.
+ *     message; use aura_group_compute_message_id() to derive the canonical ID.
  *
  *   content_type
  *     Message subtype: 0=normal, 1=sealed, 2=disappearing, 3=frankable,
@@ -227,40 +227,40 @@ EPP_API void epp_sealed_state_slot_destroy(
  *
  *   has_sealed_payload
  *     Non-zero when the message carries a sealed (two-layer) encrypted
- *     payload.  Use epp_group_reveal_sealed() to decrypt the inner layer.
+ *     payload.  Use aura_group_reveal_sealed() to decrypt the inner layer.
  *
  *   has_franking_data
  *     Non-zero when the message carries a franking tag and franking key
- *     suitable for abuse reporting via epp_group_verify_franking().
+ *     suitable for abuse reporting via aura_group_verify_franking().
  *
  *   sealed_*
  *     Present only when has_sealed_payload != 0.  These buffers provide the
- *     exact inputs required by epp_group_reveal_sealed().
+ *     exact inputs required by aura_group_reveal_sealed().
  *
  *   franking_*
  *     Present only when has_franking_data != 0.  These buffers provide the
- *     exact inputs required by epp_group_verify_franking().
+ *     exact inputs required by aura_group_verify_franking().
  */
 typedef struct {
-    EppBuffer plaintext;
+    AuraBuffer plaintext;
     uint32_t  sender_leaf_index;
     uint32_t  generation;
     uint32_t  content_type;
     uint32_t  ttl_seconds;
     uint64_t  sent_timestamp;
-    EppBuffer message_id;
-    EppBuffer referenced_message_id;
+    AuraBuffer message_id;
+    AuraBuffer referenced_message_id;
     uint8_t   has_sealed_payload;
     uint8_t   has_franking_data;
-    EppBuffer sealed_hint;
-    EppBuffer sealed_encrypted_content;
-    EppBuffer sealed_nonce;
-    EppBuffer sealed_key;
-    EppBuffer franking_tag;
-    EppBuffer franking_key;
-    EppBuffer franking_content;
-    EppBuffer franking_sealed_content;
-} EppGroupDecryptResult;
+    AuraBuffer sealed_hint;
+    AuraBuffer sealed_encrypted_content;
+    AuraBuffer sealed_nonce;
+    AuraBuffer sealed_key;
+    AuraBuffer franking_tag;
+    AuraBuffer franking_key;
+    AuraBuffer franking_content;
+    AuraBuffer franking_sealed_content;
+} AuraGroupDecryptResult;
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -268,7 +268,7 @@ typedef struct {
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /*
- * epp_identity_create — generate a fresh identity with random keys.
+ * aura_identity_create — generate a fresh identity with random keys.
  *
  * Creates a new long-term identity consisting of:
  *   - X25519 Diffie-Hellman key pair (classic DH for X3DH)
@@ -277,17 +277,17 @@ typedef struct {
  *
  * Parameters:
  *   out_handle  — receives a pointer to the newly allocated identity handle.
- *                 Must be destroyed with epp_identity_destroy() when done.
+ *                 Must be destroyed with aura_identity_destroy() when done.
  *   out_error   — optional; receives error detail on failure.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_KEY_GENERATION.
+ * Returns: AURA_SUCCESS or AURA_ERROR_KEY_GENERATION.
  */
-EPP_API EppErrorCode epp_identity_create(
-    EppIdentityHandle** out_handle,
-    EppError*           out_error);
+AURA_API AuraErrorCode aura_identity_create(
+    AuraIdentityHandle** out_handle,
+    AuraError*           out_error);
 
 /*
- * epp_identity_create_from_seed — derive a deterministic identity from a seed.
+ * aura_identity_create_from_seed — derive a deterministic identity from a seed.
  *
  * Derives all key pairs via HKDF from the provided seed bytes.  The same
  * seed always produces the same identity.  Use at least 32 bytes of
@@ -299,19 +299,19 @@ EPP_API EppErrorCode epp_identity_create(
  *   out_handle   — receives the newly allocated identity handle.
  *   out_error    — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_INVALID_INPUT, or EPP_ERROR_KEY_GENERATION.
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT, or AURA_ERROR_KEY_GENERATION.
  */
-EPP_API EppErrorCode epp_identity_create_from_seed(
+AURA_API AuraErrorCode aura_identity_create_from_seed(
     const uint8_t*      seed,
     size_t              seed_length,
-    EppIdentityHandle** out_handle,
-    EppError*           out_error);
+    AuraIdentityHandle** out_handle,
+    AuraError*           out_error);
 
 /*
- * epp_identity_create_with_context — derive a deterministic identity bound
+ * aura_identity_create_with_context — derive a deterministic identity bound
  * to a membership context string.
  *
- * Like epp_identity_create_from_seed() but additionally mixes a
+ * Like aura_identity_create_from_seed() but additionally mixes a
  * membership_id string into the key derivation.  This allows the same
  * root seed to produce different identities for different services or
  * group contexts without risk of key reuse.
@@ -326,54 +326,54 @@ EPP_API EppErrorCode epp_identity_create_from_seed(
  *   out_handle          — receives the newly allocated identity handle.
  *   out_error           — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_INVALID_INPUT, or EPP_ERROR_KEY_GENERATION.
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT, or AURA_ERROR_KEY_GENERATION.
  */
-EPP_API EppErrorCode epp_identity_create_with_context(
+AURA_API AuraErrorCode aura_identity_create_with_context(
     const uint8_t*      seed,
     size_t              seed_length,
     const char*         membership_id,
     size_t              membership_id_length,
-    EppIdentityHandle** out_handle,
-    EppError*           out_error);
+    AuraIdentityHandle** out_handle,
+    AuraError*           out_error);
 
 /*
- * epp_time_provider_manual_create — create a mutable manual clock handle.
+ * aura_time_provider_manual_create — create a mutable manual clock handle.
  *
  * Manual time providers are intended for tests, deterministic replay, or
  * environments that want to drive time-sensitive protocol checks from an
  * application-managed trusted clock. Identity handles use the system clock by
- * default until epp_identity_set_time_provider() is called.
+ * default until aura_identity_set_time_provider() is called.
  */
-EPP_API EppErrorCode epp_time_provider_manual_create(
+AURA_API AuraErrorCode aura_time_provider_manual_create(
     uint64_t                initial_now_unix,
-    EppTimeProviderHandle** out_handle,
-    EppError*               out_error);
+    AuraTimeProviderHandle** out_handle,
+    AuraError*               out_error);
 
 /*
- * epp_time_provider_manual_set_now_unix — advance a manual clock.
+ * aura_time_provider_manual_set_now_unix — advance a manual clock.
  *
  * Fails if handle is NULL, destroyed, not a manual provider, or `now_unix`
  * would move the clock backwards.
  */
-EPP_API EppErrorCode epp_time_provider_manual_set_now_unix(
-    EppTimeProviderHandle* handle,
+AURA_API AuraErrorCode aura_time_provider_manual_set_now_unix(
+    AuraTimeProviderHandle* handle,
     uint64_t               now_unix,
-    EppError*              out_error);
+    AuraError*              out_error);
 
 /*
- * epp_identity_set_time_provider — bind an identity handle to a clock.
+ * aura_identity_set_time_provider — bind an identity handle to a clock.
  *
  * Identity-bound operations such as handshake start/finish, group create/join,
  * ExternalInit join, and VoIP call establishment inherit this provider. Pass
  * NULL as time_provider_handle to reset the identity back to the system clock.
  */
-EPP_API EppErrorCode epp_identity_set_time_provider(
-    EppIdentityHandle*          handle,
-    const EppTimeProviderHandle* time_provider_handle,
-    EppError*                   out_error);
+AURA_API AuraErrorCode aura_identity_set_time_provider(
+    AuraIdentityHandle*          handle,
+    const AuraTimeProviderHandle* time_provider_handle,
+    AuraError*                   out_error);
 
 /*
- * epp_identity_get_x25519_public — copy the X25519 public key into a
+ * aura_identity_get_x25519_public — copy the X25519 public key into a
  * caller-allocated buffer.
  *
  * Parameters:
@@ -382,16 +382,16 @@ EPP_API EppErrorCode epp_identity_set_time_provider(
  *   out_key_length  — size of out_key in bytes; must be >= 32.
  *   out_error       — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_BUFFER_TOO_SMALL.
+ * Returns: AURA_SUCCESS or AURA_ERROR_BUFFER_TOO_SMALL.
  */
-EPP_API EppErrorCode epp_identity_get_x25519_public(
-    const EppIdentityHandle* handle,
+AURA_API AuraErrorCode aura_identity_get_x25519_public(
+    const AuraIdentityHandle* handle,
     uint8_t*                 out_key,
     size_t                   out_key_length,
-    EppError*                out_error);
+    AuraError*                out_error);
 
 /*
- * epp_identity_get_ed25519_public — copy the Ed25519 public key into a
+ * aura_identity_get_ed25519_public — copy the Ed25519 public key into a
  * caller-allocated buffer.
  *
  * Parameters:
@@ -400,16 +400,16 @@ EPP_API EppErrorCode epp_identity_get_x25519_public(
  *   out_key_length  — size of out_key in bytes.
  *   out_error       — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_BUFFER_TOO_SMALL.
+ * Returns: AURA_SUCCESS or AURA_ERROR_BUFFER_TOO_SMALL.
  */
-EPP_API EppErrorCode epp_identity_get_ed25519_public(
-    const EppIdentityHandle* handle,
+AURA_API AuraErrorCode aura_identity_get_ed25519_public(
+    const AuraIdentityHandle* handle,
     uint8_t*                 out_key,
     size_t                   out_key_length,
-    EppError*                out_error);
+    AuraError*                out_error);
 
 /*
- * epp_identity_get_kyber_public — copy the Kyber-768 public key into a
+ * aura_identity_get_kyber_public — copy the Kyber-768 public key into a
  * caller-allocated buffer.
  *
  * Parameters:
@@ -419,31 +419,31 @@ EPP_API EppErrorCode epp_identity_get_ed25519_public(
  *   out_key_length  — size of out_key in bytes.
  *   out_error       — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_BUFFER_TOO_SMALL.
+ * Returns: AURA_SUCCESS or AURA_ERROR_BUFFER_TOO_SMALL.
  */
-EPP_API EppErrorCode epp_identity_get_kyber_public(
-    const EppIdentityHandle* handle,
+AURA_API AuraErrorCode aura_identity_get_kyber_public(
+    const AuraIdentityHandle* handle,
     uint8_t*                 out_key,
     size_t                   out_key_length,
-    EppError*                out_error);
+    AuraError*                out_error);
 
 /*
- * epp_identity_destroy — free an identity handle and securely wipe
+ * aura_identity_destroy — free an identity handle and securely wipe
  * all private key material.
  *
  * Sets *handle to NULL after freeing.  Safe to call with *handle == NULL
  * (no-op).  Do not use the handle after this call.
  *
  * Parameters:
- *   handle — pointer-to-pointer returned by an epp_identity_create* call.
+ *   handle — pointer-to-pointer returned by an aura_identity_create* call.
  */
-EPP_API void epp_identity_destroy(EppIdentityHandle** handle);
+AURA_API void aura_identity_destroy(AuraIdentityHandle** handle);
 
 /*
- * epp_time_provider_destroy — free a manual time provider handle. Safe to call
+ * aura_time_provider_destroy — free a manual time provider handle. Safe to call
  * with NULL.
  */
-EPP_API void epp_time_provider_destroy(EppTimeProviderHandle** handle_ptr);
+AURA_API void aura_time_provider_destroy(AuraTimeProviderHandle** handle_ptr);
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -451,10 +451,10 @@ EPP_API void epp_time_provider_destroy(EppTimeProviderHandle** handle_ptr);
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /*
- * EppSessionPeerIdentity — fixed-size struct carrying a session participant's
+ * AuraSessionPeerIdentity — fixed-size struct carrying a session participant's
  * public keys.  No heap allocation; safe to copy on the stack.
- * Populated by epp_session_get_peer_identity() and
- * epp_session_get_local_identity().
+ * Populated by aura_session_get_peer_identity() and
+ * aura_session_get_local_identity().
  *
  *   ed25519_public — 32-byte Ed25519 public key (signature verification).
  *   x25519_public  — 32-byte X25519 public key (Diffie-Hellman).
@@ -462,14 +462,14 @@ EPP_API void epp_time_provider_destroy(EppTimeProviderHandle** handle_ptr);
 typedef struct {
     uint8_t ed25519_public[32];
     uint8_t x25519_public[32];
-} EppSessionPeerIdentity;
+} AuraSessionPeerIdentity;
 
 /*
- * EppEnvelopeMetadata — parsed metadata from a 1-to-1 session decrypt call.
+ * AuraEnvelopeMetadata — parsed metadata from a 1-to-1 session decrypt call.
  *
- * Obtained by passing the raw out_metadata buffer from epp_session_decrypt()
- * into epp_envelope_metadata_parse().  Free its heap contents with
- * epp_envelope_metadata_free() when done.  Do NOT free the struct itself —
+ * Obtained by passing the raw out_metadata buffer from aura_session_decrypt()
+ * into aura_envelope_metadata_parse().  Free its heap contents with
+ * aura_envelope_metadata_free() when done.  Do NOT free the struct itself —
  * it is caller-allocated (typically on the stack).
  *
  *   envelope_type          — semantic type of the message.
@@ -479,20 +479,20 @@ typedef struct {
  *                            the ratchet (useful for detecting gaps).
  *   correlation_id         — optional null-terminated application tracing
  *                            string; NULL when the sender did not set one.
- *                            Heap-allocated; freed by epp_envelope_metadata_free().
+ *                            Heap-allocated; freed by aura_envelope_metadata_free().
  *   correlation_id_length  — byte length of correlation_id (excluding NUL);
  *                            0 when correlation_id is NULL.
  */
 typedef struct {
-    EppEnvelopeType envelope_type;
+    AuraEnvelopeType envelope_type;
     uint32_t        envelope_id;
     uint64_t        message_index;
     char*           correlation_id;
     size_t          correlation_id_length;
-} EppEnvelopeMetadata;
+} AuraEnvelopeMetadata;
 
 /*
- * epp_prekey_bundle_create — serialise the identity's public keys into a
+ * aura_prekey_bundle_create — serialise the identity's public keys into a
  * prekey bundle suitable for upload to a key server.
  *
  * The bundle contains: identity public keys (X25519 + Ed25519 + Kyber-768),
@@ -503,18 +503,18 @@ typedef struct {
  *   identity_keys — valid identity handle whose public keys are exported.
  *                   The handle is NOT consumed; it remains valid after the call.
  *   out_bundle    — receives a heap-allocated protobuf-encoded bundle.
- *                   Release with epp_buffer_release() when done.
+ *                   Release with aura_buffer_release() when done.
  *   out_error     — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_ENCODE, or EPP_ERROR_KEY_GENERATION.
+ * Returns: AURA_SUCCESS, AURA_ERROR_ENCODE, or AURA_ERROR_KEY_GENERATION.
  */
-EPP_API EppErrorCode epp_prekey_bundle_create(
-    const EppIdentityHandle* identity_keys,
-    EppBuffer*               out_bundle,
-    EppError*                out_error);
+AURA_API AuraErrorCode aura_prekey_bundle_create(
+    const AuraIdentityHandle* identity_keys,
+    AuraBuffer*               out_bundle,
+    AuraError*                out_error);
 
 /*
- * epp_prekey_bundle_replenish — generate fresh one-time prekeys and add them
+ * aura_prekey_bundle_replenish — generate fresh one-time prekeys and add them
  * to the identity's local pool.
  *
  * Each successful X3DH handshake consumes one OTK from the responder's
@@ -523,7 +523,7 @@ EPP_API EppErrorCode epp_prekey_bundle_create(
  * server.
  *
  * The returned buffer is a partial PreKeyBundle protobuf with only the
- * one_time_pre_keys field populated (same schema as epp_prekey_bundle_create
+ * one_time_pre_keys field populated (same schema as aura_prekey_bundle_create
  * output).  The server merges these into the existing bundle for that identity.
  *
  * Parameters:
@@ -531,19 +531,19 @@ EPP_API EppErrorCode epp_prekey_bundle_create(
  *                     stored in the handle's internal pool so future responder
  *                     handshakes can use them automatically.
  *   count           — number of new OTKs to generate; must be > 0.
- *                     Recommended: EPP_DEFAULT_ONE_TIME_KEY_COUNT (100).
+ *                     Recommended: AURA_DEFAULT_ONE_TIME_KEY_COUNT (100).
  *   out_keys        — receives the serialised partial PreKeyBundle containing
  *                     only the new OTKs' public keys and IDs
- *                     (release with epp_buffer_release()).
+ *                     (release with aura_buffer_release()).
  *   out_error       — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_INVALID_INPUT, or EPP_ERROR_KEY_GENERATION.
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT, or AURA_ERROR_KEY_GENERATION.
  */
-EPP_API EppErrorCode epp_prekey_bundle_replenish(
-    EppIdentityHandle*  identity_handle,
+AURA_API AuraErrorCode aura_prekey_bundle_replenish(
+    AuraIdentityHandle*  identity_handle,
     uint32_t            count,
-    EppBuffer*          out_keys,
-    EppError*           out_error);
+    AuraBuffer*          out_keys,
+    AuraError*           out_error);
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -555,17 +555,17 @@ EPP_API EppErrorCode epp_prekey_bundle_replenish(
  * Flow:
  *   Initiator                          Responder
  *   ─────────────────────────────────────────────
- *   epp_handshake_initiator_start()
+ *   aura_handshake_initiator_start()
  *     → out_handshake_init  ──────────────────────►
- *                                epp_handshake_responder_start()
+ *                                aura_handshake_responder_start()
  *                                  → out_handshake_ack
  *                  ◄──────────────────────────────
- *   epp_handshake_initiator_finish()               epp_handshake_responder_finish()
- *     → EppSessionHandle                            → EppSessionHandle
+ *   aura_handshake_initiator_finish()               aura_handshake_responder_finish()
+ *     → AuraSessionHandle                            → AuraSessionHandle
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /*
- * epp_handshake_initiator_start — begin a handshake as the initiating party.
+ * aura_handshake_initiator_start — begin a handshake as the initiating party.
  *
  * Fetches the peer's prekey bundle, generates ephemeral keys, performs the
  * hybrid X3DH+Kyber KEM, and produces the initial handshake message.
@@ -578,63 +578,63 @@ EPP_API EppErrorCode epp_prekey_bundle_replenish(
  *   config                 — session configuration; may be NULL to use
  *                            library defaults.
  *   out_handle             — receives the in-progress initiator state.
- *                            Keep alive until epp_handshake_initiator_finish().
- *                            Destroy with epp_handshake_initiator_destroy()
+ *                            Keep alive until aura_handshake_initiator_finish().
+ *                            Destroy with aura_handshake_initiator_destroy()
  *                            if the handshake is abandoned.
  *   out_handshake_init     — receives the serialised init message to send to
- *                            the peer (release with epp_buffer_release()).
+ *                            the peer (release with aura_buffer_release()).
  *   out_error              — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_INVALID_INPUT, EPP_ERROR_HANDSHAKE, or
- *          EPP_ERROR_KEY_GENERATION.
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT, AURA_ERROR_HANDSHAKE, or
+ *          AURA_ERROR_KEY_GENERATION.
  */
-EPP_API EppErrorCode epp_handshake_initiator_start(
-    EppIdentityHandle*          identity_keys,
+AURA_API AuraErrorCode aura_handshake_initiator_start(
+    AuraIdentityHandle*          identity_keys,
     const uint8_t*              peer_prekey_bundle,
     size_t                      peer_prekey_bundle_length,
-    const EppSessionConfig*     config,
-    EppHandshakeInitiatorHandle** out_handle,
-    EppBuffer*                  out_handshake_init,
-    EppError*                   out_error);
+    const AuraSessionConfig*     config,
+    AuraHandshakeInitiatorHandle** out_handle,
+    AuraBuffer*                  out_handshake_init,
+    AuraError*                   out_error);
 
 /*
- * epp_handshake_initiator_finish — complete the handshake after receiving the
+ * aura_handshake_initiator_finish — complete the handshake after receiving the
  * responder's acknowledgement message.
  *
  * Verifies the responder's contribution and derives the final session key.
  * Consumes and frees the initiator handle internally on success; do NOT call
- * epp_handshake_initiator_destroy() afterwards.
+ * aura_handshake_initiator_destroy() afterwards.
  * On failure the handle remains valid and must be destroyed by the caller.
  *
  * Parameters:
- *   handle            — initiator handle from epp_handshake_initiator_start().
+ *   handle            — initiator handle from aura_handshake_initiator_start().
  *   handshake_ack     — acknowledgement bytes received from the responder
  *                       (borrowed).
  *   handshake_ack_length — byte length of handshake_ack.
- *   out_session       — receives the established EppSessionHandle.
- *                       Destroy with epp_session_destroy() when done.
+ *   out_session       — receives the established AuraSessionHandle.
+ *                       Destroy with aura_session_destroy() when done.
  *   out_error         — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_HANDSHAKE, EPP_ERROR_DECODE, or
- *          EPP_ERROR_CRYPTO_FAILURE.
+ * Returns: AURA_SUCCESS, AURA_ERROR_HANDSHAKE, AURA_ERROR_DECODE, or
+ *          AURA_ERROR_CRYPTO_FAILURE.
  */
-EPP_API EppErrorCode epp_handshake_initiator_finish(
-    EppHandshakeInitiatorHandle* handle,
+AURA_API AuraErrorCode aura_handshake_initiator_finish(
+    AuraHandshakeInitiatorHandle* handle,
     const uint8_t*               handshake_ack,
     size_t                       handshake_ack_length,
-    EppSessionHandle**           out_session,
-    EppError*                    out_error);
+    AuraSessionHandle**           out_session,
+    AuraError*                    out_error);
 
 /*
- * epp_handshake_initiator_destroy — discard an in-progress initiator state.
+ * aura_handshake_initiator_destroy — discard an in-progress initiator state.
  *
  * Call only when abandoning a handshake before finish.  Sets *handle to NULL.
  * Safe to call with *handle == NULL (no-op).
  */
-EPP_API void epp_handshake_initiator_destroy(EppHandshakeInitiatorHandle** handle);
+AURA_API void aura_handshake_initiator_destroy(AuraHandshakeInitiatorHandle** handle);
 
 /*
- * epp_handshake_responder_start — process the initiator's message and produce
+ * aura_handshake_responder_start — process the initiator's message and produce
  * an acknowledgement.
  *
  * Verifies the incoming handshake, uses the local prekey bundle's private
@@ -652,54 +652,54 @@ EPP_API void epp_handshake_initiator_destroy(EppHandshakeInitiatorHandle** handl
  *   config                     — session configuration; may be NULL for
  *                                library defaults.
  *   out_handle                 — receives the in-progress responder state.
- *                                Keep alive until epp_handshake_responder_finish().
+ *                                Keep alive until aura_handshake_responder_finish().
  *   out_handshake_ack          — receives the serialised ack message to send
  *                                back to the initiator (release with
- *                                epp_buffer_release()).
+ *                                aura_buffer_release()).
  *   out_error                  — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_HANDSHAKE, EPP_ERROR_DECODE, or
- *          EPP_ERROR_INVALID_INPUT.
+ * Returns: AURA_SUCCESS, AURA_ERROR_HANDSHAKE, AURA_ERROR_DECODE, or
+ *          AURA_ERROR_INVALID_INPUT.
  */
-EPP_API EppErrorCode epp_handshake_responder_start(
-    EppIdentityHandle*           identity_keys,
+AURA_API AuraErrorCode aura_handshake_responder_start(
+    AuraIdentityHandle*           identity_keys,
     const uint8_t*               local_prekey_bundle,
     size_t                       local_prekey_bundle_length,
     const uint8_t*               handshake_init,
     size_t                       handshake_init_length,
-    const EppSessionConfig*      config,
-    EppHandshakeResponderHandle** out_handle,
-    EppBuffer*                   out_handshake_ack,
-    EppError*                    out_error);
+    const AuraSessionConfig*      config,
+    AuraHandshakeResponderHandle** out_handle,
+    AuraBuffer*                   out_handshake_ack,
+    AuraError*                    out_error);
 
 /*
- * epp_handshake_responder_finish — finalise the responder side and obtain
+ * aura_handshake_responder_finish — finalise the responder side and obtain
  * the established session.
  *
  * Consumes the responder handle internally on success; do NOT call
- * epp_handshake_responder_destroy() afterwards.
+ * aura_handshake_responder_destroy() afterwards.
  * On failure the handle remains valid.
  *
  * Parameters:
- *   handle      — responder handle from epp_handshake_responder_start().
- *   out_session — receives the established EppSessionHandle.
- *                 Destroy with epp_session_destroy() when done.
+ *   handle      — responder handle from aura_handshake_responder_start().
+ *   out_session — receives the established AuraSessionHandle.
+ *                 Destroy with aura_session_destroy() when done.
  *   out_error   — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_HANDSHAKE.
+ * Returns: AURA_SUCCESS or AURA_ERROR_HANDSHAKE.
  */
-EPP_API EppErrorCode epp_handshake_responder_finish(
-    EppHandshakeResponderHandle* handle,
-    EppSessionHandle**           out_session,
-    EppError*                    out_error);
+AURA_API AuraErrorCode aura_handshake_responder_finish(
+    AuraHandshakeResponderHandle* handle,
+    AuraSessionHandle**           out_session,
+    AuraError*                    out_error);
 
 /*
- * epp_handshake_responder_destroy — discard an in-progress responder state.
+ * aura_handshake_responder_destroy — discard an in-progress responder state.
  *
  * Call only when abandoning a handshake before finish.  Sets *handle to NULL.
  * Safe to call with *handle == NULL (no-op).
  */
-EPP_API void epp_handshake_responder_destroy(EppHandshakeResponderHandle** handle);
+AURA_API void aura_handshake_responder_destroy(AuraHandshakeResponderHandle** handle);
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -707,7 +707,7 @@ EPP_API void epp_handshake_responder_destroy(EppHandshakeResponderHandle** handl
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /*
- * epp_session_encrypt — encrypt a plaintext message within a 1-to-1 session.
+ * aura_session_encrypt — encrypt a plaintext message within a 1-to-1 session.
  *
  * Advances the sending ratchet and produces a serialised Envelope protobuf
  * that includes the ciphertext, ratchet header, and envelope metadata.
@@ -717,7 +717,7 @@ EPP_API void epp_handshake_responder_destroy(EppHandshakeResponderHandle** handl
  *   plaintext               — message bytes to encrypt (borrowed).
  *   plaintext_length        — byte length of plaintext.
  *   envelope_type           — semantic type tag embedded in the envelope
- *                             (e.g. EPP_ENVELOPE_REQUEST).  Used by the
+ *                             (e.g. AURA_ENVELOPE_REQUEST).  Used by the
  *                             application layer for routing; not a security
  *                             parameter.
  *   envelope_id             — monotonically increasing request/response ID
@@ -728,24 +728,24 @@ EPP_API void epp_handshake_responder_destroy(EppHandshakeResponderHandle** handl
  *                             length given explicitly).  Pass NULL + 0 to omit.
  *   correlation_id_length   — byte length of correlation_id.
  *   out_encrypted_envelope  — receives the serialised encrypted envelope
- *                             (release with epp_buffer_release()).
+ *                             (release with aura_buffer_release()).
  *   out_error               — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_ENCRYPTION, or EPP_ERROR_INVALID_STATE.
+ * Returns: AURA_SUCCESS, AURA_ERROR_ENCRYPTION, or AURA_ERROR_INVALID_STATE.
  */
-EPP_API EppErrorCode epp_session_encrypt(
-    EppSessionHandle*   handle,
+AURA_API AuraErrorCode aura_session_encrypt(
+    AuraSessionHandle*   handle,
     const uint8_t*      plaintext,
     size_t              plaintext_length,
-    EppEnvelopeType     envelope_type,
+    AuraEnvelopeType     envelope_type,
     uint32_t            envelope_id,
     const char*         correlation_id,
     size_t              correlation_id_length,
-    EppBuffer*          out_encrypted_envelope,
-    EppError*           out_error);
+    AuraBuffer*          out_encrypted_envelope,
+    AuraError*           out_error);
 
 /*
- * epp_session_decrypt — decrypt a received Envelope.
+ * aura_session_decrypt — decrypt a received Envelope.
  *
  * Advances the receiving ratchet as needed, handles out-of-order messages
  * within the allowed skip window, and verifies the AEAD MAC.
@@ -756,35 +756,35 @@ EPP_API EppErrorCode epp_session_encrypt(
  *                              (borrowed).
  *   encrypted_envelope_length — byte length of encrypted_envelope.
  *   out_plaintext            — receives the decrypted message bytes
- *                              (release with epp_buffer_release()).
+ *                              (release with aura_buffer_release()).
  *   out_metadata             — receives the serialised EnvelopeMetadata
  *                              protobuf (envelope_type, envelope_id,
  *                              correlation_id).  Release with
- *                              epp_buffer_release().  May be NULL if
+ *                              aura_buffer_release().  May be NULL if
  *                              metadata is not needed.
  *   out_error                — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_DECRYPTION, EPP_ERROR_DECODE,
- *          EPP_ERROR_REPLAY_ATTACK, or EPP_ERROR_INVALID_STATE.
+ * Returns: AURA_SUCCESS, AURA_ERROR_DECRYPTION, AURA_ERROR_DECODE,
+ *          AURA_ERROR_REPLAY_ATTACK, or AURA_ERROR_INVALID_STATE.
  */
-EPP_API EppErrorCode epp_session_decrypt(
-    EppSessionHandle*   handle,
+AURA_API AuraErrorCode aura_session_decrypt(
+    AuraSessionHandle*   handle,
     const uint8_t*      encrypted_envelope,
     size_t              encrypted_envelope_length,
-    EppBuffer*          out_plaintext,
-    EppBuffer*          out_metadata,
-    EppError*           out_error);
+    AuraBuffer*          out_plaintext,
+    AuraBuffer*          out_metadata,
+    AuraError*           out_error);
 
 /*
- * epp_session_serialize_sealed — persist the session state to an encrypted
+ * aura_session_serialize_sealed — persist the session state to an encrypted
  * blob for storage (e.g. on-disk or in a secure enclave).
  *
  * LOW-LEVEL API: the state is encrypted with AES-256-GCM using the provided
  * key, and an external_counter is mixed into the AAD to prevent rollback
  * attacks. New clients should prefer
- * epp_session_export_persisted_state() when they can store one serialized slot
+ * aura_session_export_persisted_state() when they can store one serialized slot
  * record, or otherwise
- * epp_session_serialize_sealed_with_tracker().
+ * aura_session_serialize_sealed_with_tracker().
  *
  * To use raw sealed-state APIs safely, persist two values per storage slot:
  *   - max_restored_counter: highest counter already accepted on restore.
@@ -799,57 +799,57 @@ EPP_API EppErrorCode epp_session_decrypt(
  *   external_counter — next export counter for this slot
  *                      (latest_issued_counter + 1).
  *   out_state        — receives the sealed blob (release with
- *                      epp_buffer_release()).
+ *                      aura_buffer_release()).
  *   out_error        — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_INVALID_INPUT, or EPP_ERROR_ENCRYPTION.
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT, or AURA_ERROR_ENCRYPTION.
  */
-EPP_API EppErrorCode epp_session_serialize_sealed(
-    EppSessionHandle*   handle,
+AURA_API AuraErrorCode aura_session_serialize_sealed(
+    AuraSessionHandle*   handle,
     const uint8_t*      key,
     size_t              key_length,
     uint64_t            external_counter,
-    EppBuffer*          out_state,
-    EppError*           out_error);
+    AuraBuffer*          out_state,
+    AuraError*           out_error);
 
 /*
- * epp_session_serialize_sealed_with_tracker — managed sealed-state export.
+ * aura_session_serialize_sealed_with_tracker — managed sealed-state export.
  *
  * Uses the supplied tracker to allocate the next export counter and advances
  * the tracker only after a successful export. Persist the resulting sealed
  * blob and serialized tracker together for the same storage slot.
  */
-EPP_API EppErrorCode epp_session_serialize_sealed_with_tracker(
-    EppSessionHandle*                    handle,
+AURA_API AuraErrorCode aura_session_serialize_sealed_with_tracker(
+    AuraSessionHandle*                    handle,
     const uint8_t*                       key,
     size_t                               key_length,
-    EppSealedStateCounterTrackerHandle*  tracker_handle,
-    EppBuffer*                           out_state,
-    EppError*                            out_error);
+    AuraSealedStateCounterTrackerHandle*  tracker_handle,
+    AuraBuffer*                           out_state,
+    AuraError*                            out_error);
 
 /*
- * epp_session_export_persisted_state — export session state into a managed
+ * aura_session_export_persisted_state — export session state into a managed
  * sealed-state slot.
  *
  * The slot is mutated in place: it allocates the next export counter, stores
  * the new sealed blob, and updates the tracker in one in-memory object. Persist
- * slot_handle via epp_sealed_state_slot_serialize() as a single record.
+ * slot_handle via aura_sealed_state_slot_serialize() as a single record.
  */
-EPP_API EppErrorCode epp_session_export_persisted_state(
-    EppSessionHandle*          handle,
+AURA_API AuraErrorCode aura_session_export_persisted_state(
+    AuraSessionHandle*          handle,
     const uint8_t*             key,
     size_t                     key_length,
-    EppSealedStateSlotHandle*  slot_handle,
-    EppError*                  out_error);
+    AuraSealedStateSlotHandle*  slot_handle,
+    AuraError*                  out_error);
 
 /*
- * epp_session_deserialize_sealed — restore a session from a sealed blob.
+ * aura_session_deserialize_sealed — restore a session from a sealed blob.
  *
  * LOW-LEVEL API: decrypts and validates the blob. Rejects it unless the stored
  * counter is strictly greater than min_external_counter. New clients should
- * prefer epp_session_restore_persisted_state() when restoring from one
+ * prefer aura_session_restore_persisted_state() when restoring from one
  * serialized slot record, or otherwise
- * epp_session_deserialize_sealed_with_tracker().
+ * aura_session_deserialize_sealed_with_tracker().
  *
  * Parameters:
  *   state_bytes          — sealed blob bytes (borrowed).
@@ -862,100 +862,100 @@ EPP_API EppErrorCode epp_session_export_persisted_state(
  *                          After a successful restore, persist it as the new
  *                          max_restored_counter and raise
  *                          latest_issued_counter to at least this value.
- *   out_handle           — receives the restored EppSessionHandle.
- *                          Destroy with epp_session_destroy() when done.
+ *   out_handle           — receives the restored AuraSessionHandle.
+ *                          Destroy with aura_session_destroy() when done.
  *   out_error            — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_DECRYPTION, EPP_ERROR_DECODE,
- *          EPP_ERROR_INVALID_INPUT, or EPP_ERROR_REPLAY_ATTACK.
+ * Returns: AURA_SUCCESS, AURA_ERROR_DECRYPTION, AURA_ERROR_DECODE,
+ *          AURA_ERROR_INVALID_INPUT, or AURA_ERROR_REPLAY_ATTACK.
  */
-EPP_API EppErrorCode epp_session_deserialize_sealed(
+AURA_API AuraErrorCode aura_session_deserialize_sealed(
     const uint8_t*      state_bytes,
     size_t              state_length,
     const uint8_t*      key,
     size_t              key_length,
     uint64_t            min_external_counter,
     uint64_t*           out_external_counter,
-    EppSessionHandle**  out_handle,
-    EppError*           out_error);
+    AuraSessionHandle**  out_handle,
+    AuraError*           out_error);
 
 /*
- * epp_session_deserialize_sealed_with_time_provider — same as
- * epp_session_deserialize_sealed(), but the restored session uses the supplied
+ * aura_session_deserialize_sealed_with_time_provider — same as
+ * aura_session_deserialize_sealed(), but the restored session uses the supplied
  * time provider for TTL / expiry checks. Pass NULL to use the system clock.
  */
-EPP_API EppErrorCode epp_session_deserialize_sealed_with_time_provider(
+AURA_API AuraErrorCode aura_session_deserialize_sealed_with_time_provider(
     const uint8_t*             state_bytes,
     size_t                     state_length,
     const uint8_t*             key,
     size_t                     key_length,
     uint64_t                   min_external_counter,
-    const EppTimeProviderHandle* time_provider_handle,
+    const AuraTimeProviderHandle* time_provider_handle,
     uint64_t*                  out_external_counter,
-    EppSessionHandle**         out_handle,
-    EppError*                  out_error);
+    AuraSessionHandle**         out_handle,
+    AuraError*                  out_error);
 
 /*
- * epp_session_deserialize_sealed_with_tracker — managed sealed-state restore.
+ * aura_session_deserialize_sealed_with_tracker — managed sealed-state restore.
  *
  * Uses tracker_handle->max_restored_counter as the restore watermark and
  * advances the tracker only after a successful restore. The embedded blob
  * counter is not returned separately; inspect the tracker if the caller needs
  * the updated values.
  */
-EPP_API EppErrorCode epp_session_deserialize_sealed_with_tracker(
+AURA_API AuraErrorCode aura_session_deserialize_sealed_with_tracker(
     const uint8_t*                       state_bytes,
     size_t                               state_length,
     const uint8_t*                       key,
     size_t                               key_length,
-    EppSealedStateCounterTrackerHandle*  tracker_handle,
-    EppSessionHandle**                   out_handle,
-    EppError*                            out_error);
+    AuraSealedStateCounterTrackerHandle*  tracker_handle,
+    AuraSessionHandle**                   out_handle,
+    AuraError*                            out_error);
 
 /*
- * epp_session_deserialize_sealed_with_tracker_and_time_provider — managed
+ * aura_session_deserialize_sealed_with_tracker_and_time_provider — managed
  * session restore using tracker_handle plus an optional explicit time provider.
  * Pass NULL to use the system clock.
  */
-EPP_API EppErrorCode epp_session_deserialize_sealed_with_tracker_and_time_provider(
+AURA_API AuraErrorCode aura_session_deserialize_sealed_with_tracker_and_time_provider(
     const uint8_t*                       state_bytes,
     size_t                               state_length,
     const uint8_t*                       key,
     size_t                               key_length,
-    EppSealedStateCounterTrackerHandle*  tracker_handle,
-    const EppTimeProviderHandle*         time_provider_handle,
-    EppSessionHandle**                   out_handle,
-    EppError*                            out_error);
+    AuraSealedStateCounterTrackerHandle*  tracker_handle,
+    const AuraTimeProviderHandle*         time_provider_handle,
+    AuraSessionHandle**                   out_handle,
+    AuraError*                            out_error);
 
 /*
- * epp_session_restore_persisted_state — restore a session from a managed slot.
+ * aura_session_restore_persisted_state — restore a session from a managed slot.
  *
  * The slot supplies the sealed blob plus restore watermark and is updated in
  * place on success. After restore, re-serialize and persist the slot so the
  * restore watermark advances inside the same record.
  */
-EPP_API EppErrorCode epp_session_restore_persisted_state(
-    EppSealedStateSlotHandle*  slot_handle,
+AURA_API AuraErrorCode aura_session_restore_persisted_state(
+    AuraSealedStateSlotHandle*  slot_handle,
     const uint8_t*             key,
     size_t                     key_length,
-    EppSessionHandle**         out_handle,
-    EppError*                  out_error);
+    AuraSessionHandle**         out_handle,
+    AuraError*                  out_error);
 
 /*
- * epp_session_restore_persisted_state_with_time_provider — restore a session
+ * aura_session_restore_persisted_state_with_time_provider — restore a session
  * from a managed slot and bind the restored session to the supplied clock.
  * Pass NULL to use the system clock.
  */
-EPP_API EppErrorCode epp_session_restore_persisted_state_with_time_provider(
-    EppSealedStateSlotHandle*   slot_handle,
+AURA_API AuraErrorCode aura_session_restore_persisted_state_with_time_provider(
+    AuraSealedStateSlotHandle*   slot_handle,
     const uint8_t*              key,
     size_t                      key_length,
-    const EppTimeProviderHandle* time_provider_handle,
-    EppSessionHandle**          out_handle,
-    EppError*                   out_error);
+    const AuraTimeProviderHandle* time_provider_handle,
+    AuraSessionHandle**          out_handle,
+    AuraError*                   out_error);
 
 /*
- * epp_session_nonce_remaining — query how many more messages can be encrypted
+ * aura_session_nonce_remaining — query how many more messages can be encrypted
  * under the current chain key before a ratchet step is forced.
  *
  * Parameters:
@@ -963,56 +963,56 @@ EPP_API EppErrorCode epp_session_restore_persisted_state_with_time_provider(
  *   out_remaining — receives the remaining nonce budget.
  *   out_error     — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_INVALID_STATE.
+ * Returns: AURA_SUCCESS or AURA_ERROR_INVALID_STATE.
  */
-EPP_API EppErrorCode epp_session_nonce_remaining(
-    EppSessionHandle*   handle,
+AURA_API AuraErrorCode aura_session_nonce_remaining(
+    AuraSessionHandle*   handle,
     uint64_t*           out_remaining,
-    EppError*           out_error);
+    AuraError*           out_error);
 
 /*
- * epp_session_destroy — free a session handle and securely wipe all
+ * aura_session_destroy — free a session handle and securely wipe all
  * ratchet key material.
  *
  * Sets *handle to NULL.  Safe to call with *handle == NULL (no-op).
  */
-EPP_API void epp_session_destroy(EppSessionHandle** handle);
+AURA_API void aura_session_destroy(AuraSessionHandle** handle);
 
 /*
- * epp_session_get_id — retrieve the session's stable 16-byte identifier.
+ * aura_session_get_id — retrieve the session's stable 16-byte identifier.
  *
  * The session ID is derived during the handshake from both parties' key
  * material and is identical on both sides.  Use it to correlate an
- * EppSessionHandle with a stored contact record without exposing private keys.
+ * AuraSessionHandle with a stored contact record without exposing private keys.
  *
  * Parameters:
  *   handle         — active session handle.
  *   out_session_id — receives the 16-byte session ID
- *                    (release with epp_buffer_release()).
+ *                    (release with aura_buffer_release()).
  *   out_error      — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_INVALID_STATE.
+ * Returns: AURA_SUCCESS or AURA_ERROR_INVALID_STATE.
  */
-EPP_API EppErrorCode epp_session_get_id(
-    EppSessionHandle*   handle,
-    EppBuffer*          out_session_id,
-    EppError*           out_error);
+AURA_API AuraErrorCode aura_session_get_id(
+    AuraSessionHandle*   handle,
+    AuraBuffer*          out_session_id,
+    AuraError*           out_error);
 
 /*
- * epp_session_get_identity_binding_hash — retrieve the 32-byte authenticated
+ * aura_session_get_identity_binding_hash — retrieve the 32-byte authenticated
  * identity-binding hash for the current session.
  *
  * This hash is computed by the native protocol from the established local and
  * peer identity keys.  Applications can use it for TOFU, pinning, or audit
  * logging without reimplementing the transcript rules.
  */
-EPP_API EppErrorCode epp_session_get_identity_binding_hash(
-    EppSessionHandle*   handle,
-    EppBuffer*          out_binding_hash,
-    EppError*           out_error);
+AURA_API AuraErrorCode aura_session_get_identity_binding_hash(
+    AuraSessionHandle*   handle,
+    AuraBuffer*          out_binding_hash,
+    AuraError*           out_error);
 
 /*
- * epp_session_get_peer_identity — retrieve the remote peer's public keys.
+ * aura_session_get_peer_identity — retrieve the remote peer's public keys.
  *
  * Returns the Ed25519 and X25519 public keys that the peer presented during
  * the handshake.  Use these to look up the peer in your contact store or to
@@ -1020,73 +1020,73 @@ EPP_API EppErrorCode epp_session_get_identity_binding_hash(
  *
  * Parameters:
  *   handle       — active session handle.
- *   out_identity — caller-allocated EppSessionPeerIdentity to fill.
+ *   out_identity — caller-allocated AuraSessionPeerIdentity to fill.
  *                  Stack allocation is sufficient (no pointers inside).
  *   out_error    — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_INVALID_STATE.
+ * Returns: AURA_SUCCESS or AURA_ERROR_INVALID_STATE.
  */
-EPP_API EppErrorCode epp_session_get_peer_identity(
-    EppSessionHandle*        handle,
-    EppSessionPeerIdentity*  out_identity,
-    EppError*                out_error);
+AURA_API AuraErrorCode aura_session_get_peer_identity(
+    AuraSessionHandle*        handle,
+    AuraSessionPeerIdentity*  out_identity,
+    AuraError*                out_error);
 
 /*
- * epp_session_get_local_identity — retrieve the local device's public keys
+ * aura_session_get_local_identity — retrieve the local device's public keys
  * as seen by this session.
  *
- * Mirrors epp_session_get_peer_identity() but returns the local party's
+ * Mirrors aura_session_get_peer_identity() but returns the local party's
  * Ed25519 and X25519 public keys baked into the session state.
  *
  * Parameters:
  *   handle       — active session handle.
- *   out_identity — caller-allocated EppSessionPeerIdentity to fill.
+ *   out_identity — caller-allocated AuraSessionPeerIdentity to fill.
  *   out_error    — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_INVALID_STATE.
+ * Returns: AURA_SUCCESS or AURA_ERROR_INVALID_STATE.
  */
-EPP_API EppErrorCode epp_session_get_local_identity(
-    EppSessionHandle*        handle,
-    EppSessionPeerIdentity*  out_identity,
-    EppError*                out_error);
+AURA_API AuraErrorCode aura_session_get_local_identity(
+    AuraSessionHandle*        handle,
+    AuraSessionPeerIdentity*  out_identity,
+    AuraError*                out_error);
 
 /*
- * epp_envelope_metadata_parse — parse the raw metadata buffer returned by
- * epp_session_decrypt() into a structured EppEnvelopeMetadata.
+ * aura_envelope_metadata_parse — parse the raw metadata buffer returned by
+ * aura_session_decrypt() into a structured AuraEnvelopeMetadata.
  *
- * epp_session_decrypt() writes an opaque protobuf blob into out_metadata.
+ * aura_session_decrypt() writes an opaque protobuf blob into out_metadata.
  * Call this function on that blob to get individual fields without embedding
  * proto parsing in the client app.
  *
  * Parameters:
- *   metadata_bytes   — the raw metadata buffer from epp_session_decrypt()
+ *   metadata_bytes   — the raw metadata buffer from aura_session_decrypt()
  *                      (out_metadata.data, out_metadata.length). Borrowed.
  *   metadata_length  — byte length of metadata_bytes.
- *   out_meta         — caller-allocated EppEnvelopeMetadata to fill.
+ *   out_meta         — caller-allocated AuraEnvelopeMetadata to fill.
  *                      correlation_id inside will be heap-allocated if present;
- *                      free it with epp_envelope_metadata_free().
+ *                      free it with aura_envelope_metadata_free().
  *   out_error        — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_DECODE.
+ * Returns: AURA_SUCCESS or AURA_ERROR_DECODE.
  */
-EPP_API EppErrorCode epp_envelope_metadata_parse(
+AURA_API AuraErrorCode aura_envelope_metadata_parse(
     const uint8_t*       metadata_bytes,
     size_t               metadata_length,
-    EppEnvelopeMetadata* out_meta,
-    EppError*            out_error);
+    AuraEnvelopeMetadata* out_meta,
+    AuraError*            out_error);
 
 /*
- * epp_envelope_metadata_free — release heap memory inside an
- * EppEnvelopeMetadata.
+ * aura_envelope_metadata_free — release heap memory inside an
+ * AuraEnvelopeMetadata.
  *
  * Frees correlation_id if non-NULL and zeroes the pointer.  Does NOT free
  * the out_meta struct itself (caller-allocated).  Safe to call on a zeroed
  * struct (no-op).
  *
  * Parameters:
- *   meta — pointer to the EppEnvelopeMetadata to clean up.
+ *   meta — pointer to the AuraEnvelopeMetadata to clean up.
  */
-EPP_API void epp_envelope_metadata_free(EppEnvelopeMetadata* meta);
+AURA_API void aura_envelope_metadata_free(AuraEnvelopeMetadata* meta);
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1094,40 +1094,40 @@ EPP_API void epp_envelope_metadata_free(EppEnvelopeMetadata* meta);
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /*
- * EppEncryptedFrame — encrypted media/control frame produced by
- * epp_voip_encrypt_frame() or epp_voip_encrypt_call_control().
+ * AuraEncryptedFrame — encrypted media/control frame produced by
+ * aura_voip_encrypt_frame() or aura_voip_encrypt_call_control().
  *
- * Release every EppBuffer field with epp_buffer_release() when done.
+ * Release every AuraBuffer field with aura_buffer_release() when done.
  * The struct itself is caller-allocated and must not be freed.
  */
 typedef struct {
-    EppBuffer call_id;
+    AuraBuffer call_id;
     uint32_t  ssrc;
     uint64_t  frame_counter;
     uint32_t  ratchet_generation;
-    EppBuffer encrypted_payload;
-    EppBuffer nonce;
-    EppBuffer encrypted_header;
-} EppEncryptedFrame;
+    AuraBuffer encrypted_payload;
+    AuraBuffer nonce;
+    AuraBuffer encrypted_header;
+} AuraEncryptedFrame;
 
 /*
- * EppDecryptedFrame — decrypted frame returned by epp_voip_decrypt_frame().
+ * AuraDecryptedFrame — decrypted frame returned by aura_voip_decrypt_frame().
  *
- * Release payload with epp_buffer_release() when done.  All scalar fields are
+ * Release payload with aura_buffer_release() when done.  All scalar fields are
  * plain metadata copied from the authenticated RTP-like header.
  */
 typedef struct {
-    EppBuffer payload;
+    AuraBuffer payload;
     uint8_t   payload_type;
     uint32_t  ssrc;
     uint32_t  timestamp;
     uint16_t  sequence_number;
     uint64_t  frame_counter;
     uint32_t  ratchet_generation;
-} EppDecryptedFrame;
+} AuraDecryptedFrame;
 
 /*
- * EppCallStatistics — point-in-time call counters for a VoIP session.
+ * AuraCallStatistics — point-in-time call counters for a VoIP session.
  */
 typedef struct {
     uint64_t frames_sent;
@@ -1136,116 +1136,116 @@ typedef struct {
     uint32_t rekey_count;
     uint32_t ratchet_generation;
     uint64_t call_duration_secs;
-} EppCallStatistics;
+} AuraCallStatistics;
 
 /*
- * EppVoipCallControlTypeCode — values accepted by epp_voip_encrypt_call_control().
+ * AuraVoipCallControlTypeCode — values accepted by aura_voip_encrypt_call_control().
  *
- * For EPP_VOIP_CALL_CONTROL_DTMF, pass the ASCII digit / symbol in dtmf_digit
+ * For AURA_VOIP_CALL_CONTROL_DTMF, pass the ASCII digit / symbol in dtmf_digit
  * (for example '5', '*', or '#').
  */
 typedef enum {
-    EPP_VOIP_CALL_CONTROL_MUTE = 1,
-    EPP_VOIP_CALL_CONTROL_UNMUTE = 2,
-    EPP_VOIP_CALL_CONTROL_HOLD = 3,
-    EPP_VOIP_CALL_CONTROL_UNHOLD = 4,
-    EPP_VOIP_CALL_CONTROL_DTMF = 5
-} EppVoipCallControlTypeCode;
+    AURA_VOIP_CALL_CONTROL_MUTE = 1,
+    AURA_VOIP_CALL_CONTROL_UNMUTE = 2,
+    AURA_VOIP_CALL_CONTROL_HOLD = 3,
+    AURA_VOIP_CALL_CONTROL_UNHOLD = 4,
+    AURA_VOIP_CALL_CONTROL_DTMF = 5
+} AuraVoipCallControlTypeCode;
 
 /*
- * epp_voip_call_init — begin an outbound call and create an initiator handle.
+ * aura_voip_call_init — begin an outbound call and create an initiator handle.
  *
- * This is the base API used by epp_voip_call_init_start(); both functions
+ * This is the base API used by aura_voip_call_init_start(); both functions
  * have identical behavior and outputs. `out_init_bytes` and `out_initiator`
  * are required.
  */
-EPP_API EppErrorCode epp_voip_call_init(
-    const EppIdentityHandle*      identity_handle,
+AURA_API AuraErrorCode aura_voip_call_init(
+    const AuraIdentityHandle*      identity_handle,
     const uint8_t*                peer_kyber_public,
     size_t                        peer_kyber_public_len,
     uint8_t                       shield_mode,
     uint32_t                      ratchet_interval_frames,
     uint32_t                      pq_rekey_interval_secs,
-    EppBuffer*                    out_init_bytes,
-    EppVoipCallInitiatorHandle**  out_initiator,
-    EppError*                     out_error);
+    AuraBuffer*                    out_init_bytes,
+    AuraVoipCallInitiatorHandle**  out_initiator,
+    AuraError*                     out_error);
 
 /*
- * epp_voip_call_init_start — alias of epp_voip_call_init().
+ * aura_voip_call_init_start — alias of aura_voip_call_init().
  */
-EPP_API EppErrorCode epp_voip_call_init_start(
-    const EppIdentityHandle*      identity_handle,
+AURA_API AuraErrorCode aura_voip_call_init_start(
+    const AuraIdentityHandle*      identity_handle,
     const uint8_t*                peer_kyber_public,
     size_t                        peer_kyber_public_len,
     uint8_t                       shield_mode,
     uint32_t                      ratchet_interval_frames,
     uint32_t                      pq_rekey_interval_secs,
-    EppBuffer*                    out_init_bytes,
-    EppVoipCallInitiatorHandle**  out_initiator,
-    EppError*                     out_error);
+    AuraBuffer*                    out_init_bytes,
+    AuraVoipCallInitiatorHandle**  out_initiator,
+    AuraError*                     out_error);
 
 /*
- * epp_voip_call_init_complete — finish the caller side after receiving
+ * aura_voip_call_init_complete — finish the caller side after receiving
  * CallAccept bytes from the callee.
  *
  * On success writes a new VoIP session handle and consumes the initiator
  * handle. `out_session` is required. On failure the initiator remains valid
  * and must be destroyed by the caller.
  */
-EPP_API EppErrorCode epp_voip_call_init_complete(
-    EppVoipCallInitiatorHandle*  initiator_handle,
-    const EppIdentityHandle*     identity_handle,
+AURA_API AuraErrorCode aura_voip_call_init_complete(
+    AuraVoipCallInitiatorHandle*  initiator_handle,
+    const AuraIdentityHandle*     identity_handle,
     const uint8_t*               accept_bytes,
     size_t                       accept_len,
-    EppVoipSessionHandle**       out_session,
-    EppError*                    out_error);
+    AuraVoipSessionHandle**       out_session,
+    AuraError*                    out_error);
 
 /*
- * epp_voip_call_initiator_destroy — discard an in-progress outbound call
+ * aura_voip_call_initiator_destroy — discard an in-progress outbound call
  * initiator state.
  *
  * Sets *handle to NULL. Safe to call with `handle == NULL` or `*handle == NULL`.
  */
-EPP_API void epp_voip_call_initiator_destroy(EppVoipCallInitiatorHandle** handle);
+AURA_API void aura_voip_call_initiator_destroy(AuraVoipCallInitiatorHandle** handle);
 
 /*
- * epp_voip_accept_call — process CallInit bytes as the callee, returning the
+ * aura_voip_accept_call — process CallInit bytes as the callee, returning the
  * CallAccept bytes to send back plus the active VoIP session handle.
  * `out_accept_bytes` and `out_session` are required.
  */
-EPP_API EppErrorCode epp_voip_accept_call(
-    const EppIdentityHandle*  identity_handle,
+AURA_API AuraErrorCode aura_voip_accept_call(
+    const AuraIdentityHandle*  identity_handle,
     const uint8_t*            call_init_bytes,
     size_t                    call_init_len,
     const uint8_t*            peer_kyber_public,
     size_t                    peer_kyber_public_len,
-    EppBuffer*                out_accept_bytes,
-    EppVoipSessionHandle**    out_session,
-    EppError*                 out_error);
+    AuraBuffer*                out_accept_bytes,
+    AuraVoipSessionHandle**    out_session,
+    AuraError*                 out_error);
 
 /*
- * epp_voip_encrypt_frame — encrypt one media frame.
+ * aura_voip_encrypt_frame — encrypt one media frame.
  *
  * `out_frame` is required.
  */
-EPP_API EppErrorCode epp_voip_encrypt_frame(
-    const EppVoipSessionHandle*  handle,
+AURA_API AuraErrorCode aura_voip_encrypt_frame(
+    const AuraVoipSessionHandle*  handle,
     uint8_t                      payload_type,
     uint32_t                     ssrc,
     uint32_t                     timestamp,
     uint16_t                     sequence_number,
     const uint8_t*               payload,
     size_t                       payload_len,
-    EppEncryptedFrame*           out_frame,
-    EppError*                    out_error);
+    AuraEncryptedFrame*           out_frame,
+    AuraError*                    out_error);
 
 /*
- * epp_voip_decrypt_frame — decrypt one received media/control frame.
+ * aura_voip_decrypt_frame — decrypt one received media/control frame.
  *
  * `out_frame` is required.
  */
-EPP_API EppErrorCode epp_voip_decrypt_frame(
-    const EppVoipSessionHandle*  handle,
+AURA_API AuraErrorCode aura_voip_decrypt_frame(
+    const AuraVoipSessionHandle*  handle,
     const uint8_t*               call_id,
     size_t                       call_id_len,
     uint32_t                     ssrc,
@@ -1257,395 +1257,395 @@ EPP_API EppErrorCode epp_voip_decrypt_frame(
     size_t                       nonce_len,
     const uint8_t*               encrypted_header,
     size_t                       encrypted_header_len,
-    EppDecryptedFrame*           out_frame,
-    EppError*                    out_error);
+    AuraDecryptedFrame*           out_frame,
+    AuraError*                    out_error);
 
 /*
- * epp_voip_call_id — return the session's authenticated call identifier.
+ * aura_voip_call_id — return the session's authenticated call identifier.
  */
-EPP_API EppErrorCode epp_voip_call_id(
-    const EppVoipSessionHandle*  handle,
-    EppBuffer*                   out_buf,
-    EppError*                    out_error);
+AURA_API AuraErrorCode aura_voip_call_id(
+    const AuraVoipSessionHandle*  handle,
+    AuraBuffer*                   out_buf,
+    AuraError*                    out_error);
 
 /*
- * epp_voip_ssrc — return the local SSRC.  On failure returns 0 and populates
+ * aura_voip_ssrc — return the local SSRC.  On failure returns 0 and populates
  * out_error when non-NULL.
  */
-EPP_API uint32_t epp_voip_ssrc(
-    const EppVoipSessionHandle*  handle,
-    EppError*                    out_error);
+AURA_API uint32_t aura_voip_ssrc(
+    const AuraVoipSessionHandle*  handle,
+    AuraError*                    out_error);
 
 /*
- * epp_voip_is_shield_mode — return 1 when the call was negotiated in shield
+ * aura_voip_is_shield_mode — return 1 when the call was negotiated in shield
  * mode, else 0.  On failure returns 0 and populates out_error when non-NULL.
  */
-EPP_API uint8_t epp_voip_is_shield_mode(
-    const EppVoipSessionHandle*  handle,
-    EppError*                    out_error);
+AURA_API uint8_t aura_voip_is_shield_mode(
+    const AuraVoipSessionHandle*  handle,
+    AuraError*                    out_error);
 
 /*
- * epp_voip_end_call — locally mark the call as ended.  After success, frame
+ * aura_voip_end_call — locally mark the call as ended.  After success, frame
  * encryption/decryption APIs reject further traffic on this handle.
  */
-EPP_API EppErrorCode epp_voip_end_call(
-    const EppVoipSessionHandle*  handle,
-    EppError*                    out_error);
+AURA_API AuraErrorCode aura_voip_end_call(
+    const AuraVoipSessionHandle*  handle,
+    AuraError*                    out_error);
 
 /*
- * epp_voip_generate_call_end_hmac — build the authenticated CallEnd HMAC for
+ * aura_voip_generate_call_end_hmac — build the authenticated CallEnd HMAC for
  * application-supplied device_id and timestamp values.
  */
-EPP_API EppErrorCode epp_voip_generate_call_end_hmac(
-    const EppVoipSessionHandle*  handle,
+AURA_API AuraErrorCode aura_voip_generate_call_end_hmac(
+    const AuraVoipSessionHandle*  handle,
     const uint8_t*               device_id,
     size_t                       device_id_len,
     uint64_t                     timestamp,
-    EppBuffer*                   out_hmac,
-    EppError*                    out_error);
+    AuraBuffer*                   out_hmac,
+    AuraError*                    out_error);
 
 /*
- * epp_voip_verify_call_end_hmac — verify a previously generated CallEnd HMAC.
+ * aura_voip_verify_call_end_hmac — verify a previously generated CallEnd HMAC.
  *
  * Writes 1 to out_valid when valid, else 0.
  */
-EPP_API EppErrorCode epp_voip_verify_call_end_hmac(
-    const EppVoipSessionHandle*  handle,
+AURA_API AuraErrorCode aura_voip_verify_call_end_hmac(
+    const AuraVoipSessionHandle*  handle,
     const uint8_t*               device_id,
     size_t                       device_id_len,
     uint64_t                     timestamp,
     const uint8_t*               hmac_value,
     size_t                       hmac_value_len,
     uint8_t*                     out_valid,
-    EppError*                    out_error);
+    AuraError*                    out_error);
 
 /*
- * epp_voip_build_call_end — serialize an authenticated CallEnd signal.
+ * aura_voip_build_call_end — serialize an authenticated CallEnd signal.
  */
-EPP_API EppErrorCode epp_voip_build_call_end(
-    const EppVoipSessionHandle*  handle,
+AURA_API AuraErrorCode aura_voip_build_call_end(
+    const AuraVoipSessionHandle*  handle,
     const uint8_t*               device_id,
     size_t                       device_id_len,
     uint64_t                     timestamp,
-    EppBuffer*                   out_buf,
-    EppError*                    out_error);
+    AuraBuffer*                   out_buf,
+    AuraError*                    out_error);
 
 /*
- * epp_voip_process_call_end — verify and apply a serialized CallEnd signal.
+ * aura_voip_process_call_end — verify and apply a serialized CallEnd signal.
  */
-EPP_API EppErrorCode epp_voip_process_call_end(
-    const EppVoipSessionHandle*  handle,
+AURA_API AuraErrorCode aura_voip_process_call_end(
+    const AuraVoipSessionHandle*  handle,
     const uint8_t*               call_end_bytes,
     size_t                       call_end_len,
-    EppError*                    out_error);
+    AuraError*                    out_error);
 
 /*
- * epp_voip_encrypt_call_control — encode and encrypt one call-control frame.
+ * aura_voip_encrypt_call_control — encode and encrypt one call-control frame.
  *
  * `out_frame` is required.
  */
-EPP_API EppErrorCode epp_voip_encrypt_call_control(
-    const EppVoipSessionHandle*  handle,
+AURA_API AuraErrorCode aura_voip_encrypt_call_control(
+    const AuraVoipSessionHandle*  handle,
     uint8_t                      control_type,
     uint8_t                      dtmf_digit,
-    EppEncryptedFrame*           out_frame,
-    EppError*                    out_error);
+    AuraEncryptedFrame*           out_frame,
+    AuraError*                    out_error);
 
 /*
- * epp_voip_export_sealed_state — serialize encrypted VoIP session state for
+ * aura_voip_export_sealed_state — serialize encrypted VoIP session state for
  * persistence. LOW-LEVEL API: use external_counter as
  * latest_issued_counter + 1 for this slot. state_key must be exactly 32 bytes.
- * New clients should prefer epp_voip_export_persisted_state() when they can
+ * New clients should prefer aura_voip_export_persisted_state() when they can
  * store one serialized slot record, or otherwise
- * epp_voip_export_sealed_state_with_tracker().
+ * aura_voip_export_sealed_state_with_tracker().
  */
-EPP_API EppErrorCode epp_voip_export_sealed_state(
-    const EppVoipSessionHandle*  handle,
+AURA_API AuraErrorCode aura_voip_export_sealed_state(
+    const AuraVoipSessionHandle*  handle,
     const uint8_t*               state_key,
     size_t                       state_key_len,
     uint64_t                     external_counter,
-    EppBuffer*                   out_buf,
-    EppError*                    out_error);
+    AuraBuffer*                   out_buf,
+    AuraError*                    out_error);
 
 /*
- * epp_voip_export_sealed_state_with_tracker — managed VoIP sealed-state
+ * aura_voip_export_sealed_state_with_tracker — managed VoIP sealed-state
  * export. Allocates the next export counter from tracker_handle and advances
  * the tracker only after a successful export.
  */
-EPP_API EppErrorCode epp_voip_export_sealed_state_with_tracker(
-    const EppVoipSessionHandle*         handle,
+AURA_API AuraErrorCode aura_voip_export_sealed_state_with_tracker(
+    const AuraVoipSessionHandle*         handle,
     const uint8_t*                      state_key,
     size_t                              state_key_len,
-    EppSealedStateCounterTrackerHandle* tracker_handle,
-    EppBuffer*                          out_buf,
-    EppError*                           out_error);
+    AuraSealedStateCounterTrackerHandle* tracker_handle,
+    AuraBuffer*                          out_buf,
+    AuraError*                           out_error);
 
 /*
- * epp_voip_export_persisted_state — export VoIP state into a managed slot.
+ * aura_voip_export_persisted_state — export VoIP state into a managed slot.
  *
  * The slot is mutated in place: it allocates the next export counter, stores
  * the new sealed blob, and updates the tracker inside one in-memory object.
- * Persist slot_handle via epp_sealed_state_slot_serialize().
+ * Persist slot_handle via aura_sealed_state_slot_serialize().
  */
-EPP_API EppErrorCode epp_voip_export_persisted_state(
-    const EppVoipSessionHandle* handle,
+AURA_API AuraErrorCode aura_voip_export_persisted_state(
+    const AuraVoipSessionHandle* handle,
     const uint8_t*              state_key,
     size_t                      state_key_len,
-    EppSealedStateSlotHandle*   slot_handle,
-    EppError*                   out_error);
+    AuraSealedStateSlotHandle*   slot_handle,
+    AuraError*                   out_error);
 
 /*
- * epp_voip_initiate_rekey — begin a PQ rekey for an active call.
+ * aura_voip_initiate_rekey — begin a PQ rekey for an active call.
  */
-EPP_API EppErrorCode epp_voip_initiate_rekey(
-    const EppVoipSessionHandle*  handle,
-    const EppIdentityHandle*     identity_handle,
+AURA_API AuraErrorCode aura_voip_initiate_rekey(
+    const AuraVoipSessionHandle*  handle,
+    const AuraIdentityHandle*     identity_handle,
     const uint8_t*               peer_kyber_public,
     size_t                       peer_kyber_public_len,
-    EppBuffer*                   out_rekey_bytes,
-    EppError*                    out_error);
+    AuraBuffer*                   out_rekey_bytes,
+    AuraError*                    out_error);
 
 /*
- * epp_voip_process_rekey — process a peer rekey and return the rekey-ack
+ * aura_voip_process_rekey — process a peer rekey and return the rekey-ack
  * bytes to send back.
  */
-EPP_API EppErrorCode epp_voip_process_rekey(
-    const EppVoipSessionHandle*  handle,
-    const EppIdentityHandle*     identity_handle,
+AURA_API AuraErrorCode aura_voip_process_rekey(
+    const AuraVoipSessionHandle*  handle,
+    const AuraIdentityHandle*     identity_handle,
     const uint8_t*               peer_ed25519_public,
     size_t                       peer_ed25519_public_len,
     const uint8_t*               rekey_bytes,
     size_t                       rekey_len,
     const uint8_t*               peer_kyber_public,
     size_t                       peer_kyber_public_len,
-    EppBuffer*                   out_ack_bytes,
-    EppError*                    out_error);
+    AuraBuffer*                   out_ack_bytes,
+    AuraError*                    out_error);
 
 /*
- * epp_voip_process_rekey_ack — process the final ack for a previously
+ * aura_voip_process_rekey_ack — process the final ack for a previously
  * initiated rekey.
  */
-EPP_API EppErrorCode epp_voip_process_rekey_ack(
-    const EppVoipSessionHandle*  handle,
-    const EppIdentityHandle*     identity_handle,
+AURA_API AuraErrorCode aura_voip_process_rekey_ack(
+    const AuraVoipSessionHandle*  handle,
+    const AuraIdentityHandle*     identity_handle,
     const uint8_t*               peer_ed25519_public,
     size_t                       peer_ed25519_public_len,
     const uint8_t*               ack_bytes,
     size_t                       ack_len,
-    EppError*                    out_error);
+    AuraError*                    out_error);
 
 /*
- * epp_voip_import_sealed_state — restore a VoIP session from a sealed blob.
+ * aura_voip_import_sealed_state — restore a VoIP session from a sealed blob.
  *
  * LOW-LEVEL API: pass max_restored_counter as min_external_counter, then after
  * success persist the returned blob counter as the new restore watermark.
  * `out_session` is required. New clients should prefer
- * epp_voip_restore_persisted_state() when restoring from one serialized slot
- * record, or otherwise epp_voip_import_sealed_state_with_tracker().
+ * aura_voip_restore_persisted_state() when restoring from one serialized slot
+ * record, or otherwise aura_voip_import_sealed_state_with_tracker().
  */
-EPP_API EppErrorCode epp_voip_import_sealed_state(
+AURA_API AuraErrorCode aura_voip_import_sealed_state(
     const uint8_t*             data,
     size_t                     data_len,
     const uint8_t*             state_key,
     size_t                     state_key_len,
     uint64_t                   min_external_counter,
-    EppVoipSessionHandle**     out_session,
-    EppError*                  out_error);
+    AuraVoipSessionHandle**     out_session,
+    AuraError*                  out_error);
 
 /*
- * epp_voip_import_sealed_state_with_time_provider — same as
- * epp_voip_import_sealed_state(), but binds the restored session to an
+ * aura_voip_import_sealed_state_with_time_provider — same as
+ * aura_voip_import_sealed_state(), but binds the restored session to an
  * optional explicit clock. Pass NULL to use the system clock.
  */
-EPP_API EppErrorCode epp_voip_import_sealed_state_with_time_provider(
+AURA_API AuraErrorCode aura_voip_import_sealed_state_with_time_provider(
     const uint8_t*              data,
     size_t                      data_len,
     const uint8_t*              state_key,
     size_t                      state_key_len,
     uint64_t                    min_external_counter,
-    const EppTimeProviderHandle* time_provider_handle,
-    EppVoipSessionHandle**      out_session,
-    EppError*                   out_error);
+    const AuraTimeProviderHandle* time_provider_handle,
+    AuraVoipSessionHandle**      out_session,
+    AuraError*                   out_error);
 
 /*
- * epp_voip_import_sealed_state_with_tracker — managed VoIP sealed-state
+ * aura_voip_import_sealed_state_with_tracker — managed VoIP sealed-state
  * restore. Uses tracker_handle->max_restored_counter as the restore
  * watermark and advances the tracker only after a successful restore.
  */
-EPP_API EppErrorCode epp_voip_import_sealed_state_with_tracker(
+AURA_API AuraErrorCode aura_voip_import_sealed_state_with_tracker(
     const uint8_t*                      data,
     size_t                              data_len,
     const uint8_t*                      state_key,
     size_t                              state_key_len,
-    EppSealedStateCounterTrackerHandle* tracker_handle,
-    EppVoipSessionHandle**              out_session,
-    EppError*                           out_error);
+    AuraSealedStateCounterTrackerHandle* tracker_handle,
+    AuraVoipSessionHandle**              out_session,
+    AuraError*                           out_error);
 
 /*
- * epp_voip_import_sealed_state_with_tracker_and_time_provider — managed VoIP
+ * aura_voip_import_sealed_state_with_tracker_and_time_provider — managed VoIP
  * restore using tracker_handle plus an optional explicit clock. Pass NULL to
  * use the system clock.
  */
-EPP_API EppErrorCode epp_voip_import_sealed_state_with_tracker_and_time_provider(
+AURA_API AuraErrorCode aura_voip_import_sealed_state_with_tracker_and_time_provider(
     const uint8_t*                      data,
     size_t                              data_len,
     const uint8_t*                      state_key,
     size_t                              state_key_len,
-    EppSealedStateCounterTrackerHandle* tracker_handle,
-    const EppTimeProviderHandle*        time_provider_handle,
-    EppVoipSessionHandle**              out_session,
-    EppError*                           out_error);
+    AuraSealedStateCounterTrackerHandle* tracker_handle,
+    const AuraTimeProviderHandle*        time_provider_handle,
+    AuraVoipSessionHandle**              out_session,
+    AuraError*                           out_error);
 
 /*
- * epp_voip_restore_persisted_state — restore VoIP state from a managed slot.
+ * aura_voip_restore_persisted_state — restore VoIP state from a managed slot.
  *
  * The slot supplies the sealed blob plus restore watermark and is updated in
  * place on success. After restore, re-serialize and persist the slot so the
  * restore watermark advances inside the same record.
  */
-EPP_API EppErrorCode epp_voip_restore_persisted_state(
-    EppSealedStateSlotHandle*  slot_handle,
+AURA_API AuraErrorCode aura_voip_restore_persisted_state(
+    AuraSealedStateSlotHandle*  slot_handle,
     const uint8_t*             state_key,
     size_t                     state_key_len,
-    EppVoipSessionHandle**     out_session,
-    EppError*                  out_error);
+    AuraVoipSessionHandle**     out_session,
+    AuraError*                  out_error);
 
 /*
- * epp_voip_restore_persisted_state_with_time_provider — restore VoIP state
+ * aura_voip_restore_persisted_state_with_time_provider — restore VoIP state
  * from a managed slot and bind it to an optional explicit clock. Pass NULL to
  * use the system clock.
  */
-EPP_API EppErrorCode epp_voip_restore_persisted_state_with_time_provider(
-    EppSealedStateSlotHandle*   slot_handle,
+AURA_API AuraErrorCode aura_voip_restore_persisted_state_with_time_provider(
+    AuraSealedStateSlotHandle*   slot_handle,
     const uint8_t*              state_key,
     size_t                      state_key_len,
-    const EppTimeProviderHandle* time_provider_handle,
-    EppVoipSessionHandle**      out_session,
-    EppError*                   out_error);
+    const AuraTimeProviderHandle* time_provider_handle,
+    AuraVoipSessionHandle**      out_session,
+    AuraError*                   out_error);
 
 /*
- * epp_voip_sealed_state_external_counter — read the anti-rollback counter
+ * aura_voip_sealed_state_external_counter — read the anti-rollback counter
  * from a sealed VoIP state blob without decrypting it.
  */
-EPP_API EppErrorCode epp_voip_sealed_state_external_counter(
+AURA_API AuraErrorCode aura_voip_sealed_state_external_counter(
     const uint8_t*  data,
     size_t          data_len,
     uint64_t*       out_external_counter,
-    EppError*       out_error);
+    AuraError*       out_error);
 
 /*
- * epp_voip_session_destroy — free a VoIP session handle.
+ * aura_voip_session_destroy — free a VoIP session handle.
  *
  * Sets *handle to NULL. Safe to call with `handle == NULL` or `*handle == NULL`.
  */
-EPP_API void epp_voip_session_destroy(EppVoipSessionHandle** handle);
+AURA_API void aura_voip_session_destroy(AuraVoipSessionHandle** handle);
 
 /*
- * epp_voip_set_screen_share_meta — attach optional screen-share metadata to
+ * aura_voip_set_screen_share_meta — attach optional screen-share metadata to
  * the local session state. codec_hint is optional UTF-8.
  */
-EPP_API EppErrorCode epp_voip_set_screen_share_meta(
-    const EppVoipSessionHandle*  handle,
+AURA_API AuraErrorCode aura_voip_set_screen_share_meta(
+    const AuraVoipSessionHandle*  handle,
     uint32_t                     width,
     uint32_t                     height,
     uint32_t                     frame_rate,
     const uint8_t*               codec_hint,
     size_t                       codec_hint_length,
-    EppError*                    out_error);
+    AuraError*                    out_error);
 
 /*
- * epp_voip_get_screen_share_meta — fetch the currently stored screen-share
+ * aura_voip_get_screen_share_meta — fetch the currently stored screen-share
  * metadata. When absent, width/height/frame_rate are written as 0 and
  * out_codec_hint receives an empty buffer.
  */
-EPP_API EppErrorCode epp_voip_get_screen_share_meta(
-    const EppVoipSessionHandle*  handle,
+AURA_API AuraErrorCode aura_voip_get_screen_share_meta(
+    const AuraVoipSessionHandle*  handle,
     uint32_t*                    out_width,
     uint32_t*                    out_height,
     uint32_t*                    out_frame_rate,
-    EppBuffer*                   out_codec_hint,
-    EppError*                    out_error);
+    AuraBuffer*                   out_codec_hint,
+    AuraError*                    out_error);
 
 /*
- * epp_voip_clear_screen_share_meta — remove stored screen-share metadata.
+ * aura_voip_clear_screen_share_meta — remove stored screen-share metadata.
  */
-EPP_API EppErrorCode epp_voip_clear_screen_share_meta(
-    const EppVoipSessionHandle*  handle,
-    EppError*                    out_error);
+AURA_API AuraErrorCode aura_voip_clear_screen_share_meta(
+    const AuraVoipSessionHandle*  handle,
+    AuraError*                    out_error);
 
 /*
- * epp_voip_get_call_statistics — fetch current counters for a VoIP session.
+ * aura_voip_get_call_statistics — fetch current counters for a VoIP session.
  */
-EPP_API EppErrorCode epp_voip_get_call_statistics(
-    const EppVoipSessionHandle*  handle,
-    EppCallStatistics*           out_stats,
-    EppError*                    out_error);
+AURA_API AuraErrorCode aura_voip_get_call_statistics(
+    const AuraVoipSessionHandle*  handle,
+    AuraCallStatistics*           out_stats,
+    AuraError*                    out_error);
 
 /*
- * epp_voip_set_recording_consent — set the local user's recording-consent
+ * aura_voip_set_recording_consent — set the local user's recording-consent
  * value. Accepted values are protocol-defined integers (currently 0 or 1).
  */
-EPP_API EppErrorCode epp_voip_set_recording_consent(
-    const EppVoipSessionHandle*  handle,
+AURA_API AuraErrorCode aura_voip_set_recording_consent(
+    const AuraVoipSessionHandle*  handle,
     int32_t                      consent,
-    EppError*                    out_error);
+    AuraError*                    out_error);
 
 /*
- * epp_voip_get_local_recording_consent — return the local consent value, or
+ * aura_voip_get_local_recording_consent — return the local consent value, or
  * -1 on failure.
  */
-EPP_API int32_t epp_voip_get_local_recording_consent(
-    const EppVoipSessionHandle*  handle);
+AURA_API int32_t aura_voip_get_local_recording_consent(
+    const AuraVoipSessionHandle*  handle);
 
 /*
- * epp_voip_set_remote_recording_consent — legacy API retained for ABI
+ * aura_voip_set_remote_recording_consent — legacy API retained for ABI
  * compatibility. New code must not use this: remote consent is only valid
  * when updated via a signed RecordingConsentMessage.
  */
-EPP_API EppErrorCode epp_voip_set_remote_recording_consent(
-    const EppVoipSessionHandle*  handle,
+AURA_API AuraErrorCode aura_voip_set_remote_recording_consent(
+    const AuraVoipSessionHandle*  handle,
     int32_t                      consent,
-    EppError*                    out_error);
+    AuraError*                    out_error);
 
 /*
- * epp_voip_get_remote_recording_consent — return the last authenticated
+ * aura_voip_get_remote_recording_consent — return the last authenticated
  * remote consent value, or -1 on failure.
  */
-EPP_API int32_t epp_voip_get_remote_recording_consent(
-    const EppVoipSessionHandle*  handle);
+AURA_API int32_t aura_voip_get_remote_recording_consent(
+    const AuraVoipSessionHandle*  handle);
 
 /*
- * epp_voip_both_consented_to_recording — return true only when both local and
+ * aura_voip_both_consented_to_recording — return true only when both local and
  * authenticated remote consent values allow recording.
  */
-EPP_API bool epp_voip_both_consented_to_recording(
-    const EppVoipSessionHandle*  handle);
+AURA_API bool aura_voip_both_consented_to_recording(
+    const AuraVoipSessionHandle*  handle);
 
 /*
- * epp_voip_build_recording_consent_message — create a signed
+ * aura_voip_build_recording_consent_message — create a signed
  * RecordingConsentMessage that can be sent to the peer. On success this also
  * updates the session's local consent state and advances its outbound consent
  * timestamp monotonically.
  */
-EPP_API EppErrorCode epp_voip_build_recording_consent_message(
-    const EppVoipSessionHandle*  handle,
-    const EppIdentityHandle*     identity_handle,
+AURA_API AuraErrorCode aura_voip_build_recording_consent_message(
+    const AuraVoipSessionHandle*  handle,
+    const AuraIdentityHandle*     identity_handle,
     int32_t                      consent,
     uint64_t                     timestamp_unix,
-    EppBuffer*                   out_message,
-    EppError*                    out_error);
+    AuraBuffer*                   out_message,
+    AuraError*                    out_error);
 
 /*
- * epp_voip_process_recording_consent_message — verify and apply a peer's
+ * aura_voip_process_recording_consent_message — verify and apply a peer's
  * signed RecordingConsentMessage.
  */
-EPP_API EppErrorCode epp_voip_process_recording_consent_message(
-    const EppVoipSessionHandle*  handle,
+AURA_API AuraErrorCode aura_voip_process_recording_consent_message(
+    const AuraVoipSessionHandle*  handle,
     const uint8_t*               peer_ed25519_public,
     size_t                       peer_ed25519_public_len,
     const uint8_t*               message_bytes,
     size_t                       message_len,
-    EppError*                    out_error);
+    AuraError*                    out_error);
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1653,7 +1653,7 @@ EPP_API EppErrorCode epp_voip_process_recording_consent_message(
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /*
- * epp_derive_root_key — derive an application-level key from an established
+ * aura_derive_root_key — derive an application-level key from an established
  * session's opaque shared secret.
  *
  * Use this after handshake to derive e.g. a database encryption key or a
@@ -1675,19 +1675,19 @@ EPP_API EppErrorCode epp_voip_process_recording_consent_message(
  *   out_root_key_length       — requested key length in bytes (1–64).
  *   out_error                 — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_INVALID_INPUT, or EPP_ERROR_DERIVE_KEY.
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT, or AURA_ERROR_DERIVE_KEY.
  */
-EPP_API EppErrorCode epp_derive_root_key(
+AURA_API AuraErrorCode aura_derive_root_key(
     const uint8_t*  opaque_session_key,
     size_t          opaque_session_key_length,
     const uint8_t*  user_context,
     size_t          user_context_length,
     uint8_t*        out_root_key,
     size_t          out_root_key_length,
-    EppError*       out_error);
+    AuraError*       out_error);
 
 /*
- * epp_shamir_split — split a secret into authenticated Shamir shares.
+ * aura_shamir_split — split a secret into authenticated Shamir shares.
  *
  * Splits `secret` into `share_count` shares such that any `threshold` of
  * them can reconstruct the original secret.  Each share is authenticated
@@ -1704,26 +1704,26 @@ EPP_API EppErrorCode epp_derive_root_key(
  *   auth_key_length  — byte length of auth_key; minimum 16.
  *   out_shares       — receives all shares packed end-to-end into one
  *                      contiguous buffer (total size = share_count *
- *                      *out_share_length).  Release with epp_buffer_release().
+ *                      *out_share_length).  Release with aura_buffer_release().
  *   out_share_length — receives the byte length of each individual share.
  *                      All shares have the same length.
  *   out_error        — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_INVALID_INPUT, or EPP_ERROR_CRYPTO_FAILURE.
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT, or AURA_ERROR_CRYPTO_FAILURE.
  */
-EPP_API EppErrorCode epp_shamir_split(
+AURA_API AuraErrorCode aura_shamir_split(
     const uint8_t*  secret,
     size_t          secret_length,
     uint8_t         threshold,
     uint8_t         share_count,
     const uint8_t*  auth_key,
     size_t          auth_key_length,
-    EppBuffer*      out_shares,
+    AuraBuffer*      out_shares,
     size_t*         out_share_length,
-    EppError*       out_error);
+    AuraError*       out_error);
 
 /*
- * epp_shamir_reconstruct — reconstruct a secret from a subset of shares.
+ * aura_shamir_reconstruct — reconstruct a secret from a subset of shares.
  *
  * Verifies each share's HMAC before interpolation.  Requires exactly
  * `share_count` shares in the `shares` buffer, each of `share_length` bytes,
@@ -1733,36 +1733,36 @@ EPP_API EppErrorCode epp_shamir_split(
  *   shares          — packed share bytes (borrowed).
  *   shares_length   — total byte length = share_count * share_length.
  *   share_length    — byte length of each individual share (from out_share_length
- *                     returned by epp_shamir_split()).
+ *                     returned by aura_shamir_split()).
  *   share_count     — number of shares provided; must be >= threshold.
- *   auth_key        — same HMAC key used during epp_shamir_split() (borrowed).
+ *   auth_key        — same HMAC key used during aura_shamir_split() (borrowed).
  *   auth_key_length — byte length of auth_key.
  *   out_secret      — receives the reconstructed secret bytes
- *                     (release with epp_buffer_release()).
+ *                     (release with aura_buffer_release()).
  *   out_error       — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_INVALID_INPUT, EPP_ERROR_CRYPTO_FAILURE
- *          (auth failure), or EPP_ERROR_DECODE.
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT, AURA_ERROR_CRYPTO_FAILURE
+ *          (auth failure), or AURA_ERROR_DECODE.
  */
-EPP_API EppErrorCode epp_shamir_reconstruct(
+AURA_API AuraErrorCode aura_shamir_reconstruct(
     const uint8_t*  shares,
     size_t          shares_length,
     size_t          share_length,
     size_t          share_count,
     const uint8_t*  auth_key,
     size_t          auth_key_length,
-    EppBuffer*      out_secret,
-    EppError*       out_error);
+    AuraBuffer*      out_secret,
+    AuraError*       out_error);
 
-EPP_API EppErrorCode epp_attachment_generate_id(
-    EppBuffer* out_attachment_id,
-    EppError*  out_error);
+AURA_API AuraErrorCode aura_attachment_generate_id(
+    AuraBuffer* out_attachment_id,
+    AuraError*  out_error);
 
-EPP_API EppErrorCode epp_attachment_generate_file_key(
-    EppBuffer* out_file_key,
-    EppError*  out_error);
+AURA_API AuraErrorCode aura_attachment_generate_file_key(
+    AuraBuffer* out_file_key,
+    AuraError*  out_error);
 
-EPP_API EppErrorCode epp_attachment_encrypt_chunk(
+AURA_API AuraErrorCode aura_attachment_encrypt_chunk(
     const uint8_t* file_key,
     size_t         file_key_length,
     const uint8_t* attachment_id,
@@ -1775,11 +1775,11 @@ EPP_API EppErrorCode epp_attachment_encrypt_chunk(
     uint32_t       chunk_count,
     const uint8_t* plaintext,
     size_t         plaintext_length,
-    EppBuffer*     out_nonce,
-    EppBuffer*     out_ciphertext,
-    EppError*      out_error);
+    AuraBuffer*     out_nonce,
+    AuraBuffer*     out_ciphertext,
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_decrypt_chunk(
+AURA_API AuraErrorCode aura_attachment_decrypt_chunk(
     const uint8_t* file_key,
     size_t         file_key_length,
     const uint8_t* attachment_id,
@@ -1794,10 +1794,10 @@ EPP_API EppErrorCode epp_attachment_decrypt_chunk(
     size_t         nonce_length,
     const uint8_t* ciphertext,
     size_t         ciphertext_length,
-    EppBuffer*     out_plaintext,
-    EppError*      out_error);
+    AuraBuffer*     out_plaintext,
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_manifest_create(
+AURA_API AuraErrorCode aura_attachment_manifest_create(
     const uint8_t* attachment_id,
     size_t         attachment_id_length,
     const char*    mime_type,
@@ -1809,15 +1809,15 @@ EPP_API EppErrorCode epp_attachment_manifest_create(
     size_t         file_sha256_length,
     const uint8_t* encrypted_file_key,
     size_t         encrypted_file_key_length,
-    EppBuffer*     out_manifest,
-    EppError*      out_error);
+    AuraBuffer*     out_manifest,
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_manifest_validate(
+AURA_API AuraErrorCode aura_attachment_manifest_validate(
     const uint8_t* manifest_bytes,
     size_t         manifest_length,
-    EppError*      out_error);
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_chunk_validate(
+AURA_API AuraErrorCode aura_attachment_chunk_validate(
     const uint8_t* manifest_bytes,
     size_t         manifest_length,
     uint32_t       chunk_index,
@@ -1825,9 +1825,9 @@ EPP_API EppErrorCode epp_attachment_chunk_validate(
     size_t         nonce_length,
     const uint8_t* ciphertext,
     size_t         ciphertext_length,
-    EppError*      out_error);
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_encrypt_thumbnail(
+AURA_API AuraErrorCode aura_attachment_encrypt_thumbnail(
     const uint8_t* file_key,
     size_t         file_key_length,
     const uint8_t* attachment_id,
@@ -1836,11 +1836,11 @@ EPP_API EppErrorCode epp_attachment_encrypt_thumbnail(
     size_t         thumbnail_mime_type_length,
     const uint8_t* thumbnail_plaintext,
     size_t         thumbnail_plaintext_length,
-    EppBuffer*     out_nonce,
-    EppBuffer*     out_ciphertext,
-    EppError*      out_error);
+    AuraBuffer*     out_nonce,
+    AuraBuffer*     out_ciphertext,
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_decrypt_thumbnail(
+AURA_API AuraErrorCode aura_attachment_decrypt_thumbnail(
     const uint8_t* file_key,
     size_t         file_key_length,
     const uint8_t* attachment_id,
@@ -1851,62 +1851,62 @@ EPP_API EppErrorCode epp_attachment_decrypt_thumbnail(
     size_t         nonce_length,
     const uint8_t* ciphertext,
     size_t         ciphertext_length,
-    EppBuffer*     out_plaintext,
-    EppError*      out_error);
+    AuraBuffer*     out_plaintext,
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_validate_ttl(
+AURA_API AuraErrorCode aura_attachment_validate_ttl(
     uint64_t  ttl_seconds,
-    EppError* out_error);
+    AuraError* out_error);
 
-EPP_API bool epp_attachment_is_expired(
+AURA_API bool aura_attachment_is_expired(
     uint64_t created_at_unix,
     uint64_t ttl_seconds,
     uint64_t now_unix);
 
-EPP_API EppErrorCode epp_attachment_progress_create(
+AURA_API AuraErrorCode aura_attachment_progress_create(
     const uint8_t* attachment_id,
     size_t         attachment_id_length,
     uint32_t       chunk_count,
-    EppBuffer*     out_progress,
-    EppError*      out_error);
+    AuraBuffer*     out_progress,
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_progress_mark_completed(
+AURA_API AuraErrorCode aura_attachment_progress_mark_completed(
     const uint8_t* progress_bytes,
     size_t         progress_length,
     uint32_t       chunk_index,
     uint64_t       bytes_transferred,
     uint64_t       now_unix,
-    EppBuffer*     out_updated_progress,
-    EppError*      out_error);
+    AuraBuffer*     out_updated_progress,
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_progress_get_remaining(
+AURA_API AuraErrorCode aura_attachment_progress_get_remaining(
     const uint8_t* progress_bytes,
     size_t         progress_length,
-    EppBuffer*     out_remaining,
+    AuraBuffer*     out_remaining,
     uint32_t*      out_remaining_count,
-    EppError*      out_error);
+    AuraError*      out_error);
 
-EPP_API bool epp_attachment_progress_is_complete(
+AURA_API bool aura_attachment_progress_is_complete(
     const uint8_t* progress_bytes,
     size_t         progress_length);
 
-EPP_API EppErrorCode epp_attachment_generate_collage_id(
-    EppBuffer* out_collage_id,
-    EppError*  out_error);
+AURA_API AuraErrorCode aura_attachment_generate_collage_id(
+    AuraBuffer* out_collage_id,
+    AuraError*  out_error);
 
-EPP_API EppErrorCode epp_attachment_collage_create(
+AURA_API AuraErrorCode aura_attachment_collage_create(
     const uint8_t *const * manifest_array,
     const size_t*          manifest_lengths,
     size_t                 manifest_count,
-    EppBuffer*             out_collage,
-    EppError*              out_error);
+    AuraBuffer*             out_collage,
+    AuraError*              out_error);
 
-EPP_API EppErrorCode epp_attachment_collage_validate(
+AURA_API AuraErrorCode aura_attachment_collage_validate(
     const uint8_t* collage_bytes,
     size_t         collage_length,
-    EppError*      out_error);
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_collage_create_with_metadata(
+AURA_API AuraErrorCode aura_attachment_collage_create_with_metadata(
     const uint8_t *const * manifest_array,
     const size_t*          manifest_lengths,
     size_t                 manifest_count,
@@ -1915,13 +1915,13 @@ EPP_API EppErrorCode epp_attachment_collage_create_with_metadata(
     const uint8_t*         description,
     size_t                 description_length,
     int32_t                layout,
-    EppBuffer*             out_collage,
-    EppError*              out_error);
+    AuraBuffer*             out_collage,
+    AuraError*              out_error);
 
-typedef struct EppStreamingEncryptorHandle EppStreamingEncryptorHandle;
-typedef struct EppStreamingDecryptorHandle EppStreamingDecryptorHandle;
+typedef struct AuraStreamingEncryptorHandle AuraStreamingEncryptorHandle;
+typedef struct AuraStreamingDecryptorHandle AuraStreamingDecryptorHandle;
 
-EPP_API EppErrorCode epp_attachment_streaming_encryptor_create(
+AURA_API AuraErrorCode aura_attachment_streaming_encryptor_create(
     const uint8_t*              file_key,
     size_t                      file_key_length,
     const uint8_t*              attachment_id,
@@ -1931,27 +1931,27 @@ EPP_API EppErrorCode epp_attachment_streaming_encryptor_create(
     uint64_t                    total_size,
     uint32_t                    chunk_size,
     uint32_t                    chunk_count,
-    EppStreamingEncryptorHandle** out_handle,
-    EppError*                   out_error);
+    AuraStreamingEncryptorHandle** out_handle,
+    AuraError*                   out_error);
 
-EPP_API EppErrorCode epp_attachment_streaming_encryptor_write(
-    EppStreamingEncryptorHandle* handle,
+AURA_API AuraErrorCode aura_attachment_streaming_encryptor_write(
+    AuraStreamingEncryptorHandle* handle,
     const uint8_t*               data,
     size_t                       data_length,
-    EppBuffer*                   out_chunks,
+    AuraBuffer*                   out_chunks,
     uint32_t*                    out_chunk_count,
-    EppError*                    out_error);
+    AuraError*                    out_error);
 
-EPP_API EppErrorCode epp_attachment_streaming_encryptor_finish(
-    EppStreamingEncryptorHandle* handle,
-    EppBuffer*                   out_chunk,
+AURA_API AuraErrorCode aura_attachment_streaming_encryptor_finish(
+    AuraStreamingEncryptorHandle* handle,
+    AuraBuffer*                   out_chunk,
     uint8_t*                     out_has_chunk,
-    EppError*                    out_error);
+    AuraError*                    out_error);
 
-EPP_API void epp_attachment_streaming_encryptor_destroy(
-    EppStreamingEncryptorHandle* handle);
+AURA_API void aura_attachment_streaming_encryptor_destroy(
+    AuraStreamingEncryptorHandle* handle);
 
-EPP_API EppErrorCode epp_attachment_streaming_decryptor_create(
+AURA_API AuraErrorCode aura_attachment_streaming_decryptor_create(
     const uint8_t*              file_key,
     size_t                      file_key_length,
     const uint8_t*              attachment_id,
@@ -1961,26 +1961,26 @@ EPP_API EppErrorCode epp_attachment_streaming_decryptor_create(
     uint64_t                    total_size,
     uint32_t                    chunk_size,
     uint32_t                    chunk_count,
-    EppStreamingDecryptorHandle** out_handle,
-    EppError*                   out_error);
+    AuraStreamingDecryptorHandle** out_handle,
+    AuraError*                   out_error);
 
-EPP_API EppErrorCode epp_attachment_streaming_decryptor_write(
-    EppStreamingDecryptorHandle* handle,
+AURA_API AuraErrorCode aura_attachment_streaming_decryptor_write(
+    AuraStreamingDecryptorHandle* handle,
     uint32_t                     chunk_index,
     const uint8_t*               nonce,
     size_t                       nonce_length,
     const uint8_t*               ciphertext,
     size_t                       ciphertext_length,
-    EppBuffer*                   out_plaintext,
-    EppError*                    out_error);
+    AuraBuffer*                   out_plaintext,
+    AuraError*                    out_error);
 
-EPP_API bool epp_attachment_streaming_decryptor_is_complete(
-    EppStreamingDecryptorHandle* handle);
+AURA_API bool aura_attachment_streaming_decryptor_is_complete(
+    AuraStreamingDecryptorHandle* handle);
 
-EPP_API void epp_attachment_streaming_decryptor_destroy(
-    EppStreamingDecryptorHandle* handle);
+AURA_API void aura_attachment_streaming_decryptor_destroy(
+    AuraStreamingDecryptorHandle* handle);
 
-EPP_API EppErrorCode epp_attachment_manifest_create_v2(
+AURA_API AuraErrorCode aura_attachment_manifest_create_v2(
     const uint8_t* attachment_id,
     size_t         attachment_id_length,
     const uint8_t* mime_type,
@@ -2002,65 +2002,65 @@ EPP_API EppErrorCode epp_attachment_manifest_create_v2(
     uint32_t       thumbnail_original_size,
     uint64_t       ttl_seconds,
     uint64_t       created_at_unix,
-    EppBuffer*     out_manifest,
-    EppError*      out_error);
+    AuraBuffer*     out_manifest,
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_encrypt_file_key(
-    EppSessionHandle* handle,
+AURA_API AuraErrorCode aura_attachment_encrypt_file_key(
+    AuraSessionHandle* handle,
     const uint8_t*    file_key,
     size_t            file_key_length,
     const uint8_t*    attachment_id,
     size_t            attachment_id_length,
-    EppBuffer*        out_encrypted_file_key,
-    EppError*         out_error);
+    AuraBuffer*        out_encrypted_file_key,
+    AuraError*         out_error);
 
 /*
  * Decrypts an attachment file key and verifies that the decrypted envelope is
  * bound to the supplied attachment_id.
  */
-EPP_API EppErrorCode epp_attachment_decrypt_file_key(
-    EppSessionHandle* handle,
+AURA_API AuraErrorCode aura_attachment_decrypt_file_key(
+    AuraSessionHandle* handle,
     const uint8_t*    encrypted_file_key,
     size_t            encrypted_file_key_length,
     const uint8_t*    attachment_id,
     size_t            attachment_id_length,
-    EppBuffer*        out_file_key,
-    EppError*         out_error);
+    AuraBuffer*        out_file_key,
+    AuraError*         out_error);
 
 /*
  * Validates magic bytes for a supported MIME type. Unsupported MIME strings
  * are rejected rather than treated as implicitly valid.
  */
-EPP_API EppErrorCode epp_attachment_validate_magic_bytes(
+AURA_API AuraErrorCode aura_attachment_validate_magic_bytes(
     const uint8_t* header,
     size_t         header_length,
     const uint8_t* mime_type,
     size_t         mime_type_length,
-    EppError*      out_error);
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_detect_mime(
+AURA_API AuraErrorCode aura_attachment_detect_mime(
     const uint8_t* header,
     size_t         header_length,
-    EppBuffer*     out_mime,
-    EppError*      out_error);
+    AuraBuffer*     out_mime,
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_validate_filename(
+AURA_API AuraErrorCode aura_attachment_validate_filename(
     const uint8_t* name,
     size_t         name_length,
-    EppError*      out_error);
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_sanitize_filename(
+AURA_API AuraErrorCode aura_attachment_sanitize_filename(
     const uint8_t* name,
     size_t         name_length,
-    EppBuffer*     out_sanitized,
-    EppError*      out_error);
+    AuraBuffer*     out_sanitized,
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_inline_validate(
+AURA_API AuraErrorCode aura_attachment_inline_validate(
     const uint8_t* bytes,
     size_t         length,
-    EppError*      out_error);
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_inline_create(
+AURA_API AuraErrorCode aura_attachment_inline_create(
     const uint8_t* attachment_id,
     size_t         attachment_id_length,
     const uint8_t* mime_type,
@@ -2073,29 +2073,29 @@ EPP_API EppErrorCode epp_attachment_inline_create(
     uint8_t        view_once,
     uint8_t        no_forward,
     uint8_t        no_save,
-    EppBuffer*     out_buffer,
-    EppError*      out_error);
+    AuraBuffer*     out_buffer,
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_reference_validate(
+AURA_API AuraErrorCode aura_attachment_reference_validate(
     const uint8_t* bytes,
     size_t         length,
-    EppError*      out_error);
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_reference_create(
+AURA_API AuraErrorCode aura_attachment_reference_create(
     const uint8_t* attachment_id,
     size_t         attachment_id_length,
     int32_t        reference_type,
     const uint8_t* source_message_id,
     size_t         source_message_id_length,
-    EppBuffer*     out_buffer,
-    EppError*      out_error);
+    AuraBuffer*     out_buffer,
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_voice_meta_validate(
+AURA_API AuraErrorCode aura_attachment_voice_meta_validate(
     const uint8_t* bytes,
     size_t         length,
-    EppError*      out_error);
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_voice_meta_create(
+AURA_API AuraErrorCode aura_attachment_voice_meta_create(
     const float*   waveform_samples,
     size_t         waveform_count,
     const uint8_t* transcript,
@@ -2103,15 +2103,15 @@ EPP_API EppErrorCode epp_attachment_voice_meta_create(
     float          playback_speed_hint,
     uint8_t        has_playback_speed,
     uint8_t        is_listened,
-    EppBuffer*     out_buffer,
-    EppError*      out_error);
+    AuraBuffer*     out_buffer,
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_location_validate(
+AURA_API AuraErrorCode aura_attachment_location_validate(
     const uint8_t* bytes,
     size_t         length,
-    EppError*      out_error);
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_location_create(
+AURA_API AuraErrorCode aura_attachment_location_create(
     double         latitude,
     double         longitude,
     double         accuracy_meters,
@@ -2120,15 +2120,15 @@ EPP_API EppErrorCode epp_attachment_location_create(
     size_t         label_length,
     uint64_t       timestamp_unix,
     uint8_t        has_timestamp,
-    EppBuffer*     out_buffer,
-    EppError*      out_error);
+    AuraBuffer*     out_buffer,
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_contact_card_validate(
+AURA_API AuraErrorCode aura_attachment_contact_card_validate(
     const uint8_t* bytes,
     size_t         length,
-    EppError*      out_error);
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_contact_card_create(
+AURA_API AuraErrorCode aura_attachment_contact_card_create(
     const uint8_t* display_name,
     size_t         display_name_length,
     const uint8_t* phone,
@@ -2139,15 +2139,15 @@ EPP_API EppErrorCode epp_attachment_contact_card_create(
     size_t         avatar_data_length,
     const uint8_t* organization,
     size_t         organization_length,
-    EppBuffer*     out_buffer,
-    EppError*      out_error);
+    AuraBuffer*     out_buffer,
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_link_preview_validate(
+AURA_API AuraErrorCode aura_attachment_link_preview_validate(
     const uint8_t* bytes,
     size_t         length,
-    EppError*      out_error);
+    AuraError*      out_error);
 
-EPP_API EppErrorCode epp_attachment_link_preview_create(
+AURA_API AuraErrorCode aura_attachment_link_preview_create(
     const uint8_t* url,
     size_t         url_length,
     const uint8_t* title,
@@ -2160,8 +2160,8 @@ EPP_API EppErrorCode epp_attachment_link_preview_create(
     size_t         preview_image_mime_length,
     const uint8_t* domain,
     size_t         domain_length,
-    EppBuffer*     out_buffer,
-    EppError*      out_error);
+    AuraBuffer*     out_buffer,
+    AuraError*      out_error);
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2173,12 +2173,12 @@ EPP_API EppErrorCode epp_attachment_link_preview_create(
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /*
- * epp_group_generate_key_package — generate a signed key package for group
+ * aura_group_generate_key_package — generate a signed key package for group
  * invitation.
  *
  * A KeyPackage is a signed public-key advertisement that a group admin uses
  * to add a new member.  The matching secrets handle holds the private keys
- * and MUST be retained by the invitee until epp_group_join() is called.
+ * and MUST be retained by the invitee until aura_group_join() is called.
  *
  * Parameters:
  *   identity_handle — the invitee's long-term identity (not consumed).
@@ -2187,37 +2187,37 @@ EPP_API EppErrorCode epp_attachment_link_preview_create(
  *                     and visible to all group members.  Borrowed.
  *   credential_length — byte length of credential.
  *   out_key_package — receives the serialised, signed KeyPackage protobuf to
- *                     send to the group admin (release with epp_buffer_release()).
+ *                     send to the group admin (release with aura_buffer_release()).
  *   out_secrets     — receives the private secrets handle corresponding to
  *                     this key package.  MUST be kept alive and passed to
- *                     epp_group_join() later.  Destroy with
- *                     epp_group_key_package_secrets_destroy() if the
+ *                     aura_group_join() later.  Destroy with
+ *                     aura_group_key_package_secrets_destroy() if the
  *                     invitation is never completed.
  *   out_error       — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_KEY_GENERATION, or EPP_ERROR_ENCODE.
+ * Returns: AURA_SUCCESS, AURA_ERROR_KEY_GENERATION, or AURA_ERROR_ENCODE.
  */
-EPP_API EppErrorCode epp_group_generate_key_package(
-    EppIdentityHandle*           identity_handle,
+AURA_API AuraErrorCode aura_group_generate_key_package(
+    AuraIdentityHandle*           identity_handle,
     const uint8_t*               credential,
     size_t                       credential_length,
-    EppBuffer*                   out_key_package,
-    EppKeyPackageSecretsHandle** out_secrets,
-    EppError*                    out_error);
+    AuraBuffer*                   out_key_package,
+    AuraKeyPackageSecretsHandle** out_secrets,
+    AuraError*                    out_error);
 
 /*
- * epp_group_key_package_secrets_destroy — free a key package secrets handle.
+ * aura_group_key_package_secrets_destroy — free a key package secrets handle.
  *
  * Call when an invitation was never completed and the secrets are no longer
  * needed.  Sets *handle to NULL.
  */
-EPP_API void epp_group_key_package_secrets_destroy(
-    EppKeyPackageSecretsHandle** handle);
+AURA_API void aura_group_key_package_secrets_destroy(
+    AuraKeyPackageSecretsHandle** handle);
 
 /*
- * epp_group_create — create a new group as the sole initial member.
+ * aura_group_create — create a new group as the sole initial member.
  *
- * The caller becomes leaf index 0.  Use epp_group_add_member() to invite
+ * The caller becomes leaf index 0.  Use aura_group_add_member() to invite
  * others.  Group uses the hardened shielded policy by default.
  *
  * Parameters:
@@ -2225,100 +2225,100 @@ EPP_API void epp_group_key_package_secrets_destroy(
  *   credential      — caller's application credential embedded in the group
  *                     tree (borrowed).
  *   credential_length — byte length of credential.
- *   out_handle      — receives the EppGroupSessionHandle.
- *                     Destroy with epp_group_destroy() when done.
+ *   out_handle      — receives the AuraGroupSessionHandle.
+ *                     Destroy with aura_group_destroy() when done.
  *   out_error       — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_KEY_GENERATION, or EPP_ERROR_GROUP_PROTOCOL.
+ * Returns: AURA_SUCCESS, AURA_ERROR_KEY_GENERATION, or AURA_ERROR_GROUP_PROTOCOL.
  */
-EPP_API EppErrorCode epp_group_create(
-    EppIdentityHandle*       identity_handle,
+AURA_API AuraErrorCode aura_group_create(
+    AuraIdentityHandle*       identity_handle,
     const uint8_t*           credential,
     size_t                   credential_length,
-    EppGroupSessionHandle**  out_handle,
-    EppError*                out_error);
+    AuraGroupSessionHandle**  out_handle,
+    AuraError*                out_error);
 
 /*
- * epp_group_create_shielded — create a new group with metadata shielding
+ * aura_group_create_shielded — create a new group with metadata shielding
  * enabled.
  *
- * Like epp_group_create() but enables enhanced sender-key padding and
+ * Like aura_group_create() but enables enhanced sender-key padding and
  * traffic-analysis resistance features.  All members must support shielded
  * mode; mixing shielded and non-shielded clients in the same group is not
  * supported.
  *
- * Parameters: same as epp_group_create().
+ * Parameters: same as aura_group_create().
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_KEY_GENERATION, or EPP_ERROR_GROUP_PROTOCOL.
+ * Returns: AURA_SUCCESS, AURA_ERROR_KEY_GENERATION, or AURA_ERROR_GROUP_PROTOCOL.
  */
-EPP_API EppErrorCode epp_group_create_shielded(
-    EppIdentityHandle*       identity_handle,
+AURA_API AuraErrorCode aura_group_create_shielded(
+    AuraIdentityHandle*       identity_handle,
     const uint8_t*           credential,
     size_t                   credential_length,
-    EppGroupSessionHandle**  out_handle,
-    EppError*                out_error);
+    AuraGroupSessionHandle**  out_handle,
+    AuraError*                out_error);
 
 /*
- * epp_group_is_shielded — query whether the group has shielding enabled.
+ * aura_group_is_shielded — query whether the group has shielding enabled.
  *
  * Parameters:
  *   handle       — active group session handle.
  *   out_shielded — receives 1 if shielded, 0 otherwise.
  *   out_error    — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_INVALID_STATE.
+ * Returns: AURA_SUCCESS or AURA_ERROR_INVALID_STATE.
  */
-EPP_API EppErrorCode epp_group_is_shielded(
-    EppGroupSessionHandle*  handle,
+AURA_API AuraErrorCode aura_group_is_shielded(
+    AuraGroupSessionHandle*  handle,
     uint8_t*                out_shielded,
-    EppError*               out_error);
+    AuraError*               out_error);
 
 /*
- * epp_group_create_with_policy — create a new group with an explicit
+ * aura_group_create_with_policy — create a new group with an explicit
  * security policy.
  *
  * Parameters:
  *   identity_handle   — caller's long-term identity (not consumed).
  *   credential        — caller's credential (borrowed).
  *   credential_length — byte length of credential.
- *   policy            — pointer to a populated EppGroupSecurityPolicy;
+ *   policy            — pointer to a populated AuraGroupSecurityPolicy;
  *                       must not be NULL.  The struct is copied internally.
  *   out_handle        — receives the group session handle.
  *   out_error         — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_INVALID_INPUT, or EPP_ERROR_GROUP_PROTOCOL.
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT, or AURA_ERROR_GROUP_PROTOCOL.
  */
-EPP_API EppErrorCode epp_group_create_with_policy(
-    EppIdentityHandle*            identity_handle,
+AURA_API AuraErrorCode aura_group_create_with_policy(
+    AuraIdentityHandle*            identity_handle,
     const uint8_t*                credential,
     size_t                        credential_length,
-    const EppGroupSecurityPolicy* policy,
-    EppGroupSessionHandle**       out_handle,
-    EppError*                     out_error);
+    const AuraGroupSecurityPolicy* policy,
+    AuraGroupSessionHandle**       out_handle,
+    AuraError*                     out_error);
 
 /*
- * epp_group_get_security_policy — read the active security policy of a group.
+ * aura_group_get_security_policy — read the active security policy of a group.
  *
  * Parameters:
  *   handle     — active group session handle.
- *   out_policy — caller-allocated EppGroupSecurityPolicy to fill in.
+ *   out_policy — caller-allocated AuraGroupSecurityPolicy to fill in.
  *   out_error  — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_INVALID_STATE.
+ * Returns: AURA_SUCCESS or AURA_ERROR_INVALID_STATE.
  */
-EPP_API EppErrorCode epp_group_get_security_policy(
-    EppGroupSessionHandle*  handle,
-    EppGroupSecurityPolicy* out_policy,
-    EppError*               out_error);
+AURA_API AuraErrorCode aura_group_get_security_policy(
+    AuraGroupSessionHandle*  handle,
+    AuraGroupSecurityPolicy* out_policy,
+    AuraError*               out_error);
 
 /*
- * epp_group_join — join a group using a Welcome message.
+ * aura_group_join — join a group using a Welcome message.
  *
  * Decrypts the Welcome, verifies the tree and confirmation MAC, and
  * establishes the new member's group session at the current epoch.
  *
  * IMPORTANT: After calling this function do NOT also call
- * epp_group_process_commit() for the same commit that generated the Welcome.
+ * aura_group_process_commit() for the same commit that generated the Welcome.
  * The Welcome already brings the session to epoch N; processing the commit
  * again would cause an epoch mismatch error.
  *
@@ -2331,30 +2331,30 @@ EPP_API EppErrorCode epp_group_get_security_policy(
  *                       KeyPackage that was added (consumed and freed
  *                       internally on success; do NOT destroy afterwards).
  *                       On failure the handle remains valid.
- *   out_group_handle  — receives the EppGroupSessionHandle.
- *                       Destroy with epp_group_destroy() when done.
+ *   out_group_handle  — receives the AuraGroupSessionHandle.
+ *                       Destroy with aura_group_destroy() when done.
  *   out_error         — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_WELCOME, EPP_ERROR_DECODE, or
- *          EPP_ERROR_TREE_INTEGRITY.
+ * Returns: AURA_SUCCESS, AURA_ERROR_WELCOME, AURA_ERROR_DECODE, or
+ *          AURA_ERROR_TREE_INTEGRITY.
  */
-EPP_API EppErrorCode epp_group_join(
-    EppIdentityHandle*          identity_handle,
+AURA_API AuraErrorCode aura_group_join(
+    AuraIdentityHandle*          identity_handle,
     const uint8_t*              welcome_bytes,
     size_t                      welcome_length,
-    EppKeyPackageSecretsHandle* secrets_handle,
-    EppGroupSessionHandle**     out_group_handle,
-    EppError*                   out_error);
+    AuraKeyPackageSecretsHandle* secrets_handle,
+    AuraGroupSessionHandle**     out_group_handle,
+    AuraError*                   out_error);
 
 /*
- * epp_group_add_member — add a new member to the group.
+ * aura_group_add_member — add a new member to the group.
  *
  * Creates an Add proposal, wraps it in a Commit, advances the local epoch,
  * and produces a Welcome message for the new member.
  *
  * Only the member who calls this function should send the commit to the
- * group; other existing members call epp_group_process_commit() on receipt.
- * The new member calls epp_group_join() with the welcome bytes.
+ * group; other existing members call aura_group_process_commit() on receipt.
+ * The new member calls aura_group_join() with the welcome bytes.
  *
  * Parameters:
  *   handle             — active group session handle (caller must be a
@@ -2362,24 +2362,24 @@ EPP_API EppErrorCode epp_group_join(
  *   key_package_bytes  — serialised KeyPackage from the invitee (borrowed).
  *   key_package_length — byte length of key_package_bytes.
  *   out_commit         — receives the serialised Commit to broadcast to
- *                        existing members (release with epp_buffer_release()).
+ *                        existing members (release with aura_buffer_release()).
  *   out_welcome        — receives the serialised Welcome to send to the
- *                        new member (release with epp_buffer_release()).
+ *                        new member (release with aura_buffer_release()).
  *   out_error          — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_GROUP_MEMBERSHIP, EPP_ERROR_GROUP_PROTOCOL,
- *          or EPP_ERROR_ENCODE.
+ * Returns: AURA_SUCCESS, AURA_ERROR_GROUP_MEMBERSHIP, AURA_ERROR_GROUP_PROTOCOL,
+ *          or AURA_ERROR_ENCODE.
  */
-EPP_API EppErrorCode epp_group_add_member(
-    EppGroupSessionHandle*  handle,
+AURA_API AuraErrorCode aura_group_add_member(
+    AuraGroupSessionHandle*  handle,
     const uint8_t*          key_package_bytes,
     size_t                  key_package_length,
-    EppBuffer*              out_commit,
-    EppBuffer*              out_welcome,
-    EppError*               out_error);
+    AuraBuffer*              out_commit,
+    AuraBuffer*              out_welcome,
+    AuraError*               out_error);
 
 /*
- * epp_group_remove_member — remove a member from the group.
+ * aura_group_remove_member — remove a member from the group.
  *
  * Creates a Remove proposal, wraps it in a Commit, and advances the local
  * epoch.  The removed member loses access to future messages immediately.
@@ -2387,24 +2387,24 @@ EPP_API EppErrorCode epp_group_add_member(
  * Parameters:
  *   handle      — active group session handle (caller must be a current member).
  *   leaf_index  — zero-based leaf index of the member to remove.
- *                 Use epp_group_get_member_leaf_indices() to discover indices.
- *                 A member may not remove themselves; use epp_group_update()
+ *                 Use aura_group_get_member_leaf_indices() to discover indices.
+ *                 A member may not remove themselves; use aura_group_update()
  *                 followed by leaving via the application layer instead.
  *   out_commit  — receives the serialised Commit to broadcast
- *                 (release with epp_buffer_release()).
+ *                 (release with aura_buffer_release()).
  *   out_error   — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_GROUP_MEMBERSHIP, EPP_ERROR_INVALID_INPUT,
- *          or EPP_ERROR_GROUP_PROTOCOL.
+ * Returns: AURA_SUCCESS, AURA_ERROR_GROUP_MEMBERSHIP, AURA_ERROR_INVALID_INPUT,
+ *          or AURA_ERROR_GROUP_PROTOCOL.
  */
-EPP_API EppErrorCode epp_group_remove_member(
-    EppGroupSessionHandle*  handle,
+AURA_API AuraErrorCode aura_group_remove_member(
+    AuraGroupSessionHandle*  handle,
     uint32_t                leaf_index,
-    EppBuffer*              out_commit,
-    EppError*               out_error);
+    AuraBuffer*              out_commit,
+    AuraError*               out_error);
 
 /*
- * epp_group_update — rotate the caller's leaf keys and advance the epoch.
+ * aura_group_update — rotate the caller's leaf keys and advance the epoch.
  *
  * Creates an Update proposal, wraps it in a Commit, and publishes a new
  * UpdatePath so all other members can derive the new epoch keys.  Call
@@ -2414,18 +2414,18 @@ EPP_API EppErrorCode epp_group_remove_member(
  * Parameters:
  *   handle     — active group session handle.
  *   out_commit — receives the serialised Commit to broadcast
- *                (release with epp_buffer_release()).
+ *                (release with aura_buffer_release()).
  *   out_error  — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_GROUP_PROTOCOL.
+ * Returns: AURA_SUCCESS or AURA_ERROR_GROUP_PROTOCOL.
  */
-EPP_API EppErrorCode epp_group_update(
-    EppGroupSessionHandle*  handle,
-    EppBuffer*              out_commit,
-    EppError*               out_error);
+AURA_API AuraErrorCode aura_group_update(
+    AuraGroupSessionHandle*  handle,
+    AuraBuffer*              out_commit,
+    AuraError*               out_error);
 
 /*
- * epp_group_process_commit — apply a Commit received from another member.
+ * aura_group_process_commit — apply a Commit received from another member.
  *
  * Validates the Commit (parent hash chain, confirmation MAC, UpdatePath),
  * updates the ratchet tree, and advances the local epoch.  Must be called
@@ -2442,116 +2442,116 @@ EPP_API EppErrorCode epp_group_update(
  *   commit_length — byte length of commit_bytes.
  *   out_error     — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_GROUP_PROTOCOL, EPP_ERROR_TREE_INTEGRITY,
- *          EPP_ERROR_DECODE, or EPP_ERROR_GROUP_MEMBERSHIP.
+ * Returns: AURA_SUCCESS, AURA_ERROR_GROUP_PROTOCOL, AURA_ERROR_TREE_INTEGRITY,
+ *          AURA_ERROR_DECODE, or AURA_ERROR_GROUP_MEMBERSHIP.
  */
-EPP_API EppErrorCode epp_group_process_commit(
-    EppGroupSessionHandle*  handle,
+AURA_API AuraErrorCode aura_group_process_commit(
+    AuraGroupSessionHandle*  handle,
     const uint8_t*          commit_bytes,
     size_t                  commit_length,
-    EppError*               out_error);
+    AuraError*               out_error);
 
 /*
- * epp_group_encrypt — encrypt a plaintext message to the group.
+ * aura_group_encrypt — encrypt a plaintext message to the group.
  *
  * Uses the current epoch's sender-key ratchet.  The generation counter
  * advances with each call; recipients use the sender leaf index + generation
  * to decrypt out-of-order messages within the epoch.
  *
  * If mandatory_franking is set in the group's security policy this function
- * returns EPP_ERROR_INVALID_STATE; use epp_group_encrypt_frankable() instead.
+ * returns AURA_ERROR_INVALID_STATE; use aura_group_encrypt_frankable() instead.
  *
  * Parameters:
  *   handle           — active group session handle.
  *   plaintext        — message bytes to encrypt (borrowed).
  *   plaintext_length — byte length of plaintext.
  *   out_ciphertext   — receives the serialised GroupMessage protobuf
- *                      (release with epp_buffer_release()).
+ *                      (release with aura_buffer_release()).
  *   out_error        — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_ENCRYPTION, or EPP_ERROR_INVALID_STATE.
+ * Returns: AURA_SUCCESS, AURA_ERROR_ENCRYPTION, or AURA_ERROR_INVALID_STATE.
  */
-EPP_API EppErrorCode epp_group_encrypt(
-    EppGroupSessionHandle*  handle,
+AURA_API AuraErrorCode aura_group_encrypt(
+    AuraGroupSessionHandle*  handle,
     const uint8_t*          plaintext,
     size_t                  plaintext_length,
-    EppBuffer*              out_ciphertext,
-    EppError*               out_error);
+    AuraBuffer*              out_ciphertext,
+    AuraError*               out_error);
 
 /*
- * epp_group_decrypt — decrypt a group message (basic variant).
+ * aura_group_decrypt — decrypt a group message (basic variant).
  *
  * Suitable when you only need the plaintext and sender identity.  For full
- * metadata (TTL, content type, message ID, franking) use epp_group_decrypt_ex().
+ * metadata (TTL, content type, message ID, franking) use aura_group_decrypt_ex().
  *
  * Parameters:
  *   handle            — active group session handle.
  *   ciphertext        — serialised GroupMessage bytes (borrowed).
  *   ciphertext_length — byte length of ciphertext.
  *   out_plaintext     — receives the decrypted plaintext
- *                       (release with epp_buffer_release()).
+ *                       (release with aura_buffer_release()).
  *   out_sender_leaf   — receives the zero-based leaf index of the sender.
  *   out_generation    — receives the per-sender generation counter.
  *   out_error         — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_DECRYPTION, EPP_ERROR_DECODE, or
- *          EPP_ERROR_GROUP_MEMBERSHIP.
+ * Returns: AURA_SUCCESS, AURA_ERROR_DECRYPTION, AURA_ERROR_DECODE, or
+ *          AURA_ERROR_GROUP_MEMBERSHIP.
  */
-EPP_API EppErrorCode epp_group_decrypt(
-    EppGroupSessionHandle*  handle,
+AURA_API AuraErrorCode aura_group_decrypt(
+    AuraGroupSessionHandle*  handle,
     const uint8_t*          ciphertext,
     size_t                  ciphertext_length,
-    EppBuffer*              out_plaintext,
+    AuraBuffer*              out_plaintext,
     uint32_t*               out_sender_leaf,
     uint32_t*               out_generation,
-    EppError*               out_error);
+    AuraError*               out_error);
 
 /*
- * epp_group_decrypt_ex — decrypt a group message with full metadata.
+ * aura_group_decrypt_ex — decrypt a group message with full metadata.
  *
- * Populates an EppGroupDecryptResult with plaintext, sender, generation,
+ * Populates an AuraGroupDecryptResult with plaintext, sender, generation,
  * content type, TTL, timestamps, message IDs, and feature flags.
- * Must be freed with epp_group_decrypt_result_free() after use.
+ * Must be freed with aura_group_decrypt_result_free() after use.
  *
  * Parameters:
  *   handle            — active group session handle.
  *   ciphertext        — serialised GroupMessage bytes (borrowed).
  *   ciphertext_length — byte length of ciphertext.
- *   out_result        — caller-allocated EppGroupDecryptResult to fill.
- *                       All EppBuffer fields inside are heap-allocated;
- *                       free the entire struct with epp_group_decrypt_result_free().
+ *   out_result        — caller-allocated AuraGroupDecryptResult to fill.
+ *                       All AuraBuffer fields inside are heap-allocated;
+ *                       free the entire struct with aura_group_decrypt_result_free().
  *   out_error         — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_DECRYPTION, EPP_ERROR_DECODE,
- *          EPP_ERROR_MESSAGE_EXPIRED, or EPP_ERROR_GROUP_MEMBERSHIP.
+ * Returns: AURA_SUCCESS, AURA_ERROR_DECRYPTION, AURA_ERROR_DECODE,
+ *          AURA_ERROR_MESSAGE_EXPIRED, or AURA_ERROR_GROUP_MEMBERSHIP.
  */
-EPP_API EppErrorCode epp_group_decrypt_ex(
-    EppGroupSessionHandle*  handle,
+AURA_API AuraErrorCode aura_group_decrypt_ex(
+    AuraGroupSessionHandle*  handle,
     const uint8_t*          ciphertext,
     size_t                  ciphertext_length,
-    EppGroupDecryptResult*  out_result,
-    EppError*               out_error);
+    AuraGroupDecryptResult*  out_result,
+    AuraError*               out_error);
 
 /*
- * epp_group_decrypt_result_free — release all heap memory inside an
- * EppGroupDecryptResult previously populated by epp_group_decrypt_ex().
+ * aura_group_decrypt_result_free — release all heap memory inside an
+ * AuraGroupDecryptResult previously populated by aura_group_decrypt_ex().
  *
  * Does NOT free the result struct itself (which is caller-allocated).
- * Zeros all EppBuffer fields after release.  Safe to call on a zeroed struct.
+ * Zeros all AuraBuffer fields after release.  Safe to call on a zeroed struct.
  *
  * Safety:
- *   - Call only after a successful epp_group_decrypt_ex() (EPP_SUCCESS), or on
- *     a zero-initialised struct (EppGroupDecryptResult result = {0}).
- *   - If epp_group_decrypt_ex() returned an error the struct may be partially
- *     written.  Always zero-initialise before passing to epp_group_decrypt_ex()
- *     so that calling epp_group_decrypt_result_free() after an error is safe.
- *   - Do NOT call epp_buffer_release() on individual fields — use this
+ *   - Call only after a successful aura_group_decrypt_ex() (AURA_SUCCESS), or on
+ *     a zero-initialised struct (AuraGroupDecryptResult result = {0}).
+ *   - If aura_group_decrypt_ex() returned an error the struct may be partially
+ *     written.  Always zero-initialise before passing to aura_group_decrypt_ex()
+ *     so that calling aura_group_decrypt_result_free() after an error is safe.
+ *   - Do NOT call aura_buffer_release() on individual fields — use this
  *     function to release the entire result atomically.
  */
-EPP_API void epp_group_decrypt_result_free(EppGroupDecryptResult* result);
+AURA_API void aura_group_decrypt_result_free(AuraGroupDecryptResult* result);
 
 /*
- * epp_group_compute_message_id — compute a deterministic message ID from
+ * aura_group_compute_message_id — compute a deterministic message ID from
  * group metadata.
  *
  * Produces a stable, collision-resistant ID that clients can use to track,
@@ -2569,22 +2569,22 @@ EPP_API void epp_group_decrypt_result_free(EppGroupDecryptResult* result);
  *   sender_leaf_index   — leaf index of the sending member in the ratchet tree.
  *   generation          — per-member message generation counter at send time.
  *   out_message_id      — receives the 32-byte deterministic message ID
- *                         (release with epp_buffer_release()).
+ *                         (release with aura_buffer_release()).
  *   out_error           — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_INVALID_INPUT, or EPP_ERROR_CRYPTO.
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT, or AURA_ERROR_CRYPTO.
  */
-EPP_API EppErrorCode epp_group_compute_message_id(
+AURA_API AuraErrorCode aura_group_compute_message_id(
     const uint8_t*  group_id,
     size_t          group_id_length,
     uint64_t        epoch,
     uint32_t        sender_leaf_index,
     uint32_t        generation,
-    EppBuffer*      out_message_id,
-    EppError*       out_error);
+    AuraBuffer*      out_message_id,
+    AuraError*       out_error);
 
 /*
- * epp_group_get_id — retrieve the group's unique identifier bytes.
+ * aura_group_get_id — retrieve the group's unique identifier bytes.
  *
  * The group ID is a stable 32-byte random value assigned at creation and
  * preserved across epochs.
@@ -2592,18 +2592,18 @@ EPP_API EppErrorCode epp_group_compute_message_id(
  * Parameters:
  *   handle       — active group session handle.
  *   out_group_id — receives a copy of the group ID bytes
- *                  (release with epp_buffer_release()).
+ *                  (release with aura_buffer_release()).
  *   out_error    — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_INVALID_STATE.
+ * Returns: AURA_SUCCESS or AURA_ERROR_INVALID_STATE.
  */
-EPP_API EppErrorCode epp_group_get_id(
-    EppGroupSessionHandle*  handle,
-    EppBuffer*              out_group_id,
-    EppError*               out_error);
+AURA_API AuraErrorCode aura_group_get_id(
+    AuraGroupSessionHandle*  handle,
+    AuraBuffer*              out_group_id,
+    AuraError*               out_error);
 
 /*
- * epp_group_get_epoch — return the current epoch number.
+ * aura_group_get_epoch — return the current epoch number.
  *
  * The epoch increments with each successfully processed Commit.  Epoch 0
  * is the initial state after group creation.
@@ -2613,10 +2613,10 @@ EPP_API EppErrorCode epp_group_get_id(
  *
  * Returns: current epoch as uint64_t.  No error output; panics on NULL.
  */
-EPP_API uint64_t epp_group_get_epoch(EppGroupSessionHandle* handle);
+AURA_API uint64_t aura_group_get_epoch(AuraGroupSessionHandle* handle);
 
 /*
- * epp_group_get_my_leaf_index — return the caller's leaf index in the tree.
+ * aura_group_get_my_leaf_index — return the caller's leaf index in the tree.
  *
  * Stable for the lifetime of membership; does not change across epochs.
  *
@@ -2625,10 +2625,10 @@ EPP_API uint64_t epp_group_get_epoch(EppGroupSessionHandle* handle);
  *
  * Returns: zero-based leaf index as uint32_t.
  */
-EPP_API uint32_t epp_group_get_my_leaf_index(EppGroupSessionHandle* handle);
+AURA_API uint32_t aura_group_get_my_leaf_index(AuraGroupSessionHandle* handle);
 
 /*
- * epp_group_get_member_count — return the current number of active members.
+ * aura_group_get_member_count — return the current number of active members.
  *
  * Counts only occupied (non-blank) leaf nodes.
  *
@@ -2637,10 +2637,10 @@ EPP_API uint32_t epp_group_get_my_leaf_index(EppGroupSessionHandle* handle);
  *
  * Returns: member count as uint32_t.
  */
-EPP_API uint32_t epp_group_get_member_count(EppGroupSessionHandle* handle);
+AURA_API uint32_t aura_group_get_member_count(AuraGroupSessionHandle* handle);
 
 /*
- * epp_group_get_member_leaf_indices — retrieve the leaf indices of all
+ * aura_group_get_member_leaf_indices — retrieve the leaf indices of all
  * current members as a packed array of uint32_t.
  *
  * The returned buffer contains member_count values, each 4 bytes,
@@ -2649,27 +2649,27 @@ EPP_API uint32_t epp_group_get_member_count(EppGroupSessionHandle* handle);
  * Parameters:
  *   handle      — active group session handle.
  *   out_indices — receives the packed uint32_t array
- *                 (release with epp_buffer_release()).
+ *                 (release with aura_buffer_release()).
  *   out_error   — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_INVALID_STATE.
+ * Returns: AURA_SUCCESS or AURA_ERROR_INVALID_STATE.
  */
-EPP_API EppErrorCode epp_group_get_member_leaf_indices(
-    EppGroupSessionHandle*  handle,
-    EppBuffer*              out_indices,
-    EppError*               out_error);
+AURA_API AuraErrorCode aura_group_get_member_leaf_indices(
+    AuraGroupSessionHandle*  handle,
+    AuraBuffer*              out_indices,
+    AuraError*               out_error);
 
 /*
- * epp_group_serialize — persist the full group session state to an encrypted
+ * aura_group_serialize — persist the full group session state to an encrypted
  * blob (including private ratchet tree keys).
  *
- * Uses the same sealed-blob format as epp_session_serialize_sealed().
+ * Uses the same sealed-blob format as aura_session_serialize_sealed().
  * LOW-LEVEL API: persist two values per slot:
  *   - max_restored_counter: highest counter already accepted on restore.
  *   - latest_issued_counter: highest counter already used for export.
- * New clients should prefer epp_group_export_persisted_state() when they can
+ * New clients should prefer aura_group_export_persisted_state() when they can
  * store one serialized slot record, or otherwise
- * epp_group_serialize_with_tracker().
+ * aura_group_serialize_with_tracker().
  *
  * external_counter here must be latest_issued_counter + 1.
  *
@@ -2680,52 +2680,52 @@ EPP_API EppErrorCode epp_group_get_member_leaf_indices(
  *   external_counter — next export counter for this slot
  *                      (latest_issued_counter + 1).
  *   out_state        — receives the encrypted blob
- *                      (release with epp_buffer_release()).
+ *                      (release with aura_buffer_release()).
  *   out_error        — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_INVALID_INPUT, or EPP_ERROR_ENCRYPTION.
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT, or AURA_ERROR_ENCRYPTION.
  */
-EPP_API EppErrorCode epp_group_serialize(
-    EppGroupSessionHandle*  handle,
+AURA_API AuraErrorCode aura_group_serialize(
+    AuraGroupSessionHandle*  handle,
     const uint8_t*          key,
     size_t                  key_length,
     uint64_t                external_counter,
-    EppBuffer*              out_state,
-    EppError*               out_error);
+    AuraBuffer*              out_state,
+    AuraError*               out_error);
 
 /*
- * epp_group_serialize_with_tracker — managed group sealed-state export.
+ * aura_group_serialize_with_tracker — managed group sealed-state export.
  *
  * Uses tracker_handle to allocate the next export counter and advances the
  * tracker only after a successful export.
  */
-EPP_API EppErrorCode epp_group_serialize_with_tracker(
-    EppGroupSessionHandle*               handle,
+AURA_API AuraErrorCode aura_group_serialize_with_tracker(
+    AuraGroupSessionHandle*               handle,
     const uint8_t*                       key,
     size_t                               key_length,
-    EppSealedStateCounterTrackerHandle*  tracker_handle,
-    EppBuffer*                           out_state,
-    EppError*                            out_error);
+    AuraSealedStateCounterTrackerHandle*  tracker_handle,
+    AuraBuffer*                           out_state,
+    AuraError*                            out_error);
 
 /*
- * epp_group_export_persisted_state — export group state into a managed slot.
+ * aura_group_export_persisted_state — export group state into a managed slot.
  *
  * The slot is mutated in place: it allocates the next export counter, stores
  * the new sealed blob, and updates the tracker inside one in-memory object.
- * Persist slot_handle via epp_sealed_state_slot_serialize().
+ * Persist slot_handle via aura_sealed_state_slot_serialize().
  */
-EPP_API EppErrorCode epp_group_export_persisted_state(
-    EppGroupSessionHandle*      handle,
+AURA_API AuraErrorCode aura_group_export_persisted_state(
+    AuraGroupSessionHandle*      handle,
     const uint8_t*              key,
     size_t                      key_length,
-    EppSealedStateSlotHandle*   slot_handle,
-    EppError*                   out_error);
+    AuraSealedStateSlotHandle*   slot_handle,
+    AuraError*                   out_error);
 
 /*
- * epp_group_deserialize — restore a group session from an encrypted blob.
- * New clients should prefer epp_group_restore_persisted_state() when
+ * aura_group_deserialize — restore a group session from an encrypted blob.
+ * New clients should prefer aura_group_restore_persisted_state() when
  * restoring from one serialized slot record, or otherwise
- * epp_group_deserialize_with_tracker().
+ * aura_group_deserialize_with_tracker().
  *
  * Parameters:
  *   state_bytes          — sealed blob bytes (borrowed).
@@ -2743,106 +2743,106 @@ EPP_API EppErrorCode epp_group_export_persisted_state(
  *                          so keep the identity alive while the session is
  *                          in use). Its Ed25519 identity keypair must match
  *                          the identity embedded in the sealed group state.
- *   out_handle           — receives the restored EppGroupSessionHandle.
- *                          Destroy with epp_group_destroy(). 
+ *   out_handle           — receives the restored AuraGroupSessionHandle.
+ *                          Destroy with aura_group_destroy(). 
  *   out_error            — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_DECRYPTION, EPP_ERROR_DECODE,
- *          EPP_ERROR_INVALID_INPUT, or EPP_ERROR_REPLAY_ATTACK.
+ * Returns: AURA_SUCCESS, AURA_ERROR_DECRYPTION, AURA_ERROR_DECODE,
+ *          AURA_ERROR_INVALID_INPUT, or AURA_ERROR_REPLAY_ATTACK.
  */
-EPP_API EppErrorCode epp_group_deserialize(
+AURA_API AuraErrorCode aura_group_deserialize(
     const uint8_t*          state_bytes,
     size_t                  state_length,
     const uint8_t*          key,
     size_t                  key_length,
     uint64_t                min_external_counter,
     uint64_t*               out_external_counter,
-    EppIdentityHandle*      identity_handle,
-    EppGroupSessionHandle** out_handle,
-    EppError*               out_error);
+    AuraIdentityHandle*      identity_handle,
+    AuraGroupSessionHandle** out_handle,
+    AuraError*               out_error);
 
 /*
- * epp_group_deserialize_with_tracker — managed group sealed-state restore.
+ * aura_group_deserialize_with_tracker — managed group sealed-state restore.
  *
  * Uses tracker_handle->max_restored_counter as the restore watermark and
  * advances the tracker only after a successful restore.
  */
-EPP_API EppErrorCode epp_group_deserialize_with_tracker(
+AURA_API AuraErrorCode aura_group_deserialize_with_tracker(
     const uint8_t*                       state_bytes,
     size_t                               state_length,
     const uint8_t*                       key,
     size_t                               key_length,
-    EppSealedStateCounterTrackerHandle*  tracker_handle,
-    EppIdentityHandle*                   identity_handle,
-    EppGroupSessionHandle**              out_handle,
-    EppError*                            out_error);
+    AuraSealedStateCounterTrackerHandle*  tracker_handle,
+    AuraIdentityHandle*                   identity_handle,
+    AuraGroupSessionHandle**              out_handle,
+    AuraError*                            out_error);
 
 /*
- * epp_group_restore_persisted_state — restore a group session from a managed
+ * aura_group_restore_persisted_state — restore a group session from a managed
  * slot.
  *
  * The slot supplies the sealed blob plus restore watermark and is updated in
  * place on success. After restore, re-serialize and persist the slot so the
  * restore watermark advances inside the same record.
  */
-EPP_API EppErrorCode epp_group_restore_persisted_state(
-    EppSealedStateSlotHandle*  slot_handle,
+AURA_API AuraErrorCode aura_group_restore_persisted_state(
+    AuraSealedStateSlotHandle*  slot_handle,
     const uint8_t*             key,
     size_t                     key_length,
-    EppIdentityHandle*         identity_handle,
-    EppGroupSessionHandle**    out_handle,
-    EppError*                  out_error);
+    AuraIdentityHandle*         identity_handle,
+    AuraGroupSessionHandle**    out_handle,
+    AuraError*                  out_error);
 
 /*
- * epp_group_export_public_state — export the group's public state for
+ * aura_group_export_public_state — export the group's public state for
  * ExternalInit joins.
  *
  * The exported PublicGroupState contains the ratchet tree public keys,
  * group context, and external init public key.  Upload it to the relay or
  * distribute out-of-band so that prospective members can call
- * epp_group_join_external().
+ * aura_group_join_external().
  *
  * Parameters:
  *   handle           — active group session handle.
  *   out_public_state — receives the serialised PublicGroupState protobuf
- *                      (release with epp_buffer_release()).
+ *                      (release with aura_buffer_release()).
  *   out_error        — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_GROUP_PROTOCOL.
+ * Returns: AURA_SUCCESS or AURA_ERROR_GROUP_PROTOCOL.
  */
-EPP_API EppErrorCode epp_group_export_public_state(
-    EppGroupSessionHandle*  handle,
-    EppBuffer*              out_public_state,
-    EppError*               out_error);
+AURA_API AuraErrorCode aura_group_export_public_state(
+    AuraGroupSessionHandle*  handle,
+    AuraBuffer*              out_public_state,
+    AuraError*               out_error);
 
 /*
- * epp_group_authorize_external_join — mint an authorization artifact for one
+ * aura_group_authorize_external_join — mint an authorization artifact for one
  * specific external joiner.
  *
  * Existing members call this after verifying the joiner's identity out of
  * band.  The returned bytes are bound to group_id + current epoch + joiner
  * identity + joiner credential + an explicit signed auth-format version + the
  * current exported public state (group_context_hash + external init public
- * keys), and must be supplied to epp_group_join_external().  Authorizations
+ * keys), and must be supplied to aura_group_join_external().  Authorizations
  * are short-lived and joiners reject expired artifacts during bootstrap;
  * existing members validate the resulting ExternalInit Commit against the exact
  * pre-commit group state rather than their local wall clock. During rollout,
  * use ExternalInit only between peers that support the same authorization
  * payload format.
  */
-EPP_API EppErrorCode epp_group_authorize_external_join(
-    EppGroupSessionHandle*  handle,
+AURA_API AuraErrorCode aura_group_authorize_external_join(
+    AuraGroupSessionHandle*  handle,
     const uint8_t*          joiner_identity_ed25519_public,
     size_t                  joiner_identity_ed25519_public_length,
     const uint8_t*          joiner_identity_x25519_public,
     size_t                  joiner_identity_x25519_public_length,
     const uint8_t*          joiner_credential,
     size_t                  joiner_credential_length,
-    EppBuffer*              out_authorization,
-    EppError*               out_error);
+    AuraBuffer*              out_authorization,
+    AuraError*               out_error);
 
 /*
- * epp_group_join_external — join a group without a Welcome by performing an
+ * aura_group_join_external — join a group without a Welcome by performing an
  * ExternalInit.
  *
  * Uses the group's published external init key (inside public_state) plus a
@@ -2850,44 +2850,44 @@ EPP_API EppErrorCode epp_group_authorize_external_join(
  * ExternalInit Commit, and establish the caller as a new leaf.
  *
  * After a successful call the caller broadcasts out_commit to all existing
- * members, who apply it with epp_group_process_commit().
+ * members, who apply it with aura_group_process_commit().
  *
  * Parameters:
  *   identity_handle    — caller's long-term identity (not consumed).
- *   public_state       — PublicGroupState bytes (from epp_group_export_public_state
+ *   public_state       — PublicGroupState bytes (from aura_group_export_public_state
  *                        of an existing member, or fetched from relay). Borrowed.
  *                        The joiner verifies that authorization is signed by a
  *                        current member and cryptographically bound to this
  *                        exact public_state.
  *   public_state_length — byte length of public_state.
  *   authorization      — authorization bytes from
- *                        epp_group_authorize_external_join(). Borrowed. The
+ *                        aura_group_authorize_external_join(). Borrowed. The
  *                        joiner enforces the authorization freshness window
  *                        here before creating an ExternalInit Commit.
  *   authorization_length — byte length of authorization.
  *   credential         — caller's application credential to embed in the tree
  *                        (borrowed).
  *   credential_length  — byte length of credential.
- *   out_group_handle   — receives the new EppGroupSessionHandle.
- *                        Destroy with epp_group_destroy() when done.
+ *   out_group_handle   — receives the new AuraGroupSessionHandle.
+ *                        Destroy with aura_group_destroy() when done.
  *   out_commit         — receives the ExternalInit Commit to broadcast
- *                        (release with epp_buffer_release()).
+ *                        (release with aura_buffer_release()).
  *   out_error          — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_GROUP_PROTOCOL, EPP_ERROR_DECODE, or
- *          EPP_ERROR_KEY_GENERATION.
+ * Returns: AURA_SUCCESS, AURA_ERROR_GROUP_PROTOCOL, AURA_ERROR_DECODE, or
+ *          AURA_ERROR_KEY_GENERATION.
  */
-EPP_API EppErrorCode epp_group_join_external(
-    EppIdentityHandle*      identity_handle,
+AURA_API AuraErrorCode aura_group_join_external(
+    AuraIdentityHandle*      identity_handle,
     const uint8_t*          public_state,
     size_t                  public_state_length,
     const uint8_t*          authorization,
     size_t                  authorization_length,
     const uint8_t*          credential,
     size_t                  credential_length,
-    EppGroupSessionHandle** out_group_handle,
-    EppBuffer*              out_commit,
-    EppError*               out_error);
+    AuraGroupSessionHandle** out_group_handle,
+    AuraBuffer*              out_commit,
+    AuraError*               out_error);
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2895,13 +2895,13 @@ EPP_API EppErrorCode epp_group_join_external(
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /*
- * epp_group_encrypt_sealed — encrypt a message with a two-layer sealed payload.
+ * aura_group_encrypt_sealed — encrypt a message with a two-layer sealed payload.
  *
  * The outer layer is a normal group-encrypted envelope.  The inner plaintext
  * is additionally encrypted with a per-message seal_key derived from the
  * message key.  Recipients see that a sealed payload exists (has_sealed_payload
- * in EppGroupDecryptResult) but cannot read the inner content until the sender
- * calls epp_group_reveal_sealed() and shares the seal_key and nonce.
+ * in AuraGroupDecryptResult) but cannot read the inner content until the sender
+ * calls aura_group_reveal_sealed() and shares the seal_key and nonce.
  *
  * hint is visible to recipients before the reveal and can carry a preview
  * (e.g. "You have a sealed message from Alice").
@@ -2914,26 +2914,26 @@ EPP_API EppErrorCode epp_group_join_external(
  *                      Pass NULL + 0 to omit.  Borrowed.
  *   hint_length      — byte length of hint.
  *   out_ciphertext   — receives the serialised GroupMessage protobuf
- *                      (release with epp_buffer_release()).
+ *                      (release with aura_buffer_release()).
  *   out_error        — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_ENCRYPTION, or EPP_ERROR_INVALID_STATE.
+ * Returns: AURA_SUCCESS, AURA_ERROR_ENCRYPTION, or AURA_ERROR_INVALID_STATE.
  */
-EPP_API EppErrorCode epp_group_encrypt_sealed(
-    EppGroupSessionHandle*  handle,
+AURA_API AuraErrorCode aura_group_encrypt_sealed(
+    AuraGroupSessionHandle*  handle,
     const uint8_t*          plaintext,
     size_t                  plaintext_length,
     const uint8_t*          hint,
     size_t                  hint_length,
-    EppBuffer*              out_ciphertext,
-    EppError*               out_error);
+    AuraBuffer*              out_ciphertext,
+    AuraError*               out_error);
 
 /*
- * epp_group_encrypt_disappearing — encrypt a message with a server-enforced
+ * aura_group_encrypt_disappearing — encrypt a message with a server-enforced
  * time-to-live.
  *
  * The TTL and sent_timestamp are embedded in the authenticated plaintext.
- * epp_group_decrypt_ex() returns EPP_ERROR_MESSAGE_EXPIRED if the current
+ * aura_group_decrypt_ex() returns AURA_ERROR_MESSAGE_EXPIRED if the current
  * time exceeds sent_timestamp + ttl_seconds.
  *
  * Parameters:
@@ -2943,21 +2943,21 @@ EPP_API EppErrorCode epp_group_encrypt_sealed(
  *   ttl_seconds      — lifetime in seconds after sent_timestamp.
  *                      Must be > 0.
  *   out_ciphertext   — receives the serialised GroupMessage
- *                      (release with epp_buffer_release()).
+ *                      (release with aura_buffer_release()).
  *   out_error        — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_INVALID_INPUT, or EPP_ERROR_ENCRYPTION.
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT, or AURA_ERROR_ENCRYPTION.
  */
-EPP_API EppErrorCode epp_group_encrypt_disappearing(
-    EppGroupSessionHandle*  handle,
+AURA_API AuraErrorCode aura_group_encrypt_disappearing(
+    AuraGroupSessionHandle*  handle,
     const uint8_t*          plaintext,
     size_t                  plaintext_length,
     uint32_t                ttl_seconds,
-    EppBuffer*              out_ciphertext,
-    EppError*               out_error);
+    AuraBuffer*              out_ciphertext,
+    AuraError*               out_error);
 
 /*
- * epp_group_encrypt_frankable — encrypt a message with an embedded franking
+ * aura_group_encrypt_frankable — encrypt a message with an embedded franking
  * tag for abuse reporting.
  *
  * Generates a (franking_key, franking_tag) pair.  The franking_tag is placed
@@ -2972,20 +2972,20 @@ EPP_API EppErrorCode epp_group_encrypt_disappearing(
  *   plaintext        — message bytes to encrypt (borrowed).
  *   plaintext_length — byte length of plaintext.
  *   out_ciphertext   — receives the serialised GroupMessage
- *                      (release with epp_buffer_release()).
+ *                      (release with aura_buffer_release()).
  *   out_error        — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_ENCRYPTION, or EPP_ERROR_INVALID_STATE.
+ * Returns: AURA_SUCCESS, AURA_ERROR_ENCRYPTION, or AURA_ERROR_INVALID_STATE.
  */
-EPP_API EppErrorCode epp_group_encrypt_frankable(
-    EppGroupSessionHandle*  handle,
+AURA_API AuraErrorCode aura_group_encrypt_frankable(
+    AuraGroupSessionHandle*  handle,
     const uint8_t*          plaintext,
     size_t                  plaintext_length,
-    EppBuffer*              out_ciphertext,
-    EppError*               out_error);
+    AuraBuffer*              out_ciphertext,
+    AuraError*               out_error);
 
 /*
- * epp_group_encrypt_edit — encrypt an edit to a previously sent message.
+ * aura_group_encrypt_edit — encrypt an edit to a previously sent message.
  *
  * Produces a GroupMessage with content_type=4 (edit) that references the
  * original message by its canonical ID.  Recipients who can decrypt the
@@ -2996,26 +2996,26 @@ EPP_API EppErrorCode epp_group_encrypt_frankable(
  *   new_content              — replacement message bytes (borrowed).
  *   new_content_length       — byte length of new_content.
  *   target_message_id        — canonical ID of the message being edited
- *                              (32 bytes; from EppGroupDecryptResult.message_id
- *                              or epp_group_compute_message_id()). Borrowed.
+ *                              (32 bytes; from AuraGroupDecryptResult.message_id
+ *                              or aura_group_compute_message_id()). Borrowed.
  *   target_message_id_length — byte length of target_message_id; must be 32.
  *   out_ciphertext           — receives the serialised GroupMessage
- *                              (release with epp_buffer_release()).
+ *                              (release with aura_buffer_release()).
  *   out_error                — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_INVALID_INPUT, or EPP_ERROR_ENCRYPTION.
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT, or AURA_ERROR_ENCRYPTION.
  */
-EPP_API EppErrorCode epp_group_encrypt_edit(
-    EppGroupSessionHandle*  handle,
+AURA_API AuraErrorCode aura_group_encrypt_edit(
+    AuraGroupSessionHandle*  handle,
     const uint8_t*          new_content,
     size_t                  new_content_length,
     const uint8_t*          target_message_id,
     size_t                  target_message_id_length,
-    EppBuffer*              out_ciphertext,
-    EppError*               out_error);
+    AuraBuffer*              out_ciphertext,
+    AuraError*               out_error);
 
 /*
- * epp_group_encrypt_delete — encrypt a delete request for a previously sent
+ * aura_group_encrypt_delete — encrypt a delete request for a previously sent
  * message.
  *
  * Produces a GroupMessage with content_type=5 (delete) referencing the
@@ -3029,24 +3029,24 @@ EPP_API EppErrorCode epp_group_encrypt_edit(
  *                              (32 bytes). Borrowed.
  *   target_message_id_length — must be 32.
  *   out_ciphertext           — receives the serialised GroupMessage
- *                              (release with epp_buffer_release()).
+ *                              (release with aura_buffer_release()).
  *   out_error                — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_INVALID_INPUT, or EPP_ERROR_ENCRYPTION.
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT, or AURA_ERROR_ENCRYPTION.
  */
-EPP_API EppErrorCode epp_group_encrypt_delete(
-    EppGroupSessionHandle*  handle,
+AURA_API AuraErrorCode aura_group_encrypt_delete(
+    AuraGroupSessionHandle*  handle,
     const uint8_t*          target_message_id,
     size_t                  target_message_id_length,
-    EppBuffer*              out_ciphertext,
-    EppError*               out_error);
+    AuraBuffer*              out_ciphertext,
+    AuraError*               out_error);
 
 /*
- * epp_group_reveal_sealed — decrypt the inner layer of a sealed message.
+ * aura_group_reveal_sealed — decrypt the inner layer of a sealed message.
  *
  * The caller must supply the hint, encrypted_content, nonce, and seal_key
  * that are embedded in the decrypted GroupMessage payload
- * (available after epp_group_decrypt_ex() when has_sealed_payload == 1).
+ * (available after aura_group_decrypt_ex() when has_sealed_payload == 1).
  * The sender shares seal_key out-of-band when ready to reveal.
  *
  * Parameters:
@@ -3060,12 +3060,12 @@ EPP_API EppErrorCode epp_group_encrypt_delete(
  *   seal_key                 — 32-byte seal key shared by the sender (borrowed).
  *   seal_key_length          — must be 32.
  *   out_plaintext            — receives the decrypted inner plaintext
- *                              (release with epp_buffer_release()).
+ *                              (release with aura_buffer_release()).
  *   out_error                — optional error detail.
  *
- * Returns: EPP_SUCCESS, EPP_ERROR_INVALID_INPUT, or EPP_ERROR_DECRYPTION.
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT, or AURA_ERROR_DECRYPTION.
  */
-EPP_API EppErrorCode epp_group_reveal_sealed(
+AURA_API AuraErrorCode aura_group_reveal_sealed(
     const uint8_t*  hint,
     size_t          hint_length,
     const uint8_t*  encrypted_content,
@@ -3074,8 +3074,8 @@ EPP_API EppErrorCode epp_group_reveal_sealed(
     size_t          nonce_length,
     const uint8_t*  seal_key,
     size_t          seal_key_length,
-    EppBuffer*      out_plaintext,
-    EppError*       out_error);
+    AuraBuffer*      out_plaintext,
+    AuraError*       out_error);
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -3083,7 +3083,7 @@ EPP_API EppErrorCode epp_group_reveal_sealed(
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /*
- * epp_group_set_psk — inject a pre-shared key into the group's key schedule.
+ * aura_group_set_psk — inject a pre-shared key into the group's key schedule.
  *
  * The PSK is mixed into the next epoch's init_secret via HKDF, binding the
  * epoch to external shared context (e.g. a password or hardware token value).
@@ -3099,21 +3099,21 @@ EPP_API EppErrorCode epp_group_reveal_sealed(
  *   psk_length  — byte length of psk.
  *   out_error   — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_INVALID_INPUT.
+ * Returns: AURA_SUCCESS or AURA_ERROR_INVALID_INPUT.
  */
-EPP_API EppErrorCode epp_group_set_psk(
-    EppGroupSessionHandle*  handle,
+AURA_API AuraErrorCode aura_group_set_psk(
+    AuraGroupSessionHandle*  handle,
     const uint8_t*          psk_id,
     size_t                  psk_id_length,
     const uint8_t*          psk,
     size_t                  psk_length,
-    EppError*               out_error);
+    AuraError*               out_error);
 
 /*
- * epp_group_get_pending_reinit — check whether a ReInit proposal is pending.
+ * aura_group_get_pending_reinit — check whether a ReInit proposal is pending.
  *
  * A ReInit signals that the group should migrate to a new group (new ID,
- * potentially new protocol version).  When this returns EPP_SUCCESS and
+ * potentially new protocol version).  When this returns AURA_SUCCESS and
  * out_new_group_id.length > 0, the application should initiate the migration
  * flow: create a new group with the given ID and re-add all members.
  *
@@ -3121,26 +3121,26 @@ EPP_API EppErrorCode epp_group_set_psk(
  *   handle           — active group session handle.
  *   out_new_group_id — receives the proposed new group ID bytes, or an
  *                      empty buffer if no reinit is pending
- *                      (release with epp_buffer_release()).
+ *                      (release with aura_buffer_release()).
  *   out_new_version  — receives the proposed new protocol version number,
  *                      or 0 if no reinit is pending.
  *   out_error        — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_INVALID_STATE.
+ * Returns: AURA_SUCCESS or AURA_ERROR_INVALID_STATE.
  */
-EPP_API EppErrorCode epp_group_get_pending_reinit(
-    EppGroupSessionHandle*  handle,
-    EppBuffer*              out_new_group_id,
+AURA_API AuraErrorCode aura_group_get_pending_reinit(
+    AuraGroupSessionHandle*  handle,
+    AuraBuffer*              out_new_group_id,
     uint32_t*               out_new_version,
-    EppError*               out_error);
+    AuraError*               out_error);
 
 /*
- * epp_group_destroy — free a group session handle and securely wipe all
+ * aura_group_destroy — free a group session handle and securely wipe all
  * private ratchet tree key material.
  *
  * Sets *handle to NULL.  Safe to call with *handle == NULL (no-op).
  */
-EPP_API void epp_group_destroy(EppGroupSessionHandle** handle);
+AURA_API void aura_group_destroy(AuraGroupSessionHandle** handle);
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -3151,7 +3151,7 @@ EPP_API void epp_group_destroy(EppGroupSessionHandle** handle);
  * The library never calls a NULL slot.
  *
  * THREADING: Callbacks may be invoked from any thread that calls an
- * epp_session_* function.  If your user_data is shared state, protect it
+ * aura_session_* function.  If your user_data is shared state, protect it
  * with your own lock.
  *
  * LIFETIME: user_data must remain valid until the session is destroyed or a
@@ -3160,82 +3160,82 @@ EPP_API void epp_group_destroy(EppGroupSessionHandle** handle);
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /*
- * EppOnHandshakeCompleted — fired once when both sides have completed the
+ * AuraOnHandshakeCompleted — fired once when both sides have completed the
  * X3DH+Kyber handshake and the session is ready for encrypt/decrypt.
  *
  *   session_id     — pointer to the 16-byte session identifier (borrowed for
  *                    the duration of the callback only; do NOT retain).
  *   session_id_len — always 16.
- *   user_data      — the value passed in EppSessionEventCallbacks.user_data.
+ *   user_data      — the value passed in AuraSessionEventCallbacks.user_data.
  *
  * Use case: store the session ID in your contact database to correlate this
- * EppSessionHandle with a user record.
+ * AuraSessionHandle with a user record.
  */
-typedef void (*EppOnHandshakeCompleted)(
+typedef void (*AuraOnHandshakeCompleted)(
     const uint8_t* session_id,
     size_t         session_id_len,
     void*          user_data);
 
 /*
- * EppOnRatchetRotated — fired each time the DH ratchet advances to a new
+ * AuraOnRatchetRotated — fired each time the DH ratchet advances to a new
  * epoch (i.e. a new chain key is derived).
  *
  *   epoch     — monotonically increasing ratchet epoch counter.
- *   user_data — value from EppSessionEventCallbacks.user_data.
+ *   user_data — value from AuraSessionEventCallbacks.user_data.
  *
  * Use case: UI indicator showing "forward secrecy refreshed".
  */
-typedef void (*EppOnRatchetRotated)(uint64_t epoch, void* user_data);
+typedef void (*AuraOnRatchetRotated)(uint64_t epoch, void* user_data);
 
 /*
- * EppOnSessionError — fired on a non-fatal internal protocol error.
+ * AuraOnSessionError — fired on a non-fatal internal protocol error.
  *
- *   code      — error category (see EppErrorCode).
+ *   code      — error category (see AuraErrorCode).
  *   message   — null-terminated human-readable description (borrowed; valid
  *               only for the duration of the callback).
- *   user_data — value from EppSessionEventCallbacks.user_data.
+ *   user_data — value from AuraSessionEventCallbacks.user_data.
  *
  * Use case: logging / telemetry.  The session remains usable after this
  * callback; if the error is fatal the next API call will return an error code.
  */
-typedef void (*EppOnSessionError)(
-    EppErrorCode   code,
+typedef void (*AuraOnSessionError)(
+    AuraErrorCode   code,
     const char*    message,
     void*          user_data);
 
 /*
- * EppOnNonceExhaustionWarning — fired when the current chain's nonce budget
+ * AuraOnNonceExhaustionWarning — fired when the current chain's nonce budget
  * drops below ~10 %.  The next outgoing or incoming message will trigger a
  * DH ratchet step automatically, but calling the callback gives the app a
  * chance to schedule a proactive message.
  *
  *   remaining    — nonces left in the current chain.
  *   max_capacity — total nonce budget for a single chain.
- *   user_data    — value from EppSessionEventCallbacks.user_data.
+ *   user_data    — value from AuraSessionEventCallbacks.user_data.
  */
-typedef void (*EppOnNonceExhaustionWarning)(
+typedef void (*AuraOnNonceExhaustionWarning)(
     uint64_t remaining,
     uint64_t max_capacity,
     void*    user_data);
 
 /*
- * EppOnRatchetStallingWarning — fired when many consecutive messages have
+ * AuraOnRatchetStallingWarning — fired when many consecutive messages have
  * been sent without a DH ratchet step (the peer appears unresponsive).
  * At this point forward secrecy is degraded; consider sending a ping or
  * triggering a session refresh.
  *
  *   messages_since_ratchet — number of messages sent since the last ratchet.
- *   user_data              — value from EppSessionEventCallbacks.user_data.
+ *   user_data              — value from AuraSessionEventCallbacks.user_data.
  */
-typedef void (*EppOnRatchetStallingWarning)(
+typedef void (*AuraOnRatchetStallingWarning)(
     uint64_t messages_since_ratchet,
     void*    user_data);
 
 /*
- * EppSessionEventCallbacks — vtable of C callbacks for a 1-to-1 session.
+ * AuraSessionEventCallbacks — vtable of C callbacks for a 1-to-1 session.
  *
  * Pass a pointer to a populated (or zeroed) instance to
- * epp_session_set_event_handler().  The struct is copied by value; you do
+ * aura_session_set_event_handler().  The struct is copied by value; you do
  * not need to keep it alive after the call returns.
  *
  * Set any callback field to NULL to ignore that event.
@@ -3244,16 +3244,16 @@ typedef void (*EppOnRatchetStallingWarning)(
  * Typical use: pass `self` / a context pointer from your application.
  */
 typedef struct {
-    EppOnHandshakeCompleted      on_handshake_completed;
-    EppOnRatchetRotated          on_ratchet_rotated;
-    EppOnSessionError            on_error;
-    EppOnNonceExhaustionWarning  on_nonce_exhaustion_warning;
-    EppOnRatchetStallingWarning  on_ratchet_stalling_warning;
+    AuraOnHandshakeCompleted      on_handshake_completed;
+    AuraOnRatchetRotated          on_ratchet_rotated;
+    AuraOnSessionError            on_error;
+    AuraOnNonceExhaustionWarning  on_nonce_exhaustion_warning;
+    AuraOnRatchetStallingWarning  on_ratchet_stalling_warning;
     void*                        user_data;
-} EppSessionEventCallbacks;
+} AuraSessionEventCallbacks;
 
 /*
- * epp_session_set_event_handler — register C callbacks on a 1-to-1 session.
+ * aura_session_set_event_handler — register C callbacks on a 1-to-1 session.
  *
  * The callbacks struct is copied immediately; you can free or reuse it after
  * this call returns.  Calling this function again replaces the previous
@@ -3261,26 +3261,26 @@ typedef struct {
  *
  * Parameters:
  *   handle    — active session handle.
- *   callbacks — pointer to a populated EppSessionEventCallbacks (not NULL).
+ *   callbacks — pointer to a populated AuraSessionEventCallbacks (not NULL).
  *               All function-pointer fields may individually be NULL.
  *   out_error — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_NULL_POINTER / EPP_ERROR_INVALID_STATE.
+ * Returns: AURA_SUCCESS or AURA_ERROR_NULL_POINTER / AURA_ERROR_INVALID_STATE.
  *
  * Example:
  *   static void on_ratchet(uint64_t epoch, void* ctx) {
  *       MyApp* app = ctx;
  *       app->last_ratchet_epoch = epoch;
  *   }
- *   EppSessionEventCallbacks cbs = {0};
+ *   AuraSessionEventCallbacks cbs = {0};
  *   cbs.on_ratchet_rotated = on_ratchet;
  *   cbs.user_data = my_app;
- *   epp_session_set_event_handler(session, &cbs, &err);
+ *   aura_session_set_event_handler(session, &cbs, &err);
  */
-EPP_API EppErrorCode epp_session_set_event_handler(
-    EppSessionHandle*              handle,
-    const EppSessionEventCallbacks* callbacks,
-    EppError*                      out_error);
+AURA_API AuraErrorCode aura_session_set_event_handler(
+    AuraSessionHandle*              handle,
+    const AuraSessionEventCallbacks* callbacks,
+    AuraError*                      out_error);
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -3290,67 +3290,67 @@ EPP_API EppErrorCode epp_session_set_event_handler(
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /*
- * EppOnMemberAdded — fired after a Commit that added a new member is applied.
+ * AuraOnMemberAdded — fired after a Commit that added a new member is applied.
  *
  *   leaf_index           — zero-based leaf position of the new member in the
  *                          ratchet tree.
  *   identity_ed25519     — pointer to the new member's 32-byte Ed25519 public
  *                          key (borrowed; valid only during this callback).
  *   identity_ed25519_len — always 32.
- *   user_data            — value from EppGroupEventCallbacks.user_data.
+ *   user_data            — value from AuraGroupEventCallbacks.user_data.
  *
  * Use case: update the UI member list; look up the new contact by their key.
  */
-typedef void (*EppOnMemberAdded)(
+typedef void (*AuraOnMemberAdded)(
     uint32_t       leaf_index,
     const uint8_t* identity_ed25519,
     size_t         identity_ed25519_len,
     void*          user_data);
 
 /*
- * EppOnMemberRemoved — fired after a Commit that removed a member is applied.
+ * AuraOnMemberRemoved — fired after a Commit that removed a member is applied.
  *
  *   leaf_index — leaf position of the removed member (now blank in the tree).
- *   user_data  — value from EppGroupEventCallbacks.user_data.
+ *   user_data  — value from AuraGroupEventCallbacks.user_data.
  *
  * Use case: remove the member from the UI; revoke any cached sender key.
  */
-typedef void (*EppOnMemberRemoved)(uint32_t leaf_index, void* user_data);
+typedef void (*AuraOnMemberRemoved)(uint32_t leaf_index, void* user_data);
 
 /*
- * EppOnEpochAdvanced — fired every time a Commit is successfully applied and
+ * AuraOnEpochAdvanced — fired every time a Commit is successfully applied and
  * the epoch number increments.
  *
  *   new_epoch    — epoch number after the commit.
  *   member_count — number of active (non-blank) members after the commit.
- *   user_data    — value from EppGroupEventCallbacks.user_data.
+ *   user_data    — value from AuraGroupEventCallbacks.user_data.
  *
  * Use case: persist the new epoch to storage; refresh epoch-bound UI state.
  */
-typedef void (*EppOnEpochAdvanced)(
+typedef void (*AuraOnEpochAdvanced)(
     uint64_t new_epoch,
     uint32_t member_count,
     void*    user_data);
 
 /*
- * EppOnSenderKeyExhaustionWarning — fired when this member's sender-key
+ * AuraOnSenderKeyExhaustionWarning — fired when this member's sender-key
  * generation counter approaches the per-epoch limit set by
- * EppGroupSecurityPolicy.max_messages_per_epoch.
+ * AuraGroupSecurityPolicy.max_messages_per_epoch.
  *
  *   remaining    — generation slots remaining before a forced Update is needed.
  *   max_capacity — the total per-epoch message budget for this member.
- *   user_data    — value from EppGroupEventCallbacks.user_data.
+ *   user_data    — value from AuraGroupEventCallbacks.user_data.
  *
- * Use case: prompt the user or automatically call epp_group_update() to
+ * Use case: prompt the user or automatically call aura_group_update() to
  * rotate keys and start a new epoch before the budget is exhausted.
  */
-typedef void (*EppOnSenderKeyExhaustionWarning)(
+typedef void (*AuraOnSenderKeyExhaustionWarning)(
     uint32_t remaining,
     uint32_t max_capacity,
     void*    user_data);
 
 /*
- * EppOnReInitProposed — fired when a Commit that contains a ReInit proposal
+ * AuraOnReInitProposed — fired when a Commit that contains a ReInit proposal
  * is successfully applied.  A ReInit signals that the group is deprecated and
  * all members should migrate to a new group.
  *
@@ -3358,59 +3358,59 @@ typedef void (*EppOnSenderKeyExhaustionWarning)(
  *                      valid only for the duration of this callback).
  *   new_group_id_len — always 32.
  *   new_version      — protocol version the new group should use.
- *   user_data        — value from EppGroupEventCallbacks.user_data.
+ *   user_data        — value from AuraGroupEventCallbacks.user_data.
  *
  * Use case: notify participants, create a fresh group at new_group_id with
  * the indicated protocol version, and stop sending into the old group.
  */
-typedef void (*EppOnReInitProposed)(
+typedef void (*AuraOnReInitProposed)(
     const uint8_t* new_group_id,
     size_t         new_group_id_len,
     uint32_t       new_version,
     void*          user_data);
 
 /*
- * EppGroupEventCallbacks — vtable of C callbacks for a group session.
+ * AuraGroupEventCallbacks — vtable of C callbacks for a group session.
  *
  * Pass a pointer to a populated (or zeroed) instance to
- * epp_group_set_event_handler().  Copied by value; struct need not outlive
+ * aura_group_set_event_handler().  Copied by value; struct need not outlive
  * the call.  Set any field to NULL to ignore that event.
  */
 typedef struct {
-    EppOnMemberAdded                on_member_added;
-    EppOnMemberRemoved              on_member_removed;
-    EppOnEpochAdvanced              on_epoch_advanced;
-    EppOnSenderKeyExhaustionWarning on_sender_key_exhaustion_warning;
-    EppOnReInitProposed             on_reinit_proposed;
+    AuraOnMemberAdded                on_member_added;
+    AuraOnMemberRemoved              on_member_removed;
+    AuraOnEpochAdvanced              on_epoch_advanced;
+    AuraOnSenderKeyExhaustionWarning on_sender_key_exhaustion_warning;
+    AuraOnReInitProposed             on_reinit_proposed;
     void*                           user_data;
-} EppGroupEventCallbacks;
+} AuraGroupEventCallbacks;
 
 /*
- * epp_group_set_event_handler — register C callbacks on a group session.
+ * aura_group_set_event_handler — register C callbacks on a group session.
  *
  * The callbacks struct is copied immediately; free or reuse it after return.
  * Calling again replaces the previous handler; pass a zeroed struct to remove.
  *
  * Parameters:
  *   handle    — active group session handle.
- *   callbacks — pointer to a populated EppGroupEventCallbacks (not NULL).
+ *   callbacks — pointer to a populated AuraGroupEventCallbacks (not NULL).
  *   out_error — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_NULL_POINTER / EPP_ERROR_INVALID_STATE.
+ * Returns: AURA_SUCCESS or AURA_ERROR_NULL_POINTER / AURA_ERROR_INVALID_STATE.
  *
  * Example:
  *   static void on_epoch(uint64_t epoch, uint32_t members, void* ctx) {
  *       persist_epoch(ctx, epoch, members);
  *   }
- *   EppGroupEventCallbacks cbs = {0};
+ *   AuraGroupEventCallbacks cbs = {0};
  *   cbs.on_epoch_advanced = on_epoch;
  *   cbs.user_data = my_db;
- *   epp_group_set_event_handler(group, &cbs, &err);
+ *   aura_group_set_event_handler(group, &cbs, &err);
  */
-EPP_API EppErrorCode epp_group_set_event_handler(
-    EppGroupSessionHandle*          handle,
-    const EppGroupEventCallbacks*   callbacks,
-    EppError*                       out_error);
+AURA_API AuraErrorCode aura_group_set_event_handler(
+    AuraGroupSessionHandle*          handle,
+    const AuraGroupEventCallbacks*   callbacks,
+    AuraError*                       out_error);
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -3422,66 +3422,66 @@ EPP_API EppErrorCode epp_group_set_event_handler(
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /*
- * EppOnOtkExhaustionWarning — fired after an OTK (One-Time Prekey) is
+ * AuraOnOtkExhaustionWarning — fired after an OTK (One-Time Prekey) is
  * consumed and the remaining pool has dropped at or below the exhaustion
  * warning threshold (default: ≤ 10 % of max_capacity).
  *
  * A depleted OTK pool prevents new contacts from initiating a handshake with
  * this identity.  Upload fresh OTKs immediately by calling
- * epp_prekey_bundle_replenish() and sending the result to the key server.
+ * aura_prekey_bundle_replenish() and sending the result to the key server.
  *
  *   remaining    — OTKs remaining in the local pool after this consumption.
  *   max_capacity — the default pool size (DEFAULT_ONE_TIME_KEY_COUNT = 100).
- *   user_data    — value from EppIdentityEventCallbacks.user_data.
+ *   user_data    — value from AuraIdentityEventCallbacks.user_data.
  *
  * Use case: trigger background replenishment so the pool never hits zero.
  */
-typedef void (*EppOnOtkExhaustionWarning)(
+typedef void (*AuraOnOtkExhaustionWarning)(
     uint32_t remaining,
     uint32_t max_capacity,
     void*    user_data);
 
 /*
- * EppIdentityEventCallbacks — vtable of C callbacks for an identity handle.
+ * AuraIdentityEventCallbacks — vtable of C callbacks for an identity handle.
  *
  * Pass a pointer to a populated (or zeroed) instance to
- * epp_identity_set_event_handler().  Copied by value; struct need not outlive
+ * aura_identity_set_event_handler().  Copied by value; struct need not outlive
  * the call.  Set any field to NULL to ignore that event.
  */
 typedef struct {
-    EppOnOtkExhaustionWarning on_otk_exhaustion_warning;
+    AuraOnOtkExhaustionWarning on_otk_exhaustion_warning;
     void*                     user_data;
-} EppIdentityEventCallbacks;
+} AuraIdentityEventCallbacks;
 
 /*
- * epp_identity_set_event_handler — register C callbacks on an identity handle.
+ * aura_identity_set_event_handler — register C callbacks on an identity handle.
  *
  * The callbacks struct is copied immediately; free or reuse it after return.
  * Calling again replaces the previous handler; pass a zeroed struct to remove.
  *
  * Parameters:
  *   handle    — active identity handle (not NULL).
- *   callbacks — pointer to a populated EppIdentityEventCallbacks (not NULL).
+ *   callbacks — pointer to a populated AuraIdentityEventCallbacks (not NULL).
  *               All function-pointer fields may individually be NULL.
  *   out_error — optional error detail.
  *
- * Returns: EPP_SUCCESS or EPP_ERROR_NULL_POINTER / EPP_ERROR_INVALID_STATE.
+ * Returns: AURA_SUCCESS or AURA_ERROR_NULL_POINTER / AURA_ERROR_INVALID_STATE.
  *
  * Example:
  *   static void on_otk_low(uint32_t remaining, uint32_t max, void* ctx) {
  *       MyApp* app = ctx;
- *       epp_prekey_bundle_replenish(app->identity, 50, app->out_buf, NULL);
+ *       aura_prekey_bundle_replenish(app->identity, 50, app->out_buf, NULL);
  *       upload_otks_to_key_server(app->out_buf);
  *   }
- *   EppIdentityEventCallbacks cbs = {0};
+ *   AuraIdentityEventCallbacks cbs = {0};
  *   cbs.on_otk_exhaustion_warning = on_otk_low;
  *   cbs.user_data = my_app;
- *   epp_identity_set_event_handler(identity, &cbs, &err);
+ *   aura_identity_set_event_handler(identity, &cbs, &err);
  */
-EPP_API EppErrorCode epp_identity_set_event_handler(
-    EppIdentityHandle*                handle,
-    const EppIdentityEventCallbacks*  callbacks,
-    EppError*                         out_error);
+AURA_API AuraErrorCode aura_identity_set_event_handler(
+    AuraIdentityHandle*                handle,
+    const AuraIdentityEventCallbacks*  callbacks,
+    AuraError*                         out_error);
 
 #ifdef __cplusplus
 }

@@ -25,7 +25,7 @@ Sealed Messages — повідомлення з подвійним шаром ш
 ### Шифрування (encrypt_sealed)
 
 1. Отримати `message_key` з sender key chain (як звичайне повідомлення)
-2. Створити `seal_key = HKDF-Expand(message_key, "Ecliptix-Group-SealKey", 32)`
+2. Створити `seal_key = HKDF-Expand(message_key, "Aura-Group-SealKey", 32)`
 3. Згенерувати випадковий `sealed_nonce` (12 байт)
 4. Зашифрувати фактичний контент: `sealed_content = AES-GCM-SIV(seal_key, sealed_nonce, plaintext, "sealed")`
 5. Записати `hint` як `content` у `GroupPlaintext`

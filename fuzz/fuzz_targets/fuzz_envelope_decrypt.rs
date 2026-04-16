@@ -1,10 +1,10 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::crypto::CryptoInterop;
-use ecliptix_protocol::identity::IdentityKeys;
-use ecliptix_protocol::proto::{PreKeyBundle, OneTimePreKey, SecureEnvelope};
-use ecliptix_protocol::protocol::{HandshakeInitiator, HandshakeResponder};
+use aura_protected_protocol::crypto::CryptoInterop;
+use aura_protected_protocol::identity::IdentityKeys;
+use aura_protected_protocol::proto::{PreKeyBundle, OneTimePreKey, SecureEnvelope};
+use aura_protected_protocol::protocol::{HandshakeInitiator, HandshakeResponder};
 use prost::Message;
 use std::sync::Once;
 

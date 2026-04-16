@@ -1,6 +1,6 @@
-# Ecliptix Protocol — Formal Verification Models
+# Aura Protocol — Formal Verification Models
 
-Machine-checked formal verification of the Ecliptix Protection Protocol,
+Machine-checked formal verification of the Aura Protection Protocol,
 complementing the game-based security proofs in `docs/security-proof.tex`.
 
 ## Verification Results
@@ -40,16 +40,16 @@ complementing the game-based security proofs in `docs/security-proof.tex`.
 
 | File | Tool | What it verifies |
 |------|------|------------------|
-| `tamarin/ecliptix_handshake.spthy` | Tamarin | Hybrid X3DH: secrecy, mutual auth, forward secrecy, key confirmation |
-| `tamarin/ecliptix_ratchet.spthy` | Tamarin | Hybrid ratchet: PCS, key agreement, secrecy |
-| `tamarin/ecliptix.spthy` | Tamarin | Full combined model (reference only — non-terminating due to DH complexity) |
-| `proverif/ecliptix.pv` | ProVerif | Secrecy, authentication, injective correspondence |
+| `tamarin/aura_handshake.spthy` | Tamarin | Hybrid X3DH: secrecy, mutual auth, forward secrecy, key confirmation |
+| `tamarin/aura_ratchet.spthy` | Tamarin | Hybrid ratchet: PCS, key agreement, secrecy |
+| `tamarin/aura.spthy` | Tamarin | Full combined model (reference only — non-terminating due to DH complexity) |
+| `proverif/aura.pv` | ProVerif | Secrecy, authentication, injective correspondence |
 
 ## Design Decisions
 
 ### Tamarin Model Decomposition
 
-The full combined model (`ecliptix.spthy`) with 13+ custom functions and
+The full combined model (`aura.spthy`) with 13+ custom functions and
 the DH equational theory causes intractable source saturation in Tamarin
 (>170 min without progress). Following the approach of Signal (EUROCRYPT 2020)
 and Apple PQ3 (USENIX Security 2025), we decompose into:

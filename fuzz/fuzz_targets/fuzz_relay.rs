@@ -1,10 +1,10 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::api::relay::{
+use aura_protected_protocol::api::relay::{
     self, GroupMemberRecord, GroupRoster,
 };
-use ecliptix_protocol::crypto::CryptoInterop;
+use aura_protected_protocol::crypto::CryptoInterop;
 use std::sync::Once;
 
 static INIT: Once = Once::new();

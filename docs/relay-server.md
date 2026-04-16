@@ -1,6 +1,6 @@
 # Relay (сервер) — API та що викликати
 
-Сервер (relay) не дешифрує вміст повідомлень. Він перевіряє формат, маршрутизує по `group_id` та зберігає/доставляє події. Усі функції relay API знаходяться в модулі `ecliptix_protocol::api::relay` (Rust).
+Сервер (relay) не дешифрує вміст повідомлень. Він перевіряє формат, маршрутизує по `group_id` та зберігає/доставляє події. Усі функції relay API знаходяться в модулі `aura_protected_protocol::api::relay` (Rust).
 
 ## Що передає клієнт на сервер
 
@@ -156,8 +156,8 @@
 
 Рекомендований контракт:
 
-- manifest перевіряти через `epp_attachment_manifest_validate(...)`;
-- кожен encrypted chunk перевіряти через `epp_attachment_chunk_validate(...)`;
+- manifest перевіряти через `aura_attachment_manifest_validate(...)`;
+- кожен encrypted chunk перевіряти через `aura_attachment_chunk_validate(...)`;
 - файл/чанки зберігати як opaque ciphertext blobs.
 
 Зона відповідальності transport шару:

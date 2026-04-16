@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Report a bug in Ecliptix Protected Protocol
+about: Report a bug in Aura Protected Protocol
 title: '[BUG] '
 labels: bug
 assignees: ''

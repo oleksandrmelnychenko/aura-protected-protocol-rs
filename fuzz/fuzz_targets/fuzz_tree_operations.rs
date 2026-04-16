@@ -2,7 +2,7 @@
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::protocol::group::tree;
+use aura_protected_protocol::protocol::group::tree;
 
 #[derive(Arbitrary, Debug)]
 struct TreeInput {

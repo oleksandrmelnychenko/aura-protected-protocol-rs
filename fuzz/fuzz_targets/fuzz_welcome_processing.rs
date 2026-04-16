@@ -1,9 +1,9 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::crypto::{SecureMemoryHandle, CryptoInterop};
-use ecliptix_protocol::identity::IdentityKeys;
-use ecliptix_protocol::protocol::group::GroupSession;
+use aura_protected_protocol::crypto::{SecureMemoryHandle, CryptoInterop};
+use aura_protected_protocol::identity::IdentityKeys;
+use aura_protected_protocol::protocol::group::GroupSession;
 use std::sync::Once;
 
 static INIT: Once = Once::new();

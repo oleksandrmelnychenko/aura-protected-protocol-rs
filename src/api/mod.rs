@@ -310,9 +310,9 @@ impl SealedStateSlot {
     }
 }
 
-pub struct EcliptixSession(Session);
+pub struct AuraSession(Session);
 
-impl EcliptixSession {
+impl AuraSession {
     pub fn encrypt(
         &mut self,
         plaintext: &[u8],
@@ -491,31 +491,31 @@ impl EcliptixSession {
     }
 }
 
-pub struct EcliptixInitiator(HandshakeInitiator);
+pub struct AuraInitiator(HandshakeInitiator);
 
-impl EcliptixInitiator {
-    pub fn complete(self, ack_bytes: &[u8]) -> Result<EcliptixSession, ProtocolError> {
+impl AuraInitiator {
+    pub fn complete(self, ack_bytes: &[u8]) -> Result<AuraSession, ProtocolError> {
         let session = self.0.finish(ack_bytes)?;
-        Ok(EcliptixSession(session))
+        Ok(AuraSession(session))
     }
 }
 
-pub struct EcliptixResponder(HandshakeResponder);
+pub struct AuraResponder(HandshakeResponder);
 
-impl EcliptixResponder {
-    pub fn complete(self) -> Result<EcliptixSession, ProtocolError> {
+impl AuraResponder {
+    pub fn complete(self) -> Result<AuraSession, ProtocolError> {
         let session = self.0.finish()?;
-        Ok(EcliptixSession(session))
+        Ok(AuraSession(session))
     }
 }
 
-pub struct EcliptixProtocol {
+pub struct AuraProtocol {
     identity: IdentityKeys,
     max_messages: u32,
     time_provider: Arc<dyn ITimeProvider>,
 }
 
-impl EcliptixProtocol {
+impl AuraProtocol {
     pub fn new(opk_count: u32) -> Result<Self, ProtocolError> {
         Self::new_with_time_provider(opk_count, Arc::new(SystemTimeProvider))
     }
@@ -611,7 +611,7 @@ impl EcliptixProtocol {
     pub fn begin_session(
         &mut self,
         peer_bundle_bytes: &[u8],
-    ) -> Result<(EcliptixInitiator, Vec<u8>), ProtocolError> {
+    ) -> Result<(AuraInitiator, Vec<u8>), ProtocolError> {
         if peer_bundle_bytes.len() > MAX_HANDSHAKE_MESSAGE_SIZE {
             return Err(ProtocolError::invalid_input("PreKeyBundle too large"));
         }
@@ -627,13 +627,13 @@ impl EcliptixProtocol {
         )?;
         let init_bytes = initiator.encoded_message().to_vec();
 
-        Ok((EcliptixInitiator(initiator), init_bytes))
+        Ok((AuraInitiator(initiator), init_bytes))
     }
 
     pub fn accept_session(
         &mut self,
         init_bytes: &[u8],
-    ) -> Result<(EcliptixResponder, Vec<u8>), ProtocolError> {
+    ) -> Result<(AuraResponder, Vec<u8>), ProtocolError> {
         self.accept_session_with_replay_guard(init_bytes, None)
     }
 
@@ -641,7 +641,7 @@ impl EcliptixProtocol {
         &mut self,
         init_bytes: &[u8],
         replay_guard: Option<&dyn HandshakeInitReplayGuard>,
-    ) -> Result<(EcliptixResponder, Vec<u8>), ProtocolError> {
+    ) -> Result<(AuraResponder, Vec<u8>), ProtocolError> {
         let local_bundle_bytes = self.pre_key_bundle()?;
         let local_bundle = PreKeyBundle::decode(local_bundle_bytes.as_slice()).map_err(|e| {
             ProtocolError::decode(format!("Failed to decode local PreKeyBundle: {e}"))
@@ -657,7 +657,7 @@ impl EcliptixProtocol {
         )?;
         let ack_bytes = responder.encoded_ack().to_vec();
 
-        Ok((EcliptixResponder(responder), ack_bytes))
+        Ok((AuraResponder(responder), ack_bytes))
     }
 
     pub fn generate_key_package(
@@ -672,41 +672,41 @@ impl EcliptixProtocol {
         Ok((buf, x25519_priv, kyber_sec))
     }
 
-    pub fn create_group(&self, credential: Vec<u8>) -> Result<EcliptixGroupSession, ProtocolError> {
+    pub fn create_group(&self, credential: Vec<u8>) -> Result<AuraGroupSession, ProtocolError> {
         let session = GroupSession::create_with_policy_and_time_provider(
             &self.identity,
             credential,
             GroupSecurityPolicy::shield(),
             self.time_provider.clone(),
         )?;
-        Ok(EcliptixGroupSession(session))
+        Ok(AuraGroupSession(session))
     }
 
     pub fn create_shielded_group(
         &self,
         credential: Vec<u8>,
-    ) -> Result<EcliptixGroupSession, ProtocolError> {
+    ) -> Result<AuraGroupSession, ProtocolError> {
         let session = GroupSession::create_with_policy_and_time_provider(
             &self.identity,
             credential,
             GroupSecurityPolicy::shield(),
             self.time_provider.clone(),
         )?;
-        Ok(EcliptixGroupSession(session))
+        Ok(AuraGroupSession(session))
     }
 
     pub fn create_group_with_policy(
         &self,
         credential: Vec<u8>,
         policy: GroupSecurityPolicy,
-    ) -> Result<EcliptixGroupSession, ProtocolError> {
+    ) -> Result<AuraGroupSession, ProtocolError> {
         let session = GroupSession::create_with_policy_and_time_provider(
             &self.identity,
             credential,
             policy,
             self.time_provider.clone(),
         )?;
-        Ok(EcliptixGroupSession(session))
+        Ok(AuraGroupSession(session))
     }
 
     pub fn join_group(
@@ -714,7 +714,7 @@ impl EcliptixProtocol {
         welcome_bytes: &[u8],
         x25519_private: SecureMemoryHandle,
         kyber_secret: SecureMemoryHandle,
-    ) -> Result<EcliptixGroupSession, ProtocolError> {
+    ) -> Result<AuraGroupSession, ProtocolError> {
         let ed25519_secret = self.identity.get_identity_ed25519_private_key_copy()?;
         let session = GroupSession::from_welcome_with_time_provider(
             welcome_bytes,
@@ -725,7 +725,7 @@ impl EcliptixProtocol {
             ed25519_secret,
             self.time_provider.clone(),
         )?;
-        Ok(EcliptixGroupSession(session))
+        Ok(AuraGroupSession(session))
     }
 
     pub fn join_group_external(
@@ -733,7 +733,7 @@ impl EcliptixProtocol {
         public_state_bytes: &[u8],
         authorization_bytes: &[u8],
         credential: Vec<u8>,
-    ) -> Result<(EcliptixGroupSession, Vec<u8>), ProtocolError> {
+    ) -> Result<(AuraGroupSession, Vec<u8>), ProtocolError> {
         let (session, commit_bytes) = GroupSession::from_external_join_with_time_provider(
             public_state_bytes,
             authorization_bytes,
@@ -741,7 +741,7 @@ impl EcliptixProtocol {
             credential,
             self.time_provider.clone(),
         )?;
-        Ok((EcliptixGroupSession(session), commit_bytes))
+        Ok((AuraGroupSession(session), commit_bytes))
     }
 
     pub fn validate_envelope(envelope_bytes: &[u8]) -> Result<(), ProtocolError> {
@@ -830,10 +830,10 @@ use crate::protocol::voip::{
 };
 use std::sync::Arc;
 
-pub struct EcliptixVoipSession(VoipSession);
-pub type EcliptixVoipScreenShareMeta = (u32, u32, u32, Option<String>);
+pub struct AuraVoipSession(VoipSession);
+pub type AuraVoipScreenShareMeta = (u32, u32, u32, Option<String>);
 
-impl EcliptixVoipSession {
+impl AuraVoipSession {
     pub fn encrypt_frame(
         &self,
         payload_type: u8,
@@ -1020,7 +1020,7 @@ impl EcliptixVoipSession {
 
     pub fn get_screen_share_meta(
         &self,
-    ) -> Result<Option<EcliptixVoipScreenShareMeta>, ProtocolError> {
+    ) -> Result<Option<AuraVoipScreenShareMeta>, ProtocolError> {
         self.0.get_screen_share_meta()
     }
 
@@ -1159,7 +1159,7 @@ impl EcliptixVoipSession {
     }
 }
 
-pub struct EcliptixCallInitiator {
+pub struct AuraCallInitiator {
     pub init_output: voip::call_key_exchange::CallInitOutput,
     pub call_id: Vec<u8>,
     pub shield_mode: bool,
@@ -1168,7 +1168,7 @@ pub struct EcliptixCallInitiator {
     time_provider: Arc<dyn ITimeProvider>,
 }
 
-impl EcliptixCallInitiator {
+impl AuraCallInitiator {
     pub fn complete(
         self,
         identity_kyber_secret: &SecureMemoryHandle,
@@ -1177,7 +1177,7 @@ impl EcliptixCallInitiator {
         peer_ed25519_public: &[u8],
         peer_signature: &[u8],
         peer_key_confirm_mac: &[u8],
-    ) -> Result<EcliptixVoipSession, ProtocolError> {
+    ) -> Result<AuraVoipSession, ProtocolError> {
         let auth_context = voip::call_key_exchange::CallInitAuthContext {
             version: VOIP_PROTOCOL_VERSION,
             media_type: 1,
@@ -1205,14 +1205,14 @@ impl EcliptixCallInitiator {
             self.shield_mode,
             self.time_provider,
         )?;
-        Ok(EcliptixVoipSession(session))
+        Ok(AuraVoipSession(session))
     }
 
     pub fn complete_from_accept(
         self,
         identity_kyber_secret: &SecureMemoryHandle,
         call_accept_bytes: &[u8],
-    ) -> Result<EcliptixVoipSession, ProtocolError> {
+    ) -> Result<AuraVoipSession, ProtocolError> {
         if call_accept_bytes.len() > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
             return Err(ProtocolError::voip_call("CallAccept too large"));
         }
@@ -1239,14 +1239,14 @@ impl EcliptixCallInitiator {
     }
 }
 
-impl EcliptixProtocol {
+impl AuraProtocol {
     pub fn initiate_call(
         &self,
         peer_kyber_public: &[u8],
         shield_mode: bool,
         ratchet_interval_frames: u32,
         pq_rekey_interval_secs: u32,
-    ) -> Result<(EcliptixCallInitiator, Vec<u8>), ProtocolError> {
+    ) -> Result<(AuraCallInitiator, Vec<u8>), ProtocolError> {
         let ed25519_secret = self.identity.get_identity_ed25519_private_key_copy()?;
         let ed25519_public = self.identity.get_identity_ed25519_public();
 
@@ -1289,7 +1289,7 @@ impl EcliptixProtocol {
             .encode(&mut buf)
             .map_err(|e| ProtocolError::encode(format!("CallInit encode: {e}")))?;
 
-        let initiator = EcliptixCallInitiator {
+        let initiator = AuraCallInitiator {
             init_output,
             call_id,
             shield_mode,
@@ -1305,7 +1305,7 @@ impl EcliptixProtocol {
         &self,
         call_init_bytes: &[u8],
         peer_kyber_public: &[u8],
-    ) -> Result<(EcliptixVoipSession, Vec<u8>), ProtocolError> {
+    ) -> Result<(AuraVoipSession, Vec<u8>), ProtocolError> {
         if call_init_bytes.len() > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
             return Err(ProtocolError::voip_call("CallInit too large"));
         }
@@ -1371,21 +1371,21 @@ impl EcliptixProtocol {
             self.time_provider.clone(),
         )?;
 
-        Ok((EcliptixVoipSession(session), buf))
+        Ok((AuraVoipSession(session), buf))
     }
 
     pub fn complete_call(
         &self,
-        initiator: EcliptixCallInitiator,
+        initiator: AuraCallInitiator,
         call_accept_bytes: &[u8],
-    ) -> Result<EcliptixVoipSession, ProtocolError> {
+    ) -> Result<AuraVoipSession, ProtocolError> {
         let kyber_secret = self.identity.clone_kyber_secret_key()?;
         initiator.complete_from_accept(&kyber_secret, call_accept_bytes)
     }
 
     pub fn initiate_call_rekey(
         &self,
-        session: &EcliptixVoipSession,
+        session: &AuraVoipSession,
         peer_kyber_public: &[u8],
     ) -> Result<Vec<u8>, ProtocolError> {
         let ed25519_secret = self.identity.get_identity_ed25519_private_key_copy()?;
@@ -1394,7 +1394,7 @@ impl EcliptixProtocol {
 
     pub fn process_call_rekey(
         &self,
-        session: &EcliptixVoipSession,
+        session: &AuraVoipSession,
         rekey_bytes: &[u8],
         peer_ed25519_public: &[u8],
         peer_kyber_public: &[u8],
@@ -1415,7 +1415,7 @@ impl EcliptixProtocol {
 
     pub fn process_call_rekey_ack(
         &self,
-        session: &EcliptixVoipSession,
+        session: &AuraVoipSession,
         ack_bytes: &[u8],
         peer_ed25519_public: &[u8],
     ) -> Result<(), ProtocolError> {
@@ -1428,7 +1428,7 @@ impl EcliptixProtocol {
 
     pub fn build_call_recording_consent_message(
         &self,
-        session: &EcliptixVoipSession,
+        session: &AuraVoipSession,
         consent: i32,
         timestamp_unix: u64,
     ) -> Result<Vec<u8>, ProtocolError> {
@@ -1438,7 +1438,7 @@ impl EcliptixProtocol {
 
     pub fn process_call_recording_consent_message(
         &self,
-        session: &EcliptixVoipSession,
+        session: &AuraVoipSession,
         message_bytes: &[u8],
         peer_ed25519_public: &[u8],
     ) -> Result<i32, ProtocolError> {
@@ -1450,14 +1450,14 @@ impl EcliptixProtocol {
         data: &[u8],
         state_key: &[u8],
         min_external_counter: u64,
-    ) -> Result<(EcliptixVoipSession, u64), ProtocolError> {
-        let session = EcliptixVoipSession::from_sealed_state_with_time_provider(
+    ) -> Result<(AuraVoipSession, u64), ProtocolError> {
+        let session = AuraVoipSession::from_sealed_state_with_time_provider(
             data,
             state_key,
             min_external_counter,
             self.time_provider.clone(),
         )?;
-        let external_counter = EcliptixVoipSession::sealed_state_external_counter(data)?;
+        let external_counter = AuraVoipSession::sealed_state_external_counter(data)?;
         Ok((session, external_counter))
     }
 
@@ -1466,8 +1466,8 @@ impl EcliptixProtocol {
         data: &[u8],
         state_key: &[u8],
         tracker: &mut SealedStateCounterTracker,
-    ) -> Result<EcliptixVoipSession, ProtocolError> {
-        EcliptixVoipSession::from_sealed_state_with_counter_tracker_and_time_provider(
+    ) -> Result<AuraVoipSession, ProtocolError> {
+        AuraVoipSession::from_sealed_state_with_counter_tracker_and_time_provider(
             data,
             state_key,
             tracker,
@@ -1479,8 +1479,8 @@ impl EcliptixProtocol {
         &self,
         slot: &mut SealedStateSlot,
         state_key: &[u8],
-    ) -> Result<EcliptixVoipSession, ProtocolError> {
-        EcliptixVoipSession::restore_from_slot_with_time_provider(
+    ) -> Result<AuraVoipSession, ProtocolError> {
+        AuraVoipSession::restore_from_slot_with_time_provider(
             slot,
             state_key,
             self.time_provider.clone(),
@@ -1488,9 +1488,9 @@ impl EcliptixProtocol {
     }
 }
 
-pub struct EcliptixGroupSession(GroupSession);
+pub struct AuraGroupSession(GroupSession);
 
-impl EcliptixGroupSession {
+impl AuraGroupSession {
     pub fn add_member(
         &self,
         key_package_bytes: &[u8],

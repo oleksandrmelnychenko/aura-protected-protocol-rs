@@ -1,10 +1,10 @@
-# EPP / Relay / Swift Alignment Contract
+# AURA / Relay / Swift Alignment Contract
 
 Цей документ фіксує інваріанти інтеграції між:
 
-- `ecliptix-protected-protocol-rs` (EPP core + FFI),
-- `ecliptix-auth-relay` (gateway/relay),
-- iOS Swift клієнтом (`Ecliptix-iOS`).
+- `aura-protected-protocol-rs` (AURA core + FFI),
+- `aura-auth-relay` (gateway/relay),
+- iOS Swift клієнтом (`Aura-iOS`).
 
 Мета: щоб production інтеграція не мала "тихих" розходжень між протоколом, relay та клієнтом.
 
@@ -40,7 +40,7 @@
 - коректного roster enforcement,
 - узгодженого Shield mode behavior у групових контекстах.
 
-## 3) Sealed state anti-rollback contract (EPP <-> Relay <-> Swift)
+## 3) Sealed state anti-rollback contract (AURA <-> Relay <-> Swift)
 
 Для `session/group serialize sealed` діє єдиний контракт:
 
@@ -100,7 +100,7 @@ Shield mode є властивістю групової сесії та roster/po
 
 - README та `docs/relay-server.md` не містять legacy API назв замість strict path;
 - Swift guide і FFI guide описують `external_counter` invariant;
-- Swift guide і FFI guide описують `EPP_ERROR_BUSY`, forward-only manual clock та nulling destroy semantics для low-level handle-ів;
+- Swift guide і FFI guide описують `AURA_ERROR_BUSY`, forward-only manual clock та nulling destroy semantics для low-level handle-ів;
 - relay integration не оминає strict validation виклики;
 - handshake replay/OPK invariant не порушено.
 - для VoIP relay у multi-instance режимі є пер-`call_id` атомарність у store (lock/CAS/transaction).

@@ -2,7 +2,7 @@
 use libfuzzer_sys::fuzz_target;
 use prost::Message;
 
-use ecliptix_protocol::proto::{CallInit, CallAccept, CallEnd, CallRekey, VoipEnvelope};
+use aura_protected_protocol::proto::{CallInit, CallAccept, CallEnd, CallRekey, VoipEnvelope};
 
 fuzz_target!(|data: &[u8]| {
     if data.is_empty() {

@@ -1,6 +1,6 @@
 # Swift Session Verification
 
-Цей файл описує рекомендований verification flow для Swift wrapper-ів Ecliptix Protected Protocol після встановлення 1:1 сесії.
+Цей файл описує рекомендований verification flow для Swift wrapper-ів Aura Protected Protocol після встановлення 1:1 сесії.
 
 ## Що перевіряти після handshake
 
@@ -12,13 +12,13 @@
 
 Для цього Swift API тепер надає:
 
-- `EppSession.peerIdentity()`
-- `EppSession.localIdentity()`
-- `EppSession.identityBindingHash()`
-- `EppSession.sessionId()`
-- `EppSession.verificationSnapshot()`
-- `EppHandshakeInitiator.finishVerifyingPeer(...)`
-- `EppHandshakeResponder.finishVerifyingPeer(...)`
+- `AuraSession.peerIdentity()`
+- `AuraSession.localIdentity()`
+- `AuraSession.identityBindingHash()`
+- `AuraSession.sessionId()`
+- `AuraSession.verificationSnapshot()`
+- `AuraHandshakeInitiator.finishVerifyingPeer(...)`
+- `AuraHandshakeResponder.finishVerifyingPeer(...)`
 
 ## Рекомендований flow
 
@@ -27,7 +27,7 @@
 Якщо застосунок уже знає очікувану identity peer-а поза handshake:
 
 ```swift
-let (initiator, handshakeInit) = try EppHandshakeInitiator.start(
+let (initiator, handshakeInit) = try AuraHandshakeInitiator.start(
     identity: aliceIdentity,
     peerPrekeyBundle: bobBundle
 )
@@ -56,7 +56,7 @@ if !peer.matches(
     ed25519PublicKey: expectedEd25519,
     x25519PublicKey: expectedX25519
 ) {
-    throw EppError.handshake("Peer identity verification failed")
+    throw AuraError.handshake("Peer identity verification failed")
 }
 ```
 
@@ -71,10 +71,10 @@ if !peer.matches(
 
 У Swift wrapper-і fingerprint зараз представлений через hex-рядки публічних ключів:
 
-- `EppSessionIdentity.ed25519FingerprintHex`
-- `EppSessionIdentity.x25519FingerprintHex`
-- `EppIdentity.ed25519FingerprintHex()`
-- `EppIdentity.x25519FingerprintHex()`
+- `AuraSessionIdentity.ed25519FingerprintHex`
+- `AuraSessionIdentity.x25519FingerprintHex`
+- `AuraIdentity.ed25519FingerprintHex()`
+- `AuraIdentity.x25519FingerprintHex()`
 
 Це зручно для:
 
@@ -114,7 +114,7 @@ print(snapshot.identityBindingHash as NSData)
 print(snapshot.peerIdentity.ed25519FingerprintHex)
 ```
 
-`EppSessionVerificationSnapshot` збирає:
+`AuraSessionVerificationSnapshot` збирає:
 
 - `sessionId`
 - `identityBindingHash`
@@ -144,7 +144,7 @@ let authorization = try group.authorizeExternalJoin(
     credential: credential
 )
 
-let (joinedGroup, commit) = try EppGroupSession.joinExternal(
+let (joinedGroup, commit) = try AuraGroupSession.joinExternal(
     identity: joinerIdentity,
     publicState: publicState,
     authorization: authorization,
@@ -156,7 +156,7 @@ let (joinedGroup, commit) = try EppGroupSession.joinExternal(
 
 ## Важливе зауваження про shutdown
 
-`EcliptixProtectedProtocol.shutdown()` збережений для API symmetry, але поточна native реалізація не робить значущого teardown.
+`AuraProtectedProtocol.shutdown()` збережений для API symmetry, але поточна native реалізація не робить значущого teardown.
 
 Не треба будувати критичну логіку безпеки навколо цього виклику.
 

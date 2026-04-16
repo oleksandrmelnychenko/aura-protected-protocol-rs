@@ -3,10 +3,10 @@
 
 import Foundation
 
-/// Cryptographic utility functions for the Ecliptix Protected Protocol.
+/// Cryptographic utility functions for the Aura Protected Protocol.
 ///
 /// Provides envelope validation and Shamir's Secret Sharing operations.
-public enum EppCrypto {
+public enum AuraCrypto {
 
     /// Validates the structure of an encrypted envelope without decrypting it.
     ///
@@ -14,9 +14,9 @@ public enum EppCrypto {
     /// without requiring any key material.
     ///
     /// - Parameter data: The envelope data to validate.
-    /// - Throws: `EppError` if the envelope is malformed or structurally invalid.
+    /// - Throws: `AuraError` if the envelope is malformed or structurally invalid.
     public static func validateEnvelope(_ data: Data) throws {
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = data.withUnsafeBytes { dataBytes in
             native_epp_envelope_validate(
                 dataBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
@@ -25,8 +25,8 @@ public enum EppCrypto {
             )
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
     }
 
@@ -42,16 +42,16 @@ public enum EppCrypto {
     ///   - shareCount: The total number of shares to generate.
     ///   - authKey: An authentication key for share integrity verification.
     /// - Returns: An array of `shareCount` share data objects.
-    /// - Throws: `EppError` if splitting fails (e.g., invalid threshold/shareCount).
+    /// - Throws: `AuraError` if splitting fails (e.g., invalid threshold/shareCount).
     public static func shamirSplit(
         secret: Data,
         threshold: UInt8,
         shareCount: UInt8,
         authKey: Data
     ) throws -> [Data] {
-        var outShares = NativeEppBuffer(data: nil, length: 0)
+        var outShares = NativeAuraBuffer(data: nil, length: 0)
         var outShareLength: Int = 0
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = secret.withUnsafeBytes { secretBytes in
             authKey.withUnsafeBytes { authKeyBytes in
                 native_epp_shamir_split(
@@ -71,11 +71,11 @@ public enum EppCrypto {
             if outShares.data != nil { native_epp_buffer_release(&outShares) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let ptr = outShares.data, outShareLength > 0 else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         let totalCount = Int(shareCount)
         var shares = [Data]()
@@ -98,14 +98,14 @@ public enum EppCrypto {
     ///   - authKey: The authentication key used during splitting.
     ///   - threshold: The minimum number of shares required (must match the split threshold).
     /// - Returns: The reconstructed secret data.
-    /// - Throws: `EppError` if reconstruction fails (e.g., insufficient shares, wrong auth key).
+    /// - Throws: `AuraError` if reconstruction fails (e.g., insufficient shares, wrong auth key).
     public static func shamirReconstruct(
         shares: [Data],
         authKey: Data,
         threshold: Int
     ) throws -> Data {
         guard !shares.isEmpty else {
-            throw EppError.invalidInput("No shares provided")
+            throw AuraError.invalidInput("No shares provided")
         }
         let shareLength = shares[0].count
         let shareCount = shares.count
@@ -113,8 +113,8 @@ public enum EppCrypto {
         for share in shares {
             flatShares.append(share)
         }
-        var outSecret = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        var outSecret = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = flatShares.withUnsafeBytes { sharesBytes in
             authKey.withUnsafeBytes { authKeyBytes in
                 native_epp_shamir_reconstruct(
@@ -133,11 +133,11 @@ public enum EppCrypto {
             if outSecret.data != nil { native_epp_buffer_release(&outSecret) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let data = dataFromBuffer(outSecret) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }

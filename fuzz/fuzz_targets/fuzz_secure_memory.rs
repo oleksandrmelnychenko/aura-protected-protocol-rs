@@ -2,7 +2,7 @@
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::crypto::SecureMemoryHandle;
+use aura_protected_protocol::crypto::SecureMemoryHandle;
 
 #[derive(Arbitrary, Debug)]
 struct MemInput {

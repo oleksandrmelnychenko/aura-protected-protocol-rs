@@ -231,7 +231,7 @@ fn chunk_aad(
     chunk_count: u32,
 ) -> Vec<u8> {
     let mut aad = Vec::with_capacity(128 + mime_type.len());
-    aad.extend_from_slice(b"Ecliptix-Attachment-Chunk-v1");
+    aad.extend_from_slice(b"Aura-Attachment-Chunk-v1");
     aad.extend_from_slice(attachment_id);
     aad.extend_from_slice(&total_size.to_le_bytes());
     aad.extend_from_slice(&chunk_size.to_le_bytes());

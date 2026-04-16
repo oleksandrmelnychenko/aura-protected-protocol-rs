@@ -2,8 +2,8 @@
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::crypto::CryptoInterop;
-use ecliptix_protocol::protocol::group::SenderKeyChain;
+use aura_protected_protocol::crypto::CryptoInterop;
+use aura_protected_protocol::protocol::group::SenderKeyChain;
 use std::sync::Once;
 
 static INIT: Once = Once::new();

@@ -5,7 +5,7 @@
 // # FFI Safety Contract
 //
 // All `pub unsafe extern "C"` functions in this module share these preconditions:
-//   - `out_error` (when present) must be either null or point to a valid `EppError`.
+//   - `out_error` (when present) must be either null or point to a valid `AuraError`.
 //   - `out_buf` / `out_*` output pointers must be either null or point to writable memory.
 //   - `handle` pointers must originate from the corresponding `_create` / `_start` function.
 //   - `(data, length)` pairs must form valid, readable slices (or `data` must be null when
@@ -81,66 +81,66 @@ fn try_acquire_busy(flag: &AtomicBool) -> Result<BusyGuard<'_>, ()> {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EppErrorCode {
-    EppSuccess = 0,
-    EppErrorGeneric = 1,
-    EppErrorInvalidInput = 2,
-    EppErrorKeyGeneration = 3,
-    EppErrorDeriveKey = 4,
-    EppErrorHandshake = 5,
-    EppErrorEncryption = 6,
-    EppErrorDecryption = 7,
-    EppErrorDecode = 8,
-    EppErrorEncode = 9,
-    EppErrorBufferTooSmall = 10,
-    EppErrorObjectDisposed = 11,
-    EppErrorPrepareLocal = 12,
-    EppErrorOutOfMemory = 13,
-    EppErrorCryptoFailure = 14,
-    EppErrorNullPointer = 15,
-    EppErrorInvalidState = 16,
-    EppErrorReplayAttack = 17,
-    EppErrorSessionExpired = 18,
-    EppErrorPqMissing = 19,
-    EppErrorGroupProtocol = 20,
-    EppErrorGroupMembership = 21,
-    EppErrorTreeIntegrity = 22,
-    EppErrorWelcome = 23,
-    EppErrorMessageExpired = 24,
-    EppErrorFranking = 25,
-    EppErrorVoipCall = 26,
-    EppErrorVoipMedia = 27,
-    EppErrorVoipRekey = 28,
-    EppErrorBusy = 29,
+pub enum AuraErrorCode {
+    AuraSuccess = 0,
+    AuraErrorGeneric = 1,
+    AuraErrorInvalidInput = 2,
+    AuraErrorKeyGeneration = 3,
+    AuraErrorDeriveKey = 4,
+    AuraErrorHandshake = 5,
+    AuraErrorEncryption = 6,
+    AuraErrorDecryption = 7,
+    AuraErrorDecode = 8,
+    AuraErrorEncode = 9,
+    AuraErrorBufferTooSmall = 10,
+    AuraErrorObjectDisposed = 11,
+    AuraErrorPrepareLocal = 12,
+    AuraErrorOutOfMemory = 13,
+    AuraErrorCryptoFailure = 14,
+    AuraErrorNullPointer = 15,
+    AuraErrorInvalidState = 16,
+    AuraErrorReplayAttack = 17,
+    AuraErrorSessionExpired = 18,
+    AuraErrorPqMissing = 19,
+    AuraErrorGroupProtocol = 20,
+    AuraErrorGroupMembership = 21,
+    AuraErrorTreeIntegrity = 22,
+    AuraErrorWelcome = 23,
+    AuraErrorMessageExpired = 24,
+    AuraErrorFranking = 25,
+    AuraErrorVoipCall = 26,
+    AuraErrorVoipMedia = 27,
+    AuraErrorVoipRekey = 28,
+    AuraErrorBusy = 29,
 }
 
 #[repr(C)]
-pub struct EppBuffer {
+pub struct AuraBuffer {
     pub data: *mut u8,
     pub length: usize,
 }
 
 #[repr(C)]
-pub struct EppError {
-    pub code: EppErrorCode,
+pub struct AuraError {
+    pub code: AuraErrorCode,
     pub message: *mut c_char,
 }
 
 #[repr(C)]
-pub struct EppSessionConfig {
+pub struct AuraSessionConfig {
     pub max_messages_per_chain: u32,
 }
 
 #[repr(C)]
-pub enum EppEnvelopeType {
-    EppEnvelopeRequest = 0,
-    EppEnvelopeResponse = 1,
-    EppEnvelopeNotification = 2,
-    EppEnvelopeHeartbeat = 3,
-    EppEnvelopeErrorResponse = 4,
+pub enum AuraEnvelopeType {
+    AuraEnvelopeRequest = 0,
+    AuraEnvelopeResponse = 1,
+    AuraEnvelopeNotification = 2,
+    AuraEnvelopeHeartbeat = 3,
+    AuraEnvelopeErrorResponse = 4,
 }
 
-pub struct EppIdentityState {
+pub struct AuraIdentityState {
     pub keys: IdentityKeys,
     pub time_provider: Arc<dyn ITimeProvider>,
 }
@@ -158,11 +158,11 @@ impl ITimeProvider for ManualTimeProvider {
     }
 }
 
-enum EppTimeProvider {
+enum AuraTimeProvider {
     Manual(Arc<ManualTimeProvider>),
 }
 
-impl EppTimeProvider {
+impl AuraTimeProvider {
     fn as_trait_arc(&self) -> Arc<dyn ITimeProvider> {
         match self {
             Self::Manual(provider) => provider.clone(),
@@ -174,46 +174,46 @@ fn default_time_provider() -> Arc<dyn ITimeProvider> {
     Arc::new(SystemTimeProvider)
 }
 
-pub struct EppIdentityHandle {
-    pub inner: Option<EppIdentityState>,
+pub struct AuraIdentityHandle {
+    pub inner: Option<AuraIdentityState>,
     pub in_use: AtomicBool,
 }
-pub struct EppTimeProviderHandle(Option<EppTimeProvider>);
-pub struct EppSessionHandle {
+pub struct AuraTimeProviderHandle(Option<AuraTimeProvider>);
+pub struct AuraSessionHandle {
     pub inner: Option<Session>,
     pub in_use: AtomicBool,
 }
-pub struct EppHandshakeInitiatorHandle(pub Option<HandshakeInitiator>);
-pub struct EppHandshakeResponderHandle(pub Option<HandshakeResponder>);
-pub struct EppGroupSessionHandle {
+pub struct AuraHandshakeInitiatorHandle(pub Option<HandshakeInitiator>);
+pub struct AuraHandshakeResponderHandle(pub Option<HandshakeResponder>);
+pub struct AuraGroupSessionHandle {
     pub inner: Option<GroupSession>,
     pub in_use: AtomicBool,
 }
-pub struct EppSealedStateCounterTrackerHandle(pub Option<SealedStateCounterTracker>);
-pub struct EppSealedStateSlotHandle(pub Option<SealedStateSlot>);
+pub struct AuraSealedStateCounterTrackerHandle(pub Option<SealedStateCounterTracker>);
+pub struct AuraSealedStateSlotHandle(pub Option<SealedStateSlot>);
 
-pub struct EppVoipSessionHandle {
+pub struct AuraVoipSessionHandle {
     pub inner: Option<crate::protocol::voip::VoipSession>,
     pub in_use: AtomicBool,
 }
 
-pub struct EppStreamingEncryptorHandle(pub Option<StreamingEncryptor>);
-pub struct EppStreamingDecryptorHandle(pub Option<StreamingDecryptor>);
+pub struct AuraStreamingEncryptorHandle(pub Option<StreamingEncryptor>);
+pub struct AuraStreamingDecryptorHandle(pub Option<StreamingDecryptor>);
 
 #[repr(C)]
-pub struct EppEncryptedFrame {
-    pub call_id: EppBuffer,
+pub struct AuraEncryptedFrame {
+    pub call_id: AuraBuffer,
     pub ssrc: u32,
     pub frame_counter: u64,
     pub ratchet_generation: u32,
-    pub encrypted_payload: EppBuffer,
-    pub nonce: EppBuffer,
-    pub encrypted_header: EppBuffer,
+    pub encrypted_payload: AuraBuffer,
+    pub nonce: AuraBuffer,
+    pub encrypted_header: AuraBuffer,
 }
 
 #[repr(C)]
-pub struct EppDecryptedFrame {
-    pub payload: EppBuffer,
+pub struct AuraDecryptedFrame {
+    pub payload: AuraBuffer,
     pub payload_type: u8,
     pub ssrc: u32,
     pub timestamp: u32,
@@ -222,7 +222,7 @@ pub struct EppDecryptedFrame {
     pub ratchet_generation: u32,
 }
 
-unsafe fn clear_encrypted_frame(frame: *mut EppEncryptedFrame) {
+unsafe fn clear_encrypted_frame(frame: *mut AuraEncryptedFrame) {
     if frame.is_null() {
         return;
     }
@@ -239,7 +239,7 @@ unsafe fn clear_encrypted_frame(frame: *mut EppEncryptedFrame) {
     (*frame).encrypted_header.length = 0;
 }
 
-unsafe fn clear_decrypted_frame(frame: *mut EppDecryptedFrame) {
+unsafe fn clear_decrypted_frame(frame: *mut AuraDecryptedFrame) {
     if frame.is_null() {
         return;
     }
@@ -253,13 +253,13 @@ unsafe fn clear_decrypted_frame(frame: *mut EppDecryptedFrame) {
     (*frame).ratchet_generation = 0;
 }
 
-pub struct EppKeyPackageSecretsHandle {
+pub struct AuraKeyPackageSecretsHandle {
     pub x25519_private: SecureMemoryHandle,
     pub kyber_secret: SecureMemoryHandle,
 }
 
 #[repr(C)]
-pub struct EppGroupSecurityPolicy {
+pub struct AuraGroupSecurityPolicy {
     pub max_messages_per_epoch: u32,
     pub max_skipped_keys_per_sender: u32,
     pub block_external_join: u8,
@@ -274,7 +274,7 @@ pub struct EppGroupSecurityPolicy {
 /// have access to the handle pointer.  Callers that resume using the same handle
 /// after a panic-triggered error will be caught by the state-machine checks in
 /// `require_session_mut`, `require_group_mut`, etc., which return
-/// `EppErrorObjectDisposed` when the inner value is inconsistent.  A future
+/// `AuraErrorObjectDisposed` when the inner value is inconsistent.  A future
 /// refactor may add per-handle poison flags for stronger safety guarantees.
 macro_rules! ffi_catch_panic {
     ($out_error:expr, $body:expr) => {
@@ -284,11 +284,11 @@ macro_rules! ffi_catch_panic {
                 unsafe {
                     write_error(
                         $out_error,
-                        EppErrorCode::EppErrorGeneric,
+                        AuraErrorCode::AuraErrorGeneric,
                         "Internal panic caught at FFI boundary",
                     );
                 }
-                EppErrorCode::EppErrorGeneric
+                AuraErrorCode::AuraErrorGeneric
             }
         }
     };
@@ -303,40 +303,40 @@ macro_rules! ffi_catch_panic_value {
     };
 }
 
-const fn error_code_from_protocol(e: &ProtocolError) -> EppErrorCode {
+const fn error_code_from_protocol(e: &ProtocolError) -> AuraErrorCode {
     match e {
-        ProtocolError::Generic(_) => EppErrorCode::EppErrorGeneric,
-        ProtocolError::KeyGeneration(_) => EppErrorCode::EppErrorKeyGeneration,
-        ProtocolError::DeriveKey(_) => EppErrorCode::EppErrorDeriveKey,
+        ProtocolError::Generic(_) => AuraErrorCode::AuraErrorGeneric,
+        ProtocolError::KeyGeneration(_) => AuraErrorCode::AuraErrorKeyGeneration,
+        ProtocolError::DeriveKey(_) => AuraErrorCode::AuraErrorDeriveKey,
         ProtocolError::InvalidInput(_) | ProtocolError::PeerPubKey(_) => {
-            EppErrorCode::EppErrorInvalidInput
+            AuraErrorCode::AuraErrorInvalidInput
         }
-        ProtocolError::PrepareLocal(_) => EppErrorCode::EppErrorPrepareLocal,
-        ProtocolError::Handshake(_) => EppErrorCode::EppErrorHandshake,
-        ProtocolError::Decode(_) => EppErrorCode::EppErrorDecode,
-        ProtocolError::Encode(_) => EppErrorCode::EppErrorEncode,
-        ProtocolError::BufferTooSmall(_) => EppErrorCode::EppErrorBufferTooSmall,
-        ProtocolError::ObjectDisposed => EppErrorCode::EppErrorObjectDisposed,
-        ProtocolError::ReplayAttack(_) => EppErrorCode::EppErrorReplayAttack,
-        ProtocolError::InvalidState(_) => EppErrorCode::EppErrorInvalidState,
-        ProtocolError::NullPointer => EppErrorCode::EppErrorNullPointer,
-        ProtocolError::Crypto(_) => EppErrorCode::EppErrorCryptoFailure,
-        ProtocolError::GroupProtocol(_) => EppErrorCode::EppErrorGroupProtocol,
-        ProtocolError::GroupMembership(_) => EppErrorCode::EppErrorGroupMembership,
-        ProtocolError::TreeIntegrity(_) => EppErrorCode::EppErrorTreeIntegrity,
-        ProtocolError::WelcomeError(_) => EppErrorCode::EppErrorWelcome,
-        ProtocolError::MessageExpired(_) => EppErrorCode::EppErrorMessageExpired,
-        ProtocolError::FrankingFailed(_) => EppErrorCode::EppErrorFranking,
-        ProtocolError::VoipCall(_) => EppErrorCode::EppErrorVoipCall,
-        ProtocolError::VoipMedia(_) => EppErrorCode::EppErrorVoipMedia,
-        ProtocolError::VoipRekey(_) => EppErrorCode::EppErrorVoipRekey,
+        ProtocolError::PrepareLocal(_) => AuraErrorCode::AuraErrorPrepareLocal,
+        ProtocolError::Handshake(_) => AuraErrorCode::AuraErrorHandshake,
+        ProtocolError::Decode(_) => AuraErrorCode::AuraErrorDecode,
+        ProtocolError::Encode(_) => AuraErrorCode::AuraErrorEncode,
+        ProtocolError::BufferTooSmall(_) => AuraErrorCode::AuraErrorBufferTooSmall,
+        ProtocolError::ObjectDisposed => AuraErrorCode::AuraErrorObjectDisposed,
+        ProtocolError::ReplayAttack(_) => AuraErrorCode::AuraErrorReplayAttack,
+        ProtocolError::InvalidState(_) => AuraErrorCode::AuraErrorInvalidState,
+        ProtocolError::NullPointer => AuraErrorCode::AuraErrorNullPointer,
+        ProtocolError::Crypto(_) => AuraErrorCode::AuraErrorCryptoFailure,
+        ProtocolError::GroupProtocol(_) => AuraErrorCode::AuraErrorGroupProtocol,
+        ProtocolError::GroupMembership(_) => AuraErrorCode::AuraErrorGroupMembership,
+        ProtocolError::TreeIntegrity(_) => AuraErrorCode::AuraErrorTreeIntegrity,
+        ProtocolError::WelcomeError(_) => AuraErrorCode::AuraErrorWelcome,
+        ProtocolError::MessageExpired(_) => AuraErrorCode::AuraErrorMessageExpired,
+        ProtocolError::FrankingFailed(_) => AuraErrorCode::AuraErrorFranking,
+        ProtocolError::VoipCall(_) => AuraErrorCode::AuraErrorVoipCall,
+        ProtocolError::VoipMedia(_) => AuraErrorCode::AuraErrorVoipMedia,
+        ProtocolError::VoipRekey(_) => AuraErrorCode::AuraErrorVoipRekey,
     }
 }
 
 /// # Safety
-/// `out_error` must be null or point to a valid, writable `EppError`.  If `(*out_error).message`
+/// `out_error` must be null or point to a valid, writable `AuraError`.  If `(*out_error).message`
 /// is non-null it must have been allocated by `CString::into_raw`.
-unsafe fn write_error(out_error: *mut EppError, code: EppErrorCode, msg: &str) {
+unsafe fn write_error(out_error: *mut AuraError, code: AuraErrorCode, msg: &str) {
     if out_error.is_null() {
         return;
     }
@@ -351,22 +351,22 @@ unsafe fn write_error(out_error: *mut EppError, code: EppErrorCode, msg: &str) {
 
 /// # Safety
 /// Same preconditions as [`write_error`].
-unsafe fn write_protocol_error(out_error: *mut EppError, e: &ProtocolError) -> EppErrorCode {
+unsafe fn write_protocol_error(out_error: *mut AuraError, e: &ProtocolError) -> AuraErrorCode {
     let code = error_code_from_protocol(e);
     write_error(out_error, code, &e.to_string());
     code
 }
 
 /// # Safety
-/// `out` must be null or point to a valid, writable `EppBuffer`.
+/// `out` must be null or point to a valid, writable `AuraBuffer`.
 /// If it already contains an FFI-owned allocation from a previous call, that
 /// allocation is released before the new buffer is written.
-unsafe fn write_buffer(out: *mut EppBuffer, bytes: Vec<u8>) {
+unsafe fn write_buffer(out: *mut AuraBuffer, bytes: Vec<u8>) {
     if out.is_null() {
         return;
     }
     if !(*out).data.is_null() || (*out).length != 0 {
-        epp_buffer_release(out);
+        aura_buffer_release(out);
     }
     if bytes.is_empty() {
         (*out).data = std::ptr::null_mut();
@@ -398,18 +398,18 @@ unsafe fn replace_out_handle<T>(out: *mut *mut T, new_handle: *mut T) {
 }
 
 /// # Safety
-/// `handle` must be null or point to a live `EppIdentityHandle` created by `epp_identity_create*`.
+/// `handle` must be null or point to a live `AuraIdentityHandle` created by `aura_identity_create*`.
 unsafe fn require_identity_ref<'a>(
-    handle: *const EppIdentityHandle,
-    out_error: *mut EppError,
-) -> Result<&'a IdentityKeys, EppErrorCode> {
+    handle: *const AuraIdentityHandle,
+    out_error: *mut AuraError,
+) -> Result<&'a IdentityKeys, AuraErrorCode> {
     if handle.is_null() {
         write_error(
             out_error,
-            EppErrorCode::EppErrorNullPointer,
+            AuraErrorCode::AuraErrorNullPointer,
             "handle is null",
         );
-        return Err(EppErrorCode::EppErrorNullPointer);
+        return Err(AuraErrorCode::AuraErrorNullPointer);
     }
     (*handle)
         .inner
@@ -418,70 +418,70 @@ unsafe fn require_identity_ref<'a>(
         .ok_or_else(|| {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorObjectDisposed,
+                AuraErrorCode::AuraErrorObjectDisposed,
                 "handle already destroyed",
             );
-            EppErrorCode::EppErrorObjectDisposed
+            AuraErrorCode::AuraErrorObjectDisposed
         })
 }
 
 unsafe fn require_counter_tracker_mut<'a>(
-    handle: *mut EppSealedStateCounterTrackerHandle,
-    out_error: *mut EppError,
-) -> Result<&'a mut SealedStateCounterTracker, EppErrorCode> {
+    handle: *mut AuraSealedStateCounterTrackerHandle,
+    out_error: *mut AuraError,
+) -> Result<&'a mut SealedStateCounterTracker, AuraErrorCode> {
     if handle.is_null() {
         write_error(
             out_error,
-            EppErrorCode::EppErrorNullPointer,
+            AuraErrorCode::AuraErrorNullPointer,
             "counter tracker handle is null",
         );
-        return Err(EppErrorCode::EppErrorNullPointer);
+        return Err(AuraErrorCode::AuraErrorNullPointer);
     }
     (*handle).0.as_mut().ok_or_else(|| {
         write_error(
             out_error,
-            EppErrorCode::EppErrorObjectDisposed,
+            AuraErrorCode::AuraErrorObjectDisposed,
             "counter tracker handle already destroyed",
         );
-        EppErrorCode::EppErrorObjectDisposed
+        AuraErrorCode::AuraErrorObjectDisposed
     })
 }
 
 unsafe fn require_sealed_state_slot_mut<'a>(
-    handle: *mut EppSealedStateSlotHandle,
-    out_error: *mut EppError,
-) -> Result<&'a mut SealedStateSlot, EppErrorCode> {
+    handle: *mut AuraSealedStateSlotHandle,
+    out_error: *mut AuraError,
+) -> Result<&'a mut SealedStateSlot, AuraErrorCode> {
     if handle.is_null() {
         write_error(
             out_error,
-            EppErrorCode::EppErrorNullPointer,
+            AuraErrorCode::AuraErrorNullPointer,
             "sealed-state slot handle is null",
         );
-        return Err(EppErrorCode::EppErrorNullPointer);
+        return Err(AuraErrorCode::AuraErrorNullPointer);
     }
     (*handle).0.as_mut().ok_or_else(|| {
         write_error(
             out_error,
-            EppErrorCode::EppErrorObjectDisposed,
+            AuraErrorCode::AuraErrorObjectDisposed,
             "sealed-state slot handle already destroyed",
         );
-        EppErrorCode::EppErrorObjectDisposed
+        AuraErrorCode::AuraErrorObjectDisposed
     })
 }
 
 /// # Safety
-/// `handle` must be null or point to a live, exclusively-owned `EppIdentityHandle`.
+/// `handle` must be null or point to a live, exclusively-owned `AuraIdentityHandle`.
 unsafe fn require_identity_mut<'a>(
-    handle: *mut EppIdentityHandle,
-    out_error: *mut EppError,
-) -> Result<&'a mut IdentityKeys, EppErrorCode> {
+    handle: *mut AuraIdentityHandle,
+    out_error: *mut AuraError,
+) -> Result<&'a mut IdentityKeys, AuraErrorCode> {
     if handle.is_null() {
         write_error(
             out_error,
-            EppErrorCode::EppErrorNullPointer,
+            AuraErrorCode::AuraErrorNullPointer,
             "handle is null",
         );
-        return Err(EppErrorCode::EppErrorNullPointer);
+        return Err(AuraErrorCode::AuraErrorNullPointer);
     }
     (*handle)
         .inner
@@ -490,26 +490,26 @@ unsafe fn require_identity_mut<'a>(
         .ok_or_else(|| {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorObjectDisposed,
+                AuraErrorCode::AuraErrorObjectDisposed,
                 "handle already destroyed",
             );
-            EppErrorCode::EppErrorObjectDisposed
+            AuraErrorCode::AuraErrorObjectDisposed
         })
 }
 
 /// # Safety
-/// `handle` must be null or point to a live `EppIdentityHandle`.
+/// `handle` must be null or point to a live `AuraIdentityHandle`.
 unsafe fn clone_identity_time_provider(
-    handle: *const EppIdentityHandle,
-    out_error: *mut EppError,
-) -> Result<Arc<dyn ITimeProvider>, EppErrorCode> {
+    handle: *const AuraIdentityHandle,
+    out_error: *mut AuraError,
+) -> Result<Arc<dyn ITimeProvider>, AuraErrorCode> {
     if handle.is_null() {
         write_error(
             out_error,
-            EppErrorCode::EppErrorNullPointer,
+            AuraErrorCode::AuraErrorNullPointer,
             "handle is null",
         );
-        return Err(EppErrorCode::EppErrorNullPointer);
+        return Err(AuraErrorCode::AuraErrorNullPointer);
     }
     (*handle)
         .inner
@@ -518,27 +518,27 @@ unsafe fn clone_identity_time_provider(
         .ok_or_else(|| {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorObjectDisposed,
+                AuraErrorCode::AuraErrorObjectDisposed,
                 "handle already destroyed",
             );
-            EppErrorCode::EppErrorObjectDisposed
+            AuraErrorCode::AuraErrorObjectDisposed
         })
 }
 
 /// # Safety
-/// `handle` must be null or point to a live, exclusively-owned `EppIdentityHandle`.
+/// `handle` must be null or point to a live, exclusively-owned `AuraIdentityHandle`.
 unsafe fn replace_identity_time_provider(
-    handle: *mut EppIdentityHandle,
+    handle: *mut AuraIdentityHandle,
     time_provider: Arc<dyn ITimeProvider>,
-    out_error: *mut EppError,
-) -> Result<(), EppErrorCode> {
+    out_error: *mut AuraError,
+) -> Result<(), AuraErrorCode> {
     if handle.is_null() {
         write_error(
             out_error,
-            EppErrorCode::EppErrorNullPointer,
+            AuraErrorCode::AuraErrorNullPointer,
             "handle is null",
         );
-        return Err(EppErrorCode::EppErrorNullPointer);
+        return Err(AuraErrorCode::AuraErrorNullPointer);
     }
     match (*handle).inner.as_mut() {
         Some(state) => {
@@ -548,141 +548,141 @@ unsafe fn replace_identity_time_provider(
         None => {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorObjectDisposed,
+                AuraErrorCode::AuraErrorObjectDisposed,
                 "handle already destroyed",
             );
-            Err(EppErrorCode::EppErrorObjectDisposed)
+            Err(AuraErrorCode::AuraErrorObjectDisposed)
         }
     }
 }
 
 /// # Safety
-/// `handle` must be null or point to a live `EppTimeProviderHandle`. A null
+/// `handle` must be null or point to a live `AuraTimeProviderHandle`. A null
 /// handle means "use the default system clock".
 unsafe fn clone_time_provider_or_default(
-    handle: *const EppTimeProviderHandle,
-    out_error: *mut EppError,
-) -> Result<Arc<dyn ITimeProvider>, EppErrorCode> {
+    handle: *const AuraTimeProviderHandle,
+    out_error: *mut AuraError,
+) -> Result<Arc<dyn ITimeProvider>, AuraErrorCode> {
     if handle.is_null() {
         return Ok(default_time_provider());
     }
     (*handle)
         .0
         .as_ref()
-        .map(EppTimeProvider::as_trait_arc)
+        .map(AuraTimeProvider::as_trait_arc)
         .ok_or_else(|| {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorObjectDisposed,
+                AuraErrorCode::AuraErrorObjectDisposed,
                 "time provider handle already destroyed",
             );
-            EppErrorCode::EppErrorObjectDisposed
+            AuraErrorCode::AuraErrorObjectDisposed
         })
 }
 
 /// # Safety
-/// `handle` must be null or point to a live `EppTimeProviderHandle`.
+/// `handle` must be null or point to a live `AuraTimeProviderHandle`.
 unsafe fn require_manual_time_provider<'a>(
-    handle: *mut EppTimeProviderHandle,
-    out_error: *mut EppError,
-) -> Result<&'a Arc<ManualTimeProvider>, EppErrorCode> {
+    handle: *mut AuraTimeProviderHandle,
+    out_error: *mut AuraError,
+) -> Result<&'a Arc<ManualTimeProvider>, AuraErrorCode> {
     if handle.is_null() {
         write_error(
             out_error,
-            EppErrorCode::EppErrorNullPointer,
+            AuraErrorCode::AuraErrorNullPointer,
             "time provider handle is null",
         );
-        return Err(EppErrorCode::EppErrorNullPointer);
+        return Err(AuraErrorCode::AuraErrorNullPointer);
     }
     match (*handle).0.as_ref() {
-        Some(EppTimeProvider::Manual(provider)) => Ok(provider),
+        Some(AuraTimeProvider::Manual(provider)) => Ok(provider),
         None => {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorObjectDisposed,
+                AuraErrorCode::AuraErrorObjectDisposed,
                 "time provider handle already destroyed",
             );
-            Err(EppErrorCode::EppErrorObjectDisposed)
+            Err(AuraErrorCode::AuraErrorObjectDisposed)
         }
     }
 }
 
 /// # Safety
-/// `handle` must be null or point to a live, exclusively-owned `EppSessionHandle`.
+/// `handle` must be null or point to a live, exclusively-owned `AuraSessionHandle`.
 ///
 /// Acquires the handle's busy-flag; the returned [`BusyGuard`] releases it on
 /// drop, preventing concurrent access from multiple FFI calls.
 unsafe fn require_session_mut<'a>(
-    handle: *mut EppSessionHandle,
-    out_error: *mut EppError,
-) -> Result<(BusyGuard<'a>, &'a mut Session), EppErrorCode> {
+    handle: *mut AuraSessionHandle,
+    out_error: *mut AuraError,
+) -> Result<(BusyGuard<'a>, &'a mut Session), AuraErrorCode> {
     if handle.is_null() {
         write_error(
             out_error,
-            EppErrorCode::EppErrorNullPointer,
+            AuraErrorCode::AuraErrorNullPointer,
             "handle is null",
         );
-        return Err(EppErrorCode::EppErrorNullPointer);
+        return Err(AuraErrorCode::AuraErrorNullPointer);
     }
     let guard = try_acquire_busy(&(*handle).in_use).map_err(|()| {
         write_error(
             out_error,
-            EppErrorCode::EppErrorBusy,
+            AuraErrorCode::AuraErrorBusy,
             "session handle is already in use by another call",
         );
-        EppErrorCode::EppErrorBusy
+        AuraErrorCode::AuraErrorBusy
     })?;
     let inner = (*handle).inner.as_mut().ok_or_else(|| {
         write_error(
             out_error,
-            EppErrorCode::EppErrorObjectDisposed,
+            AuraErrorCode::AuraErrorObjectDisposed,
             "handle already destroyed",
         );
-        EppErrorCode::EppErrorObjectDisposed
+        AuraErrorCode::AuraErrorObjectDisposed
     })?;
     Ok((guard, inner))
 }
 
 /// # Safety
-/// `handle` must be null or point to a live, exclusively-owned `EppGroupSessionHandle`.
+/// `handle` must be null or point to a live, exclusively-owned `AuraGroupSessionHandle`.
 ///
 /// Acquires the handle's busy-flag; the returned [`BusyGuard`] releases it on
 /// drop, preventing concurrent access from multiple FFI calls.
 unsafe fn require_group_mut<'a>(
-    handle: *mut EppGroupSessionHandle,
-    out_error: *mut EppError,
-) -> Result<(BusyGuard<'a>, &'a mut GroupSession), EppErrorCode> {
+    handle: *mut AuraGroupSessionHandle,
+    out_error: *mut AuraError,
+) -> Result<(BusyGuard<'a>, &'a mut GroupSession), AuraErrorCode> {
     if handle.is_null() {
         write_error(
             out_error,
-            EppErrorCode::EppErrorNullPointer,
+            AuraErrorCode::AuraErrorNullPointer,
             "handle is null",
         );
-        return Err(EppErrorCode::EppErrorNullPointer);
+        return Err(AuraErrorCode::AuraErrorNullPointer);
     }
     let guard = try_acquire_busy(&(*handle).in_use).map_err(|()| {
         write_error(
             out_error,
-            EppErrorCode::EppErrorBusy,
+            AuraErrorCode::AuraErrorBusy,
             "group session handle is already in use by another call",
         );
-        EppErrorCode::EppErrorBusy
+        AuraErrorCode::AuraErrorBusy
     })?;
     let inner = (*handle).inner.as_mut().ok_or_else(|| {
         write_error(
             out_error,
-            EppErrorCode::EppErrorObjectDisposed,
+            AuraErrorCode::AuraErrorObjectDisposed,
             "handle already destroyed",
         );
-        EppErrorCode::EppErrorObjectDisposed
+        AuraErrorCode::AuraErrorObjectDisposed
     })?;
     Ok((guard, inner))
 }
 
 /// # Safety
-/// `handle` must be null or point to a live `EppGroupSessionHandle`.
+/// `handle` must be null or point to a live `AuraGroupSessionHandle`.
 const unsafe fn group_ref_or_none<'a>(
-    handle: *const EppGroupSessionHandle,
+    handle: *const AuraGroupSessionHandle,
 ) -> Option<&'a GroupSession> {
     if handle.is_null() {
         return None;
@@ -691,52 +691,52 @@ const unsafe fn group_ref_or_none<'a>(
 }
 
 #[no_mangle]
-pub extern "C" fn epp_version() -> *const c_char {
+pub extern "C" fn aura_version() -> *const c_char {
     static VERSION: &[u8] = b"1.1.1\0";
     VERSION.as_ptr().cast::<c_char>()
 }
 
 #[no_mangle]
-pub extern "C" fn epp_init() -> EppErrorCode {
-    ffi_catch_panic_value!(EppErrorCode::EppErrorCryptoFailure, {
+pub extern "C" fn aura_init() -> AuraErrorCode {
+    ffi_catch_panic_value!(AuraErrorCode::AuraErrorCryptoFailure, {
         let _ = CryptoInterop::initialize();
         KyberInterop::install_rng();
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub const extern "C" fn epp_shutdown() {}
+pub const extern "C" fn aura_shutdown() {}
 
 /// # Safety
-/// See module-level FFI safety contract.  `out_handle` must point to writable `*mut EppIdentityHandle`.
+/// See module-level FFI safety contract.  `out_handle` must point to writable `*mut AuraIdentityHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_identity_create(
-    out_handle: *mut *mut EppIdentityHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_identity_create(
+    out_handle: *mut *mut AuraIdentityHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_handle is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         match IdentityKeys::create(DEFAULT_ONE_TIME_KEY_COUNT) {
             Ok(keys) => {
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppIdentityHandle {
-                        inner: Some(EppIdentityState {
+                    Box::into_raw(Box::new(AuraIdentityHandle {
+                        inner: Some(AuraIdentityState {
                             keys,
                             time_provider: default_time_provider(),
                         }),
                         in_use: AtomicBool::new(false),
                     })),
                 );
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -745,38 +745,38 @@ pub unsafe extern "C" fn epp_identity_create(
 
 /// # Safety
 /// See module-level FFI safety contract.  `(seed, seed_length)` must form a valid readable slice.
-/// `out_handle` must point to writable `*mut EppIdentityHandle`.
+/// `out_handle` must point to writable `*mut AuraIdentityHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_identity_create_from_seed(
+pub unsafe extern "C" fn aura_identity_create_from_seed(
     seed: *const u8,
     seed_length: usize,
-    out_handle: *mut *mut EppIdentityHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_handle: *mut *mut AuraIdentityHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if seed.is_null() || seed_length == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "seed is null or empty",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if seed_length > MAX_BUFFER_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "input too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if out_handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_handle is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let seed_slice = std::slice::from_raw_parts(seed, seed_length);
         match IdentityKeys::create_from_master_key(
@@ -787,15 +787,15 @@ pub unsafe extern "C" fn epp_identity_create_from_seed(
             Ok(keys) => {
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppIdentityHandle {
-                        inner: Some(EppIdentityState {
+                    Box::into_raw(Box::new(AuraIdentityHandle {
+                        inner: Some(AuraIdentityState {
                             keys,
                             time_provider: default_time_provider(),
                         }),
                         in_use: AtomicBool::new(false),
                     })),
                 );
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -804,56 +804,56 @@ pub unsafe extern "C" fn epp_identity_create_from_seed(
 
 /// # Safety
 /// See module-level FFI safety contract.  `(seed, seed_length)` and `(membership_id, membership_id_length)`
-/// must form valid readable slices.  `out_handle` must point to writable `*mut EppIdentityHandle`.
+/// must form valid readable slices.  `out_handle` must point to writable `*mut AuraIdentityHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_identity_create_with_context(
+pub unsafe extern "C" fn aura_identity_create_with_context(
     seed: *const u8,
     seed_length: usize,
     membership_id: *const c_char,
     membership_id_length: usize,
-    out_handle: *mut *mut EppIdentityHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_handle: *mut *mut AuraIdentityHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if seed.is_null() || seed_length == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "seed is null or empty",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if seed_length > MAX_BUFFER_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "input too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if membership_id.is_null() || membership_id_length == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "membership_id is null or empty",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if membership_id_length > MAX_BUFFER_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "input too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if out_handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_handle is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
 
         let seed_slice = std::slice::from_raw_parts(seed, seed_length);
@@ -862,10 +862,10 @@ pub unsafe extern "C" fn epp_identity_create_with_context(
         let Ok(mid_str) = std::str::from_utf8(mid_bytes) else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "membership_id is not valid UTF-8",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         };
 
         match IdentityKeys::create_from_master_key(seed_slice, mid_str, DEFAULT_ONE_TIME_KEY_COUNT)
@@ -873,15 +873,15 @@ pub unsafe extern "C" fn epp_identity_create_with_context(
             Ok(keys) => {
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppIdentityHandle {
-                        inner: Some(EppIdentityState {
+                    Box::into_raw(Box::new(AuraIdentityHandle {
+                        inner: Some(AuraIdentityState {
                             keys,
                             time_provider: default_time_provider(),
                         }),
                         in_use: AtomicBool::new(false),
                     })),
                 );
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -890,41 +890,41 @@ pub unsafe extern "C" fn epp_identity_create_with_context(
 
 /// # Safety
 /// See module-level FFI safety contract. `out_handle` must point to writable
-/// `*mut EppTimeProviderHandle`.
+/// `*mut AuraTimeProviderHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_time_provider_manual_create(
+pub unsafe extern "C" fn aura_time_provider_manual_create(
     initial_now_unix: u64,
-    out_handle: *mut *mut EppTimeProviderHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_handle: *mut *mut AuraTimeProviderHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_handle is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
-        let provider = EppTimeProvider::Manual(Arc::new(ManualTimeProvider {
+        let provider = AuraTimeProvider::Manual(Arc::new(ManualTimeProvider {
             now_unix: Mutex::new(initial_now_unix),
         }));
         replace_out_handle(
             out_handle,
-            Box::into_raw(Box::new(EppTimeProviderHandle(Some(provider)))),
+            Box::into_raw(Box::new(AuraTimeProviderHandle(Some(provider)))),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
 /// See module-level FFI safety contract.
 #[no_mangle]
-pub unsafe extern "C" fn epp_time_provider_manual_set_now_unix(
-    handle: *mut EppTimeProviderHandle,
+pub unsafe extern "C" fn aura_time_provider_manual_set_now_unix(
+    handle: *mut AuraTimeProviderHandle,
     now_unix: u64,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         let provider = match require_manual_time_provider(handle, out_error) {
             Ok(v) => v,
@@ -935,21 +935,21 @@ pub unsafe extern "C" fn epp_time_provider_manual_set_now_unix(
                 if now_unix < *guard {
                     write_error(
                         out_error,
-                        EppErrorCode::EppErrorInvalidInput,
+                        AuraErrorCode::AuraErrorInvalidInput,
                         "manual time provider: clock must not go backwards",
                     );
-                    return EppErrorCode::EppErrorInvalidInput;
+                    return AuraErrorCode::AuraErrorInvalidInput;
                 }
                 *guard = now_unix;
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(_) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorInvalidState,
+                    AuraErrorCode::AuraErrorInvalidState,
                     "manual time provider mutex poisoned",
                 );
-                EppErrorCode::EppErrorInvalidState
+                AuraErrorCode::AuraErrorInvalidState
             }
         }
     })
@@ -959,18 +959,18 @@ pub unsafe extern "C" fn epp_time_provider_manual_set_now_unix(
 /// See module-level FFI safety contract. Passing NULL as `time_provider_handle`
 /// resets the identity to the default system clock.
 #[no_mangle]
-pub unsafe extern "C" fn epp_identity_set_time_provider(
-    handle: *mut EppIdentityHandle,
-    time_provider_handle: *const EppTimeProviderHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_identity_set_time_provider(
+    handle: *mut AuraIdentityHandle,
+    time_provider_handle: *const AuraTimeProviderHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         let time_provider = match clone_time_provider_or_default(time_provider_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
         match replace_identity_time_provider(handle, time_provider, out_error) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(code) => code,
         }
     })
@@ -979,28 +979,28 @@ pub unsafe extern "C" fn epp_identity_set_time_provider(
 /// # Safety
 /// See module-level FFI safety contract.
 #[no_mangle]
-pub unsafe extern "C" fn epp_identity_get_x25519_public(
-    handle: *const EppIdentityHandle,
+pub unsafe extern "C" fn aura_identity_get_x25519_public(
+    handle: *const AuraIdentityHandle,
     out_key: *mut u8,
     out_key_length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_key.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_key is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if out_key_length < X25519_PUBLIC_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorBufferTooSmall,
+                AuraErrorCode::AuraErrorBufferTooSmall,
                 "Buffer too small for X25519 public key",
             );
-            return EppErrorCode::EppErrorBufferTooSmall;
+            return AuraErrorCode::AuraErrorBufferTooSmall;
         }
         let identity = match require_identity_ref(handle, out_error) {
             Ok(v) => v,
@@ -1008,35 +1008,35 @@ pub unsafe extern "C" fn epp_identity_get_x25519_public(
         };
         let pk = identity.get_identity_x25519_public();
         std::ptr::copy_nonoverlapping(pk.as_ptr(), out_key, pk.len());
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
 /// See module-level FFI safety contract.
 #[no_mangle]
-pub unsafe extern "C" fn epp_identity_get_ed25519_public(
-    handle: *const EppIdentityHandle,
+pub unsafe extern "C" fn aura_identity_get_ed25519_public(
+    handle: *const AuraIdentityHandle,
     out_key: *mut u8,
     out_key_length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_key.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_key is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if out_key_length < ED25519_PUBLIC_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorBufferTooSmall,
+                AuraErrorCode::AuraErrorBufferTooSmall,
                 "Buffer too small for Ed25519 public key",
             );
-            return EppErrorCode::EppErrorBufferTooSmall;
+            return AuraErrorCode::AuraErrorBufferTooSmall;
         }
         let identity = match require_identity_ref(handle, out_error) {
             Ok(v) => v,
@@ -1044,35 +1044,35 @@ pub unsafe extern "C" fn epp_identity_get_ed25519_public(
         };
         let pk = identity.get_identity_ed25519_public();
         std::ptr::copy_nonoverlapping(pk.as_ptr(), out_key, pk.len());
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
 /// See module-level FFI safety contract.
 #[no_mangle]
-pub unsafe extern "C" fn epp_identity_get_kyber_public(
-    handle: *const EppIdentityHandle,
+pub unsafe extern "C" fn aura_identity_get_kyber_public(
+    handle: *const AuraIdentityHandle,
     out_key: *mut u8,
     out_key_length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_key.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_key is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if out_key_length < KYBER_PUBLIC_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorBufferTooSmall,
+                AuraErrorCode::AuraErrorBufferTooSmall,
                 "Buffer too small for Kyber public key",
             );
-            return EppErrorCode::EppErrorBufferTooSmall;
+            return AuraErrorCode::AuraErrorBufferTooSmall;
         }
         let identity = match require_identity_ref(handle, out_error) {
             Ok(v) => v,
@@ -1080,15 +1080,15 @@ pub unsafe extern "C" fn epp_identity_get_kyber_public(
         };
         let pk = identity.get_kyber_public();
         std::ptr::copy_nonoverlapping(pk.as_ptr(), out_key, pk.len());
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
-/// See module-level FFI safety contract.  `handle_ptr` must point to a handle from `epp_identity_create`,
+/// See module-level FFI safety contract.  `handle_ptr` must point to a handle from `aura_identity_create`,
 /// or be null.  The handle must not be used after this call.
 #[no_mangle]
-pub unsafe extern "C" fn epp_identity_destroy(handle_ptr: *mut *mut EppIdentityHandle) {
+pub unsafe extern "C" fn aura_identity_destroy(handle_ptr: *mut *mut AuraIdentityHandle) {
     ffi_catch_panic_value!((), unsafe {
         if handle_ptr.is_null() {
             return;
@@ -1102,9 +1102,9 @@ pub unsafe extern "C" fn epp_identity_destroy(handle_ptr: *mut *mut EppIdentityH
 
 /// # Safety
 /// See module-level FFI safety contract. `handle_ptr` must point to a handle
-/// from `epp_time_provider_manual_create`, or be null.
+/// from `aura_time_provider_manual_create`, or be null.
 #[no_mangle]
-pub unsafe extern "C" fn epp_time_provider_destroy(handle_ptr: *mut *mut EppTimeProviderHandle) {
+pub unsafe extern "C" fn aura_time_provider_destroy(handle_ptr: *mut *mut AuraTimeProviderHandle) {
     ffi_catch_panic_value!((), unsafe {
         if handle_ptr.is_null() {
             return;
@@ -1119,19 +1119,19 @@ pub unsafe extern "C" fn epp_time_provider_destroy(handle_ptr: *mut *mut EppTime
 /// # Safety
 /// See module-level FFI safety contract.
 #[no_mangle]
-pub unsafe extern "C" fn epp_prekey_bundle_create(
-    identity_keys: *const EppIdentityHandle,
-    out_bundle: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_prekey_bundle_create(
+    identity_keys: *const AuraIdentityHandle,
+    out_bundle: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_bundle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_bundle is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let identity = match require_identity_ref(identity_keys, out_error) {
             Ok(v) => v,
@@ -1168,46 +1168,46 @@ pub unsafe extern "C" fn epp_prekey_bundle_create(
         if let Err(e) = proto_bundle.encode(&mut buf) {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorEncode,
+                AuraErrorCode::AuraErrorEncode,
                 &format!("Failed to encode PreKeyBundle: {e}"),
             );
-            return EppErrorCode::EppErrorEncode;
+            return AuraErrorCode::AuraErrorEncode;
         }
 
         write_buffer(out_bundle, buf);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
 /// See module-level FFI safety contract.  `(peer_prekey_bundle, peer_prekey_bundle_length)` must form
-/// a valid readable slice.  `out_handle` must point to writable `*mut EppHandshakeInitiatorHandle`.
+/// a valid readable slice.  `out_handle` must point to writable `*mut AuraHandshakeInitiatorHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_handshake_initiator_start(
-    identity_keys: *mut EppIdentityHandle,
+pub unsafe extern "C" fn aura_handshake_initiator_start(
+    identity_keys: *mut AuraIdentityHandle,
     peer_prekey_bundle: *const u8,
     peer_prekey_bundle_length: usize,
-    config: *const EppSessionConfig,
-    out_handle: *mut *mut EppHandshakeInitiatorHandle,
-    out_handshake_init: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    config: *const AuraSessionConfig,
+    out_handle: *mut *mut AuraHandshakeInitiatorHandle,
+    out_handshake_init: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if peer_prekey_bundle.is_null() || out_handle.is_null() || out_handshake_init.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if peer_prekey_bundle_length > MAX_HANDSHAKE_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "peer_prekey_bundle too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let bundle_bytes =
@@ -1217,10 +1217,10 @@ pub unsafe extern "C" fn epp_handshake_initiator_start(
             Err(e) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorDecode,
+                    AuraErrorCode::AuraErrorDecode,
                     &format!("Failed to decode PreKeyBundle: {e}"),
                 );
-                return EppErrorCode::EppErrorDecode;
+                return AuraErrorCode::AuraErrorDecode;
             }
         };
 
@@ -1251,9 +1251,9 @@ pub unsafe extern "C" fn epp_handshake_initiator_start(
                 write_buffer(out_handshake_init, initiator.encoded_message().to_vec());
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppHandshakeInitiatorHandle(Some(initiator)))),
+                    Box::into_raw(Box::new(AuraHandshakeInitiatorHandle(Some(initiator)))),
                 );
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -1262,49 +1262,49 @@ pub unsafe extern "C" fn epp_handshake_initiator_start(
 
 /// # Safety
 /// See module-level FFI safety contract.  `(handshake_ack, handshake_ack_length)` must form a valid
-/// readable slice.  `out_session` must point to writable `*mut EppSessionHandle`.
+/// readable slice.  `out_session` must point to writable `*mut AuraSessionHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_handshake_initiator_finish(
-    handle: *mut EppHandshakeInitiatorHandle,
+pub unsafe extern "C" fn aura_handshake_initiator_finish(
+    handle: *mut AuraHandshakeInitiatorHandle,
     handshake_ack: *const u8,
     handshake_ack_length: usize,
-    out_session: *mut *mut EppSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_session: *mut *mut AuraSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "handle is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if handshake_ack.is_null() || out_session.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if handshake_ack_length > MAX_HANDSHAKE_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "handshake_ack too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let handle_ref = &mut *handle;
         let Some(initiator) = handle_ref.0.take() else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorObjectDisposed,
+                AuraErrorCode::AuraErrorObjectDisposed,
                 "handle already consumed",
             );
-            return EppErrorCode::EppErrorObjectDisposed;
+            return AuraErrorCode::AuraErrorObjectDisposed;
         };
 
         let ack_bytes = std::slice::from_raw_parts(handshake_ack, handshake_ack_length);
@@ -1312,12 +1312,12 @@ pub unsafe extern "C" fn epp_handshake_initiator_finish(
             Ok(session) => {
                 replace_out_handle(
                     out_session,
-                    Box::into_raw(Box::new(EppSessionHandle {
+                    Box::into_raw(Box::new(AuraSessionHandle {
                         inner: Some(session),
                         in_use: AtomicBool::new(false),
                     })),
                 );
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -1326,10 +1326,10 @@ pub unsafe extern "C" fn epp_handshake_initiator_finish(
 
 /// # Safety
 /// See module-level FFI safety contract.  `handle_ptr` must point to a handle from
-/// `epp_handshake_initiator_start`, or be null.  The handle must not be used after this call.
+/// `aura_handshake_initiator_start`, or be null.  The handle must not be used after this call.
 #[no_mangle]
-pub unsafe extern "C" fn epp_handshake_initiator_destroy(
-    handle_ptr: *mut *mut EppHandshakeInitiatorHandle,
+pub unsafe extern "C" fn aura_handshake_initiator_destroy(
+    handle_ptr: *mut *mut AuraHandshakeInitiatorHandle,
 ) {
     ffi_catch_panic_value!((), unsafe {
         if handle_ptr.is_null() {
@@ -1345,19 +1345,19 @@ pub unsafe extern "C" fn epp_handshake_initiator_destroy(
 /// # Safety
 /// See module-level FFI safety contract.  `(local_prekey_bundle, local_prekey_bundle_length)` and
 /// `(handshake_init, handshake_init_length)` must form valid readable slices.
-/// `out_handle` must point to writable `*mut EppHandshakeResponderHandle`.
+/// `out_handle` must point to writable `*mut AuraHandshakeResponderHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_handshake_responder_start(
-    identity_keys: *mut EppIdentityHandle,
+pub unsafe extern "C" fn aura_handshake_responder_start(
+    identity_keys: *mut AuraIdentityHandle,
     local_prekey_bundle: *const u8,
     local_prekey_bundle_length: usize,
     handshake_init: *const u8,
     handshake_init_length: usize,
-    config: *const EppSessionConfig,
-    out_handle: *mut *mut EppHandshakeResponderHandle,
-    out_handshake_ack: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    config: *const AuraSessionConfig,
+    out_handle: *mut *mut AuraHandshakeResponderHandle,
+    out_handshake_ack: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if local_prekey_bundle.is_null()
             || handshake_init.is_null()
@@ -1366,20 +1366,20 @@ pub unsafe extern "C" fn epp_handshake_responder_start(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if local_prekey_bundle_length > MAX_HANDSHAKE_MESSAGE_SIZE
             || handshake_init_length > MAX_HANDSHAKE_MESSAGE_SIZE
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Message too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let bundle_bytes =
@@ -1389,10 +1389,10 @@ pub unsafe extern "C" fn epp_handshake_responder_start(
             Err(e) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorDecode,
+                    AuraErrorCode::AuraErrorDecode,
                     &format!("Failed to decode local PreKeyBundle: {e}"),
                 );
-                return EppErrorCode::EppErrorDecode;
+                return AuraErrorCode::AuraErrorDecode;
             }
         };
 
@@ -1426,9 +1426,9 @@ pub unsafe extern "C" fn epp_handshake_responder_start(
                 write_buffer(out_handshake_ack, responder.encoded_ack().to_vec());
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppHandshakeResponderHandle(Some(responder)))),
+                    Box::into_raw(Box::new(AuraHandshakeResponderHandle(Some(responder)))),
                 );
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -1436,42 +1436,42 @@ pub unsafe extern "C" fn epp_handshake_responder_start(
 }
 
 /// # Safety
-/// See module-level FFI safety contract.  `out_session` must point to writable `*mut EppSessionHandle`.
+/// See module-level FFI safety contract.  `out_session` must point to writable `*mut AuraSessionHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_handshake_responder_finish(
-    handle: *mut EppHandshakeResponderHandle,
-    out_session: *mut *mut EppSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_handshake_responder_finish(
+    handle: *mut AuraHandshakeResponderHandle,
+    out_session: *mut *mut AuraSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if handle.is_null() || out_session.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let handle_ref = &mut *handle;
         let Some(responder) = handle_ref.0.take() else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorObjectDisposed,
+                AuraErrorCode::AuraErrorObjectDisposed,
                 "handle already consumed",
             );
-            return EppErrorCode::EppErrorObjectDisposed;
+            return AuraErrorCode::AuraErrorObjectDisposed;
         };
 
         match responder.finish() {
             Ok(session) => {
                 replace_out_handle(
                     out_session,
-                    Box::into_raw(Box::new(EppSessionHandle {
+                    Box::into_raw(Box::new(AuraSessionHandle {
                         inner: Some(session),
                         in_use: AtomicBool::new(false),
                     })),
                 );
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -1480,10 +1480,10 @@ pub unsafe extern "C" fn epp_handshake_responder_finish(
 
 /// # Safety
 /// See module-level FFI safety contract.  `handle_ptr` must point to a handle from
-/// `epp_handshake_responder_start`, or be null.  The handle must not be used after this call.
+/// `aura_handshake_responder_start`, or be null.  The handle must not be used after this call.
 #[no_mangle]
-pub unsafe extern "C" fn epp_handshake_responder_destroy(
-    handle_ptr: *mut *mut EppHandshakeResponderHandle,
+pub unsafe extern "C" fn aura_handshake_responder_destroy(
+    handle_ptr: *mut *mut AuraHandshakeResponderHandle,
 ) {
     ffi_catch_panic_value!((), unsafe {
         if handle_ptr.is_null() {
@@ -1500,33 +1500,33 @@ pub unsafe extern "C" fn epp_handshake_responder_destroy(
 /// See module-level FFI safety contract.  `(plaintext, plaintext_length)` and
 /// `(correlation_id, correlation_id_length)` must form valid readable slices.
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_encrypt(
-    handle: *mut EppSessionHandle,
+pub unsafe extern "C" fn aura_session_encrypt(
+    handle: *mut AuraSessionHandle,
     plaintext: *const u8,
     plaintext_length: usize,
-    envelope_type: EppEnvelopeType,
+    envelope_type: AuraEnvelopeType,
     envelope_id: u32,
     correlation_id: *const c_char,
     correlation_id_length: usize,
-    out_encrypted_envelope: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_encrypted_envelope: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if plaintext.is_null() || out_encrypted_envelope.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if plaintext_length > MAX_ENVELOPE_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "plaintext too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let payload = std::slice::from_raw_parts(plaintext, plaintext_length);
@@ -1534,10 +1534,10 @@ pub unsafe extern "C" fn epp_session_encrypt(
         if correlation_id_length > MAX_BUFFER_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "correlation_id too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let corr_id: Option<&str> = if !correlation_id.is_null() && correlation_id_length > 0 {
@@ -1548,10 +1548,10 @@ pub unsafe extern "C" fn epp_session_encrypt(
             } else {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorInvalidInput,
+                    AuraErrorCode::AuraErrorInvalidInput,
                     "correlation_id is not valid UTF-8",
                 );
-                return EppErrorCode::EppErrorInvalidInput;
+                return AuraErrorCode::AuraErrorInvalidInput;
             }
         } else {
             None
@@ -1572,14 +1572,14 @@ pub unsafe extern "C" fn epp_session_encrypt(
         if let Err(e) = envelope.encode(&mut buf) {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorEncode,
+                AuraErrorCode::AuraErrorEncode,
                 &format!("Failed to encode SecureEnvelope: {e}"),
             );
-            return EppErrorCode::EppErrorEncode;
+            return AuraErrorCode::AuraErrorEncode;
         }
 
         write_buffer(out_encrypted_envelope, buf);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
@@ -1587,30 +1587,30 @@ pub unsafe extern "C" fn epp_session_encrypt(
 /// See module-level FFI safety contract.  `(encrypted_envelope, encrypted_envelope_length)` must
 /// form a valid readable slice.
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_decrypt(
-    handle: *mut EppSessionHandle,
+pub unsafe extern "C" fn aura_session_decrypt(
+    handle: *mut AuraSessionHandle,
     encrypted_envelope: *const u8,
     encrypted_envelope_length: usize,
-    out_plaintext: *mut EppBuffer,
-    out_metadata: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_plaintext: *mut AuraBuffer,
+    out_metadata: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if encrypted_envelope.is_null() || out_plaintext.is_null() || out_metadata.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if encrypted_envelope_length > MAX_ENVELOPE_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Envelope too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
@@ -1623,10 +1623,10 @@ pub unsafe extern "C" fn epp_session_decrypt(
             Err(e) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorDecode,
+                    AuraErrorCode::AuraErrorDecode,
                     &format!("Failed to decode SecureEnvelope: {e}"),
                 );
-                return EppErrorCode::EppErrorDecode;
+                return AuraErrorCode::AuraErrorDecode;
             }
         };
         let result = match session.decrypt(&envelope) {
@@ -1638,34 +1638,34 @@ pub unsafe extern "C" fn epp_session_decrypt(
         if let Err(e) = result.metadata.encode(&mut meta_buf) {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorEncode,
+                AuraErrorCode::AuraErrorEncode,
                 &format!("Failed to encode EnvelopeMetadata: {e}"),
             );
-            return EppErrorCode::EppErrorEncode;
+            return AuraErrorCode::AuraErrorEncode;
         }
 
         write_buffer(out_plaintext, result.plaintext);
         write_buffer(out_metadata, meta_buf);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
 /// See module-level FFI safety contract.
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_nonce_remaining(
-    handle: *mut EppSessionHandle,
+pub unsafe extern "C" fn aura_session_nonce_remaining(
+    handle: *mut AuraSessionHandle,
     out_remaining: *mut u64,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_remaining.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_remaining is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
@@ -1674,7 +1674,7 @@ pub unsafe extern "C" fn epp_session_nonce_remaining(
         match session.nonce_remaining() {
             Ok(remaining) => {
                 std::ptr::write(out_remaining, remaining);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -1683,9 +1683,9 @@ pub unsafe extern "C" fn epp_session_nonce_remaining(
 
 /// # Safety
 /// See module-level FFI safety contract.  `handle_ptr` must point to a handle from
-/// `epp_handshake_*_finish`, or be null.  The handle must not be used after this call.
+/// `aura_handshake_*_finish`, or be null.  The handle must not be used after this call.
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_destroy(handle_ptr: *mut *mut EppSessionHandle) {
+pub unsafe extern "C" fn aura_session_destroy(handle_ptr: *mut *mut AuraSessionHandle) {
     ffi_catch_panic_value!((), unsafe {
         if handle_ptr.is_null() {
             return;
@@ -1701,31 +1701,31 @@ pub unsafe extern "C" fn epp_session_destroy(handle_ptr: *mut *mut EppSessionHan
 /// See module-level FFI safety contract.  `(encrypted_envelope, encrypted_envelope_length)` must
 /// form a valid readable slice.
 #[no_mangle]
-pub unsafe extern "C" fn epp_envelope_validate(
+pub unsafe extern "C" fn aura_envelope_validate(
     encrypted_envelope: *const u8,
     encrypted_envelope_length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if encrypted_envelope.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "encrypted_envelope is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if encrypted_envelope_length > MAX_ENVELOPE_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Envelope exceeds maximum allowed size",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let bytes = std::slice::from_raw_parts(encrypted_envelope, encrypted_envelope_length);
-        match crate::api::EcliptixProtocol::validate_envelope(bytes) {
-            Ok(()) => EppErrorCode::EppSuccess,
+        match crate::api::AuraProtocol::validate_envelope(bytes) {
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
@@ -1736,56 +1736,56 @@ pub unsafe extern "C" fn epp_envelope_validate(
 /// `(user_context, user_context_length)` must form valid readable slices.
 /// `(out_root_key, out_root_key_length)` must form a valid writable slice.
 #[no_mangle]
-pub unsafe extern "C" fn epp_derive_root_key(
+pub unsafe extern "C" fn aura_derive_root_key(
     opaque_session_key: *const u8,
     opaque_session_key_length: usize,
     user_context: *const u8,
     user_context_length: usize,
     out_root_key: *mut u8,
     out_root_key_length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if opaque_session_key.is_null() || user_context.is_null() || out_root_key.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if out_root_key_length < ROOT_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorBufferTooSmall,
+                AuraErrorCode::AuraErrorBufferTooSmall,
                 "Output buffer too small for derived root key",
             );
-            return EppErrorCode::EppErrorBufferTooSmall;
+            return AuraErrorCode::AuraErrorBufferTooSmall;
         }
         if opaque_session_key_length > MAX_BUFFER_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "opaque_session_key too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if user_context_length > MAX_BUFFER_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "user_context too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let ikm = std::slice::from_raw_parts(opaque_session_key, opaque_session_key_length);
         let ctx = std::slice::from_raw_parts(user_context, user_context_length);
 
-        match crate::api::EcliptixProtocol::derive_root_key(ikm, ctx, out_root_key_length) {
+        match crate::api::AuraProtocol::derive_root_key(ikm, ctx, out_root_key_length) {
             Ok(key) => {
                 std::ptr::copy_nonoverlapping(key.as_ptr(), out_root_key, key.len());
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -1796,48 +1796,48 @@ pub unsafe extern "C" fn epp_derive_root_key(
 /// See module-level FFI safety contract.  `(secret, secret_length)` and `(auth_key, auth_key_length)`
 /// must form valid readable slices.
 #[no_mangle]
-pub unsafe extern "C" fn epp_shamir_split(
+pub unsafe extern "C" fn aura_shamir_split(
     secret: *const u8,
     secret_length: usize,
     threshold: u8,
     share_count: u8,
     auth_key: *const u8,
     auth_key_length: usize,
-    out_shares: *mut EppBuffer,
+    out_shares: *mut AuraBuffer,
     out_share_length: *mut usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if secret.is_null() || out_shares.is_null() || out_share_length.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if secret_length == 0 || secret_length > MAX_BUFFER_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Secret length invalid",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         if auth_key.is_null() || auth_key_length != HMAC_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "auth_key must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let secret_slice = std::slice::from_raw_parts(secret, secret_length);
         let auth_key_slice = std::slice::from_raw_parts(auth_key, auth_key_length);
 
-        let shares = match crate::api::EcliptixProtocol::shamir_split(
+        let shares = match crate::api::AuraProtocol::shamir_split(
             secret_slice,
             threshold,
             share_count,
@@ -1851,27 +1851,27 @@ pub unsafe extern "C" fn epp_shamir_split(
         if data_share_count == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorGeneric,
+                AuraErrorCode::AuraErrorGeneric,
                 "No shares generated",
             );
-            return EppErrorCode::EppErrorGeneric;
+            return AuraErrorCode::AuraErrorGeneric;
         }
 
         let data_share_len = shares[0].len();
 
         let Some(auth_tag) = shares.last() else {
-            write_error(out_error, EppErrorCode::EppErrorGeneric, "Empty shares");
-            return EppErrorCode::EppErrorGeneric;
+            write_error(out_error, AuraErrorCode::AuraErrorGeneric, "Empty shares");
+            return AuraErrorCode::AuraErrorGeneric;
         };
         let Some(total_len) =
             data_share_count.checked_mul(data_share_len.saturating_add(auth_tag.len()))
         else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Share size overflow",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         };
         let mut flat = Vec::with_capacity(total_len);
         for ds in &shares[..data_share_count] {
@@ -1881,7 +1881,7 @@ pub unsafe extern "C" fn epp_shamir_split(
         *out_share_length = data_share_len + auth_tag.len();
         write_buffer(out_shares, flat);
 
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
@@ -1889,59 +1889,59 @@ pub unsafe extern "C" fn epp_shamir_split(
 /// See module-level FFI safety contract.  `(shares, shares_length)` and `(auth_key, auth_key_length)`
 /// must form valid readable slices.
 #[no_mangle]
-pub unsafe extern "C" fn epp_shamir_reconstruct(
+pub unsafe extern "C" fn aura_shamir_reconstruct(
     shares: *const u8,
     shares_length: usize,
     share_length: usize,
     share_count: usize,
     auth_key: *const u8,
     auth_key_length: usize,
-    out_secret: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_secret: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if shares.is_null() || out_secret.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "shares or out_secret is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if share_length == 0 || share_count == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "share_length and share_count must be > 0",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         if auth_key.is_null() || auth_key_length != HMAC_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "auth_key must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let expected_len = share_count.saturating_mul(share_length);
         if shares_length != expected_len {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "shares_length must equal share_count * share_length",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if share_length <= HMAC_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "share_length must be larger than the embedded auth tag",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let flat_slice = std::slice::from_raw_parts(shares, shares_length);
@@ -1960,10 +1960,10 @@ pub unsafe extern "C" fn epp_shamir_reconstruct(
                 if existing != &share_tag {
                     write_error(
                         out_error,
-                        EppErrorCode::EppErrorInvalidInput,
+                        AuraErrorCode::AuraErrorInvalidInput,
                         "All Shamir shares must carry the same auth tag",
                     );
-                    return EppErrorCode::EppErrorInvalidInput;
+                    return AuraErrorCode::AuraErrorInvalidInput;
                 }
             } else {
                 auth_tag = Some(share_tag);
@@ -1975,20 +1975,20 @@ pub unsafe extern "C" fn epp_shamir_reconstruct(
         } else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Missing embedded auth tag",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
-        match crate::api::EcliptixProtocol::shamir_reconstruct(
+        match crate::api::AuraProtocol::shamir_reconstruct(
             &all_shares,
             auth_key_slice,
             share_count,
         ) {
             Ok(secret) => {
                 write_buffer(out_secret, secret);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -1996,51 +1996,51 @@ pub unsafe extern "C" fn epp_shamir_reconstruct(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_generate_id(
-    out_attachment_id: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_attachment_generate_id(
+    out_attachment_id: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_attachment_id.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_attachment_id is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         write_buffer(
             out_attachment_id,
             crate::protocol::attachment::generate_attachment_id(),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_generate_file_key(
-    out_file_key: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_attachment_generate_file_key(
+    out_file_key: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_file_key.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_file_key is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         write_buffer(
             out_file_key,
             crate::protocol::attachment::generate_file_key(),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_encrypt_chunk(
+pub unsafe extern "C" fn aura_attachment_encrypt_chunk(
     file_key: *const u8,
     file_key_length: usize,
     attachment_id: *const u8,
@@ -2053,10 +2053,10 @@ pub unsafe extern "C" fn epp_attachment_encrypt_chunk(
     chunk_count: u32,
     plaintext: *const u8,
     plaintext_length: usize,
-    out_nonce: *mut EppBuffer,
-    out_ciphertext: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_nonce: *mut AuraBuffer,
+    out_ciphertext: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if file_key.is_null()
             || attachment_id.is_null()
@@ -2067,34 +2067,34 @@ pub unsafe extern "C" fn epp_attachment_encrypt_chunk(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if file_key_length != ATTACHMENT_FILE_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Attachment file_key must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if attachment_id_length != ATTACHMENT_ID_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Attachment ID must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if plaintext_length == 0 || plaintext_length > MAX_ATTACHMENT_CHUNK_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Attachment plaintext chunk size is out of range",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let file_key_slice = std::slice::from_raw_parts(file_key, file_key_length);
@@ -2103,10 +2103,10 @@ pub unsafe extern "C" fn epp_attachment_encrypt_chunk(
         let Ok(mime_type) = std::str::from_utf8(mime_slice) else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "mime_type must be valid UTF-8",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         };
         let plaintext_slice = std::slice::from_raw_parts(plaintext, plaintext_length);
 
@@ -2123,7 +2123,7 @@ pub unsafe extern "C" fn epp_attachment_encrypt_chunk(
             Ok((nonce, ciphertext)) => {
                 write_buffer(out_nonce, nonce);
                 write_buffer(out_ciphertext, ciphertext);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -2131,7 +2131,7 @@ pub unsafe extern "C" fn epp_attachment_encrypt_chunk(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_decrypt_chunk(
+pub unsafe extern "C" fn aura_attachment_decrypt_chunk(
     file_key: *const u8,
     file_key_length: usize,
     attachment_id: *const u8,
@@ -2146,9 +2146,9 @@ pub unsafe extern "C" fn epp_attachment_decrypt_chunk(
     nonce_length: usize,
     ciphertext: *const u8,
     ciphertext_length: usize,
-    out_plaintext: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_plaintext: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if file_key.is_null()
             || attachment_id.is_null()
@@ -2159,42 +2159,42 @@ pub unsafe extern "C" fn epp_attachment_decrypt_chunk(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if file_key_length != ATTACHMENT_FILE_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Attachment file_key must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if attachment_id_length != ATTACHMENT_ID_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Attachment ID must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if nonce_length != AES_GCM_NONCE_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Attachment nonce must be 12 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if ciphertext_length == 0 || ciphertext_length > MAX_ATTACHMENT_CHUNK_SIZE + 16 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Attachment ciphertext chunk size is out of range",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let file_key_slice = std::slice::from_raw_parts(file_key, file_key_length);
@@ -2203,10 +2203,10 @@ pub unsafe extern "C" fn epp_attachment_decrypt_chunk(
         let Ok(mime_type) = std::str::from_utf8(mime_slice) else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "mime_type must be valid UTF-8",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         };
         let nonce_slice = std::slice::from_raw_parts(nonce, nonce_length);
         let ciphertext_slice = std::slice::from_raw_parts(ciphertext, ciphertext_length);
@@ -2224,7 +2224,7 @@ pub unsafe extern "C" fn epp_attachment_decrypt_chunk(
         ) {
             Ok(plaintext) => {
                 write_buffer(out_plaintext, plaintext);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -2232,7 +2232,7 @@ pub unsafe extern "C" fn epp_attachment_decrypt_chunk(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_manifest_create(
+pub unsafe extern "C" fn aura_attachment_manifest_create(
     attachment_id: *const u8,
     attachment_id_length: usize,
     mime_type: *const c_char,
@@ -2244,9 +2244,9 @@ pub unsafe extern "C" fn epp_attachment_manifest_create(
     file_sha256_length: usize,
     encrypted_file_key: *const u8,
     encrypted_file_key_length: usize,
-    out_manifest: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_manifest: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if attachment_id.is_null()
             || mime_type.is_null()
@@ -2256,30 +2256,30 @@ pub unsafe extern "C" fn epp_attachment_manifest_create(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if attachment_id_length != ATTACHMENT_ID_BYTES
             || file_sha256_length != ATTACHMENT_HASH_BYTES
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Attachment ID and file_sha256 must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if encrypted_file_key_length == 0
             || encrypted_file_key_length > MAX_ATTACHMENT_ENCRYPTED_FILE_KEY_SIZE
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "encrypted_file_key size is out of range",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let attachment_id_slice = std::slice::from_raw_parts(attachment_id, attachment_id_length);
@@ -2287,10 +2287,10 @@ pub unsafe extern "C" fn epp_attachment_manifest_create(
         let Ok(mime_type_str) = std::str::from_utf8(mime_slice) else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "mime_type must be valid UTF-8",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         };
         let mime_type = mime_type_str.to_owned();
         let file_sha256_slice = std::slice::from_raw_parts(file_sha256, file_sha256_length);
@@ -2333,32 +2333,32 @@ pub unsafe extern "C" fn epp_attachment_manifest_create(
             );
         }
         write_buffer(out_manifest, bytes);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_manifest_validate(
+pub unsafe extern "C" fn aura_attachment_manifest_validate(
     manifest_bytes: *const u8,
     manifest_length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if manifest_bytes.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "manifest_bytes is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if manifest_length == 0 || manifest_length > MAX_ATTACHMENT_MANIFEST_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Attachment manifest size is out of range",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let bytes = std::slice::from_raw_parts(manifest_bytes, manifest_length);
         let manifest = match AttachmentManifest::decode(bytes) {
@@ -2371,14 +2371,14 @@ pub unsafe extern "C" fn epp_attachment_manifest_validate(
             }
         };
         match crate::protocol::attachment::validate_manifest(&manifest) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_chunk_validate(
+pub unsafe extern "C" fn aura_attachment_chunk_validate(
     manifest_bytes: *const u8,
     manifest_length: usize,
     chunk_index: u32,
@@ -2386,24 +2386,24 @@ pub unsafe extern "C" fn epp_attachment_chunk_validate(
     nonce_length: usize,
     ciphertext: *const u8,
     ciphertext_length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if manifest_bytes.is_null() || nonce.is_null() || ciphertext.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if manifest_length == 0 || manifest_length > MAX_ATTACHMENT_MANIFEST_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Attachment manifest size is out of range",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let manifest_slice = std::slice::from_raw_parts(manifest_bytes, manifest_length);
@@ -2424,7 +2424,7 @@ pub unsafe extern "C" fn epp_attachment_chunk_validate(
             nonce_slice,
             ciphertext_slice,
         ) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
@@ -2433,7 +2433,7 @@ pub unsafe extern "C" fn epp_attachment_chunk_validate(
 /// # Safety
 /// `buffer` must be null or point to a value previously written by this FFI layer.
 #[no_mangle]
-pub unsafe extern "C" fn epp_buffer_release(buffer: *mut EppBuffer) {
+pub unsafe extern "C" fn aura_buffer_release(buffer: *mut AuraBuffer) {
     if buffer.is_null() {
         return;
     }
@@ -2448,13 +2448,13 @@ pub unsafe extern "C" fn epp_buffer_release(buffer: *mut EppBuffer) {
 }
 
 #[no_mangle]
-pub extern "C" fn epp_buffer_alloc(capacity: usize) -> *mut EppBuffer {
+pub extern "C" fn aura_buffer_alloc(capacity: usize) -> *mut AuraBuffer {
     if capacity == 0 {
         return std::ptr::null_mut();
     }
     let data: Box<[u8]> = vec![0u8; capacity].into_boxed_slice();
     let ptr = Box::into_raw(data).cast::<u8>();
-    let buf = Box::new(EppBuffer {
+    let buf = Box::new(AuraBuffer {
         data: ptr,
         length: capacity,
     });
@@ -2464,7 +2464,7 @@ pub extern "C" fn epp_buffer_alloc(capacity: usize) -> *mut EppBuffer {
 /// # Safety
 /// `buffer` must be null or point to a value previously written by this FFI layer.
 #[no_mangle]
-pub unsafe extern "C" fn epp_buffer_free(buffer: *mut EppBuffer) {
+pub unsafe extern "C" fn aura_buffer_free(buffer: *mut AuraBuffer) {
     if buffer.is_null() {
         return;
     }
@@ -2481,7 +2481,7 @@ pub unsafe extern "C" fn epp_buffer_free(buffer: *mut EppBuffer) {
 /// # Safety
 /// `error` must be null or point to a value previously written by this FFI layer.
 #[no_mangle]
-pub unsafe extern "C" fn epp_error_free(error: *mut EppError) {
+pub unsafe extern "C" fn aura_error_free(error: *mut AuraError) {
     if error.is_null() {
         return;
     }
@@ -2493,86 +2493,86 @@ pub unsafe extern "C" fn epp_error_free(error: *mut EppError) {
 }
 
 #[no_mangle]
-pub const extern "C" fn epp_error_string(code: EppErrorCode) -> *const c_char {
+pub const extern "C" fn aura_error_string(code: AuraErrorCode) -> *const c_char {
     let s: &'static [u8] = match code {
-        EppErrorCode::EppSuccess => b"Success\0",
-        EppErrorCode::EppErrorGeneric => b"Generic error\0",
-        EppErrorCode::EppErrorInvalidInput => b"Invalid input\0",
-        EppErrorCode::EppErrorKeyGeneration => b"Key generation failed\0",
-        EppErrorCode::EppErrorDeriveKey => b"Key derivation failed\0",
-        EppErrorCode::EppErrorHandshake => b"Handshake failed\0",
-        EppErrorCode::EppErrorEncryption => b"Encryption failed\0",
-        EppErrorCode::EppErrorDecryption => b"Decryption failed\0",
-        EppErrorCode::EppErrorDecode => b"Decode failed\0",
-        EppErrorCode::EppErrorEncode => b"Encode failed\0",
-        EppErrorCode::EppErrorBufferTooSmall => b"Buffer too small\0",
-        EppErrorCode::EppErrorObjectDisposed => b"Object disposed\0",
-        EppErrorCode::EppErrorPrepareLocal => b"Prepare local failed\0",
-        EppErrorCode::EppErrorOutOfMemory => b"Out of memory\0",
-        EppErrorCode::EppErrorCryptoFailure => b"Crypto failure\0",
-        EppErrorCode::EppErrorNullPointer => b"Null pointer\0",
-        EppErrorCode::EppErrorInvalidState => b"Invalid state\0",
-        EppErrorCode::EppErrorReplayAttack => b"Replay attack detected\0",
-        EppErrorCode::EppErrorSessionExpired => b"Session expired\0",
-        EppErrorCode::EppErrorPqMissing => b"Post-quantum material missing\0",
-        EppErrorCode::EppErrorGroupProtocol => b"Group protocol error\0",
-        EppErrorCode::EppErrorGroupMembership => b"Group membership error\0",
-        EppErrorCode::EppErrorTreeIntegrity => b"Tree integrity error\0",
-        EppErrorCode::EppErrorWelcome => b"Welcome processing error\0",
-        EppErrorCode::EppErrorMessageExpired => b"Message expired\0",
-        EppErrorCode::EppErrorFranking => b"Franking verification failed\0",
-        EppErrorCode::EppErrorVoipCall => b"VoIP call error\0",
-        EppErrorCode::EppErrorVoipMedia => b"VoIP media error\0",
-        EppErrorCode::EppErrorVoipRekey => b"VoIP rekey error\0",
-        EppErrorCode::EppErrorBusy => b"Handle is already in use by another call\0",
+        AuraErrorCode::AuraSuccess => b"Success\0",
+        AuraErrorCode::AuraErrorGeneric => b"Generic error\0",
+        AuraErrorCode::AuraErrorInvalidInput => b"Invalid input\0",
+        AuraErrorCode::AuraErrorKeyGeneration => b"Key generation failed\0",
+        AuraErrorCode::AuraErrorDeriveKey => b"Key derivation failed\0",
+        AuraErrorCode::AuraErrorHandshake => b"Handshake failed\0",
+        AuraErrorCode::AuraErrorEncryption => b"Encryption failed\0",
+        AuraErrorCode::AuraErrorDecryption => b"Decryption failed\0",
+        AuraErrorCode::AuraErrorDecode => b"Decode failed\0",
+        AuraErrorCode::AuraErrorEncode => b"Encode failed\0",
+        AuraErrorCode::AuraErrorBufferTooSmall => b"Buffer too small\0",
+        AuraErrorCode::AuraErrorObjectDisposed => b"Object disposed\0",
+        AuraErrorCode::AuraErrorPrepareLocal => b"Prepare local failed\0",
+        AuraErrorCode::AuraErrorOutOfMemory => b"Out of memory\0",
+        AuraErrorCode::AuraErrorCryptoFailure => b"Crypto failure\0",
+        AuraErrorCode::AuraErrorNullPointer => b"Null pointer\0",
+        AuraErrorCode::AuraErrorInvalidState => b"Invalid state\0",
+        AuraErrorCode::AuraErrorReplayAttack => b"Replay attack detected\0",
+        AuraErrorCode::AuraErrorSessionExpired => b"Session expired\0",
+        AuraErrorCode::AuraErrorPqMissing => b"Post-quantum material missing\0",
+        AuraErrorCode::AuraErrorGroupProtocol => b"Group protocol error\0",
+        AuraErrorCode::AuraErrorGroupMembership => b"Group membership error\0",
+        AuraErrorCode::AuraErrorTreeIntegrity => b"Tree integrity error\0",
+        AuraErrorCode::AuraErrorWelcome => b"Welcome processing error\0",
+        AuraErrorCode::AuraErrorMessageExpired => b"Message expired\0",
+        AuraErrorCode::AuraErrorFranking => b"Franking verification failed\0",
+        AuraErrorCode::AuraErrorVoipCall => b"VoIP call error\0",
+        AuraErrorCode::AuraErrorVoipMedia => b"VoIP media error\0",
+        AuraErrorCode::AuraErrorVoipRekey => b"VoIP rekey error\0",
+        AuraErrorCode::AuraErrorBusy => b"Handle is already in use by another call\0",
     };
     s.as_ptr().cast::<c_char>()
 }
 
 /// # Safety
-/// `out_handle` must point to writable `*mut EppSealedStateCounterTrackerHandle`.
+/// `out_handle` must point to writable `*mut AuraSealedStateCounterTrackerHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_sealed_state_counter_tracker_create(
-    out_handle: *mut *mut EppSealedStateCounterTrackerHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_sealed_state_counter_tracker_create(
+    out_handle: *mut *mut AuraSealedStateCounterTrackerHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_handle is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         replace_out_handle(
             out_handle,
-            Box::into_raw(Box::new(EppSealedStateCounterTrackerHandle(Some(
+            Box::into_raw(Box::new(AuraSealedStateCounterTrackerHandle(Some(
                 SealedStateCounterTracker::new(),
             )))),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
 /// `(data, data_length)` must form a valid readable slice. `out_handle` must
-/// point to writable `*mut EppSealedStateCounterTrackerHandle`.
+/// point to writable `*mut AuraSealedStateCounterTrackerHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_sealed_state_counter_tracker_create_from_serialized(
+pub unsafe extern "C" fn aura_sealed_state_counter_tracker_create_from_serialized(
     data: *const u8,
     data_length: usize,
-    out_handle: *mut *mut EppSealedStateCounterTrackerHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_handle: *mut *mut AuraSealedStateCounterTrackerHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if data.is_null() || out_handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let data = std::slice::from_raw_parts(data, data_length);
         let tracker = match SealedStateCounterTracker::deserialize(data) {
@@ -2581,36 +2581,36 @@ pub unsafe extern "C" fn epp_sealed_state_counter_tracker_create_from_serialized
         };
         replace_out_handle(
             out_handle,
-            Box::into_raw(Box::new(EppSealedStateCounterTrackerHandle(Some(tracker)))),
+            Box::into_raw(Box::new(AuraSealedStateCounterTrackerHandle(Some(tracker)))),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
 /// `handle` must be a live tracker handle and `out_state` must point to a
-/// writable `EppBuffer`.
+/// writable `AuraBuffer`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_sealed_state_counter_tracker_serialize(
-    handle: *mut EppSealedStateCounterTrackerHandle,
-    out_state: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_sealed_state_counter_tracker_serialize(
+    handle: *mut AuraSealedStateCounterTrackerHandle,
+    out_state: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_state.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_state is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let tracker = match require_counter_tracker_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
         write_buffer(out_state, tracker.serialize());
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
@@ -2618,26 +2618,26 @@ pub unsafe extern "C" fn epp_sealed_state_counter_tracker_serialize(
 /// `handle` must be a live tracker handle and `out_counter` must point to a
 /// writable `uint64_t`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_sealed_state_counter_tracker_get_max_restored_counter(
-    handle: *mut EppSealedStateCounterTrackerHandle,
+pub unsafe extern "C" fn aura_sealed_state_counter_tracker_get_max_restored_counter(
+    handle: *mut AuraSealedStateCounterTrackerHandle,
     out_counter: *mut u64,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_counter.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_counter is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let tracker = match require_counter_tracker_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
         *out_counter = tracker.max_restored_counter();
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
@@ -2645,36 +2645,36 @@ pub unsafe extern "C" fn epp_sealed_state_counter_tracker_get_max_restored_count
 /// `handle` must be a live tracker handle and `out_counter` must point to a
 /// writable `uint64_t`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_sealed_state_counter_tracker_get_latest_issued_counter(
-    handle: *mut EppSealedStateCounterTrackerHandle,
+pub unsafe extern "C" fn aura_sealed_state_counter_tracker_get_latest_issued_counter(
+    handle: *mut AuraSealedStateCounterTrackerHandle,
     out_counter: *mut u64,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_counter.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_counter is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let tracker = match require_counter_tracker_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
         *out_counter = tracker.latest_issued_counter();
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
 /// `handle_ptr` must point to a handle from
-/// `epp_sealed_state_counter_tracker_create*`, or be null. The handle must not
+/// `aura_sealed_state_counter_tracker_create*`, or be null. The handle must not
 /// be used after this call.
 #[no_mangle]
-pub unsafe extern "C" fn epp_sealed_state_counter_tracker_destroy(
-    handle_ptr: *mut *mut EppSealedStateCounterTrackerHandle,
+pub unsafe extern "C" fn aura_sealed_state_counter_tracker_destroy(
+    handle_ptr: *mut *mut AuraSealedStateCounterTrackerHandle,
 ) {
     ffi_catch_panic_value!((), unsafe {
         if handle_ptr.is_null() {
@@ -2688,49 +2688,49 @@ pub unsafe extern "C" fn epp_sealed_state_counter_tracker_destroy(
 }
 
 /// # Safety
-/// `out_handle` must point to writable `*mut EppSealedStateSlotHandle`.
+/// `out_handle` must point to writable `*mut AuraSealedStateSlotHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_sealed_state_slot_create(
-    out_handle: *mut *mut EppSealedStateSlotHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_sealed_state_slot_create(
+    out_handle: *mut *mut AuraSealedStateSlotHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_handle is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         replace_out_handle(
             out_handle,
-            Box::into_raw(Box::new(EppSealedStateSlotHandle(Some(
+            Box::into_raw(Box::new(AuraSealedStateSlotHandle(Some(
                 SealedStateSlot::new(),
             )))),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
 /// `(data, data_length)` must form a valid readable slice. `out_handle` must
-/// point to writable `*mut EppSealedStateSlotHandle`.
+/// point to writable `*mut AuraSealedStateSlotHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_sealed_state_slot_create_from_serialized(
+pub unsafe extern "C" fn aura_sealed_state_slot_create_from_serialized(
     data: *const u8,
     data_length: usize,
-    out_handle: *mut *mut EppSealedStateSlotHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_handle: *mut *mut AuraSealedStateSlotHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if data.is_null() || out_handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let data = std::slice::from_raw_parts(data, data_length);
         let slot = match SealedStateSlot::deserialize(data) {
@@ -2739,29 +2739,29 @@ pub unsafe extern "C" fn epp_sealed_state_slot_create_from_serialized(
         };
         replace_out_handle(
             out_handle,
-            Box::into_raw(Box::new(EppSealedStateSlotHandle(Some(slot)))),
+            Box::into_raw(Box::new(AuraSealedStateSlotHandle(Some(slot)))),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
 /// `handle` must be a live slot handle and `out_state` must point to a writable
-/// `EppBuffer`.
+/// `AuraBuffer`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_sealed_state_slot_serialize(
-    handle: *mut EppSealedStateSlotHandle,
-    out_state: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_sealed_state_slot_serialize(
+    handle: *mut AuraSealedStateSlotHandle,
+    out_state: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_state.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_state is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let slot = match require_sealed_state_slot_mut(handle, out_error) {
             Ok(v) => v,
@@ -2772,7 +2772,7 @@ pub unsafe extern "C" fn epp_sealed_state_slot_serialize(
             Err(e) => return write_protocol_error(out_error, &e),
         };
         write_buffer(out_state, bytes);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
@@ -2780,26 +2780,26 @@ pub unsafe extern "C" fn epp_sealed_state_slot_serialize(
 /// `handle` must be a live slot handle and `out_counter` must point to a
 /// writable `uint64_t`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_sealed_state_slot_get_max_restored_counter(
-    handle: *mut EppSealedStateSlotHandle,
+pub unsafe extern "C" fn aura_sealed_state_slot_get_max_restored_counter(
+    handle: *mut AuraSealedStateSlotHandle,
     out_counter: *mut u64,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_counter.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_counter is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let slot = match require_sealed_state_slot_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
         *out_counter = slot.max_restored_counter();
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
@@ -2807,35 +2807,35 @@ pub unsafe extern "C" fn epp_sealed_state_slot_get_max_restored_counter(
 /// `handle` must be a live slot handle and `out_counter` must point to a
 /// writable `uint64_t`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_sealed_state_slot_get_latest_issued_counter(
-    handle: *mut EppSealedStateSlotHandle,
+pub unsafe extern "C" fn aura_sealed_state_slot_get_latest_issued_counter(
+    handle: *mut AuraSealedStateSlotHandle,
     out_counter: *mut u64,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_counter.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_counter is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let slot = match require_sealed_state_slot_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
         *out_counter = slot.latest_issued_counter();
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
-/// `handle_ptr` must point to a handle from `epp_sealed_state_slot_create*`, or
+/// `handle_ptr` must point to a handle from `aura_sealed_state_slot_create*`, or
 /// be null. The handle must not be used after this call.
 #[no_mangle]
-pub unsafe extern "C" fn epp_sealed_state_slot_destroy(
-    handle_ptr: *mut *mut EppSealedStateSlotHandle,
+pub unsafe extern "C" fn aura_sealed_state_slot_destroy(
+    handle_ptr: *mut *mut AuraSealedStateSlotHandle,
 ) {
     ffi_catch_panic_value!((), unsafe {
         if handle_ptr.is_null() {
@@ -2851,51 +2851,51 @@ pub unsafe extern "C" fn epp_sealed_state_slot_destroy(
 /// # Safety
 /// `(data, length)` must form a valid, writable byte slice.
 #[no_mangle]
-pub unsafe extern "C" fn epp_secure_wipe(data: *mut u8, length: usize) -> EppErrorCode {
+pub unsafe extern "C" fn aura_secure_wipe(data: *mut u8, length: usize) -> AuraErrorCode {
     ffi_catch_panic!(std::ptr::null_mut(), unsafe {
         if data.is_null() {
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if length == 0 {
-            return EppErrorCode::EppSuccess;
+            return AuraErrorCode::AuraSuccess;
         }
         if length > MAX_BUFFER_SIZE {
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let slice = std::slice::from_raw_parts_mut(data, length);
-        crate::api::EcliptixProtocol::secure_wipe(slice);
-        EppErrorCode::EppSuccess
+        crate::api::AuraProtocol::secure_wipe(slice);
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
 /// See module-level FFI safety contract.  `(credential, credential_length)` must form a valid
-/// readable slice.  `out_secrets` must point to writable `*mut EppKeyPackageSecretsHandle`.
+/// readable slice.  `out_secrets` must point to writable `*mut AuraKeyPackageSecretsHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_generate_key_package(
-    identity_handle: *mut EppIdentityHandle,
+pub unsafe extern "C" fn aura_group_generate_key_package(
+    identity_handle: *mut AuraIdentityHandle,
     credential: *const u8,
     credential_length: usize,
-    out_key_package: *mut EppBuffer,
-    out_secrets: *mut *mut EppKeyPackageSecretsHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_key_package: *mut AuraBuffer,
+    out_secrets: *mut *mut AuraKeyPackageSecretsHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_key_package.is_null() || out_secrets.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if credential_length > MAX_BUFFER_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Credential too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let cred = if credential.is_null() || credential_length == 0 {
             vec![]
@@ -2914,20 +2914,20 @@ pub unsafe extern "C" fn epp_group_generate_key_package(
                 if let Err(e) = kp.encode(&mut buf) {
                     write_error(
                         out_error,
-                        EppErrorCode::EppErrorEncode,
+                        AuraErrorCode::AuraErrorEncode,
                         &format!("KeyPackage encode: {e}"),
                     );
-                    return EppErrorCode::EppErrorEncode;
+                    return AuraErrorCode::AuraErrorEncode;
                 }
                 write_buffer(out_key_package, buf);
                 replace_out_handle(
                     out_secrets,
-                    Box::into_raw(Box::new(EppKeyPackageSecretsHandle {
+                    Box::into_raw(Box::new(AuraKeyPackageSecretsHandle {
                         x25519_private: x25519_priv,
                         kyber_secret: kyber_sec,
                     })),
                 );
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -2936,10 +2936,10 @@ pub unsafe extern "C" fn epp_group_generate_key_package(
 
 /// # Safety
 /// See module-level FFI safety contract.  `handle_ptr` must point to a handle from
-/// `epp_group_generate_key_package`, or be null.  The handle must not be used after this call.
+/// `aura_group_generate_key_package`, or be null.  The handle must not be used after this call.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_key_package_secrets_destroy(
-    handle_ptr: *mut *mut EppKeyPackageSecretsHandle,
+pub unsafe extern "C" fn aura_group_key_package_secrets_destroy(
+    handle_ptr: *mut *mut AuraKeyPackageSecretsHandle,
 ) {
     ffi_catch_panic_value!((), unsafe {
         if handle_ptr.is_null() {
@@ -2954,23 +2954,23 @@ pub unsafe extern "C" fn epp_group_key_package_secrets_destroy(
 
 /// # Safety
 /// See module-level FFI safety contract.  `(credential, credential_length)` must form a valid
-/// readable slice.  `out_handle` must point to writable `*mut EppGroupSessionHandle`.
+/// readable slice.  `out_handle` must point to writable `*mut AuraGroupSessionHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_create(
-    identity_handle: *mut EppIdentityHandle,
+pub unsafe extern "C" fn aura_group_create(
+    identity_handle: *mut AuraIdentityHandle,
     credential: *const u8,
     credential_length: usize,
-    out_handle: *mut *mut EppGroupSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_handle: *mut *mut AuraGroupSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let cred = if credential.is_null() || credential_length == 0 {
             vec![]
@@ -2995,12 +2995,12 @@ pub unsafe extern "C" fn epp_group_create(
             Ok(session) => {
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppGroupSessionHandle {
+                    Box::into_raw(Box::new(AuraGroupSessionHandle {
                         inner: Some(session),
                         in_use: AtomicBool::new(false),
                     })),
                 );
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -3010,21 +3010,21 @@ pub unsafe extern "C" fn epp_group_create(
 /// # Safety
 /// See module-level FFI safety contract.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_create_shielded(
-    identity_handle: *mut EppIdentityHandle,
+pub unsafe extern "C" fn aura_group_create_shielded(
+    identity_handle: *mut AuraIdentityHandle,
     credential: *const u8,
     credential_length: usize,
-    out_handle: *mut *mut EppGroupSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_handle: *mut *mut AuraGroupSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let cred = if credential.is_null() || credential_length == 0 {
             vec![]
@@ -3049,12 +3049,12 @@ pub unsafe extern "C" fn epp_group_create_shielded(
             Ok(session) => {
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppGroupSessionHandle {
+                    Box::into_raw(Box::new(AuraGroupSessionHandle {
                         inner: Some(session),
                         in_use: AtomicBool::new(false),
                     })),
                 );
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -3064,19 +3064,19 @@ pub unsafe extern "C" fn epp_group_create_shielded(
 /// # Safety
 /// See module-level FFI safety contract.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_is_shielded(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_is_shielded(
+    handle: *mut AuraGroupSessionHandle,
     out_shielded: *mut u8,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_shielded.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_shielded is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
@@ -3085,7 +3085,7 @@ pub unsafe extern "C" fn epp_group_is_shielded(
         match session.is_shielded() {
             Ok(shielded) => {
                 *out_shielded = u8::from(shielded);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -3096,22 +3096,22 @@ pub unsafe extern "C" fn epp_group_is_shielded(
 /// See module-level FFI safety contract.  Each field of `policy` must be populated by the
 /// caller.  Invalid policy values (e.g. `max_messages_per_epoch < 10`) return an error.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_create_with_policy(
-    identity_handle: *mut EppIdentityHandle,
+pub unsafe extern "C" fn aura_group_create_with_policy(
+    identity_handle: *mut AuraIdentityHandle,
     credential: *const u8,
     credential_length: usize,
-    policy: *const EppGroupSecurityPolicy,
-    out_handle: *mut *mut EppGroupSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    policy: *const AuraGroupSecurityPolicy,
+    out_handle: *mut *mut AuraGroupSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_handle.is_null() || policy.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let cred = if credential.is_null() || credential_length == 0 {
             vec![]
@@ -3143,12 +3143,12 @@ pub unsafe extern "C" fn epp_group_create_with_policy(
             Ok(session) => {
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppGroupSessionHandle {
+                    Box::into_raw(Box::new(AuraGroupSessionHandle {
                         inner: Some(session),
                         in_use: AtomicBool::new(false),
                     })),
                 );
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -3157,21 +3157,21 @@ pub unsafe extern "C" fn epp_group_create_with_policy(
 
 /// # Safety
 /// See module-level FFI safety contract.  `out_policy` must point to a writable
-/// `EppGroupSecurityPolicy`.
+/// `AuraGroupSecurityPolicy`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_get_security_policy(
-    handle: *mut EppGroupSessionHandle,
-    out_policy: *mut EppGroupSecurityPolicy,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_group_get_security_policy(
+    handle: *mut AuraGroupSessionHandle,
+    out_policy: *mut AuraGroupSecurityPolicy,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_policy.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_policy is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
@@ -3184,7 +3184,7 @@ pub unsafe extern "C" fn epp_group_get_security_policy(
                 (*out_policy).block_external_join = u8::from(p.block_external_join);
                 (*out_policy).enhanced_key_schedule = u8::from(p.enhanced_key_schedule);
                 (*out_policy).mandatory_franking = u8::from(p.mandatory_franking);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -3193,32 +3193,32 @@ pub unsafe extern "C" fn epp_group_get_security_policy(
 
 /// # Safety
 /// See module-level FFI safety contract.  `(welcome_bytes, welcome_length)` must form a valid
-/// readable slice.  `out_group_handle` must point to writable `*mut EppGroupSessionHandle`.
+/// readable slice.  `out_group_handle` must point to writable `*mut AuraGroupSessionHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_join(
-    identity_handle: *mut EppIdentityHandle,
+pub unsafe extern "C" fn aura_group_join(
+    identity_handle: *mut AuraIdentityHandle,
     welcome_bytes: *const u8,
     welcome_length: usize,
-    secrets_handle: *mut EppKeyPackageSecretsHandle,
-    out_group_handle: *mut *mut EppGroupSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    secrets_handle: *mut AuraKeyPackageSecretsHandle,
+    out_group_handle: *mut *mut AuraGroupSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if welcome_bytes.is_null() || secrets_handle.is_null() || out_group_handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if welcome_length > MAX_GROUP_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Welcome message too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let welcome_slice = std::slice::from_raw_parts(welcome_bytes, welcome_length);
@@ -3242,10 +3242,10 @@ pub unsafe extern "C" fn epp_group_join(
             Err(e) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorOutOfMemory,
+                    AuraErrorCode::AuraErrorOutOfMemory,
                     &format!("x25519 key clone failed: {e}"),
                 );
-                return EppErrorCode::EppErrorOutOfMemory;
+                return AuraErrorCode::AuraErrorOutOfMemory;
             }
         };
         let kyber_secret = match secrets.kyber_secret.try_clone() {
@@ -3253,10 +3253,10 @@ pub unsafe extern "C" fn epp_group_join(
             Err(e) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorOutOfMemory,
+                    AuraErrorCode::AuraErrorOutOfMemory,
                     &format!("kyber key clone failed: {e}"),
                 );
-                return EppErrorCode::EppErrorOutOfMemory;
+                return AuraErrorCode::AuraErrorOutOfMemory;
             }
         };
         match GroupSession::from_welcome_with_time_provider(
@@ -3271,12 +3271,12 @@ pub unsafe extern "C" fn epp_group_join(
             Ok(session) => {
                 replace_out_handle(
                     out_group_handle,
-                    Box::into_raw(Box::new(EppGroupSessionHandle {
+                    Box::into_raw(Box::new(AuraGroupSessionHandle {
                         inner: Some(session),
                         in_use: AtomicBool::new(false),
                     })),
                 );
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -3287,30 +3287,30 @@ pub unsafe extern "C" fn epp_group_join(
 /// See module-level FFI safety contract.  `(key_package_bytes, key_package_length)` must form a
 /// valid readable slice.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_add_member(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_add_member(
+    handle: *mut AuraGroupSessionHandle,
     key_package_bytes: *const u8,
     key_package_length: usize,
-    out_commit: *mut EppBuffer,
-    out_welcome: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_commit: *mut AuraBuffer,
+    out_welcome: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if key_package_bytes.is_null() || out_commit.is_null() || out_welcome.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if key_package_length > MAX_GROUP_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "KeyPackage too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let kp_slice = std::slice::from_raw_parts(key_package_bytes, key_package_length);
@@ -3319,10 +3319,10 @@ pub unsafe extern "C" fn epp_group_add_member(
             Err(e) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorDecode,
+                    AuraErrorCode::AuraErrorDecode,
                     &format!("KeyPackage decode: {e}"),
                 );
-                return EppErrorCode::EppErrorDecode;
+                return AuraErrorCode::AuraErrorDecode;
             }
         };
 
@@ -3334,7 +3334,7 @@ pub unsafe extern "C" fn epp_group_add_member(
             Ok((commit_bytes, welcome_bytes)) => {
                 write_buffer(out_commit, commit_bytes);
                 write_buffer(out_welcome, welcome_bytes);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -3344,20 +3344,20 @@ pub unsafe extern "C" fn epp_group_add_member(
 /// # Safety
 /// See module-level FFI safety contract.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_remove_member(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_remove_member(
+    handle: *mut AuraGroupSessionHandle,
     leaf_index: u32,
-    out_commit: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_commit: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_commit.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
 
         let (_guard, session) = match require_group_mut(handle, out_error) {
@@ -3367,7 +3367,7 @@ pub unsafe extern "C" fn epp_group_remove_member(
         match session.remove_member(leaf_index) {
             Ok(commit_bytes) => {
                 write_buffer(out_commit, commit_bytes);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -3377,19 +3377,19 @@ pub unsafe extern "C" fn epp_group_remove_member(
 /// # Safety
 /// See module-level FFI safety contract.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_update(
-    handle: *mut EppGroupSessionHandle,
-    out_commit: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_group_update(
+    handle: *mut AuraGroupSessionHandle,
+    out_commit: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_commit.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
 
         let (_guard, session) = match require_group_mut(handle, out_error) {
@@ -3399,7 +3399,7 @@ pub unsafe extern "C" fn epp_group_update(
         match session.update() {
             Ok(commit_bytes) => {
                 write_buffer(out_commit, commit_bytes);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -3410,28 +3410,28 @@ pub unsafe extern "C" fn epp_group_update(
 /// See module-level FFI safety contract.  `(commit_bytes, commit_length)` must form a valid
 /// readable slice.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_process_commit(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_process_commit(
+    handle: *mut AuraGroupSessionHandle,
     commit_bytes: *const u8,
     commit_length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if commit_bytes.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if commit_length > MAX_GROUP_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Commit too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let slice = std::slice::from_raw_parts(commit_bytes, commit_length);
@@ -3440,7 +3440,7 @@ pub unsafe extern "C" fn epp_group_process_commit(
             Err(code) => return code,
         };
         match session.process_commit(slice) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
@@ -3450,29 +3450,29 @@ pub unsafe extern "C" fn epp_group_process_commit(
 /// See module-level FFI safety contract.  `(plaintext, plaintext_length)` must form a valid
 /// readable slice.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_encrypt(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_encrypt(
+    handle: *mut AuraGroupSessionHandle,
     plaintext: *const u8,
     plaintext_length: usize,
-    out_ciphertext: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_ciphertext: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if plaintext.is_null() || out_ciphertext.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if plaintext_length > MAX_ENVELOPE_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Plaintext too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let pt = std::slice::from_raw_parts(plaintext, plaintext_length);
@@ -3483,7 +3483,7 @@ pub unsafe extern "C" fn epp_group_encrypt(
         match session.encrypt(pt) {
             Ok(ct_bytes) => {
                 write_buffer(out_ciphertext, ct_bytes);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -3494,15 +3494,15 @@ pub unsafe extern "C" fn epp_group_encrypt(
 /// See module-level FFI safety contract.  `(ciphertext, ciphertext_length)` must form a valid
 /// readable slice.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_decrypt(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_decrypt(
+    handle: *mut AuraGroupSessionHandle,
     ciphertext: *const u8,
     ciphertext_length: usize,
-    out_plaintext: *mut EppBuffer,
+    out_plaintext: *mut AuraBuffer,
     out_sender_leaf: *mut u32,
     out_generation: *mut u32,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if ciphertext.is_null()
             || out_plaintext.is_null()
@@ -3511,18 +3511,18 @@ pub unsafe extern "C" fn epp_group_decrypt(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if ciphertext_length > MAX_GROUP_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Ciphertext too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let ct = std::slice::from_raw_parts(ciphertext, ciphertext_length);
@@ -3535,7 +3535,7 @@ pub unsafe extern "C" fn epp_group_decrypt(
                 write_buffer(out_plaintext, result.plaintext);
                 *out_sender_leaf = result.sender_leaf_index;
                 *out_generation = result.generation;
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -3545,19 +3545,19 @@ pub unsafe extern "C" fn epp_group_decrypt(
 /// # Safety
 /// See module-level FFI safety contract.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_get_id(
-    handle: *mut EppGroupSessionHandle,
-    out_group_id: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_group_get_id(
+    handle: *mut AuraGroupSessionHandle,
+    out_group_id: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_group_id.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
@@ -3566,7 +3566,7 @@ pub unsafe extern "C" fn epp_group_get_id(
         match session.group_id() {
             Ok(group_id) => {
                 write_buffer(out_group_id, group_id);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -3576,7 +3576,7 @@ pub unsafe extern "C" fn epp_group_get_id(
 /// # Safety
 /// See module-level FFI safety contract.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_get_epoch(handle: *mut EppGroupSessionHandle) -> u64 {
+pub unsafe extern "C" fn aura_group_get_epoch(handle: *mut AuraGroupSessionHandle) -> u64 {
     ffi_catch_panic_value!(0u64, unsafe {
         group_ref_or_none(handle.cast_const())
             .and_then(|s| s.epoch().ok())
@@ -3587,7 +3587,7 @@ pub unsafe extern "C" fn epp_group_get_epoch(handle: *mut EppGroupSessionHandle)
 /// # Safety
 /// See module-level FFI safety contract.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_get_my_leaf_index(handle: *mut EppGroupSessionHandle) -> u32 {
+pub unsafe extern "C" fn aura_group_get_my_leaf_index(handle: *mut AuraGroupSessionHandle) -> u32 {
     ffi_catch_panic_value!(u32::MAX, unsafe {
         group_ref_or_none(handle.cast_const())
             .and_then(|s| s.my_leaf_index().ok())
@@ -3598,7 +3598,7 @@ pub unsafe extern "C" fn epp_group_get_my_leaf_index(handle: *mut EppGroupSessio
 /// # Safety
 /// See module-level FFI safety contract.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_get_member_count(handle: *mut EppGroupSessionHandle) -> u32 {
+pub unsafe extern "C" fn aura_group_get_member_count(handle: *mut AuraGroupSessionHandle) -> u32 {
     ffi_catch_panic_value!(0u32, unsafe {
         group_ref_or_none(handle.cast_const())
             .and_then(|s| s.member_count().ok())
@@ -3609,38 +3609,38 @@ pub unsafe extern "C" fn epp_group_get_member_count(handle: *mut EppGroupSession
 /// # Safety
 /// See module-level FFI safety contract.  `(key, key_length)` must form a valid readable slice.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_serialize(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_serialize(
+    handle: *mut AuraGroupSessionHandle,
     key: *const u8,
     key_length: usize,
     external_counter: u64,
-    out_state: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_state: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if key.is_null() || out_state.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if key_length != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Key must be exactly 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if external_counter == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "external_counter must be > 0",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let key_slice = std::slice::from_raw_parts(key, key_length);
@@ -3651,7 +3651,7 @@ pub unsafe extern "C" fn epp_group_serialize(
         match session.export_sealed_state(key_slice, external_counter) {
             Ok(bytes) => {
                 write_buffer(out_state, bytes);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -3660,19 +3660,19 @@ pub unsafe extern "C" fn epp_group_serialize(
 
 /// # Safety
 /// See module-level FFI safety contract.  `(state_bytes, state_length)` and `(key, key_length)` must
-/// form valid readable slices.  `out_handle` must point to writable `*mut EppGroupSessionHandle`.
+/// form valid readable slices.  `out_handle` must point to writable `*mut AuraGroupSessionHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_deserialize(
+pub unsafe extern "C" fn aura_group_deserialize(
     state_bytes: *const u8,
     state_length: usize,
     key: *const u8,
     key_length: usize,
     min_external_counter: u64,
     out_external_counter: *mut u64,
-    identity_handle: *mut EppIdentityHandle,
-    out_handle: *mut *mut EppGroupSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    identity_handle: *mut AuraIdentityHandle,
+    out_handle: *mut *mut AuraGroupSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if state_bytes.is_null()
             || key.is_null()
@@ -3681,26 +3681,26 @@ pub unsafe extern "C" fn epp_group_deserialize(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if state_length > MAX_GROUP_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "State blob too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if key_length != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Key must be exactly 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let state_slice = std::slice::from_raw_parts(state_bytes, state_length);
@@ -3734,12 +3734,12 @@ pub unsafe extern "C" fn epp_group_deserialize(
                 *out_external_counter = external_counter;
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppGroupSessionHandle {
+                    Box::into_raw(Box::new(AuraGroupSessionHandle {
                         inner: Some(session),
                         in_use: AtomicBool::new(false),
                     })),
                 );
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -3749,32 +3749,32 @@ pub unsafe extern "C" fn epp_group_deserialize(
 /// # Safety
 /// See module-level FFI safety contract. `(key, key_length)` must form a valid
 /// readable slice. `tracker_handle` must be a live
-/// `EppSealedStateCounterTrackerHandle`.
+/// `AuraSealedStateCounterTrackerHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_serialize_with_tracker(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_serialize_with_tracker(
+    handle: *mut AuraGroupSessionHandle,
     key: *const u8,
     key_length: usize,
-    tracker_handle: *mut EppSealedStateCounterTrackerHandle,
-    out_state: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    tracker_handle: *mut AuraSealedStateCounterTrackerHandle,
+    out_state: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if key.is_null() || out_state.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if key_length != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Key must be exactly 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let tracker = match require_counter_tracker_mut(tracker_handle, out_error) {
@@ -3799,49 +3799,49 @@ pub unsafe extern "C" fn epp_group_serialize_with_tracker(
             return write_protocol_error(out_error, &e);
         }
         write_buffer(out_state, bytes);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
 /// See module-level FFI safety contract. `(state_bytes, state_length)` and
 /// `(key, key_length)` must form valid readable slices. `out_handle` must
-/// point to writable `*mut EppGroupSessionHandle`.
+/// point to writable `*mut AuraGroupSessionHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_deserialize_with_tracker(
+pub unsafe extern "C" fn aura_group_deserialize_with_tracker(
     state_bytes: *const u8,
     state_length: usize,
     key: *const u8,
     key_length: usize,
-    tracker_handle: *mut EppSealedStateCounterTrackerHandle,
-    identity_handle: *mut EppIdentityHandle,
-    out_handle: *mut *mut EppGroupSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    tracker_handle: *mut AuraSealedStateCounterTrackerHandle,
+    identity_handle: *mut AuraIdentityHandle,
+    out_handle: *mut *mut AuraGroupSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if state_bytes.is_null() || key.is_null() || out_handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if state_length > MAX_GROUP_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "State blob too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if key_length != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Key must be exactly 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let tracker = match require_counter_tracker_mut(tracker_handle, out_error) {
@@ -3883,38 +3883,38 @@ pub unsafe extern "C" fn epp_group_deserialize_with_tracker(
         }
         replace_out_handle(
             out_handle,
-            Box::into_raw(Box::new(EppGroupSessionHandle {
+            Box::into_raw(Box::new(AuraGroupSessionHandle {
                 inner: Some(session),
                 in_use: AtomicBool::new(false),
             })),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
 /// See module-level FFI safety contract. `(key, key_length)` must form a valid
-/// readable slice. `slot_handle` must be a live `EppSealedStateSlotHandle`.
+/// readable slice. `slot_handle` must be a live `AuraSealedStateSlotHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_export_persisted_state(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_export_persisted_state(
+    handle: *mut AuraGroupSessionHandle,
     key: *const u8,
     key_length: usize,
-    slot_handle: *mut EppSealedStateSlotHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    slot_handle: *mut AuraSealedStateSlotHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if key.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "key is null");
-            return EppErrorCode::EppErrorNullPointer;
+            write_error(out_error, AuraErrorCode::AuraErrorNullPointer, "key is null");
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if key_length != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Key must be exactly 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let slot = match require_sealed_state_slot_mut(slot_handle, out_error) {
@@ -3935,7 +3935,7 @@ pub unsafe extern "C" fn epp_group_export_persisted_state(
             Err(e) => return write_protocol_error(out_error, &e),
         };
         match slot.note_successful_export(external_counter, bytes) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
@@ -3943,32 +3943,32 @@ pub unsafe extern "C" fn epp_group_export_persisted_state(
 
 /// # Safety
 /// See module-level FFI safety contract. `(key, key_length)` must form a valid
-/// readable slice. `slot_handle` must be a live `EppSealedStateSlotHandle`.
+/// readable slice. `slot_handle` must be a live `AuraSealedStateSlotHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_restore_persisted_state(
-    slot_handle: *mut EppSealedStateSlotHandle,
+pub unsafe extern "C" fn aura_group_restore_persisted_state(
+    slot_handle: *mut AuraSealedStateSlotHandle,
     key: *const u8,
     key_length: usize,
-    identity_handle: *mut EppIdentityHandle,
-    out_handle: *mut *mut EppGroupSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    identity_handle: *mut AuraIdentityHandle,
+    out_handle: *mut *mut AuraGroupSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if key.is_null() || out_handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if key_length != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Key must be exactly 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let slot = match require_sealed_state_slot_mut(slot_handle, out_error) {
@@ -3978,19 +3978,19 @@ pub unsafe extern "C" fn epp_group_restore_persisted_state(
         if slot.is_empty() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "sealed-state slot is empty",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let state_slice = slot.sealed_state();
         if state_slice.len() > MAX_GROUP_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "State blob too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let key_slice = std::slice::from_raw_parts(key, key_length);
         let external_counter = match GroupSession::sealed_state_external_counter(state_slice) {
@@ -4025,31 +4025,31 @@ pub unsafe extern "C" fn epp_group_restore_persisted_state(
         }
         replace_out_handle(
             out_handle,
-            Box::into_raw(Box::new(EppGroupSessionHandle {
+            Box::into_raw(Box::new(AuraGroupSessionHandle {
                 inner: Some(session),
                 in_use: AtomicBool::new(false),
             })),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
 /// See module-level FFI safety contract.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_export_public_state(
-    handle: *mut EppGroupSessionHandle,
-    out_public_state: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_group_export_public_state(
+    handle: *mut AuraGroupSessionHandle,
+    out_public_state: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_public_state.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
 
         let (_guard, session) = match require_group_mut(handle, out_error) {
@@ -4059,7 +4059,7 @@ pub unsafe extern "C" fn epp_group_export_public_state(
         match session.export_public_state() {
             Ok(bytes) => {
                 write_buffer(out_public_state, bytes);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -4071,17 +4071,17 @@ pub unsafe extern "C" fn epp_group_export_public_state(
 /// `(joiner_identity_x25519_public, joiner_identity_x25519_public_length)`, and
 /// `(joiner_credential, joiner_credential_length)` must form valid readable slices.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_authorize_external_join(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_authorize_external_join(
+    handle: *mut AuraGroupSessionHandle,
     joiner_identity_ed25519_public: *const u8,
     joiner_identity_ed25519_public_length: usize,
     joiner_identity_x25519_public: *const u8,
     joiner_identity_x25519_public_length: usize,
     joiner_credential: *const u8,
     joiner_credential_length: usize,
-    out_authorization: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_authorization: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if joiner_identity_ed25519_public.is_null()
             || joiner_identity_x25519_public.is_null()
@@ -4089,10 +4089,10 @@ pub unsafe extern "C" fn epp_group_authorize_external_join(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
@@ -4114,7 +4114,7 @@ pub unsafe extern "C" fn epp_group_authorize_external_join(
         match session.authorize_external_join(joiner_ed, joiner_x, joiner_credential) {
             Ok(bytes) => {
                 write_buffer(out_authorization, bytes);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -4125,20 +4125,20 @@ pub unsafe extern "C" fn epp_group_authorize_external_join(
 /// See module-level FFI safety contract.  `(public_state, public_state_length)`,
 /// `(authorization, authorization_length)`, and
 /// `(credential, credential_length)` must form valid readable slices.
-/// `out_group_handle` must point to writable `*mut EppGroupSessionHandle`.
+/// `out_group_handle` must point to writable `*mut AuraGroupSessionHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_join_external(
-    identity_handle: *mut EppIdentityHandle,
+pub unsafe extern "C" fn aura_group_join_external(
+    identity_handle: *mut AuraIdentityHandle,
     public_state: *const u8,
     public_state_length: usize,
     authorization: *const u8,
     authorization_length: usize,
     credential: *const u8,
     credential_length: usize,
-    out_group_handle: *mut *mut EppGroupSessionHandle,
-    out_commit: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_group_handle: *mut *mut AuraGroupSessionHandle,
+    out_commit: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if public_state.is_null()
             || authorization.is_null()
@@ -4147,26 +4147,26 @@ pub unsafe extern "C" fn epp_group_join_external(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if public_state_length > MAX_GROUP_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Public state too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if credential_length > MAX_BUFFER_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Credential too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let state_slice = std::slice::from_raw_parts(public_state, public_state_length);
@@ -4199,13 +4199,13 @@ pub unsafe extern "C" fn epp_group_join_external(
             Ok((session, commit_bytes)) => {
                 replace_out_handle(
                     out_group_handle,
-                    Box::into_raw(Box::new(EppGroupSessionHandle {
+                    Box::into_raw(Box::new(AuraGroupSessionHandle {
                         inner: Some(session),
                         in_use: AtomicBool::new(false),
                     })),
                 );
                 write_buffer(out_commit, commit_bytes);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -4231,30 +4231,30 @@ impl crate::protocol::group::PskResolver for FfiPskResolver {
 /// See module-level FFI safety contract.  `(psk_id, psk_id_length)` and `(psk, psk_length)` must
 /// form valid readable slices.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_set_psk(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_set_psk(
+    handle: *mut AuraGroupSessionHandle,
     psk_id: *const u8,
     psk_id_length: usize,
     psk: *const u8,
     psk_length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if handle.is_null() || psk_id.is_null() || psk.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if psk_id_length == 0 || psk_length < PSK_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "PSK id and value are required",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let id_slice = std::slice::from_raw_parts(psk_id, psk_id_length);
         let psk_slice = std::slice::from_raw_parts(psk, psk_length);
@@ -4267,7 +4267,7 @@ pub unsafe extern "C" fn epp_group_set_psk(
             Err(code) => return code,
         };
         match session.set_psk_resolver(resolver) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
@@ -4276,19 +4276,19 @@ pub unsafe extern "C" fn epp_group_set_psk(
 /// # Safety
 /// See module-level FFI safety contract.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_get_member_leaf_indices(
-    handle: *mut EppGroupSessionHandle,
-    out_indices: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_group_get_member_leaf_indices(
+    handle: *mut AuraGroupSessionHandle,
+    out_indices: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_indices.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
@@ -4303,15 +4303,15 @@ pub unsafe extern "C" fn epp_group_get_member_leaf_indices(
             buf.extend_from_slice(&idx.to_le_bytes());
         }
         write_buffer(out_indices, buf);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
-/// See module-level FFI safety contract.  `handle_ptr` must point to a handle from `epp_group_create`,
+/// See module-level FFI safety contract.  `handle_ptr` must point to a handle from `aura_group_create`,
 /// or be null.  The handle must not be used after this call.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_destroy(handle_ptr: *mut *mut EppGroupSessionHandle) {
+pub unsafe extern "C" fn aura_group_destroy(handle_ptr: *mut *mut AuraGroupSessionHandle) {
     ffi_catch_panic_value!((), unsafe {
         if handle_ptr.is_null() {
             return;
@@ -4344,38 +4344,38 @@ impl crate::interfaces::IStateKeyProvider for FfiStateKeyProvider {
 /// # Safety
 /// See module-level FFI safety contract.  `(key, key_length)` must form a valid readable slice.
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_serialize_sealed(
-    handle: *mut EppSessionHandle,
+pub unsafe extern "C" fn aura_session_serialize_sealed(
+    handle: *mut AuraSessionHandle,
     key: *const u8,
     key_length: usize,
     external_counter: u64,
-    out_state: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_state: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if key.is_null() || out_state.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if key_length != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Key must be exactly 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if external_counter == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "external_counter must be > 0",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let key_slice = std::slice::from_raw_parts(key, key_length);
@@ -4384,19 +4384,19 @@ pub unsafe extern "C" fn epp_session_serialize_sealed(
             Err(e) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorOutOfMemory,
+                    AuraErrorCode::AuraErrorOutOfMemory,
                     &format!("Allocate: {e}"),
                 );
-                return EppErrorCode::EppErrorOutOfMemory;
+                return AuraErrorCode::AuraErrorOutOfMemory;
             }
         };
         if let Err(e) = smh.write(key_slice) {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorGeneric,
+                AuraErrorCode::AuraErrorGeneric,
                 &format!("Write: {e}"),
             );
-            return EppErrorCode::EppErrorGeneric;
+            return AuraErrorCode::AuraErrorGeneric;
         }
 
         let provider = FfiStateKeyProvider { handle: smh };
@@ -4407,7 +4407,7 @@ pub unsafe extern "C" fn epp_session_serialize_sealed(
         match session.export_sealed_state(&provider, external_counter) {
             Ok(bytes) => {
                 write_buffer(out_state, bytes);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -4416,18 +4416,18 @@ pub unsafe extern "C" fn epp_session_serialize_sealed(
 
 /// # Safety
 /// See module-level FFI safety contract.  `(state_bytes, state_length)` and `(key, key_length)` must
-/// form valid readable slices.  `out_handle` must point to writable `*mut EppSessionHandle`.
+/// form valid readable slices.  `out_handle` must point to writable `*mut AuraSessionHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_deserialize_sealed(
+pub unsafe extern "C" fn aura_session_deserialize_sealed(
     state_bytes: *const u8,
     state_length: usize,
     key: *const u8,
     key_length: usize,
     min_external_counter: u64,
     out_external_counter: *mut u64,
-    out_handle: *mut *mut EppSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_handle: *mut *mut AuraSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if state_bytes.is_null()
             || key.is_null()
@@ -4436,26 +4436,26 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if key_length != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Key must be exactly 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if state_length > MAX_BUFFER_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Sealed state too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let state_slice = std::slice::from_raw_parts(state_bytes, state_length);
@@ -4469,19 +4469,19 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed(
             Err(e) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorOutOfMemory,
+                    AuraErrorCode::AuraErrorOutOfMemory,
                     &format!("Allocate: {e}"),
                 );
-                return EppErrorCode::EppErrorOutOfMemory;
+                return AuraErrorCode::AuraErrorOutOfMemory;
             }
         };
         if let Err(e) = smh.write(key_slice) {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorGeneric,
+                AuraErrorCode::AuraErrorGeneric,
                 &format!("Write: {e}"),
             );
-            return EppErrorCode::EppErrorGeneric;
+            return AuraErrorCode::AuraErrorGeneric;
         }
 
         let provider = FfiStateKeyProvider { handle: smh };
@@ -4490,12 +4490,12 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed(
                 *out_external_counter = external_counter;
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppSessionHandle {
+                    Box::into_raw(Box::new(AuraSessionHandle {
                         inner: Some(session),
                         in_use: AtomicBool::new(false),
                     })),
                 );
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -4507,17 +4507,17 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed(
 /// `(key, key_length)` must form valid readable slices. `time_provider_handle`
 /// may be NULL to use the system clock.
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_deserialize_sealed_with_time_provider(
+pub unsafe extern "C" fn aura_session_deserialize_sealed_with_time_provider(
     state_bytes: *const u8,
     state_length: usize,
     key: *const u8,
     key_length: usize,
     min_external_counter: u64,
-    time_provider_handle: *const EppTimeProviderHandle,
+    time_provider_handle: *const AuraTimeProviderHandle,
     out_external_counter: *mut u64,
-    out_handle: *mut *mut EppSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_handle: *mut *mut AuraSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if state_bytes.is_null()
             || key.is_null()
@@ -4526,26 +4526,26 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed_with_time_provider(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if key_length != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Key must be exactly 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if state_length > MAX_BUFFER_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Sealed state too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let time_provider = match clone_time_provider_or_default(time_provider_handle, out_error) {
@@ -4563,19 +4563,19 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed_with_time_provider(
             Err(e) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorOutOfMemory,
+                    AuraErrorCode::AuraErrorOutOfMemory,
                     &format!("Allocate: {e}"),
                 );
-                return EppErrorCode::EppErrorOutOfMemory;
+                return AuraErrorCode::AuraErrorOutOfMemory;
             }
         };
         if let Err(e) = smh.write(key_slice) {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorGeneric,
+                AuraErrorCode::AuraErrorGeneric,
                 &format!("Write: {e}"),
             );
-            return EppErrorCode::EppErrorGeneric;
+            return AuraErrorCode::AuraErrorGeneric;
         }
 
         let provider = FfiStateKeyProvider { handle: smh };
@@ -4589,12 +4589,12 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed_with_time_provider(
                 *out_external_counter = external_counter;
                 replace_out_handle(
                     out_handle,
-                    Box::into_raw(Box::new(EppSessionHandle {
+                    Box::into_raw(Box::new(AuraSessionHandle {
                         inner: Some(session),
                         in_use: AtomicBool::new(false),
                     })),
                 );
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -4604,32 +4604,32 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed_with_time_provider(
 /// # Safety
 /// See module-level FFI safety contract. `(key, key_length)` must form a valid
 /// readable slice. `tracker_handle` must be a live
-/// `EppSealedStateCounterTrackerHandle`.
+/// `AuraSealedStateCounterTrackerHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_serialize_sealed_with_tracker(
-    handle: *mut EppSessionHandle,
+pub unsafe extern "C" fn aura_session_serialize_sealed_with_tracker(
+    handle: *mut AuraSessionHandle,
     key: *const u8,
     key_length: usize,
-    tracker_handle: *mut EppSealedStateCounterTrackerHandle,
-    out_state: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    tracker_handle: *mut AuraSealedStateCounterTrackerHandle,
+    out_state: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if key.is_null() || out_state.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if key_length != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Key must be exactly 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let tracker = match require_counter_tracker_mut(tracker_handle, out_error) {
@@ -4647,19 +4647,19 @@ pub unsafe extern "C" fn epp_session_serialize_sealed_with_tracker(
             Err(e) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorOutOfMemory,
+                    AuraErrorCode::AuraErrorOutOfMemory,
                     &format!("Allocate: {e}"),
                 );
-                return EppErrorCode::EppErrorOutOfMemory;
+                return AuraErrorCode::AuraErrorOutOfMemory;
             }
         };
         if let Err(e) = smh.write(key_slice) {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorGeneric,
+                AuraErrorCode::AuraErrorGeneric,
                 &format!("Write: {e}"),
             );
-            return EppErrorCode::EppErrorGeneric;
+            return AuraErrorCode::AuraErrorGeneric;
         }
 
         let provider = FfiStateKeyProvider { handle: smh };
@@ -4675,48 +4675,48 @@ pub unsafe extern "C" fn epp_session_serialize_sealed_with_tracker(
             return write_protocol_error(out_error, &e);
         }
         write_buffer(out_state, bytes);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
 /// See module-level FFI safety contract. `(state_bytes, state_length)` and
 /// `(key, key_length)` must form valid readable slices. `out_handle` must
-/// point to writable `*mut EppSessionHandle`.
+/// point to writable `*mut AuraSessionHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_deserialize_sealed_with_tracker(
+pub unsafe extern "C" fn aura_session_deserialize_sealed_with_tracker(
     state_bytes: *const u8,
     state_length: usize,
     key: *const u8,
     key_length: usize,
-    tracker_handle: *mut EppSealedStateCounterTrackerHandle,
-    out_handle: *mut *mut EppSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    tracker_handle: *mut AuraSealedStateCounterTrackerHandle,
+    out_handle: *mut *mut AuraSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if state_bytes.is_null() || key.is_null() || out_handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if key_length != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Key must be exactly 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if state_length > MAX_BUFFER_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Sealed state too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let tracker = match require_counter_tracker_mut(tracker_handle, out_error) {
@@ -4735,19 +4735,19 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed_with_tracker(
             Err(e) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorOutOfMemory,
+                    AuraErrorCode::AuraErrorOutOfMemory,
                     &format!("Allocate: {e}"),
                 );
-                return EppErrorCode::EppErrorOutOfMemory;
+                return AuraErrorCode::AuraErrorOutOfMemory;
             }
         };
         if let Err(e) = smh.write(key_slice) {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorGeneric,
+                AuraErrorCode::AuraErrorGeneric,
                 &format!("Write: {e}"),
             );
-            return EppErrorCode::EppErrorGeneric;
+            return AuraErrorCode::AuraErrorGeneric;
         }
 
         let provider = FfiStateKeyProvider { handle: smh };
@@ -4764,12 +4764,12 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed_with_tracker(
         }
         replace_out_handle(
             out_handle,
-            Box::into_raw(Box::new(EppSessionHandle {
+            Box::into_raw(Box::new(AuraSessionHandle {
                 inner: Some(session),
                 in_use: AtomicBool::new(false),
             })),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
@@ -4778,40 +4778,40 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed_with_tracker(
 /// `(key, key_length)` must form valid readable slices. `time_provider_handle`
 /// may be NULL to use the system clock.
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_deserialize_sealed_with_tracker_and_time_provider(
+pub unsafe extern "C" fn aura_session_deserialize_sealed_with_tracker_and_time_provider(
     state_bytes: *const u8,
     state_length: usize,
     key: *const u8,
     key_length: usize,
-    tracker_handle: *mut EppSealedStateCounterTrackerHandle,
-    time_provider_handle: *const EppTimeProviderHandle,
-    out_handle: *mut *mut EppSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    tracker_handle: *mut AuraSealedStateCounterTrackerHandle,
+    time_provider_handle: *const AuraTimeProviderHandle,
+    out_handle: *mut *mut AuraSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if state_bytes.is_null() || key.is_null() || out_handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if key_length != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Key must be exactly 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if state_length > MAX_BUFFER_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Sealed state too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let tracker = match require_counter_tracker_mut(tracker_handle, out_error) {
@@ -4834,19 +4834,19 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed_with_tracker_and_time_pr
             Err(e) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorOutOfMemory,
+                    AuraErrorCode::AuraErrorOutOfMemory,
                     &format!("Allocate: {e}"),
                 );
-                return EppErrorCode::EppErrorOutOfMemory;
+                return AuraErrorCode::AuraErrorOutOfMemory;
             }
         };
         if let Err(e) = smh.write(key_slice) {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorGeneric,
+                AuraErrorCode::AuraErrorGeneric,
                 &format!("Write: {e}"),
             );
-            return EppErrorCode::EppErrorGeneric;
+            return AuraErrorCode::AuraErrorGeneric;
         }
 
         let provider = FfiStateKeyProvider { handle: smh };
@@ -4864,38 +4864,38 @@ pub unsafe extern "C" fn epp_session_deserialize_sealed_with_tracker_and_time_pr
         }
         replace_out_handle(
             out_handle,
-            Box::into_raw(Box::new(EppSessionHandle {
+            Box::into_raw(Box::new(AuraSessionHandle {
                 inner: Some(session),
                 in_use: AtomicBool::new(false),
             })),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// # Safety
 /// See module-level FFI safety contract. `(key, key_length)` must form a valid
-/// readable slice. `slot_handle` must be a live `EppSealedStateSlotHandle`.
+/// readable slice. `slot_handle` must be a live `AuraSealedStateSlotHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_export_persisted_state(
-    handle: *mut EppSessionHandle,
+pub unsafe extern "C" fn aura_session_export_persisted_state(
+    handle: *mut AuraSessionHandle,
     key: *const u8,
     key_length: usize,
-    slot_handle: *mut EppSealedStateSlotHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    slot_handle: *mut AuraSealedStateSlotHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if key.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "key is null");
-            return EppErrorCode::EppErrorNullPointer;
+            write_error(out_error, AuraErrorCode::AuraErrorNullPointer, "key is null");
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if key_length != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Key must be exactly 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let slot = match require_sealed_state_slot_mut(slot_handle, out_error) {
@@ -4912,19 +4912,19 @@ pub unsafe extern "C" fn epp_session_export_persisted_state(
             Err(e) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorOutOfMemory,
+                    AuraErrorCode::AuraErrorOutOfMemory,
                     &format!("Allocate: {e}"),
                 );
-                return EppErrorCode::EppErrorOutOfMemory;
+                return AuraErrorCode::AuraErrorOutOfMemory;
             }
         };
         if let Err(e) = smh.write(key_slice) {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorGeneric,
+                AuraErrorCode::AuraErrorGeneric,
                 &format!("Write: {e}"),
             );
-            return EppErrorCode::EppErrorGeneric;
+            return AuraErrorCode::AuraErrorGeneric;
         }
         let provider = FfiStateKeyProvider { handle: smh };
         let (_guard, session) = match require_session_mut(handle, out_error) {
@@ -4936,7 +4936,7 @@ pub unsafe extern "C" fn epp_session_export_persisted_state(
             Err(e) => return write_protocol_error(out_error, &e),
         };
         match slot.note_successful_export(external_counter, bytes) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
@@ -4944,31 +4944,31 @@ pub unsafe extern "C" fn epp_session_export_persisted_state(
 
 /// # Safety
 /// See module-level FFI safety contract. `(key, key_length)` must form a valid
-/// readable slice. `slot_handle` must be a live `EppSealedStateSlotHandle`.
+/// readable slice. `slot_handle` must be a live `AuraSealedStateSlotHandle`.
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_restore_persisted_state(
-    slot_handle: *mut EppSealedStateSlotHandle,
+pub unsafe extern "C" fn aura_session_restore_persisted_state(
+    slot_handle: *mut AuraSealedStateSlotHandle,
     key: *const u8,
     key_length: usize,
-    out_handle: *mut *mut EppSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_handle: *mut *mut AuraSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if key.is_null() || out_handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if key_length != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Key must be exactly 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let slot = match require_sealed_state_slot_mut(slot_handle, out_error) {
@@ -4978,20 +4978,20 @@ pub unsafe extern "C" fn epp_session_restore_persisted_state(
         if slot.is_empty() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "sealed-state slot is empty",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let key_slice = std::slice::from_raw_parts(key, key_length);
         let state_slice = slot.sealed_state();
         if state_slice.len() > MAX_BUFFER_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Sealed state too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let external_counter = match Session::sealed_state_external_counter(state_slice) {
             Ok(c) => c,
@@ -5002,19 +5002,19 @@ pub unsafe extern "C" fn epp_session_restore_persisted_state(
             Err(e) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorOutOfMemory,
+                    AuraErrorCode::AuraErrorOutOfMemory,
                     &format!("Allocate: {e}"),
                 );
-                return EppErrorCode::EppErrorOutOfMemory;
+                return AuraErrorCode::AuraErrorOutOfMemory;
             }
         };
         if let Err(e) = smh.write(key_slice) {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorGeneric,
+                AuraErrorCode::AuraErrorGeneric,
                 &format!("Write: {e}"),
             );
-            return EppErrorCode::EppErrorGeneric;
+            return AuraErrorCode::AuraErrorGeneric;
         }
 
         let provider = FfiStateKeyProvider { handle: smh };
@@ -5028,12 +5028,12 @@ pub unsafe extern "C" fn epp_session_restore_persisted_state(
         }
         replace_out_handle(
             out_handle,
-            Box::into_raw(Box::new(EppSessionHandle {
+            Box::into_raw(Box::new(AuraSessionHandle {
                 inner: Some(session),
                 in_use: AtomicBool::new(false),
             })),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
@@ -5041,30 +5041,30 @@ pub unsafe extern "C" fn epp_session_restore_persisted_state(
 /// See module-level FFI safety contract. `(key, key_length)` must form a valid
 /// readable slice. `time_provider_handle` may be NULL to use the system clock.
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_restore_persisted_state_with_time_provider(
-    slot_handle: *mut EppSealedStateSlotHandle,
+pub unsafe extern "C" fn aura_session_restore_persisted_state_with_time_provider(
+    slot_handle: *mut AuraSealedStateSlotHandle,
     key: *const u8,
     key_length: usize,
-    time_provider_handle: *const EppTimeProviderHandle,
-    out_handle: *mut *mut EppSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    time_provider_handle: *const AuraTimeProviderHandle,
+    out_handle: *mut *mut AuraSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if key.is_null() || out_handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if key_length != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Key must be exactly 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let slot = match require_sealed_state_slot_mut(slot_handle, out_error) {
@@ -5074,10 +5074,10 @@ pub unsafe extern "C" fn epp_session_restore_persisted_state_with_time_provider(
         if slot.is_empty() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "sealed-state slot is empty",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let time_provider = match clone_time_provider_or_default(time_provider_handle, out_error) {
             Ok(v) => v,
@@ -5088,10 +5088,10 @@ pub unsafe extern "C" fn epp_session_restore_persisted_state_with_time_provider(
         if state_slice.len() > MAX_BUFFER_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Sealed state too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let external_counter = match Session::sealed_state_external_counter(state_slice) {
             Ok(c) => c,
@@ -5102,19 +5102,19 @@ pub unsafe extern "C" fn epp_session_restore_persisted_state_with_time_provider(
             Err(e) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorOutOfMemory,
+                    AuraErrorCode::AuraErrorOutOfMemory,
                     &format!("Allocate: {e}"),
                 );
-                return EppErrorCode::EppErrorOutOfMemory;
+                return AuraErrorCode::AuraErrorOutOfMemory;
             }
         };
         if let Err(e) = smh.write(key_slice) {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorGeneric,
+                AuraErrorCode::AuraErrorGeneric,
                 &format!("Write: {e}"),
             );
-            return EppErrorCode::EppErrorGeneric;
+            return AuraErrorCode::AuraErrorGeneric;
         }
 
         let provider = FfiStateKeyProvider { handle: smh };
@@ -5132,12 +5132,12 @@ pub unsafe extern "C" fn epp_session_restore_persisted_state_with_time_provider(
         }
         replace_out_handle(
             out_handle,
-            Box::into_raw(Box::new(EppSessionHandle {
+            Box::into_raw(Box::new(AuraSessionHandle {
                 inner: Some(session),
                 in_use: AtomicBool::new(false),
             })),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
@@ -5145,31 +5145,31 @@ pub unsafe extern "C" fn epp_session_restore_persisted_state_with_time_provider(
 /// See module-level FFI safety contract.  `(plaintext, plaintext_length)` and
 /// `(hint, hint_length)` must form valid readable slices.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_encrypt_sealed(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_encrypt_sealed(
+    handle: *mut AuraGroupSessionHandle,
     plaintext: *const u8,
     plaintext_length: usize,
     hint: *const u8,
     hint_length: usize,
-    out_ciphertext: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_ciphertext: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if plaintext.is_null() || out_ciphertext.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if plaintext_length > MAX_ENVELOPE_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Plaintext too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let pt = std::slice::from_raw_parts(plaintext, plaintext_length);
@@ -5177,10 +5177,10 @@ pub unsafe extern "C" fn epp_group_encrypt_sealed(
         if hint_length > MAX_BUFFER_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "hint too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let hint_slice = if hint.is_null() || hint_length == 0 {
@@ -5196,7 +5196,7 @@ pub unsafe extern "C" fn epp_group_encrypt_sealed(
         match session.encrypt_sealed(pt, hint_slice) {
             Ok(ct_bytes) => {
                 write_buffer(out_ciphertext, ct_bytes);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -5207,30 +5207,30 @@ pub unsafe extern "C" fn epp_group_encrypt_sealed(
 /// See module-level FFI safety contract.  `(plaintext, plaintext_length)` must form a valid
 /// readable slice.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_encrypt_disappearing(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_encrypt_disappearing(
+    handle: *mut AuraGroupSessionHandle,
     plaintext: *const u8,
     plaintext_length: usize,
     ttl_seconds: u32,
-    out_ciphertext: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_ciphertext: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if plaintext.is_null() || out_ciphertext.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if plaintext_length > MAX_ENVELOPE_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Plaintext too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let pt = std::slice::from_raw_parts(plaintext, plaintext_length);
@@ -5241,7 +5241,7 @@ pub unsafe extern "C" fn epp_group_encrypt_disappearing(
         match session.encrypt_disappearing(pt, ttl_seconds) {
             Ok(ct_bytes) => {
                 write_buffer(out_ciphertext, ct_bytes);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -5252,29 +5252,29 @@ pub unsafe extern "C" fn epp_group_encrypt_disappearing(
 /// See module-level FFI safety contract.  `(plaintext, plaintext_length)` must form a valid
 /// readable slice.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_encrypt_frankable(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_encrypt_frankable(
+    handle: *mut AuraGroupSessionHandle,
     plaintext: *const u8,
     plaintext_length: usize,
-    out_ciphertext: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_ciphertext: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if plaintext.is_null() || out_ciphertext.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if plaintext_length > MAX_ENVELOPE_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Plaintext too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let pt = std::slice::from_raw_parts(plaintext, plaintext_length);
@@ -5285,7 +5285,7 @@ pub unsafe extern "C" fn epp_group_encrypt_frankable(
         match session.encrypt_frankable(pt) {
             Ok(ct_bytes) => {
                 write_buffer(out_ciphertext, ct_bytes);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -5296,39 +5296,39 @@ pub unsafe extern "C" fn epp_group_encrypt_frankable(
 /// See module-level FFI safety contract.  `(new_content, new_content_length)` and
 /// `(target_message_id, target_message_id_length)` must form valid readable slices.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_encrypt_edit(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_encrypt_edit(
+    handle: *mut AuraGroupSessionHandle,
     new_content: *const u8,
     new_content_length: usize,
     target_message_id: *const u8,
     target_message_id_length: usize,
-    out_ciphertext: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_ciphertext: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if new_content.is_null() || target_message_id.is_null() || out_ciphertext.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if new_content_length > MAX_ENVELOPE_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Content too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if target_message_id_length != MESSAGE_ID_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "target_message_id must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let content = std::slice::from_raw_parts(new_content, new_content_length);
@@ -5340,7 +5340,7 @@ pub unsafe extern "C" fn epp_group_encrypt_edit(
         match session.encrypt_edit(content, target_id) {
             Ok(ct_bytes) => {
                 write_buffer(out_ciphertext, ct_bytes);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -5351,29 +5351,29 @@ pub unsafe extern "C" fn epp_group_encrypt_edit(
 /// See module-level FFI safety contract.  `(target_message_id, target_message_id_length)` must form
 /// a valid readable slice.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_encrypt_delete(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_encrypt_delete(
+    handle: *mut AuraGroupSessionHandle,
     target_message_id: *const u8,
     target_message_id_length: usize,
-    out_ciphertext: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_ciphertext: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if target_message_id.is_null() || out_ciphertext.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if target_message_id_length != MESSAGE_ID_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "target_message_id must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let target_id = std::slice::from_raw_parts(target_message_id, target_message_id_length);
@@ -5384,7 +5384,7 @@ pub unsafe extern "C" fn epp_group_encrypt_delete(
         match session.encrypt_delete(target_id) {
             Ok(ct_bytes) => {
                 write_buffer(out_ciphertext, ct_bytes);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -5392,22 +5392,22 @@ pub unsafe extern "C" fn epp_group_encrypt_delete(
 }
 
 #[repr(C)]
-pub struct EppGroupDecryptResult {
-    pub plaintext: EppBuffer,
+pub struct AuraGroupDecryptResult {
+    pub plaintext: AuraBuffer,
     pub sender_leaf_index: u32,
     pub generation: u32,
     pub content_type: u32,
     pub ttl_seconds: u32,
     pub sent_timestamp: u64,
-    pub message_id: EppBuffer,
-    pub referenced_message_id: EppBuffer,
+    pub message_id: AuraBuffer,
+    pub referenced_message_id: AuraBuffer,
     pub has_sealed_payload: u8,
     pub has_franking_data: u8,
     pub mentions_count: u32,
-    pub reply_to_message_id: EppBuffer,
+    pub reply_to_message_id: AuraBuffer,
 }
 
-unsafe fn clear_group_decrypt_result(result: *mut EppGroupDecryptResult) {
+unsafe fn clear_group_decrypt_result(result: *mut AuraGroupDecryptResult) {
     if result.is_null() {
         return;
     }
@@ -5432,14 +5432,14 @@ unsafe fn clear_group_decrypt_result(result: *mut EppGroupDecryptResult) {
 /// # Safety
 /// `result` must be null or point to a value previously written by this FFI layer.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_decrypt_result_free(result: *mut EppGroupDecryptResult) {
+pub unsafe extern "C" fn aura_group_decrypt_result_free(result: *mut AuraGroupDecryptResult) {
     if result.is_null() {
         return;
     }
-    epp_buffer_release(std::ptr::addr_of_mut!((*result).plaintext));
-    epp_buffer_release(std::ptr::addr_of_mut!((*result).message_id));
-    epp_buffer_release(std::ptr::addr_of_mut!((*result).referenced_message_id));
-    epp_buffer_release(std::ptr::addr_of_mut!((*result).reply_to_message_id));
+    aura_buffer_release(std::ptr::addr_of_mut!((*result).plaintext));
+    aura_buffer_release(std::ptr::addr_of_mut!((*result).message_id));
+    aura_buffer_release(std::ptr::addr_of_mut!((*result).referenced_message_id));
+    aura_buffer_release(std::ptr::addr_of_mut!((*result).reply_to_message_id));
     clear_group_decrypt_result(result);
 }
 
@@ -5447,30 +5447,30 @@ pub unsafe extern "C" fn epp_group_decrypt_result_free(result: *mut EppGroupDecr
 /// See module-level FFI safety contract.  `(ciphertext, ciphertext_length)` must form a valid
 /// readable slice.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_decrypt_ex(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_decrypt_ex(
+    handle: *mut AuraGroupSessionHandle,
     ciphertext: *const u8,
     ciphertext_length: usize,
-    out_result: *mut EppGroupDecryptResult,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_result: *mut AuraGroupDecryptResult,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if ciphertext.is_null() || out_result.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         clear_group_decrypt_result(out_result);
         if ciphertext_length > MAX_GROUP_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Ciphertext too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let ct = std::slice::from_raw_parts(ciphertext, ciphertext_length);
@@ -5509,7 +5509,7 @@ pub unsafe extern "C" fn epp_group_decrypt_ex(
                     std::ptr::addr_of_mut!((*out_result).reply_to_message_id),
                     reply_id,
                 );
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -5520,67 +5520,67 @@ pub unsafe extern "C" fn epp_group_decrypt_ex(
 /// See module-level FFI safety contract.  `(group_id, group_id_length)` must form a valid
 /// readable slice.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_compute_message_id(
+pub unsafe extern "C" fn aura_group_compute_message_id(
     group_id: *const u8,
     group_id_length: usize,
     epoch: u64,
     sender_leaf_index: u32,
     generation: u32,
-    out_message_id: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_message_id: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if group_id.is_null() || out_message_id.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
 
         let gid = std::slice::from_raw_parts(group_id, group_id_length);
         let id =
             crate::protocol::group::compute_message_id(gid, epoch, sender_leaf_index, generation);
         write_buffer(out_message_id, id);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_set_member_role(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_set_member_role(
+    handle: *mut AuraGroupSessionHandle,
     leaf_index: u32,
     role: i32,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
         match session.set_member_role(leaf_index, role) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_get_member_role(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_get_member_role(
+    handle: *mut AuraGroupSessionHandle,
     leaf_index: u32,
     out_role: *mut i32,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_role.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_role is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
@@ -5589,7 +5589,7 @@ pub unsafe extern "C" fn epp_group_get_member_role(
         match session.get_member_role(leaf_index) {
             Ok(role) => {
                 *out_role = role;
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -5597,42 +5597,42 @@ pub unsafe extern "C" fn epp_group_get_member_role(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_encrypt_reaction(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_encrypt_reaction(
+    handle: *mut AuraGroupSessionHandle,
     message_id: *const u8,
     message_id_length: usize,
     emoji: *const u8,
     emoji_length: usize,
     remove: u8,
-    out_buffer: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_buffer: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if message_id.is_null() || emoji.is_null() || out_buffer.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if message_id_length != MESSAGE_ID_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "message_id must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let mid = std::slice::from_raw_parts(message_id, message_id_length);
         let emoji_bytes = std::slice::from_raw_parts(emoji, emoji_length);
         let Ok(emoji_str) = std::str::from_utf8(emoji_bytes) else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "emoji is not valid UTF-8",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         };
         let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
@@ -5641,7 +5641,7 @@ pub unsafe extern "C" fn epp_group_encrypt_reaction(
         match session.encrypt_reaction(mid, emoji_str, remove != 0) {
             Ok(ct) => {
                 write_buffer(out_buffer, ct);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -5649,38 +5649,38 @@ pub unsafe extern "C" fn epp_group_encrypt_reaction(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_encrypt_read_receipt(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_encrypt_read_receipt(
+    handle: *mut AuraGroupSessionHandle,
     message_ids_flat: *const u8,
     message_id_count: usize,
     timestamp: u64,
-    out_buffer: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_buffer: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_buffer.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_buffer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if message_id_count > 0 && message_ids_flat.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "message_ids_flat is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if message_id_count > MAX_READ_RECEIPT_IDS_FFI {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "message_id_count exceeds upper bound",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let flat = if message_id_count > 0 {
             let total_bytes = match message_id_count.checked_mul(MESSAGE_ID_BYTES) {
@@ -5688,10 +5688,10 @@ pub unsafe extern "C" fn epp_group_encrypt_read_receipt(
                 None => {
                     write_error(
                         out_error,
-                        EppErrorCode::EppErrorInvalidInput,
+                        AuraErrorCode::AuraErrorInvalidInput,
                         "message_id_count * MESSAGE_ID_BYTES overflow",
                     );
-                    return EppErrorCode::EppErrorInvalidInput;
+                    return AuraErrorCode::AuraErrorInvalidInput;
                 }
             };
             std::slice::from_raw_parts(message_ids_flat, total_bytes)
@@ -5709,7 +5709,7 @@ pub unsafe extern "C" fn epp_group_encrypt_read_receipt(
         match session.encrypt_read_receipt(&ids, timestamp) {
             Ok(ct) => {
                 write_buffer(out_buffer, ct);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -5717,20 +5717,20 @@ pub unsafe extern "C" fn epp_group_encrypt_read_receipt(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_encrypt_typing(
-    handle: *mut EppGroupSessionHandle,
+pub unsafe extern "C" fn aura_group_encrypt_typing(
+    handle: *mut AuraGroupSessionHandle,
     is_typing: u8,
-    out_buffer: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_buffer: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_buffer.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_buffer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
@@ -5739,7 +5739,7 @@ pub unsafe extern "C" fn epp_group_encrypt_typing(
         match session.encrypt_typing(is_typing != 0) {
             Ok(ct) => {
                 write_buffer(out_buffer, ct);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -5750,7 +5750,7 @@ pub unsafe extern "C" fn epp_group_encrypt_typing(
 /// See module-level FFI safety contract.  `(hint, hint_length)`, `(encrypted_content, encrypted_content_length)`,
 /// `(nonce, nonce_length)`, and `(seal_key, seal_key_length)` must form valid readable slices.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_reveal_sealed(
+pub unsafe extern "C" fn aura_group_reveal_sealed(
     hint: *const u8,
     hint_length: usize,
     encrypted_content: *const u8,
@@ -5759,9 +5759,9 @@ pub unsafe extern "C" fn epp_group_reveal_sealed(
     nonce_length: usize,
     seal_key: *const u8,
     seal_key_length: usize,
-    out_plaintext: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_plaintext: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if encrypted_content.is_null()
             || nonce.is_null()
@@ -5770,43 +5770,43 @@ pub unsafe extern "C" fn epp_group_reveal_sealed(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if nonce_length != AES_GCM_NONCE_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Nonce must be 12 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if seal_key_length != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Seal key must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if encrypted_content_length > MAX_GROUP_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Encrypted content too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         if hint_length > MAX_BUFFER_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "hint too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let _ = if hint.is_null() || hint_length == 0 {
@@ -5828,7 +5828,7 @@ pub unsafe extern "C" fn epp_group_reveal_sealed(
         match GroupSession::reveal_sealed(&payload) {
             Ok(pt) => {
                 write_buffer(out_plaintext, pt);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -5840,7 +5840,7 @@ pub unsafe extern "C" fn epp_group_reveal_sealed(
 /// `(franking_key, franking_key_length)`, `(content, content_length)`, and
 /// `(sealed_content, sealed_content_length)` must form valid readable slices.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_verify_franking(
+pub unsafe extern "C" fn aura_group_verify_franking(
     franking_tag: *const u8,
     franking_tag_length: usize,
     franking_key: *const u8,
@@ -5850,8 +5850,8 @@ pub unsafe extern "C" fn epp_group_verify_franking(
     sealed_content: *const u8,
     sealed_content_length: usize,
     out_valid: *mut u8,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if franking_tag.is_null()
             || franking_key.is_null()
@@ -5860,42 +5860,42 @@ pub unsafe extern "C" fn epp_group_verify_franking(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if franking_tag_length != HMAC_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Franking tag must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if franking_key_length != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Franking key must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if content_length > MAX_GROUP_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Content too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if sealed_content_length > MAX_GROUP_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Sealed content too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         use crate::protocol::group::{FrankingData, GroupSession};
@@ -5913,7 +5913,7 @@ pub unsafe extern "C" fn epp_group_verify_franking(
         match GroupSession::verify_franking(&data) {
             Ok(valid) => {
                 *out_valid = u8::from(valid);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -5923,20 +5923,20 @@ pub unsafe extern "C" fn epp_group_verify_franking(
 /// # Safety
 /// See module-level FFI safety contract.
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_get_pending_reinit(
-    handle: *mut EppGroupSessionHandle,
-    out_new_group_id: *mut EppBuffer,
+pub unsafe extern "C" fn aura_group_get_pending_reinit(
+    handle: *mut AuraGroupSessionHandle,
+    out_new_group_id: *mut AuraBuffer,
     out_new_version: *mut u32,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_new_group_id.is_null() || out_new_version.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
 
         let (_guard, session) = match require_group_mut(handle, out_error) {
@@ -5954,64 +5954,64 @@ pub unsafe extern "C" fn epp_group_get_pending_reinit(
             }
             Err(e) => return write_protocol_error(out_error, &e),
         }
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 /// Acquires the handle's busy-flag; the returned [`BusyGuard`] releases it on
 /// drop, preventing concurrent access from multiple FFI calls.
 unsafe fn require_voip_ref<'a>(
-    handle: *const EppVoipSessionHandle,
-    out_error: *mut EppError,
-) -> Result<(BusyGuard<'a>, &'a crate::protocol::voip::VoipSession), EppErrorCode> {
+    handle: *const AuraVoipSessionHandle,
+    out_error: *mut AuraError,
+) -> Result<(BusyGuard<'a>, &'a crate::protocol::voip::VoipSession), AuraErrorCode> {
     if handle.is_null() {
         write_error(
             out_error,
-            EppErrorCode::EppErrorNullPointer,
+            AuraErrorCode::AuraErrorNullPointer,
             "null VoIP session handle",
         );
-        return Err(EppErrorCode::EppErrorNullPointer);
+        return Err(AuraErrorCode::AuraErrorNullPointer);
     }
     // Safety: we only read the `in_use` field; we need a *const → *const cast
     // which is sound because `AtomicBool` access is through atomic ops.
     let guard = try_acquire_busy(&(*handle).in_use).map_err(|()| {
         write_error(
             out_error,
-            EppErrorCode::EppErrorBusy,
+            AuraErrorCode::AuraErrorBusy,
             "VoIP session handle is already in use by another call",
         );
-        EppErrorCode::EppErrorBusy
+        AuraErrorCode::AuraErrorBusy
     })?;
     let inner = (*handle).inner.as_ref().ok_or_else(|| {
         write_error(
             out_error,
-            EppErrorCode::EppErrorObjectDisposed,
+            AuraErrorCode::AuraErrorObjectDisposed,
             "VoIP session disposed",
         );
-        EppErrorCode::EppErrorObjectDisposed
+        AuraErrorCode::AuraErrorObjectDisposed
     })?;
     Ok((guard, inner))
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_accept_call(
-    identity_handle: *const EppIdentityHandle,
+pub unsafe extern "C" fn aura_voip_accept_call(
+    identity_handle: *const AuraIdentityHandle,
     call_init_bytes: *const u8,
     call_init_len: usize,
     peer_kyber_public: *const u8,
     peer_kyber_public_len: usize,
-    out_accept_bytes: *mut EppBuffer,
-    out_session: *mut *mut EppVoipSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_accept_bytes: *mut AuraBuffer,
+    out_session: *mut *mut AuraVoipSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         if out_accept_bytes.is_null() || out_session.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let time_provider = match clone_identity_time_provider(identity_handle, out_error) {
             Ok(v) => v,
@@ -6024,26 +6024,26 @@ pub unsafe extern "C" fn epp_voip_accept_call(
         if call_init_bytes.is_null() || call_init_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null CallInit bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if call_init_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "CallInit too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if peer_kyber_public.is_null() || peer_kyber_public_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null peer kyber public key",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let init_bytes = std::slice::from_raw_parts(call_init_bytes, call_init_len);
         let kyber_pub = std::slice::from_raw_parts(peer_kyber_public, peer_kyber_public_len);
@@ -6053,10 +6053,10 @@ pub unsafe extern "C" fn epp_voip_accept_call(
             Err(e) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorDecode,
+                    AuraErrorCode::AuraErrorDecode,
                     &format!("CallInit decode: {e}"),
                 );
-                return EppErrorCode::EppErrorDecode;
+                return AuraErrorCode::AuraErrorDecode;
             }
         };
 
@@ -6073,10 +6073,10 @@ pub unsafe extern "C" fn epp_voip_accept_call(
         if call_init.version != crate::core::constants::VOIP_PROTOCOL_VERSION {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "unsupported VoIP protocol version",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let auth_context = crate::protocol::voip::call_key_exchange::CallInitAuthContext {
@@ -6120,10 +6120,10 @@ pub unsafe extern "C" fn epp_voip_accept_call(
         if let Err(e) = proto.encode(&mut buf) {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorEncode,
+                AuraErrorCode::AuraErrorEncode,
                 &format!("CallAccept encode: {e}"),
             );
-            return EppErrorCode::EppErrorEncode;
+            return AuraErrorCode::AuraErrorEncode;
         }
         write_buffer(out_accept_bytes, buf);
 
@@ -6142,27 +6142,27 @@ pub unsafe extern "C" fn epp_voip_accept_call(
 
         replace_out_handle(
             out_session,
-            Box::into_raw(Box::new(EppVoipSessionHandle {
+            Box::into_raw(Box::new(AuraVoipSessionHandle {
                 inner: Some(session),
                 in_use: AtomicBool::new(false),
             })),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_encrypt_frame(
-    handle: *const EppVoipSessionHandle,
+pub unsafe extern "C" fn aura_voip_encrypt_frame(
+    handle: *const AuraVoipSessionHandle,
     payload_type: u8,
     ssrc: u32,
     timestamp: u32,
     sequence_number: u16,
     payload: *const u8,
     payload_len: usize,
-    out_frame: *mut EppEncryptedFrame,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_frame: *mut AuraEncryptedFrame,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         unsafe {
             clear_encrypted_frame(out_frame);
@@ -6170,10 +6170,10 @@ pub unsafe extern "C" fn epp_voip_encrypt_frame(
         if out_frame.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_frame is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
@@ -6182,10 +6182,10 @@ pub unsafe extern "C" fn epp_voip_encrypt_frame(
         if payload.is_null() || payload_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null payload",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let data = std::slice::from_raw_parts(payload, payload_len);
         let header = crate::protocol::voip::frame::FrameHeader {
@@ -6210,13 +6210,13 @@ pub unsafe extern "C" fn epp_voip_encrypt_frame(
         );
         write_buffer(&raw mut (*out_frame).nonce, enc.nonce);
         write_buffer(&raw mut (*out_frame).encrypted_header, enc.encrypted_header);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_decrypt_frame(
-    handle: *const EppVoipSessionHandle,
+pub unsafe extern "C" fn aura_voip_decrypt_frame(
+    handle: *const AuraVoipSessionHandle,
     call_id: *const u8,
     call_id_len: usize,
     ssrc: u32,
@@ -6228,9 +6228,9 @@ pub unsafe extern "C" fn epp_voip_decrypt_frame(
     nonce_len: usize,
     encrypted_header: *const u8,
     encrypted_header_len: usize,
-    out_frame: *mut EppDecryptedFrame,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_frame: *mut AuraDecryptedFrame,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         unsafe {
             clear_decrypted_frame(out_frame);
@@ -6238,10 +6238,10 @@ pub unsafe extern "C" fn epp_voip_decrypt_frame(
         if out_frame.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_frame is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
@@ -6271,34 +6271,34 @@ pub unsafe extern "C" fn epp_voip_decrypt_frame(
         if cid.len() > CALL_ID_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "call_id too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if enc_payload.len() > MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "encrypted payload too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if enc_header.len() > MAX_VOIP_ENCRYPTED_HEADER_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "encrypted header too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if enc_nonce.len() > AES_GCM_NONCE_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "nonce too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let encrypted = crate::protocol::voip::EncryptedFrame {
@@ -6323,30 +6323,30 @@ pub unsafe extern "C" fn epp_voip_decrypt_frame(
         (*out_frame).sequence_number = dec.header.sequence_number;
         (*out_frame).frame_counter = dec.frame_counter;
         (*out_frame).ratchet_generation = dec.ratchet_generation;
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_call_id(
-    handle: *const EppVoipSessionHandle,
-    out_buf: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_voip_call_id(
+    handle: *const AuraVoipSessionHandle,
+    out_buf: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
         write_buffer(out_buf, session.call_id());
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_ssrc(
-    handle: *const EppVoipSessionHandle,
-    out_error: *mut EppError,
+pub unsafe extern "C" fn aura_voip_ssrc(
+    handle: *const AuraVoipSessionHandle,
+    out_error: *mut AuraError,
 ) -> u32 {
     ffi_catch_panic_value!(0, {
         let Ok((_guard, session)) = require_voip_ref(handle, out_error) else {
@@ -6357,9 +6357,9 @@ pub unsafe extern "C" fn epp_voip_ssrc(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_is_shield_mode(
-    handle: *const EppVoipSessionHandle,
-    out_error: *mut EppError,
+pub unsafe extern "C" fn aura_voip_is_shield_mode(
+    handle: *const AuraVoipSessionHandle,
+    out_error: *mut AuraError,
 ) -> u8 {
     ffi_catch_panic_value!(0, {
         let Ok((_guard, session)) = require_voip_ref(handle, out_error) else {
@@ -6370,31 +6370,31 @@ pub unsafe extern "C" fn epp_voip_is_shield_mode(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_end_call(
-    handle: *const EppVoipSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_voip_end_call(
+    handle: *const AuraVoipSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
         match session.end_call() {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_generate_call_end_hmac(
-    handle: *const EppVoipSessionHandle,
+pub unsafe extern "C" fn aura_voip_generate_call_end_hmac(
+    handle: *const AuraVoipSessionHandle,
     device_id: *const u8,
     device_id_len: usize,
     timestamp: u64,
-    out_hmac: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_hmac: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
@@ -6408,7 +6408,7 @@ pub unsafe extern "C" fn epp_voip_generate_call_end_hmac(
         match session.generate_call_end_hmac(did, timestamp) {
             Ok(h) => {
                 write_buffer(out_hmac, h);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -6416,16 +6416,16 @@ pub unsafe extern "C" fn epp_voip_generate_call_end_hmac(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_verify_call_end_hmac(
-    handle: *const EppVoipSessionHandle,
+pub unsafe extern "C" fn aura_voip_verify_call_end_hmac(
+    handle: *const AuraVoipSessionHandle,
     device_id: *const u8,
     device_id_len: usize,
     timestamp: u64,
     hmac_value: *const u8,
     hmac_value_len: usize,
     out_valid: *mut u8,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
@@ -6446,7 +6446,7 @@ pub unsafe extern "C" fn epp_voip_verify_call_end_hmac(
                 if !out_valid.is_null() {
                     *out_valid = u8::from(is_valid);
                 }
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -6454,14 +6454,14 @@ pub unsafe extern "C" fn epp_voip_verify_call_end_hmac(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_build_call_end(
-    handle: *const EppVoipSessionHandle,
+pub unsafe extern "C" fn aura_voip_build_call_end(
+    handle: *const AuraVoipSessionHandle,
     device_id: *const u8,
     device_id_len: usize,
     timestamp: u64,
-    out_buf: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_buf: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
@@ -6475,7 +6475,7 @@ pub unsafe extern "C" fn epp_voip_build_call_end(
         match session.build_call_end(did, timestamp) {
             Ok(bytes) => {
                 write_buffer(out_buf, bytes);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -6483,12 +6483,12 @@ pub unsafe extern "C" fn epp_voip_build_call_end(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_process_call_end(
-    handle: *const EppVoipSessionHandle,
+pub unsafe extern "C" fn aura_voip_process_call_end(
+    handle: *const AuraVoipSessionHandle,
     call_end_bytes: *const u8,
     call_end_len: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
@@ -6497,28 +6497,28 @@ pub unsafe extern "C" fn epp_voip_process_call_end(
         if call_end_bytes.is_null() || call_end_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null CallEnd bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let call_end = std::slice::from_raw_parts(call_end_bytes, call_end_len);
         match session.process_call_end(call_end) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_encrypt_call_control(
-    handle: *const EppVoipSessionHandle,
+pub unsafe extern "C" fn aura_voip_encrypt_call_control(
+    handle: *const AuraVoipSessionHandle,
     control_type: u8,
     dtmf_digit: u8,
-    out_frame: *mut EppEncryptedFrame,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_frame: *mut AuraEncryptedFrame,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         unsafe {
             clear_encrypted_frame(out_frame);
@@ -6526,10 +6526,10 @@ pub unsafe extern "C" fn epp_voip_encrypt_call_control(
         if out_frame.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_frame is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
@@ -6544,10 +6544,10 @@ pub unsafe extern "C" fn epp_voip_encrypt_call_control(
             _ => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorInvalidInput,
+                    AuraErrorCode::AuraErrorInvalidInput,
                     "unknown control type",
                 );
-                return EppErrorCode::EppErrorInvalidInput;
+                return AuraErrorCode::AuraErrorInvalidInput;
             }
         };
         let enc = match session.encrypt_call_control(control) {
@@ -6564,19 +6564,19 @@ pub unsafe extern "C" fn epp_voip_encrypt_call_control(
         );
         write_buffer(&raw mut (*out_frame).nonce, enc.nonce);
         write_buffer(&raw mut (*out_frame).encrypted_header, enc.encrypted_header);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_export_sealed_state(
-    handle: *const EppVoipSessionHandle,
+pub unsafe extern "C" fn aura_voip_export_sealed_state(
+    handle: *const AuraVoipSessionHandle,
     state_key: *const u8,
     state_key_len: usize,
     external_counter: u64,
-    out_buf: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_buf: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
@@ -6585,16 +6585,16 @@ pub unsafe extern "C" fn epp_voip_export_sealed_state(
         if state_key.is_null() || state_key_len != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "state key must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let key = std::slice::from_raw_parts(state_key, state_key_len);
         match session.export_sealed_state(key, external_counter) {
             Ok(data) => {
                 write_buffer(out_buf, data);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -6602,22 +6602,22 @@ pub unsafe extern "C" fn epp_voip_export_sealed_state(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_export_sealed_state_with_tracker(
-    handle: *const EppVoipSessionHandle,
+pub unsafe extern "C" fn aura_voip_export_sealed_state_with_tracker(
+    handle: *const AuraVoipSessionHandle,
     state_key: *const u8,
     state_key_len: usize,
-    tracker_handle: *mut EppSealedStateCounterTrackerHandle,
-    out_buf: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    tracker_handle: *mut AuraSealedStateCounterTrackerHandle,
+    out_buf: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         if out_buf.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_buf is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
@@ -6626,10 +6626,10 @@ pub unsafe extern "C" fn epp_voip_export_sealed_state_with_tracker(
         if state_key.is_null() || state_key_len != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "state key must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let tracker = match require_counter_tracker_mut(tracker_handle, out_error) {
             Ok(v) => v,
@@ -6648,18 +6648,18 @@ pub unsafe extern "C" fn epp_voip_export_sealed_state_with_tracker(
             return write_protocol_error(out_error, &e);
         }
         write_buffer(out_buf, data);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_export_persisted_state(
-    handle: *const EppVoipSessionHandle,
+pub unsafe extern "C" fn aura_voip_export_persisted_state(
+    handle: *const AuraVoipSessionHandle,
     state_key: *const u8,
     state_key_len: usize,
-    slot_handle: *mut EppSealedStateSlotHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    slot_handle: *mut AuraSealedStateSlotHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
@@ -6668,10 +6668,10 @@ pub unsafe extern "C" fn epp_voip_export_persisted_state(
         if state_key.is_null() || state_key_len != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "state key must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let slot = match require_sealed_state_slot_mut(slot_handle, out_error) {
             Ok(v) => v,
@@ -6687,13 +6687,13 @@ pub unsafe extern "C" fn epp_voip_export_persisted_state(
             Err(e) => return write_protocol_error(out_error, &e),
         };
         match slot.note_successful_export(external_counter, data) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
-pub struct EppVoipCallInitiatorHandle {
+pub struct AuraVoipCallInitiatorHandle {
     pub init_output: Option<crate::protocol::voip::CallInitOutput>,
     pub call_id: Vec<u8>,
     pub shield_mode: bool,
@@ -6703,25 +6703,25 @@ pub struct EppVoipCallInitiatorHandle {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_call_init(
-    identity_handle: *const EppIdentityHandle,
+pub unsafe extern "C" fn aura_voip_call_init(
+    identity_handle: *const AuraIdentityHandle,
     peer_kyber_public: *const u8,
     peer_kyber_public_len: usize,
     shield_mode: u8,
     ratchet_interval_frames: u32,
     pq_rekey_interval_secs: u32,
-    out_init_bytes: *mut EppBuffer,
-    out_initiator: *mut *mut EppVoipCallInitiatorHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_init_bytes: *mut AuraBuffer,
+    out_initiator: *mut *mut AuraVoipCallInitiatorHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         if out_init_bytes.is_null() || out_initiator.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let time_provider = match clone_identity_time_provider(identity_handle, out_error) {
             Ok(v) => v,
@@ -6734,10 +6734,10 @@ pub unsafe extern "C" fn epp_voip_call_init(
         if peer_kyber_public.is_null() || peer_kyber_public_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null peer kyber public key",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let kyber_pub = std::slice::from_raw_parts(peer_kyber_public, peer_kyber_public_len);
 
@@ -6785,15 +6785,15 @@ pub unsafe extern "C" fn epp_voip_call_init(
         if let Err(e) = proto.encode(&mut buf) {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorEncode,
+                AuraErrorCode::AuraErrorEncode,
                 &format!("CallInit encode: {e}"),
             );
-            return EppErrorCode::EppErrorEncode;
+            return AuraErrorCode::AuraErrorEncode;
         }
         write_buffer(out_init_bytes, buf);
 
         let call_id = init_output.call_id.clone();
-        let initiator = Box::new(EppVoipCallInitiatorHandle {
+        let initiator = Box::new(AuraVoipCallInitiatorHandle {
             init_output: Some(init_output),
             call_id,
             shield_mode: is_shield,
@@ -6803,23 +6803,23 @@ pub unsafe extern "C" fn epp_voip_call_init(
         });
         replace_out_handle(out_initiator, Box::into_raw(initiator));
 
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_call_init_start(
-    identity_handle: *const EppIdentityHandle,
+pub unsafe extern "C" fn aura_voip_call_init_start(
+    identity_handle: *const AuraIdentityHandle,
     peer_kyber_public: *const u8,
     peer_kyber_public_len: usize,
     shield_mode: u8,
     ratchet_interval_frames: u32,
     pq_rekey_interval_secs: u32,
-    out_init_bytes: *mut EppBuffer,
-    out_initiator: *mut *mut EppVoipCallInitiatorHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
-    epp_voip_call_init(
+    out_init_bytes: *mut AuraBuffer,
+    out_initiator: *mut *mut AuraVoipCallInitiatorHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    aura_voip_call_init(
         identity_handle,
         peer_kyber_public,
         peer_kyber_public_len,
@@ -6833,30 +6833,30 @@ pub unsafe extern "C" fn epp_voip_call_init_start(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_call_init_complete(
-    initiator_handle: *mut EppVoipCallInitiatorHandle,
-    identity_handle: *const EppIdentityHandle,
+pub unsafe extern "C" fn aura_voip_call_init_complete(
+    initiator_handle: *mut AuraVoipCallInitiatorHandle,
+    identity_handle: *const AuraIdentityHandle,
     accept_bytes: *const u8,
     accept_len: usize,
-    out_session: *mut *mut EppVoipSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_session: *mut *mut AuraVoipSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         if initiator_handle.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "null initiator handle",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if out_session.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_session is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let identity = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
@@ -6865,18 +6865,18 @@ pub unsafe extern "C" fn epp_voip_call_init_complete(
         if accept_bytes.is_null() || accept_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null CallAccept bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if accept_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "CallAccept too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let accept_data = std::slice::from_raw_parts(accept_bytes, accept_len);
@@ -6885,30 +6885,30 @@ pub unsafe extern "C" fn epp_voip_call_init_complete(
             Err(e) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorDecode,
+                    AuraErrorCode::AuraErrorDecode,
                     &format!("CallAccept decode: {e}"),
                 );
-                return EppErrorCode::EppErrorDecode;
+                return AuraErrorCode::AuraErrorDecode;
             }
         };
 
         if accept.version != crate::core::constants::VOIP_PROTOCOL_VERSION {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "unsupported VoIP protocol version",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let initiator = &mut *initiator_handle;
         let Some(init_output) = initiator.init_output.take() else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorObjectDisposed,
+                AuraErrorCode::AuraErrorObjectDisposed,
                 "initiator already consumed",
             );
-            return EppErrorCode::EppErrorObjectDisposed;
+            return AuraErrorCode::AuraErrorObjectDisposed;
         };
 
         let kyber_secret = match identity.clone_kyber_secret_key() {
@@ -6954,18 +6954,18 @@ pub unsafe extern "C" fn epp_voip_call_init_complete(
 
         replace_out_handle(
             out_session,
-            Box::into_raw(Box::new(EppVoipSessionHandle {
+            Box::into_raw(Box::new(AuraVoipSessionHandle {
                 inner: Some(session),
                 in_use: AtomicBool::new(false),
             })),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_call_initiator_destroy(
-    handle_ptr: *mut *mut EppVoipCallInitiatorHandle,
+pub unsafe extern "C" fn aura_voip_call_initiator_destroy(
+    handle_ptr: *mut *mut AuraVoipCallInitiatorHandle,
 ) {
     ffi_catch_panic_value!((), unsafe {
         if handle_ptr.is_null() {
@@ -6979,14 +6979,14 @@ pub unsafe extern "C" fn epp_voip_call_initiator_destroy(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_initiate_rekey(
-    handle: *const EppVoipSessionHandle,
-    identity_handle: *const EppIdentityHandle,
+pub unsafe extern "C" fn aura_voip_initiate_rekey(
+    handle: *const AuraVoipSessionHandle,
+    identity_handle: *const AuraIdentityHandle,
     peer_kyber_public: *const u8,
     peer_kyber_public_len: usize,
-    out_rekey_bytes: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_rekey_bytes: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
@@ -6999,10 +6999,10 @@ pub unsafe extern "C" fn epp_voip_initiate_rekey(
         if peer_kyber_public.is_null() || peer_kyber_public_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null peer kyber public key",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let ed_secret = match identity.get_identity_ed25519_private_key_copy() {
@@ -7014,7 +7014,7 @@ pub unsafe extern "C" fn epp_voip_initiate_rekey(
         match session.initiate_rekey(&ed_secret, kyber_pub) {
             Ok(bytes) => {
                 write_buffer(out_rekey_bytes, bytes);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -7022,18 +7022,18 @@ pub unsafe extern "C" fn epp_voip_initiate_rekey(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_process_rekey(
-    handle: *const EppVoipSessionHandle,
-    identity_handle: *const EppIdentityHandle,
+pub unsafe extern "C" fn aura_voip_process_rekey(
+    handle: *const AuraVoipSessionHandle,
+    identity_handle: *const AuraIdentityHandle,
     peer_ed25519_public: *const u8,
     peer_ed25519_public_len: usize,
     rekey_bytes: *const u8,
     rekey_len: usize,
     peer_kyber_public: *const u8,
     peer_kyber_public_len: usize,
-    out_ack_bytes: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_ack_bytes: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
@@ -7046,26 +7046,26 @@ pub unsafe extern "C" fn epp_voip_process_rekey(
         if rekey_bytes.is_null() || rekey_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null rekey bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if rekey_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "CallRekey too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if peer_kyber_public.is_null() || peer_kyber_public_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null peer kyber public key",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let rekey_data = std::slice::from_raw_parts(rekey_bytes, rekey_len);
@@ -7082,10 +7082,10 @@ pub unsafe extern "C" fn epp_voip_process_rekey(
         if peer_ed25519_public.is_null() || peer_ed25519_public_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null peer ed25519 public key",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let peer_ed_pub = std::slice::from_raw_parts(peer_ed25519_public, peer_ed25519_public_len);
         match session.process_rekey(
@@ -7097,7 +7097,7 @@ pub unsafe extern "C" fn epp_voip_process_rekey(
         ) {
             Ok(ack_bytes) => {
                 write_buffer(out_ack_bytes, ack_bytes);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -7105,15 +7105,15 @@ pub unsafe extern "C" fn epp_voip_process_rekey(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_process_rekey_ack(
-    handle: *const EppVoipSessionHandle,
-    identity_handle: *const EppIdentityHandle,
+pub unsafe extern "C" fn aura_voip_process_rekey_ack(
+    handle: *const AuraVoipSessionHandle,
+    identity_handle: *const AuraIdentityHandle,
     peer_ed25519_public: *const u8,
     peer_ed25519_public_len: usize,
     ack_bytes: *const u8,
     ack_len: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
@@ -7126,18 +7126,18 @@ pub unsafe extern "C" fn epp_voip_process_rekey_ack(
         if ack_bytes.is_null() || ack_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null rekey ack bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if ack_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "CallRekeyAck too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let ack_data = std::slice::from_raw_parts(ack_bytes, ack_len);
@@ -7149,61 +7149,61 @@ pub unsafe extern "C" fn epp_voip_process_rekey_ack(
         if peer_ed25519_public.is_null() || peer_ed25519_public_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null peer ed25519 public key",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let peer_ed_pub = std::slice::from_raw_parts(peer_ed25519_public, peer_ed25519_public_len);
         match session.process_rekey_ack(ack_data, peer_ed_pub, &kyber_secret) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_import_sealed_state(
+pub unsafe extern "C" fn aura_voip_import_sealed_state(
     data: *const u8,
     data_len: usize,
     state_key: *const u8,
     state_key_len: usize,
     min_external_counter: u64,
-    out_session: *mut *mut EppVoipSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_session: *mut *mut AuraVoipSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         if out_session.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_session is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if data.is_null() || data_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null sealed state data",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if data_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE + MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "sealed state too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if state_key.is_null() || state_key_len != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "state key must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let state_data = std::slice::from_raw_parts(data, data_len);
@@ -7220,58 +7220,58 @@ pub unsafe extern "C" fn epp_voip_import_sealed_state(
 
         replace_out_handle(
             out_session,
-            Box::into_raw(Box::new(EppVoipSessionHandle {
+            Box::into_raw(Box::new(AuraVoipSessionHandle {
                 inner: Some(session),
                 in_use: AtomicBool::new(false),
             })),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_import_sealed_state_with_time_provider(
+pub unsafe extern "C" fn aura_voip_import_sealed_state_with_time_provider(
     data: *const u8,
     data_len: usize,
     state_key: *const u8,
     state_key_len: usize,
     min_external_counter: u64,
-    time_provider_handle: *const EppTimeProviderHandle,
-    out_session: *mut *mut EppVoipSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    time_provider_handle: *const AuraTimeProviderHandle,
+    out_session: *mut *mut AuraVoipSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         if out_session.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_session is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if data.is_null() || data_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null sealed state data",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if data_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE + MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "sealed state too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if state_key.is_null() || state_key_len != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "state key must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let time_provider = match clone_time_provider_or_default(time_provider_handle, out_error) {
@@ -7293,57 +7293,57 @@ pub unsafe extern "C" fn epp_voip_import_sealed_state_with_time_provider(
 
         replace_out_handle(
             out_session,
-            Box::into_raw(Box::new(EppVoipSessionHandle {
+            Box::into_raw(Box::new(AuraVoipSessionHandle {
                 inner: Some(session),
                 in_use: AtomicBool::new(false),
             })),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_import_sealed_state_with_tracker(
+pub unsafe extern "C" fn aura_voip_import_sealed_state_with_tracker(
     data: *const u8,
     data_len: usize,
     state_key: *const u8,
     state_key_len: usize,
-    tracker_handle: *mut EppSealedStateCounterTrackerHandle,
-    out_session: *mut *mut EppVoipSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    tracker_handle: *mut AuraSealedStateCounterTrackerHandle,
+    out_session: *mut *mut AuraVoipSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         if out_session.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_session is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if data.is_null() || data_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null sealed state data",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if data_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE + MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "sealed state too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if state_key.is_null() || state_key_len != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "state key must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let tracker = match require_counter_tracker_mut(tracker_handle, out_error) {
@@ -7371,58 +7371,58 @@ pub unsafe extern "C" fn epp_voip_import_sealed_state_with_tracker(
         }
         replace_out_handle(
             out_session,
-            Box::into_raw(Box::new(EppVoipSessionHandle {
+            Box::into_raw(Box::new(AuraVoipSessionHandle {
                 inner: Some(session),
                 in_use: AtomicBool::new(false),
             })),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_import_sealed_state_with_tracker_and_time_provider(
+pub unsafe extern "C" fn aura_voip_import_sealed_state_with_tracker_and_time_provider(
     data: *const u8,
     data_len: usize,
     state_key: *const u8,
     state_key_len: usize,
-    tracker_handle: *mut EppSealedStateCounterTrackerHandle,
-    time_provider_handle: *const EppTimeProviderHandle,
-    out_session: *mut *mut EppVoipSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    tracker_handle: *mut AuraSealedStateCounterTrackerHandle,
+    time_provider_handle: *const AuraTimeProviderHandle,
+    out_session: *mut *mut AuraVoipSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         if out_session.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_session is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if data.is_null() || data_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null sealed state data",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if data_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE + MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "sealed state too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if state_key.is_null() || state_key_len != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "state key must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let tracker = match require_counter_tracker_mut(tracker_handle, out_error) {
@@ -7455,39 +7455,39 @@ pub unsafe extern "C" fn epp_voip_import_sealed_state_with_tracker_and_time_prov
         }
         replace_out_handle(
             out_session,
-            Box::into_raw(Box::new(EppVoipSessionHandle {
+            Box::into_raw(Box::new(AuraVoipSessionHandle {
                 inner: Some(session),
                 in_use: AtomicBool::new(false),
             })),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_restore_persisted_state(
-    slot_handle: *mut EppSealedStateSlotHandle,
+pub unsafe extern "C" fn aura_voip_restore_persisted_state(
+    slot_handle: *mut AuraSealedStateSlotHandle,
     state_key: *const u8,
     state_key_len: usize,
-    out_session: *mut *mut EppVoipSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_session: *mut *mut AuraVoipSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         if out_session.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_session is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if state_key.is_null() || state_key_len != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "state key must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let slot = match require_sealed_state_slot_mut(slot_handle, out_error) {
             Ok(v) => v,
@@ -7496,19 +7496,19 @@ pub unsafe extern "C" fn epp_voip_restore_persisted_state(
         if slot.is_empty() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "sealed-state slot is empty",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let state_data = slot.sealed_state();
         if state_data.len() > MAX_VOIP_SIGNAL_MESSAGE_SIZE + MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "sealed state too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let key = std::slice::from_raw_parts(state_key, state_key_len);
         let external_counter =
@@ -7529,40 +7529,40 @@ pub unsafe extern "C" fn epp_voip_restore_persisted_state(
         }
         replace_out_handle(
             out_session,
-            Box::into_raw(Box::new(EppVoipSessionHandle {
+            Box::into_raw(Box::new(AuraVoipSessionHandle {
                 inner: Some(session),
                 in_use: AtomicBool::new(false),
             })),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_restore_persisted_state_with_time_provider(
-    slot_handle: *mut EppSealedStateSlotHandle,
+pub unsafe extern "C" fn aura_voip_restore_persisted_state_with_time_provider(
+    slot_handle: *mut AuraSealedStateSlotHandle,
     state_key: *const u8,
     state_key_len: usize,
-    time_provider_handle: *const EppTimeProviderHandle,
-    out_session: *mut *mut EppVoipSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    time_provider_handle: *const AuraTimeProviderHandle,
+    out_session: *mut *mut AuraVoipSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         if out_session.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_session is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if state_key.is_null() || state_key_len != AES_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "state key must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let slot = match require_sealed_state_slot_mut(slot_handle, out_error) {
             Ok(v) => v,
@@ -7571,10 +7571,10 @@ pub unsafe extern "C" fn epp_voip_restore_persisted_state_with_time_provider(
         if slot.is_empty() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "sealed-state slot is empty",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let time_provider = match clone_time_provider_or_default(time_provider_handle, out_error) {
             Ok(v) => v,
@@ -7584,10 +7584,10 @@ pub unsafe extern "C" fn epp_voip_restore_persisted_state_with_time_provider(
         if state_data.len() > MAX_VOIP_SIGNAL_MESSAGE_SIZE + MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "sealed state too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let key = std::slice::from_raw_parts(state_key, state_key_len);
         let external_counter =
@@ -7609,30 +7609,30 @@ pub unsafe extern "C" fn epp_voip_restore_persisted_state_with_time_provider(
         }
         replace_out_handle(
             out_session,
-            Box::into_raw(Box::new(EppVoipSessionHandle {
+            Box::into_raw(Box::new(AuraVoipSessionHandle {
                 inner: Some(session),
                 in_use: AtomicBool::new(false),
             })),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_sealed_state_external_counter(
+pub unsafe extern "C" fn aura_voip_sealed_state_external_counter(
     data: *const u8,
     data_len: usize,
     out_external_counter: *mut u64,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         if data.is_null() || data_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null sealed state data",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let state_data = std::slice::from_raw_parts(data, data_len);
@@ -7641,7 +7641,7 @@ pub unsafe extern "C" fn epp_voip_sealed_state_external_counter(
                 if !out_external_counter.is_null() {
                     *out_external_counter = counter;
                 }
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -7649,7 +7649,7 @@ pub unsafe extern "C" fn epp_voip_sealed_state_external_counter(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_session_destroy(handle_ptr: *mut *mut EppVoipSessionHandle) {
+pub unsafe extern "C" fn aura_voip_session_destroy(handle_ptr: *mut *mut AuraVoipSessionHandle) {
     ffi_catch_panic_value!((), unsafe {
         if handle_ptr.is_null() {
             return;
@@ -7662,7 +7662,7 @@ pub unsafe extern "C" fn epp_voip_session_destroy(handle_ptr: *mut *mut EppVoipS
 }
 
 #[repr(C)]
-pub struct EppCallStatistics {
+pub struct AuraCallStatistics {
     pub frames_sent: u64,
     pub frames_received: u64,
     pub frames_dropped: u64,
@@ -7672,15 +7672,15 @@ pub struct EppCallStatistics {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_set_screen_share_meta(
-    handle: *const EppVoipSessionHandle,
+pub unsafe extern "C" fn aura_voip_set_screen_share_meta(
+    handle: *const AuraVoipSessionHandle,
     width: u32,
     height: u32,
     frame_rate: u32,
     codec_hint: *const u8,
     codec_hint_length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
@@ -7695,28 +7695,28 @@ pub unsafe extern "C" fn epp_voip_set_screen_share_meta(
             } else {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorInvalidInput,
+                    AuraErrorCode::AuraErrorInvalidInput,
                     "invalid UTF-8 in codec_hint",
                 );
-                return EppErrorCode::EppErrorInvalidInput;
+                return AuraErrorCode::AuraErrorInvalidInput;
             }
         };
         match session.set_screen_share_meta(width, height, frame_rate, hint) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_get_screen_share_meta(
-    handle: *const EppVoipSessionHandle,
+pub unsafe extern "C" fn aura_voip_get_screen_share_meta(
+    handle: *const AuraVoipSessionHandle,
     out_width: *mut u32,
     out_height: *mut u32,
     out_frame_rate: *mut u32,
-    out_codec_hint: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_codec_hint: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
@@ -7737,7 +7737,7 @@ pub unsafe extern "C" fn epp_voip_get_screen_share_meta(
                     let hint_bytes = hint.unwrap_or_default().into_bytes();
                     write_buffer(out_codec_hint, hint_bytes);
                 }
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Ok(None) => {
                 if !out_width.is_null() {
@@ -7752,7 +7752,7 @@ pub unsafe extern "C" fn epp_voip_get_screen_share_meta(
                 if !out_codec_hint.is_null() {
                     write_buffer(out_codec_hint, vec![]);
                 }
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -7760,28 +7760,28 @@ pub unsafe extern "C" fn epp_voip_get_screen_share_meta(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_clear_screen_share_meta(
-    handle: *const EppVoipSessionHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_voip_clear_screen_share_meta(
+    handle: *const AuraVoipSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
         match session.clear_screen_share_meta() {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_get_call_statistics(
-    handle: *const EppVoipSessionHandle,
-    out_stats: *mut EppCallStatistics,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_voip_get_call_statistics(
+    handle: *const AuraVoipSessionHandle,
+    out_stats: *mut AuraCallStatistics,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
@@ -7790,7 +7790,7 @@ pub unsafe extern "C" fn epp_voip_get_call_statistics(
         match session.get_call_statistics() {
             Ok(stats) => {
                 if !out_stats.is_null() {
-                    *out_stats = EppCallStatistics {
+                    *out_stats = AuraCallStatistics {
                         frames_sent: stats.frames_sent,
                         frames_received: stats.frames_received,
                         frames_dropped: stats.frames_dropped,
@@ -7799,7 +7799,7 @@ pub unsafe extern "C" fn epp_voip_get_call_statistics(
                         call_duration_secs: stats.call_duration_secs,
                     };
                 }
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -7807,26 +7807,26 @@ pub unsafe extern "C" fn epp_voip_get_call_statistics(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_set_recording_consent(
-    handle: *const EppVoipSessionHandle,
+pub unsafe extern "C" fn aura_voip_set_recording_consent(
+    handle: *const AuraVoipSessionHandle,
     consent: i32,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
         match session.set_recording_consent(consent) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_get_local_recording_consent(
-    handle: *const EppVoipSessionHandle,
+pub unsafe extern "C" fn aura_voip_get_local_recording_consent(
+    handle: *const AuraVoipSessionHandle,
 ) -> i32 {
     ffi_catch_panic_value!(-1, {
         if handle.is_null() {
@@ -7840,26 +7840,26 @@ pub unsafe extern "C" fn epp_voip_get_local_recording_consent(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_set_remote_recording_consent(
-    handle: *const EppVoipSessionHandle,
+pub unsafe extern "C" fn aura_voip_set_remote_recording_consent(
+    handle: *const AuraVoipSessionHandle,
     consent: i32,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
         match session.set_remote_recording_consent(consent) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_get_remote_recording_consent(
-    handle: *const EppVoipSessionHandle,
+pub unsafe extern "C" fn aura_voip_get_remote_recording_consent(
+    handle: *const AuraVoipSessionHandle,
 ) -> i32 {
     ffi_catch_panic_value!(-1, {
         if handle.is_null() {
@@ -7873,8 +7873,8 @@ pub unsafe extern "C" fn epp_voip_get_remote_recording_consent(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_both_consented_to_recording(
-    handle: *const EppVoipSessionHandle,
+pub unsafe extern "C" fn aura_voip_both_consented_to_recording(
+    handle: *const AuraVoipSessionHandle,
 ) -> bool {
     ffi_catch_panic_value!(false, {
         if handle.is_null() {
@@ -7888,14 +7888,14 @@ pub unsafe extern "C" fn epp_voip_both_consented_to_recording(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_build_recording_consent_message(
-    handle: *const EppVoipSessionHandle,
-    identity_handle: *const EppIdentityHandle,
+pub unsafe extern "C" fn aura_voip_build_recording_consent_message(
+    handle: *const AuraVoipSessionHandle,
+    identity_handle: *const AuraIdentityHandle,
     consent: i32,
     timestamp_unix: u64,
-    out_message: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_message: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
@@ -7912,7 +7912,7 @@ pub unsafe extern "C" fn epp_voip_build_recording_consent_message(
         match session.build_recording_consent_message(consent, timestamp_unix, &ed25519_secret) {
             Ok(message) => {
                 write_buffer(out_message, message);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -7920,14 +7920,14 @@ pub unsafe extern "C" fn epp_voip_build_recording_consent_message(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_voip_process_recording_consent_message(
-    handle: *const EppVoipSessionHandle,
+pub unsafe extern "C" fn aura_voip_process_recording_consent_message(
+    handle: *const AuraVoipSessionHandle,
     peer_ed25519_public: *const u8,
     peer_ed25519_public_len: usize,
     message_bytes: *const u8,
     message_len: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         let (_guard, session) = match require_voip_ref(handle, out_error) {
             Ok(v) => v,
@@ -7936,31 +7936,31 @@ pub unsafe extern "C" fn epp_voip_process_recording_consent_message(
         if peer_ed25519_public.is_null() || peer_ed25519_public_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null peer ed25519 public key",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if message_bytes.is_null() || message_len == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "null recording consent message bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if message_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "RecordingConsentMessage too large",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let peer_public = std::slice::from_raw_parts(peer_ed25519_public, peer_ed25519_public_len);
         let message = std::slice::from_raw_parts(message_bytes, message_len);
         match session.process_recording_consent_message(message, peer_public) {
-            Ok(_) => EppErrorCode::EppSuccess,
+            Ok(_) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
@@ -7969,73 +7969,73 @@ pub unsafe extern "C" fn epp_voip_process_recording_consent_message(
 // ─── Session identity / ID getters ─────────────────────────────────────────
 
 #[repr(C)]
-pub struct EppSessionPeerIdentity {
+pub struct AuraSessionPeerIdentity {
     pub ed25519_public: [u8; ED25519_PUBLIC_KEY_BYTES],
     pub x25519_public: [u8; X25519_PUBLIC_KEY_BYTES],
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_get_id(
-    handle: *mut EppSessionHandle,
-    out_session_id: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_session_get_id(
+    handle: *mut AuraSessionHandle,
+    out_session_id: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_session_id.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_session_id is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
         write_buffer(out_session_id, session.get_session_id());
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_get_identity_binding_hash(
-    handle: *mut EppSessionHandle,
-    out_binding_hash: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_session_get_identity_binding_hash(
+    handle: *mut AuraSessionHandle,
+    out_binding_hash: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_binding_hash.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_binding_hash is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
         write_buffer(out_binding_hash, session.get_identity_binding_hash());
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_get_peer_identity(
-    handle: *mut EppSessionHandle,
-    out_identity: *mut EppSessionPeerIdentity,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_session_get_peer_identity(
+    handle: *mut AuraSessionHandle,
+    out_identity: *mut AuraSessionPeerIdentity,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_identity.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_identity is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
@@ -8047,36 +8047,36 @@ pub unsafe extern "C" fn epp_session_get_peer_identity(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidState,
+                AuraErrorCode::AuraErrorInvalidState,
                 "Peer identity keys have unexpected length",
             );
-            return EppErrorCode::EppErrorInvalidState;
+            return AuraErrorCode::AuraErrorInvalidState;
         }
-        let mut result = EppSessionPeerIdentity {
+        let mut result = AuraSessionPeerIdentity {
             ed25519_public: [0u8; ED25519_PUBLIC_KEY_BYTES],
             x25519_public: [0u8; X25519_PUBLIC_KEY_BYTES],
         };
         result.ed25519_public.copy_from_slice(&peer.ed25519_public);
         result.x25519_public.copy_from_slice(&peer.x25519_public);
         *out_identity = result;
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_get_local_identity(
-    handle: *mut EppSessionHandle,
-    out_identity: *mut EppSessionPeerIdentity,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_session_get_local_identity(
+    handle: *mut AuraSessionHandle,
+    out_identity: *mut AuraSessionPeerIdentity,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_identity.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_identity is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
@@ -8088,47 +8088,47 @@ pub unsafe extern "C" fn epp_session_get_local_identity(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidState,
+                AuraErrorCode::AuraErrorInvalidState,
                 "Local identity keys have unexpected length",
             );
-            return EppErrorCode::EppErrorInvalidState;
+            return AuraErrorCode::AuraErrorInvalidState;
         }
-        let mut result = EppSessionPeerIdentity {
+        let mut result = AuraSessionPeerIdentity {
             ed25519_public: [0u8; ED25519_PUBLIC_KEY_BYTES],
             x25519_public: [0u8; X25519_PUBLIC_KEY_BYTES],
         };
         result.ed25519_public.copy_from_slice(&local.ed25519_public);
         result.x25519_public.copy_from_slice(&local.x25519_public);
         *out_identity = result;
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 // ─── OTK replenishment ─────────────────────────────────────────────────────
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_prekey_bundle_replenish(
-    identity_handle: *mut EppIdentityHandle,
+pub unsafe extern "C" fn aura_prekey_bundle_replenish(
+    identity_handle: *mut AuraIdentityHandle,
     count: u32,
-    out_keys: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_keys: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_keys.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_keys is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if count == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "count must be > 0",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let identity = match require_identity_mut(identity_handle, out_error) {
             Ok(v) => v,
@@ -8154,21 +8154,21 @@ pub unsafe extern "C" fn epp_prekey_bundle_replenish(
         if let Err(e) = partial_bundle.encode(&mut buf) {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorEncode,
+                AuraErrorCode::AuraErrorEncode,
                 &format!("Failed to encode replenished OTKs: {e}"),
             );
-            return EppErrorCode::EppErrorEncode;
+            return AuraErrorCode::AuraErrorEncode;
         }
         write_buffer(out_keys, buf);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 // ─── EnvelopeMetadata parsing ──────────────────────────────────────────────
 
 #[repr(C)]
-pub struct EppEnvelopeMetadata {
-    pub envelope_type: EppEnvelopeType,
+pub struct AuraEnvelopeMetadata {
+    pub envelope_type: AuraEnvelopeType,
     pub envelope_id: u32,
     pub message_index: u64,
     pub correlation_id: *mut c_char,
@@ -8176,20 +8176,20 @@ pub struct EppEnvelopeMetadata {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_envelope_metadata_parse(
+pub unsafe extern "C" fn aura_envelope_metadata_parse(
     metadata_bytes: *const u8,
     metadata_length: usize,
-    out_meta: *mut EppEnvelopeMetadata,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_meta: *mut AuraEnvelopeMetadata,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if metadata_bytes.is_null() || out_meta.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let slice = std::slice::from_raw_parts(metadata_bytes, metadata_length);
         let proto = match crate::proto::EnvelopeMetadata::decode(slice) {
@@ -8197,18 +8197,18 @@ pub unsafe extern "C" fn epp_envelope_metadata_parse(
             Err(e) => {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorDecode,
+                    AuraErrorCode::AuraErrorDecode,
                     &format!("Failed to decode EnvelopeMetadata: {e}"),
                 );
-                return EppErrorCode::EppErrorDecode;
+                return AuraErrorCode::AuraErrorDecode;
             }
         };
         let envelope_type = match proto.envelope_type {
-            1 => EppEnvelopeType::EppEnvelopeResponse,
-            2 => EppEnvelopeType::EppEnvelopeNotification,
-            3 => EppEnvelopeType::EppEnvelopeHeartbeat,
-            4 => EppEnvelopeType::EppEnvelopeErrorResponse,
-            _ => EppEnvelopeType::EppEnvelopeRequest,
+            1 => AuraEnvelopeType::AuraEnvelopeResponse,
+            2 => AuraEnvelopeType::AuraEnvelopeNotification,
+            3 => AuraEnvelopeType::AuraEnvelopeHeartbeat,
+            4 => AuraEnvelopeType::AuraEnvelopeErrorResponse,
+            _ => AuraEnvelopeType::AuraEnvelopeRequest,
         };
         let (correlation_id_ptr, correlation_id_length) =
             proto
@@ -8219,19 +8219,19 @@ pub unsafe extern "C" fn epp_envelope_metadata_parse(
                     let len = cstr.as_bytes().len();
                     (cstr.into_raw(), len)
                 });
-        *out_meta = EppEnvelopeMetadata {
+        *out_meta = AuraEnvelopeMetadata {
             envelope_type,
             envelope_id: proto.envelope_id,
             message_index: proto.message_index,
             correlation_id: correlation_id_ptr,
             correlation_id_length,
         };
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_envelope_metadata_free(meta: *mut EppEnvelopeMetadata) {
+pub unsafe extern "C" fn aura_envelope_metadata_free(meta: *mut AuraEnvelopeMetadata) {
     if meta.is_null() {
         return;
     }
@@ -8246,34 +8246,34 @@ pub unsafe extern "C" fn epp_envelope_metadata_free(meta: *mut EppEnvelopeMetada
 
 // ─── C event callbacks — 1-to-1 session ────────────────────────────────────
 
-pub type EppOnHandshakeCompleted = Option<
+pub type AuraOnHandshakeCompleted = Option<
     unsafe extern "C" fn(session_id: *const u8, session_id_len: usize, user_data: *mut c_void),
 >;
 
-pub type EppOnRatchetRotated = Option<unsafe extern "C" fn(epoch: u64, user_data: *mut c_void)>;
+pub type AuraOnRatchetRotated = Option<unsafe extern "C" fn(epoch: u64, user_data: *mut c_void)>;
 
-pub type EppOnSessionError = Option<
-    unsafe extern "C" fn(code: EppErrorCode, message: *const c_char, user_data: *mut c_void),
+pub type AuraOnSessionError = Option<
+    unsafe extern "C" fn(code: AuraErrorCode, message: *const c_char, user_data: *mut c_void),
 >;
 
-pub type EppOnNonceExhaustionWarning =
+pub type AuraOnNonceExhaustionWarning =
     Option<unsafe extern "C" fn(remaining: u64, max_capacity: u64, user_data: *mut c_void)>;
 
-pub type EppOnRatchetStallingWarning =
+pub type AuraOnRatchetStallingWarning =
     Option<unsafe extern "C" fn(messages_since_ratchet: u64, user_data: *mut c_void)>;
 
 #[repr(C)]
-pub struct EppSessionEventCallbacks {
-    pub on_handshake_completed: EppOnHandshakeCompleted,
-    pub on_ratchet_rotated: EppOnRatchetRotated,
-    pub on_error: EppOnSessionError,
-    pub on_nonce_exhaustion_warning: EppOnNonceExhaustionWarning,
-    pub on_ratchet_stalling_warning: EppOnRatchetStallingWarning,
+pub struct AuraSessionEventCallbacks {
+    pub on_handshake_completed: AuraOnHandshakeCompleted,
+    pub on_ratchet_rotated: AuraOnRatchetRotated,
+    pub on_error: AuraOnSessionError,
+    pub on_nonce_exhaustion_warning: AuraOnNonceExhaustionWarning,
+    pub on_ratchet_stalling_warning: AuraOnRatchetStallingWarning,
     pub user_data: *mut c_void,
 }
 
 struct CFfiSessionEventHandler {
-    callbacks: EppSessionEventCallbacks,
+    callbacks: AuraSessionEventCallbacks,
 }
 
 #[allow(clippy::non_send_fields_in_send_ty)]
@@ -8321,19 +8321,19 @@ impl IProtocolEventHandler for CFfiSessionEventHandler {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_set_event_handler(
-    handle: *mut EppSessionHandle,
-    callbacks: *const EppSessionEventCallbacks,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_session_set_event_handler(
+    handle: *mut AuraSessionHandle,
+    callbacks: *const AuraSessionEventCallbacks,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if callbacks.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "callbacks is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
@@ -8342,13 +8342,13 @@ pub unsafe extern "C" fn epp_session_set_event_handler(
         let cbs = std::ptr::read(callbacks);
         let handler = Arc::new(CFfiSessionEventHandler { callbacks: cbs });
         session.set_event_handler(handler);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 // ─── C event callbacks — group session ─────────────────────────────────────
 
-pub type EppOnMemberAdded = Option<
+pub type AuraOnMemberAdded = Option<
     unsafe extern "C" fn(
         leaf_index: u32,
         identity_ed25519: *const u8,
@@ -8357,15 +8357,15 @@ pub type EppOnMemberAdded = Option<
     ),
 >;
 
-pub type EppOnMemberRemoved = Option<unsafe extern "C" fn(leaf_index: u32, user_data: *mut c_void)>;
+pub type AuraOnMemberRemoved = Option<unsafe extern "C" fn(leaf_index: u32, user_data: *mut c_void)>;
 
-pub type EppOnEpochAdvanced =
+pub type AuraOnEpochAdvanced =
     Option<unsafe extern "C" fn(new_epoch: u64, member_count: u32, user_data: *mut c_void)>;
 
-pub type EppOnSenderKeyExhaustionWarning =
+pub type AuraOnSenderKeyExhaustionWarning =
     Option<unsafe extern "C" fn(remaining: u32, max_capacity: u32, user_data: *mut c_void)>;
 
-pub type EppOnReInitProposed = Option<
+pub type AuraOnReInitProposed = Option<
     unsafe extern "C" fn(
         new_group_id: *const u8,
         new_group_id_len: usize,
@@ -8375,17 +8375,17 @@ pub type EppOnReInitProposed = Option<
 >;
 
 #[repr(C)]
-pub struct EppGroupEventCallbacks {
-    pub on_member_added: EppOnMemberAdded,
-    pub on_member_removed: EppOnMemberRemoved,
-    pub on_epoch_advanced: EppOnEpochAdvanced,
-    pub on_sender_key_exhaustion_warning: EppOnSenderKeyExhaustionWarning,
-    pub on_reinit_proposed: EppOnReInitProposed,
+pub struct AuraGroupEventCallbacks {
+    pub on_member_added: AuraOnMemberAdded,
+    pub on_member_removed: AuraOnMemberRemoved,
+    pub on_epoch_advanced: AuraOnEpochAdvanced,
+    pub on_sender_key_exhaustion_warning: AuraOnSenderKeyExhaustionWarning,
+    pub on_reinit_proposed: AuraOnReInitProposed,
     pub user_data: *mut c_void,
 }
 
 struct CFfiGroupEventHandler {
-    callbacks: EppGroupEventCallbacks,
+    callbacks: AuraGroupEventCallbacks,
 }
 
 #[allow(clippy::non_send_fields_in_send_ty)]
@@ -8439,19 +8439,19 @@ impl IGroupEventHandler for CFfiGroupEventHandler {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_group_set_event_handler(
-    handle: *mut EppGroupSessionHandle,
-    callbacks: *const EppGroupEventCallbacks,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_group_set_event_handler(
+    handle: *mut AuraGroupSessionHandle,
+    callbacks: *const AuraGroupEventCallbacks,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if callbacks.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "callbacks is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
@@ -8460,23 +8460,23 @@ pub unsafe extern "C" fn epp_group_set_event_handler(
         let cbs = std::ptr::read(callbacks);
         let handler = Arc::new(CFfiGroupEventHandler { callbacks: cbs });
         session.set_event_handler(handler);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 // ─── C event callbacks — identity ──────────────────────────────────────────
 
-pub type EppOnOtkExhaustionWarning =
+pub type AuraOnOtkExhaustionWarning =
     Option<unsafe extern "C" fn(remaining: u32, max_capacity: u32, user_data: *mut c_void)>;
 
 #[repr(C)]
-pub struct EppIdentityEventCallbacks {
-    pub on_otk_exhaustion_warning: EppOnOtkExhaustionWarning,
+pub struct AuraIdentityEventCallbacks {
+    pub on_otk_exhaustion_warning: AuraOnOtkExhaustionWarning,
     pub user_data: *mut c_void,
 }
 
 struct CFfiIdentityEventHandler {
-    callbacks: EppIdentityEventCallbacks,
+    callbacks: AuraIdentityEventCallbacks,
 }
 
 #[allow(clippy::non_send_fields_in_send_ty)]
@@ -8492,19 +8492,19 @@ impl IIdentityEventHandler for CFfiIdentityEventHandler {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_identity_set_event_handler(
-    handle: *mut EppIdentityHandle,
-    callbacks: *const EppIdentityEventCallbacks,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_identity_set_event_handler(
+    handle: *mut AuraIdentityHandle,
+    callbacks: *const AuraIdentityEventCallbacks,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if callbacks.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "callbacks is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let identity = match require_identity_mut(handle, out_error) {
             Ok(v) => v,
@@ -8513,14 +8513,14 @@ pub unsafe extern "C" fn epp_identity_set_event_handler(
         let cbs = std::ptr::read(callbacks);
         let handler = Arc::new(CFfiIdentityEventHandler { callbacks: cbs });
         identity.set_event_handler(handler);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 // ── Attachment v2: Thumbnail ──
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_encrypt_thumbnail(
+pub unsafe extern "C" fn aura_attachment_encrypt_thumbnail(
     file_key: *const u8,
     file_key_length: usize,
     attachment_id: *const u8,
@@ -8529,10 +8529,10 @@ pub unsafe extern "C" fn epp_attachment_encrypt_thumbnail(
     thumbnail_mime_type_length: usize,
     thumbnail_plaintext: *const u8,
     thumbnail_plaintext_length: usize,
-    out_nonce: *mut EppBuffer,
-    out_ciphertext: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_nonce: *mut AuraBuffer,
+    out_ciphertext: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if file_key.is_null()
             || attachment_id.is_null()
@@ -8543,36 +8543,36 @@ pub unsafe extern "C" fn epp_attachment_encrypt_thumbnail(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if file_key_length != ATTACHMENT_FILE_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "file_key must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if attachment_id_length != ATTACHMENT_ID_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "attachment_id must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if thumbnail_plaintext_length == 0
             || thumbnail_plaintext_length > MAX_ATTACHMENT_THUMBNAIL_SIZE
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Thumbnail size is out of range",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let fk = std::slice::from_raw_parts(file_key, file_key_length);
@@ -8582,10 +8582,10 @@ pub unsafe extern "C" fn epp_attachment_encrypt_thumbnail(
         let Ok(mime) = std::str::from_utf8(mime_bytes) else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Invalid UTF-8 mime_type",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         };
         let plaintext = std::slice::from_raw_parts(thumbnail_plaintext, thumbnail_plaintext_length);
 
@@ -8593,7 +8593,7 @@ pub unsafe extern "C" fn epp_attachment_encrypt_thumbnail(
             Ok((nonce, ct)) => {
                 write_buffer(out_nonce, nonce);
                 write_buffer(out_ciphertext, ct);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -8601,7 +8601,7 @@ pub unsafe extern "C" fn epp_attachment_encrypt_thumbnail(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_decrypt_thumbnail(
+pub unsafe extern "C" fn aura_attachment_decrypt_thumbnail(
     file_key: *const u8,
     file_key_length: usize,
     attachment_id: *const u8,
@@ -8612,9 +8612,9 @@ pub unsafe extern "C" fn epp_attachment_decrypt_thumbnail(
     nonce_length: usize,
     ciphertext: *const u8,
     ciphertext_length: usize,
-    out_plaintext: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_plaintext: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if file_key.is_null()
             || attachment_id.is_null()
@@ -8625,34 +8625,34 @@ pub unsafe extern "C" fn epp_attachment_decrypt_thumbnail(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if file_key_length != ATTACHMENT_FILE_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "file_key must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if attachment_id_length != ATTACHMENT_ID_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "attachment_id must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if nonce_length != AES_GCM_NONCE_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "nonce must be 12 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let fk = std::slice::from_raw_parts(file_key, file_key_length);
@@ -8662,10 +8662,10 @@ pub unsafe extern "C" fn epp_attachment_decrypt_thumbnail(
         let Ok(mime) = std::str::from_utf8(mime_bytes) else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Invalid UTF-8 mime_type",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         };
         let nonce_slice = std::slice::from_raw_parts(nonce, nonce_length);
         let ct = std::slice::from_raw_parts(ciphertext, ciphertext_length);
@@ -8673,7 +8673,7 @@ pub unsafe extern "C" fn epp_attachment_decrypt_thumbnail(
         match crate::protocol::attachment::decrypt_thumbnail(fk, aid, mime, nonce_slice, ct) {
             Ok(pt) => {
                 write_buffer(out_plaintext, pt);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -8683,20 +8683,20 @@ pub unsafe extern "C" fn epp_attachment_decrypt_thumbnail(
 // ── Attachment v2: TTL ──
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_validate_ttl(
+pub unsafe extern "C" fn aura_attachment_validate_ttl(
     ttl_seconds: u64,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, {
         match crate::protocol::attachment::validate_ttl(ttl_seconds) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => unsafe { write_protocol_error(out_error, &e) },
         }
     })
 }
 
 #[no_mangle]
-pub const extern "C" fn epp_attachment_is_expired(
+pub const extern "C" fn aura_attachment_is_expired(
     created_at_unix: u64,
     ttl_seconds: u64,
     now_unix: u64,
@@ -8707,29 +8707,29 @@ pub const extern "C" fn epp_attachment_is_expired(
 // ── Attachment v2: Progress ──
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_progress_create(
+pub unsafe extern "C" fn aura_attachment_progress_create(
     attachment_id: *const u8,
     attachment_id_length: usize,
     chunk_count: u32,
-    out_progress: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_progress: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if attachment_id.is_null() || out_progress.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if attachment_id_length != ATTACHMENT_ID_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "attachment_id must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
@@ -8743,7 +8743,7 @@ pub unsafe extern "C" fn epp_attachment_progress_create(
                     );
                 }
                 write_buffer(out_progress, buf);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -8751,23 +8751,23 @@ pub unsafe extern "C" fn epp_attachment_progress_create(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_progress_mark_completed(
+pub unsafe extern "C" fn aura_attachment_progress_mark_completed(
     progress_bytes: *const u8,
     progress_length: usize,
     chunk_index: u32,
     bytes_transferred: u64,
     now_unix: u64,
-    out_updated_progress: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_updated_progress: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if progress_bytes.is_null() || out_updated_progress.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
 
         let pbytes = std::slice::from_raw_parts(progress_bytes, progress_length);
@@ -8798,26 +8798,26 @@ pub unsafe extern "C" fn epp_attachment_progress_mark_completed(
             );
         }
         write_buffer(out_updated_progress, buf);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_progress_get_remaining(
+pub unsafe extern "C" fn aura_attachment_progress_get_remaining(
     progress_bytes: *const u8,
     progress_length: usize,
-    out_remaining: *mut EppBuffer,
+    out_remaining: *mut AuraBuffer,
     out_remaining_count: *mut u32,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if progress_bytes.is_null() || out_remaining.is_null() || out_remaining_count.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
 
         let pbytes = std::slice::from_raw_parts(progress_bytes, progress_length);
@@ -8835,12 +8835,12 @@ pub unsafe extern "C" fn epp_attachment_progress_get_remaining(
         *out_remaining_count = u32::try_from(remaining.len()).unwrap_or(0);
         let bytes: Vec<u8> = remaining.iter().flat_map(|i| i.to_le_bytes()).collect();
         write_buffer(out_remaining, bytes);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_progress_is_complete(
+pub unsafe extern "C" fn aura_attachment_progress_is_complete(
     progress_bytes: *const u8,
     progress_length: usize,
 ) -> bool {
@@ -8859,51 +8859,51 @@ pub unsafe extern "C" fn epp_attachment_progress_is_complete(
 // ── Attachment v2: Collage ──
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_generate_collage_id(
-    out_collage_id: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_attachment_generate_collage_id(
+    out_collage_id: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_collage_id.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_collage_id is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         write_buffer(
             out_collage_id,
             crate::protocol::attachment::generate_collage_id(),
         );
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_collage_create(
+pub unsafe extern "C" fn aura_attachment_collage_create(
     manifest_array: *const *const u8,
     manifest_lengths: *const usize,
     manifest_count: usize,
-    out_collage: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_collage: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if manifest_array.is_null() || manifest_lengths.is_null() || out_collage.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if manifest_count == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "manifest_count must be > 0",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let ptrs = std::slice::from_raw_parts(manifest_array, manifest_count);
@@ -8914,10 +8914,10 @@ pub unsafe extern "C" fn epp_attachment_collage_create(
             if ptrs[i].is_null() {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorNullPointer,
+                    AuraErrorCode::AuraErrorNullPointer,
                     "manifest pointer is null",
                 );
-                return EppErrorCode::EppErrorNullPointer;
+                return AuraErrorCode::AuraErrorNullPointer;
             }
             let bytes = std::slice::from_raw_parts(ptrs[i], lens[i]);
             let m = match AttachmentManifest::decode(bytes) {
@@ -8942,7 +8942,7 @@ pub unsafe extern "C" fn epp_attachment_collage_create(
                     );
                 }
                 write_buffer(out_collage, buf);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -8950,27 +8950,27 @@ pub unsafe extern "C" fn epp_attachment_collage_create(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_collage_validate(
+pub unsafe extern "C" fn aura_attachment_collage_validate(
     collage_bytes: *const u8,
     collage_length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if collage_bytes.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "collage_bytes is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if collage_length == 0 || collage_length > MAX_COLLAGE_MANIFEST_SIZE {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Collage size is out of range",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let bytes = std::slice::from_raw_parts(collage_bytes, collage_length);
@@ -8984,7 +8984,7 @@ pub unsafe extern "C" fn epp_attachment_collage_validate(
             }
         };
         match crate::protocol::attachment::validate_collage_manifest(&collage) {
-            Ok(_) => EppErrorCode::EppSuccess,
+            Ok(_) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
@@ -8993,7 +8993,7 @@ pub unsafe extern "C" fn epp_attachment_collage_validate(
 // ── Attachment v2: Streaming ──
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_streaming_encryptor_create(
+pub unsafe extern "C" fn aura_attachment_streaming_encryptor_create(
     file_key: *const u8,
     file_key_length: usize,
     attachment_id: *const u8,
@@ -9003,9 +9003,9 @@ pub unsafe extern "C" fn epp_attachment_streaming_encryptor_create(
     total_size: u64,
     chunk_size: u32,
     chunk_count: u32,
-    out_handle: *mut *mut EppStreamingEncryptorHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_handle: *mut *mut AuraStreamingEncryptorHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if file_key.is_null()
             || attachment_id.is_null()
@@ -9014,10 +9014,10 @@ pub unsafe extern "C" fn epp_attachment_streaming_encryptor_create(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
 
         let fk = std::slice::from_raw_parts(file_key, file_key_length).to_vec();
@@ -9026,18 +9026,18 @@ pub unsafe extern "C" fn epp_attachment_streaming_encryptor_create(
         let Ok(mime_str) = std::str::from_utf8(mime_bytes) else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Invalid UTF-8 mime_type",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         };
         let mime = mime_str.to_string();
 
         match StreamingEncryptor::new(fk, aid, mime, total_size, chunk_size, chunk_count) {
             Ok(enc) => {
-                let handle = Box::new(EppStreamingEncryptorHandle(Some(enc)));
+                let handle = Box::new(AuraStreamingEncryptorHandle(Some(enc)));
                 replace_out_handle(out_handle, Box::into_raw(handle));
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -9045,31 +9045,31 @@ pub unsafe extern "C" fn epp_attachment_streaming_encryptor_create(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_streaming_encryptor_write(
-    handle: *mut EppStreamingEncryptorHandle,
+pub unsafe extern "C" fn aura_attachment_streaming_encryptor_write(
+    handle: *mut AuraStreamingEncryptorHandle,
     data: *const u8,
     data_length: usize,
-    out_chunks: *mut EppBuffer,
+    out_chunks: *mut AuraBuffer,
     out_chunk_count: *mut u32,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if handle.is_null() || data.is_null() || out_chunks.is_null() || out_chunk_count.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
 
         let Some(enc) = (*handle).0.as_mut() else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorObjectDisposed,
+                AuraErrorCode::AuraErrorObjectDisposed,
                 "Encryptor disposed",
             );
-            return EppErrorCode::EppErrorObjectDisposed;
+            return AuraErrorCode::AuraErrorObjectDisposed;
         };
 
         let input = std::slice::from_raw_parts(data, data_length);
@@ -9078,7 +9078,7 @@ pub unsafe extern "C" fn epp_attachment_streaming_encryptor_write(
                 *out_chunk_count = u32::try_from(chunks.len()).unwrap_or(0);
                 let serialized = serialize_encrypted_chunks(&chunks);
                 write_buffer(out_chunks, serialized);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -9086,29 +9086,29 @@ pub unsafe extern "C" fn epp_attachment_streaming_encryptor_write(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_streaming_encryptor_finish(
-    handle: *mut EppStreamingEncryptorHandle,
-    out_chunk: *mut EppBuffer,
+pub unsafe extern "C" fn aura_attachment_streaming_encryptor_finish(
+    handle: *mut AuraStreamingEncryptorHandle,
+    out_chunk: *mut AuraBuffer,
     out_has_chunk: *mut u8,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if handle.is_null() || out_chunk.is_null() || out_has_chunk.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
 
         let Some(enc) = (*handle).0.take() else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorObjectDisposed,
+                AuraErrorCode::AuraErrorObjectDisposed,
                 "Encryptor disposed",
             );
-            return EppErrorCode::EppErrorObjectDisposed;
+            return AuraErrorCode::AuraErrorObjectDisposed;
         };
 
         match enc.finish() {
@@ -9116,11 +9116,11 @@ pub unsafe extern "C" fn epp_attachment_streaming_encryptor_finish(
                 *out_has_chunk = 1;
                 let serialized = serialize_encrypted_chunks(&[chunk]);
                 write_buffer(out_chunk, serialized);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Ok(None) => {
                 *out_has_chunk = 0;
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -9128,8 +9128,8 @@ pub unsafe extern "C" fn epp_attachment_streaming_encryptor_finish(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_streaming_encryptor_destroy(
-    handle: *mut EppStreamingEncryptorHandle,
+pub unsafe extern "C" fn aura_attachment_streaming_encryptor_destroy(
+    handle: *mut AuraStreamingEncryptorHandle,
 ) {
     if !handle.is_null() {
         drop(Box::from_raw(handle));
@@ -9149,7 +9149,7 @@ fn serialize_encrypted_chunks(chunks: &[crate::protocol::attachment::EncryptedCh
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_streaming_decryptor_create(
+pub unsafe extern "C" fn aura_attachment_streaming_decryptor_create(
     file_key: *const u8,
     file_key_length: usize,
     attachment_id: *const u8,
@@ -9159,9 +9159,9 @@ pub unsafe extern "C" fn epp_attachment_streaming_decryptor_create(
     total_size: u64,
     chunk_size: u32,
     chunk_count: u32,
-    out_handle: *mut *mut EppStreamingDecryptorHandle,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_handle: *mut *mut AuraStreamingDecryptorHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if file_key.is_null()
             || attachment_id.is_null()
@@ -9170,10 +9170,10 @@ pub unsafe extern "C" fn epp_attachment_streaming_decryptor_create(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
 
         let fk = std::slice::from_raw_parts(file_key, file_key_length).to_vec();
@@ -9182,18 +9182,18 @@ pub unsafe extern "C" fn epp_attachment_streaming_decryptor_create(
         let Ok(mime_str) = std::str::from_utf8(mime_bytes) else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Invalid UTF-8 mime_type",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         };
         let mime = mime_str.to_string();
 
         match StreamingDecryptor::new(fk, aid, mime, total_size, chunk_size, chunk_count) {
             Ok(dec) => {
-                let handle = Box::new(EppStreamingDecryptorHandle(Some(dec)));
+                let handle = Box::new(AuraStreamingDecryptorHandle(Some(dec)));
                 replace_out_handle(out_handle, Box::into_raw(handle));
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -9201,33 +9201,33 @@ pub unsafe extern "C" fn epp_attachment_streaming_decryptor_create(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_streaming_decryptor_write(
-    handle: *mut EppStreamingDecryptorHandle,
+pub unsafe extern "C" fn aura_attachment_streaming_decryptor_write(
+    handle: *mut AuraStreamingDecryptorHandle,
     chunk_index: u32,
     nonce: *const u8,
     nonce_length: usize,
     ciphertext: *const u8,
     ciphertext_length: usize,
-    out_plaintext: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_plaintext: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if handle.is_null() || nonce.is_null() || ciphertext.is_null() || out_plaintext.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
 
         let Some(dec) = (*handle).0.as_mut() else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorObjectDisposed,
+                AuraErrorCode::AuraErrorObjectDisposed,
                 "Decryptor disposed",
             );
-            return EppErrorCode::EppErrorObjectDisposed;
+            return AuraErrorCode::AuraErrorObjectDisposed;
         };
 
         let nonce_slice = std::slice::from_raw_parts(nonce, nonce_length);
@@ -9236,7 +9236,7 @@ pub unsafe extern "C" fn epp_attachment_streaming_decryptor_write(
         match dec.decrypt_next(chunk_index, nonce_slice, ct) {
             Ok(pt) => {
                 write_buffer(out_plaintext, pt);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -9244,8 +9244,8 @@ pub unsafe extern "C" fn epp_attachment_streaming_decryptor_write(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_streaming_decryptor_is_complete(
-    handle: *mut EppStreamingDecryptorHandle,
+pub unsafe extern "C" fn aura_attachment_streaming_decryptor_is_complete(
+    handle: *mut AuraStreamingDecryptorHandle,
 ) -> bool {
     ffi_catch_panic_value!(false, {
         if handle.is_null() {
@@ -9257,8 +9257,8 @@ pub unsafe extern "C" fn epp_attachment_streaming_decryptor_is_complete(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_streaming_decryptor_destroy(
-    handle: *mut EppStreamingDecryptorHandle,
+pub unsafe extern "C" fn aura_attachment_streaming_decryptor_destroy(
+    handle: *mut AuraStreamingDecryptorHandle,
 ) {
     if !handle.is_null() {
         drop(Box::from_raw(handle));
@@ -9268,7 +9268,7 @@ pub unsafe extern "C" fn epp_attachment_streaming_decryptor_destroy(
 // ── Attachment v2: Manifest v2 ──
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_manifest_create_v2(
+pub unsafe extern "C" fn aura_attachment_manifest_create_v2(
     attachment_id: *const u8,
     attachment_id_length: usize,
     mime_type: *const u8,
@@ -9290,9 +9290,9 @@ pub unsafe extern "C" fn epp_attachment_manifest_create_v2(
     thumbnail_original_size: u32,
     ttl_seconds: u64,
     created_at_unix: u64,
-    out_manifest: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_manifest: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if attachment_id.is_null()
             || mime_type.is_null()
@@ -9302,30 +9302,30 @@ pub unsafe extern "C" fn epp_attachment_manifest_create_v2(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if attachment_id_length != ATTACHMENT_ID_BYTES
             || file_sha256_length != ATTACHMENT_HASH_BYTES
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "ID and SHA-256 must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if encrypted_file_key_length == 0
             || encrypted_file_key_length > MAX_ATTACHMENT_ENCRYPTED_FILE_KEY_SIZE
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "encrypted_file_key size is out of range",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
@@ -9333,10 +9333,10 @@ pub unsafe extern "C" fn epp_attachment_manifest_create_v2(
         let Ok(mime_s) = std::str::from_utf8(mime_bytes) else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "Invalid UTF-8 mime_type",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         };
         let mime_str = mime_s.to_string();
         let sha = std::slice::from_raw_parts(file_sha256, file_sha256_length);
@@ -9408,22 +9408,22 @@ pub unsafe extern "C" fn epp_attachment_manifest_create_v2(
             );
         }
         write_buffer(out_manifest, buf);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 // ── Attachment v2: File Key Helper ──
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_encrypt_file_key(
-    handle: *mut EppSessionHandle,
+pub unsafe extern "C" fn aura_attachment_encrypt_file_key(
+    handle: *mut AuraSessionHandle,
     file_key: *const u8,
     file_key_length: usize,
     attachment_id: *const u8,
     attachment_id_length: usize,
-    out_encrypted_file_key: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_encrypted_file_key: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if handle.is_null()
             || file_key.is_null()
@@ -9432,35 +9432,35 @@ pub unsafe extern "C" fn epp_attachment_encrypt_file_key(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if file_key_length != ATTACHMENT_FILE_KEY_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "file_key must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         if attachment_id_length != ATTACHMENT_ID_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "attachment_id must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let Some(session) = (*handle).inner.as_ref() else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorObjectDisposed,
+                AuraErrorCode::AuraErrorObjectDisposed,
                 "Session disposed",
             );
-            return EppErrorCode::EppErrorObjectDisposed;
+            return AuraErrorCode::AuraErrorObjectDisposed;
         };
 
         let fk = std::slice::from_raw_parts(file_key, file_key_length);
@@ -9469,7 +9469,7 @@ pub unsafe extern "C" fn epp_attachment_encrypt_file_key(
         match crate::protocol::attachment::encrypt_file_key_for_session(session, fk, aid) {
             Ok(encrypted) => {
                 write_buffer(out_encrypted_file_key, encrypted);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -9477,15 +9477,15 @@ pub unsafe extern "C" fn epp_attachment_encrypt_file_key(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_decrypt_file_key(
-    handle: *mut EppSessionHandle,
+pub unsafe extern "C" fn aura_attachment_decrypt_file_key(
+    handle: *mut AuraSessionHandle,
     encrypted_file_key: *const u8,
     encrypted_file_key_length: usize,
     attachment_id: *const u8,
     attachment_id_length: usize,
-    out_file_key: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_file_key: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if handle.is_null()
             || encrypted_file_key.is_null()
@@ -9494,27 +9494,27 @@ pub unsafe extern "C" fn epp_attachment_decrypt_file_key(
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if attachment_id_length != ATTACHMENT_ID_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "attachment_id must be 32 bytes",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let Some(session) = (*handle).inner.as_ref() else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorObjectDisposed,
+                AuraErrorCode::AuraErrorObjectDisposed,
                 "Session disposed",
             );
-            return EppErrorCode::EppErrorObjectDisposed;
+            return AuraErrorCode::AuraErrorObjectDisposed;
         };
 
         let efk = std::slice::from_raw_parts(encrypted_file_key, encrypted_file_key_length);
@@ -9523,7 +9523,7 @@ pub unsafe extern "C" fn epp_attachment_decrypt_file_key(
         match crate::protocol::attachment::decrypt_file_key_from_session(session, efk, aid) {
             Ok(key) => {
                 write_buffer(out_file_key, key);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -9531,123 +9531,123 @@ pub unsafe extern "C" fn epp_attachment_decrypt_file_key(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_validate_magic_bytes(
+pub unsafe extern "C" fn aura_attachment_validate_magic_bytes(
     header: *const u8,
     header_length: usize,
     mime_type: *const u8,
     mime_type_length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if header.is_null() || mime_type.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let header_slice = std::slice::from_raw_parts(header, header_length);
         let mime_bytes = std::slice::from_raw_parts(mime_type, mime_type_length);
         let Ok(mime_str) = std::str::from_utf8(mime_bytes) else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "mime_type is not valid UTF-8",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         };
         match crate::protocol::attachment::validate_magic_bytes(header_slice, mime_str) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_detect_mime(
+pub unsafe extern "C" fn aura_attachment_detect_mime(
     header: *const u8,
     header_length: usize,
-    out_mime: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_mime: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if header.is_null() || out_mime.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let header_slice = std::slice::from_raw_parts(header, header_length);
         let buf = crate::protocol::attachment::detect_mime_from_magic(header_slice)
             .map_or_else(Vec::new, |mime| mime.as_bytes().to_vec());
         write_buffer(out_mime, buf);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_validate_filename(
+pub unsafe extern "C" fn aura_attachment_validate_filename(
     name: *const u8,
     name_length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if name.is_null() {
-            write_error(out_error, EppErrorCode::EppErrorNullPointer, "name is null");
-            return EppErrorCode::EppErrorNullPointer;
+            write_error(out_error, AuraErrorCode::AuraErrorNullPointer, "name is null");
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let name_bytes = std::slice::from_raw_parts(name, name_length);
         let Ok(name_str) = std::str::from_utf8(name_bytes) else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "name is not valid UTF-8",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         };
         match crate::protocol::attachment::validate_filename(name_str) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_sanitize_filename(
+pub unsafe extern "C" fn aura_attachment_sanitize_filename(
     name: *const u8,
     name_length: usize,
-    out_sanitized: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_sanitized: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if name.is_null() || out_sanitized.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let name_bytes = std::slice::from_raw_parts(name, name_length);
         let Ok(name_str) = std::str::from_utf8(name_bytes) else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "name is not valid UTF-8",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         };
         let sanitized = crate::protocol::attachment::sanitize_filename(name_str);
         write_buffer(out_sanitized, sanitized.into_bytes());
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_collage_create_with_metadata(
+pub unsafe extern "C" fn aura_attachment_collage_create_with_metadata(
     manifest_array: *const *const u8,
     manifest_lengths: *const usize,
     manifest_count: usize,
@@ -9656,25 +9656,25 @@ pub unsafe extern "C" fn epp_attachment_collage_create_with_metadata(
     description: *const u8,
     description_length: usize,
     layout: i32,
-    out_collage: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_collage: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if manifest_array.is_null() || manifest_lengths.is_null() || out_collage.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         if manifest_count == 0 {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "manifest_count must be > 0",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
 
         let ptrs = std::slice::from_raw_parts(manifest_array, manifest_count);
@@ -9685,10 +9685,10 @@ pub unsafe extern "C" fn epp_attachment_collage_create_with_metadata(
             if ptrs[i].is_null() {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorNullPointer,
+                    AuraErrorCode::AuraErrorNullPointer,
                     "manifest pointer is null",
                 );
-                return EppErrorCode::EppErrorNullPointer;
+                return AuraErrorCode::AuraErrorNullPointer;
             }
             let bytes = std::slice::from_raw_parts(ptrs[i], lens[i]);
             let Ok(m) = AttachmentManifest::decode(bytes) else {
@@ -9705,10 +9705,10 @@ pub unsafe extern "C" fn epp_attachment_collage_create_with_metadata(
             let Ok(s) = std::str::from_utf8(nb) else {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorInvalidInput,
+                    AuraErrorCode::AuraErrorInvalidInput,
                     "name is not valid UTF-8",
                 );
-                return EppErrorCode::EppErrorInvalidInput;
+                return AuraErrorCode::AuraErrorInvalidInput;
             };
             Some(s)
         } else {
@@ -9719,10 +9719,10 @@ pub unsafe extern "C" fn epp_attachment_collage_create_with_metadata(
             let Ok(s) = std::str::from_utf8(db) else {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorInvalidInput,
+                    AuraErrorCode::AuraErrorInvalidInput,
                     "description is not valid UTF-8",
                 );
-                return EppErrorCode::EppErrorInvalidInput;
+                return AuraErrorCode::AuraErrorInvalidInput;
             };
             Some(s)
         } else {
@@ -9742,7 +9742,7 @@ pub unsafe extern "C" fn epp_attachment_collage_create_with_metadata(
                     );
                 }
                 write_buffer(out_collage, buf);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -9750,19 +9750,19 @@ pub unsafe extern "C" fn epp_attachment_collage_create_with_metadata(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_inline_validate(
+pub unsafe extern "C" fn aura_attachment_inline_validate(
     bytes: *const u8,
     length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if bytes.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "bytes is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let slice = std::slice::from_raw_parts(bytes, length);
         let Ok(obj) = InlineAttachment::decode(slice) else {
@@ -9772,14 +9772,14 @@ pub unsafe extern "C" fn epp_attachment_inline_validate(
             );
         };
         match crate::protocol::attachment::validate_inline_attachment(&obj) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_inline_create(
+pub unsafe extern "C" fn aura_attachment_inline_create(
     attachment_id: *const u8,
     attachment_id_length: usize,
     mime_type: *const u8,
@@ -9792,28 +9792,28 @@ pub unsafe extern "C" fn epp_attachment_inline_create(
     view_once: u8,
     no_forward: u8,
     no_save: u8,
-    out_buffer: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_buffer: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if attachment_id.is_null() || mime_type.is_null() || data.is_null() || out_buffer.is_null()
         {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
         let mime_bytes = std::slice::from_raw_parts(mime_type, mime_type_length);
         let Ok(mime_str) = std::str::from_utf8(mime_bytes) else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "mime_type is not valid UTF-8",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         };
         let data_slice = std::slice::from_raw_parts(data, data_length);
         let filename = if !original_filename.is_null() && original_filename_length > 0 {
@@ -9821,10 +9821,10 @@ pub unsafe extern "C" fn epp_attachment_inline_create(
             let Ok(fs) = std::str::from_utf8(fb) else {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorInvalidInput,
+                    AuraErrorCode::AuraErrorInvalidInput,
                     "filename is not valid UTF-8",
                 );
-                return EppErrorCode::EppErrorInvalidInput;
+                return AuraErrorCode::AuraErrorInvalidInput;
             };
             Some(fs.to_string())
         } else {
@@ -9855,7 +9855,7 @@ pub unsafe extern "C" fn epp_attachment_inline_create(
                     );
                 }
                 write_buffer(out_buffer, buf);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -9863,19 +9863,19 @@ pub unsafe extern "C" fn epp_attachment_inline_create(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_reference_validate(
+pub unsafe extern "C" fn aura_attachment_reference_validate(
     bytes: *const u8,
     length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if bytes.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "bytes is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let slice = std::slice::from_raw_parts(bytes, length);
         let Ok(obj) = AttachmentReference::decode(slice) else {
@@ -9885,30 +9885,30 @@ pub unsafe extern "C" fn epp_attachment_reference_validate(
             );
         };
         match crate::protocol::attachment::validate_attachment_reference(&obj) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_reference_create(
+pub unsafe extern "C" fn aura_attachment_reference_create(
     attachment_id: *const u8,
     attachment_id_length: usize,
     reference_type: i32,
     source_message_id: *const u8,
     source_message_id_length: usize,
-    out_buffer: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_buffer: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if attachment_id.is_null() || out_buffer.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
         let smid = if !source_message_id.is_null() && source_message_id_length > 0 {
@@ -9930,7 +9930,7 @@ pub unsafe extern "C" fn epp_attachment_reference_create(
                     );
                 }
                 write_buffer(out_buffer, buf);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -9938,19 +9938,19 @@ pub unsafe extern "C" fn epp_attachment_reference_create(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_voice_meta_validate(
+pub unsafe extern "C" fn aura_attachment_voice_meta_validate(
     bytes: *const u8,
     length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if bytes.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "bytes is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let slice = std::slice::from_raw_parts(bytes, length);
         let Ok(obj) = VoiceMessageMeta::decode(slice) else {
@@ -9960,14 +9960,14 @@ pub unsafe extern "C" fn epp_attachment_voice_meta_validate(
             );
         };
         match crate::protocol::attachment::validate_voice_message_meta(&obj) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_voice_meta_create(
+pub unsafe extern "C" fn aura_attachment_voice_meta_create(
     waveform_samples: *const f32,
     waveform_count: usize,
     transcript: *const u8,
@@ -9975,17 +9975,17 @@ pub unsafe extern "C" fn epp_attachment_voice_meta_create(
     playback_speed_hint: f32,
     has_playback_speed: u8,
     is_listened: u8,
-    out_buffer: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_buffer: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_buffer.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_buffer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let waveform = if !waveform_samples.is_null() && waveform_count > 0 {
             std::slice::from_raw_parts(waveform_samples, waveform_count).to_vec()
@@ -9997,10 +9997,10 @@ pub unsafe extern "C" fn epp_attachment_voice_meta_create(
             let Ok(ts) = std::str::from_utf8(tb) else {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorInvalidInput,
+                    AuraErrorCode::AuraErrorInvalidInput,
                     "transcript is not valid UTF-8",
                 );
-                return EppErrorCode::EppErrorInvalidInput;
+                return AuraErrorCode::AuraErrorInvalidInput;
             };
             Some(ts.to_string())
         } else {
@@ -10026,7 +10026,7 @@ pub unsafe extern "C" fn epp_attachment_voice_meta_create(
                     );
                 }
                 write_buffer(out_buffer, buf);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -10034,19 +10034,19 @@ pub unsafe extern "C" fn epp_attachment_voice_meta_create(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_location_validate(
+pub unsafe extern "C" fn aura_attachment_location_validate(
     bytes: *const u8,
     length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if bytes.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "bytes is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let slice = std::slice::from_raw_parts(bytes, length);
         let Ok(obj) = LocationAttachment::decode(slice) else {
@@ -10056,14 +10056,14 @@ pub unsafe extern "C" fn epp_attachment_location_validate(
             );
         };
         match crate::protocol::attachment::validate_location_attachment(&obj) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_location_create(
+pub unsafe extern "C" fn aura_attachment_location_create(
     latitude: f64,
     longitude: f64,
     accuracy_meters: f64,
@@ -10072,17 +10072,17 @@ pub unsafe extern "C" fn epp_attachment_location_create(
     label_length: usize,
     timestamp_unix: u64,
     has_timestamp: u8,
-    out_buffer: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_buffer: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_buffer.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_buffer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let accuracy = if has_accuracy != 0 {
             Some(accuracy_meters)
@@ -10094,10 +10094,10 @@ pub unsafe extern "C" fn epp_attachment_location_create(
             let Ok(ls) = std::str::from_utf8(lb) else {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorInvalidInput,
+                    AuraErrorCode::AuraErrorInvalidInput,
                     "label is not valid UTF-8",
                 );
-                return EppErrorCode::EppErrorInvalidInput;
+                return AuraErrorCode::AuraErrorInvalidInput;
             };
             Some(ls.to_string())
         } else {
@@ -10120,7 +10120,7 @@ pub unsafe extern "C" fn epp_attachment_location_create(
                     );
                 }
                 write_buffer(out_buffer, buf);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -10128,19 +10128,19 @@ pub unsafe extern "C" fn epp_attachment_location_create(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_contact_card_validate(
+pub unsafe extern "C" fn aura_attachment_contact_card_validate(
     bytes: *const u8,
     length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if bytes.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "bytes is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let slice = std::slice::from_raw_parts(bytes, length);
         let Ok(obj) = ContactCard::decode(slice) else {
@@ -10150,14 +10150,14 @@ pub unsafe extern "C" fn epp_attachment_contact_card_validate(
             );
         };
         match crate::protocol::attachment::validate_contact_card(&obj) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_contact_card_create(
+pub unsafe extern "C" fn aura_attachment_contact_card_create(
     display_name: *const u8,
     display_name_length: usize,
     phone: *const u8,
@@ -10168,36 +10168,36 @@ pub unsafe extern "C" fn epp_attachment_contact_card_create(
     avatar_data_length: usize,
     organization: *const u8,
     organization_length: usize,
-    out_buffer: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_buffer: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if display_name.is_null() || out_buffer.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let dn_bytes = std::slice::from_raw_parts(display_name, display_name_length);
         let Ok(dn_str) = std::str::from_utf8(dn_bytes) else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "display_name is not valid UTF-8",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         };
         let phone_opt = if !phone.is_null() && phone_length > 0 {
             let pb = std::slice::from_raw_parts(phone, phone_length);
             let Ok(ps) = std::str::from_utf8(pb) else {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorInvalidInput,
+                    AuraErrorCode::AuraErrorInvalidInput,
                     "phone is not valid UTF-8",
                 );
-                return EppErrorCode::EppErrorInvalidInput;
+                return AuraErrorCode::AuraErrorInvalidInput;
             };
             Some(ps.to_string())
         } else {
@@ -10208,10 +10208,10 @@ pub unsafe extern "C" fn epp_attachment_contact_card_create(
             let Ok(es) = std::str::from_utf8(eb) else {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorInvalidInput,
+                    AuraErrorCode::AuraErrorInvalidInput,
                     "email is not valid UTF-8",
                 );
-                return EppErrorCode::EppErrorInvalidInput;
+                return AuraErrorCode::AuraErrorInvalidInput;
             };
             Some(es.to_string())
         } else {
@@ -10227,10 +10227,10 @@ pub unsafe extern "C" fn epp_attachment_contact_card_create(
             let Ok(os) = std::str::from_utf8(ob) else {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorInvalidInput,
+                    AuraErrorCode::AuraErrorInvalidInput,
                     "organization is not valid UTF-8",
                 );
-                return EppErrorCode::EppErrorInvalidInput;
+                return AuraErrorCode::AuraErrorInvalidInput;
             };
             Some(os.to_string())
         } else {
@@ -10252,7 +10252,7 @@ pub unsafe extern "C" fn epp_attachment_contact_card_create(
                     );
                 }
                 write_buffer(out_buffer, buf);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -10260,19 +10260,19 @@ pub unsafe extern "C" fn epp_attachment_contact_card_create(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_link_preview_validate(
+pub unsafe extern "C" fn aura_attachment_link_preview_validate(
     bytes: *const u8,
     length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if bytes.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "bytes is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let slice = std::slice::from_raw_parts(bytes, length);
         let Ok(obj) = LinkPreview::decode(slice) else {
@@ -10282,14 +10282,14 @@ pub unsafe extern "C" fn epp_attachment_link_preview_validate(
             );
         };
         match crate::protocol::attachment::validate_link_preview(&obj) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_attachment_link_preview_create(
+pub unsafe extern "C" fn aura_attachment_link_preview_create(
     url: *const u8,
     url_length: usize,
     title: *const u8,
@@ -10302,36 +10302,36 @@ pub unsafe extern "C" fn epp_attachment_link_preview_create(
     preview_image_mime_length: usize,
     domain: *const u8,
     domain_length: usize,
-    out_buffer: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_buffer: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if url.is_null() || out_buffer.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "A required pointer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let url_bytes = std::slice::from_raw_parts(url, url_length);
         let Ok(url_str) = std::str::from_utf8(url_bytes) else {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "url is not valid UTF-8",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         };
         let title_opt = if !title.is_null() && title_length > 0 {
             let tb = std::slice::from_raw_parts(title, title_length);
             let Ok(ts) = std::str::from_utf8(tb) else {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorInvalidInput,
+                    AuraErrorCode::AuraErrorInvalidInput,
                     "title is not valid UTF-8",
                 );
-                return EppErrorCode::EppErrorInvalidInput;
+                return AuraErrorCode::AuraErrorInvalidInput;
             };
             Some(ts.to_string())
         } else {
@@ -10342,10 +10342,10 @@ pub unsafe extern "C" fn epp_attachment_link_preview_create(
             let Ok(ds) = std::str::from_utf8(db) else {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorInvalidInput,
+                    AuraErrorCode::AuraErrorInvalidInput,
                     "description is not valid UTF-8",
                 );
-                return EppErrorCode::EppErrorInvalidInput;
+                return AuraErrorCode::AuraErrorInvalidInput;
             };
             Some(ds.to_string())
         } else {
@@ -10361,10 +10361,10 @@ pub unsafe extern "C" fn epp_attachment_link_preview_create(
             let Ok(ms) = std::str::from_utf8(mb) else {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorInvalidInput,
+                    AuraErrorCode::AuraErrorInvalidInput,
                     "preview_image_mime is not valid UTF-8",
                 );
-                return EppErrorCode::EppErrorInvalidInput;
+                return AuraErrorCode::AuraErrorInvalidInput;
             };
             Some(ms.to_string())
         } else {
@@ -10375,10 +10375,10 @@ pub unsafe extern "C" fn epp_attachment_link_preview_create(
             let Ok(ds) = std::str::from_utf8(db) else {
                 write_error(
                     out_error,
-                    EppErrorCode::EppErrorInvalidInput,
+                    AuraErrorCode::AuraErrorInvalidInput,
                     "domain is not valid UTF-8",
                 );
-                return EppErrorCode::EppErrorInvalidInput;
+                return AuraErrorCode::AuraErrorInvalidInput;
             };
             Some(ds.to_string())
         } else {
@@ -10401,7 +10401,7 @@ pub unsafe extern "C" fn epp_attachment_link_preview_create(
                     );
                 }
                 write_buffer(out_buffer, buf);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -10409,19 +10409,19 @@ pub unsafe extern "C" fn epp_attachment_link_preview_create(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_get_metadata(
-    handle: *mut EppSessionHandle,
-    out_buffer: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_session_get_metadata(
+    handle: *mut AuraSessionHandle,
+    out_buffer: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_buffer.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_buffer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
@@ -10457,12 +10457,12 @@ pub unsafe extern "C" fn epp_session_get_metadata(
             );
         }
         write_buffer(out_buffer, buf);
-        EppErrorCode::EppSuccess
+        AuraErrorCode::AuraSuccess
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_is_expired(handle: *mut EppSessionHandle) -> bool {
+pub unsafe extern "C" fn aura_session_is_expired(handle: *mut AuraSessionHandle) -> bool {
     ffi_catch_panic_value!(false, {
         if handle.is_null() {
             return false;
@@ -10475,12 +10475,12 @@ pub unsafe extern "C" fn epp_session_is_expired(handle: *mut EppSessionHandle) -
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_set_device_id(
-    handle: *mut EppSessionHandle,
+pub unsafe extern "C" fn aura_session_set_device_id(
+    handle: *mut AuraSessionHandle,
     device_id: *const u8,
     device_id_length: usize,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
@@ -10489,33 +10489,33 @@ pub unsafe extern "C" fn epp_session_set_device_id(
         if device_id.is_null() || device_id_length != DEVICE_ID_BYTES {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorInvalidInput,
+                AuraErrorCode::AuraErrorInvalidInput,
                 "device_id must be non-null and exactly DEVICE_ID_BYTES",
             );
-            return EppErrorCode::EppErrorInvalidInput;
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let id_slice = std::slice::from_raw_parts(device_id, device_id_length);
         match session.set_device_id(id_slice) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_get_device_id(
-    handle: *mut EppSessionHandle,
-    out_buffer: *mut EppBuffer,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+pub unsafe extern "C" fn aura_session_get_device_id(
+    handle: *mut AuraSessionHandle,
+    out_buffer: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         if out_buffer.is_null() {
             write_error(
                 out_error,
-                EppErrorCode::EppErrorNullPointer,
+                AuraErrorCode::AuraErrorNullPointer,
                 "out_buffer is null",
             );
-            return EppErrorCode::EppErrorNullPointer;
+            return AuraErrorCode::AuraErrorNullPointer;
         }
         let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
@@ -10524,11 +10524,11 @@ pub unsafe extern "C" fn epp_session_get_device_id(
         match session.get_device_id() {
             Ok(Some(id)) => {
                 write_buffer(out_buffer, id);
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Ok(None) => {
                 write_buffer(out_buffer, Vec::new());
-                EppErrorCode::EppSuccess
+                AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
         }
@@ -10536,12 +10536,12 @@ pub unsafe extern "C" fn epp_session_get_device_id(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn epp_session_set_ttl(
-    handle: *mut EppSessionHandle,
+pub unsafe extern "C" fn aura_session_set_ttl(
+    handle: *mut AuraSessionHandle,
     ttl_seconds: u64,
     has_ttl: bool,
-    out_error: *mut EppError,
-) -> EppErrorCode {
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
         let (_guard, session) = match require_session_mut(handle, out_error) {
             Ok(v) => v,
@@ -10549,7 +10549,7 @@ pub unsafe extern "C" fn epp_session_set_ttl(
         };
         let ttl = if has_ttl { Some(ttl_seconds) } else { None };
         match session.set_session_ttl(ttl) {
-            Ok(()) => EppErrorCode::EppSuccess,
+            Ok(()) => AuraErrorCode::AuraSuccess,
             Err(e) => write_protocol_error(out_error, &e),
         }
     })

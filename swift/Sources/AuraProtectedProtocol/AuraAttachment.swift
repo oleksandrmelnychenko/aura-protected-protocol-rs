@@ -1,6 +1,6 @@
 import Foundation
 
-public struct EppContentPolicyConfig: Sendable {
+public struct AuraContentPolicyConfig: Sendable {
     public let viewOnce: Bool
     public let noForward: Bool
     public let noSave: Bool
@@ -12,51 +12,51 @@ public struct EppContentPolicyConfig: Sendable {
     }
 }
 
-public enum EppCollageLayout: Int32, Sendable {
+public enum AuraCollageLayout: Int32, Sendable {
     case grid = 0
     case carousel = 1
     case list = 2
     case stack = 3
 }
 
-public enum EppReferenceType: Int32, Sendable {
+public enum AuraReferenceType: Int32, Sendable {
     case reply = 0
     case quote = 1
     case forward = 2
 }
 
-public enum EppAttachment {
+public enum AuraAttachment {
 
     public static func generateId() throws -> Data {
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = native_epp_attachment_generate_id(&buf, &err)
         defer {
             if buf.data != nil { native_epp_buffer_release(&buf) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(buf) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
 
     public static func generateFileKey() throws -> Data {
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = native_epp_attachment_generate_file_key(&buf, &err)
         defer {
             if buf.data != nil { native_epp_buffer_release(&buf) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(buf) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
@@ -71,9 +71,9 @@ public enum EppAttachment {
         chunkCount: UInt32,
         plaintext: Data
     ) throws -> (nonce: Data, ciphertext: Data) {
-        var outNonce = NativeEppBuffer(data: nil, length: 0)
-        var outCiphertext = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var outNonce = NativeAuraBuffer(data: nil, length: 0)
+        var outCiphertext = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = fileKey.withUnsafeBytes { fkPtr in
             attachmentId.withUnsafeBytes { aidPtr in
                 mimeType.withCString { mimePtr in
@@ -104,12 +104,12 @@ public enum EppAttachment {
             if outCiphertext.data != nil { native_epp_buffer_release(&outCiphertext) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let nonceData = dataFromBuffer(outNonce),
               let ctData = dataFromBuffer(outCiphertext) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return (nonce: nonceData, ciphertext: ctData)
     }
@@ -125,8 +125,8 @@ public enum EppAttachment {
         nonce: Data,
         ciphertext: Data
     ) throws -> Data {
-        var outPlaintext = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var outPlaintext = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = fileKey.withUnsafeBytes { fkPtr in
             attachmentId.withUnsafeBytes { aidPtr in
                 mimeType.withCString { mimePtr in
@@ -159,11 +159,11 @@ public enum EppAttachment {
             if outPlaintext.data != nil { native_epp_buffer_release(&outPlaintext) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(outPlaintext) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
@@ -177,8 +177,8 @@ public enum EppAttachment {
         fileSha256: Data,
         encryptedFileKey: Data
     ) throws -> Data {
-        var outManifest = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var outManifest = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = attachmentId.withUnsafeBytes { aidPtr in
             mimeType.withCString { mimePtr in
                 fileSha256.withUnsafeBytes { shaPtr in
@@ -206,17 +206,17 @@ public enum EppAttachment {
             if outManifest.data != nil { native_epp_buffer_release(&outManifest) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(outManifest) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
 
     public static func validateManifest(_ manifestBytes: Data) throws {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = manifestBytes.withUnsafeBytes { ptr in
             native_epp_attachment_manifest_validate(
                 ptr.baseAddress!.assumingMemoryBound(to: UInt8.self),
@@ -225,8 +225,8 @@ public enum EppAttachment {
             )
         }
         defer { native_epp_error_free(&err) }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
     }
 
@@ -236,7 +236,7 @@ public enum EppAttachment {
         nonce: Data,
         ciphertext: Data
     ) throws {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = manifestBytes.withUnsafeBytes { mPtr in
             nonce.withUnsafeBytes { noncePtr in
                 ciphertext.withUnsafeBytes { ctPtr in
@@ -254,8 +254,8 @@ public enum EppAttachment {
             }
         }
         defer { native_epp_error_free(&err) }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
     }
 
@@ -265,9 +265,9 @@ public enum EppAttachment {
         mimeType: String,
         plaintext: Data
     ) throws -> (nonce: Data, ciphertext: Data) {
-        var outNonce = NativeEppBuffer(data: nil, length: 0)
-        var outCiphertext = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var outNonce = NativeAuraBuffer(data: nil, length: 0)
+        var outCiphertext = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let mimeData = Data(mimeType.utf8)
         let code = fileKey.withUnsafeBytes { fkPtr in
             attachmentId.withUnsafeBytes { aidPtr in
@@ -295,12 +295,12 @@ public enum EppAttachment {
             if outCiphertext.data != nil { native_epp_buffer_release(&outCiphertext) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let nonceData = dataFromBuffer(outNonce),
               let ctData = dataFromBuffer(outCiphertext) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return (nonce: nonceData, ciphertext: ctData)
     }
@@ -312,8 +312,8 @@ public enum EppAttachment {
         nonce: Data,
         ciphertext: Data
     ) throws -> Data {
-        var outPlaintext = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var outPlaintext = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let mimeData = Data(mimeType.utf8)
         let code = fileKey.withUnsafeBytes { fkPtr in
             attachmentId.withUnsafeBytes { aidPtr in
@@ -343,21 +343,21 @@ public enum EppAttachment {
             if outPlaintext.data != nil { native_epp_buffer_release(&outPlaintext) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(outPlaintext) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
 
     public static func validateTtl(_ seconds: UInt64) throws {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = native_epp_attachment_validate_ttl(seconds, &err)
         defer { native_epp_error_free(&err) }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
     }
 
@@ -369,8 +369,8 @@ public enum EppAttachment {
         attachmentId: Data,
         chunkCount: UInt32
     ) throws -> Data {
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = attachmentId.withUnsafeBytes { aidPtr in
             native_epp_attachment_progress_create(
                 aidPtr.baseAddress!.assumingMemoryBound(to: UInt8.self),
@@ -384,11 +384,11 @@ public enum EppAttachment {
             if buf.data != nil { native_epp_buffer_release(&buf) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(buf) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
@@ -399,8 +399,8 @@ public enum EppAttachment {
         bytesTransferred: UInt64,
         nowUnix: UInt64
     ) throws -> Data {
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = progressBytes.withUnsafeBytes { pPtr in
             native_epp_attachment_progress_mark_completed(
                 pPtr.baseAddress!.assumingMemoryBound(to: UInt8.self),
@@ -416,11 +416,11 @@ public enum EppAttachment {
             if buf.data != nil { native_epp_buffer_release(&buf) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(buf) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
@@ -428,9 +428,9 @@ public enum EppAttachment {
     public static func progressGetRemaining(
         progressBytes: Data
     ) throws -> (remaining: Data, count: UInt32) {
-        var buf = NativeEppBuffer(data: nil, length: 0)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
         var remainingCount: UInt32 = 0
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = progressBytes.withUnsafeBytes { pPtr in
             native_epp_attachment_progress_get_remaining(
                 pPtr.baseAddress!.assumingMemoryBound(to: UInt8.self),
@@ -444,8 +444,8 @@ public enum EppAttachment {
             if buf.data != nil { native_epp_buffer_release(&buf) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         let data = dataFromBuffer(buf) ?? Data()
         return (remaining: data, count: remainingCount)
@@ -461,25 +461,25 @@ public enum EppAttachment {
     }
 
     public static func generateCollageId() throws -> Data {
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = native_epp_attachment_generate_collage_id(&buf, &err)
         defer {
             if buf.data != nil { native_epp_buffer_release(&buf) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(buf) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
 
     public static func createCollage(manifests: [Data]) throws -> Data {
-        var outCollage = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var outCollage = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let manifestCount = manifests.count
         var pointers: [UnsafePointer<UInt8>?] = []
         var lengths: [Int] = []
@@ -512,17 +512,17 @@ public enum EppAttachment {
             if outCollage.data != nil { native_epp_buffer_release(&outCollage) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(outCollage) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
 
     public static func validateCollage(_ collageBytes: Data) throws {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = collageBytes.withUnsafeBytes { ptr in
             native_epp_attachment_collage_validate(
                 ptr.baseAddress!.assumingMemoryBound(to: UInt8.self),
@@ -531,13 +531,13 @@ public enum EppAttachment {
             )
         }
         defer { native_epp_error_free(&err) }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
     }
 
     public static func validateMagicBytes(header: Data, mimeType: String) throws {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let mimeData = Data(mimeType.utf8)
         let code = header.withUnsafeBytes { hPtr in
             mimeData.withUnsafeBytes { mPtr in
@@ -551,14 +551,14 @@ public enum EppAttachment {
             }
         }
         defer { native_epp_error_free(&err) }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
     }
 
     public static func detectMime(header: Data) throws -> String? {
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = header.withUnsafeBytes { hPtr in
             native_epp_attachment_detect_mime(
                 hPtr.baseAddress!.assumingMemoryBound(to: UInt8.self),
@@ -571,8 +571,8 @@ public enum EppAttachment {
             if buf.data != nil { native_epp_buffer_release(&buf) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(buf) else {
             return nil
@@ -581,7 +581,7 @@ public enum EppAttachment {
     }
 
     public static func validateFilename(_ name: String) throws {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let nameData = Data(name.utf8)
         let code = nameData.withUnsafeBytes { nPtr in
             native_epp_attachment_validate_filename(
@@ -591,14 +591,14 @@ public enum EppAttachment {
             )
         }
         defer { native_epp_error_free(&err) }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
     }
 
     public static func sanitizeFilename(_ name: String) throws -> String {
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let nameData = Data(name.utf8)
         let code = nameData.withUnsafeBytes { nPtr in
             native_epp_attachment_sanitize_filename(
@@ -612,12 +612,12 @@ public enum EppAttachment {
             if buf.data != nil { native_epp_buffer_release(&buf) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(buf),
               let result = String(data: data, encoding: .utf8) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return result
     }
@@ -638,8 +638,8 @@ public enum EppAttachment {
         ttlSeconds: UInt64 = 0,
         createdAtUnix: UInt64 = 0
     ) throws -> Data {
-        var outManifest = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var outManifest = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
 
         let mimeData = Data(mimeType.utf8)
         let thumbMimeData = thumbnailMimeType.map { Data($0.utf8) } ?? Data()
@@ -689,11 +689,11 @@ public enum EppAttachment {
             if outManifest.data != nil { native_epp_buffer_release(&outManifest) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(outManifest) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
@@ -703,8 +703,8 @@ public enum EppAttachment {
         fileKey: Data,
         attachmentId: Data
     ) throws -> Data {
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = fileKey.withUnsafeBytes { fkPtr in
             attachmentId.withUnsafeBytes { aidPtr in
                 native_epp_attachment_encrypt_file_key(
@@ -722,11 +722,11 @@ public enum EppAttachment {
             if buf.data != nil { native_epp_buffer_release(&buf) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(buf) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
@@ -736,8 +736,8 @@ public enum EppAttachment {
         encryptedFileKey: Data,
         attachmentId: Data
     ) throws -> Data {
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = encryptedFileKey.withUnsafeBytes { efkPtr in
             attachmentId.withUnsafeBytes { aidPtr in
                 native_epp_attachment_decrypt_file_key(
@@ -755,11 +755,11 @@ public enum EppAttachment {
             if buf.data != nil { native_epp_buffer_release(&buf) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(buf) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
@@ -768,10 +768,10 @@ public enum EppAttachment {
         manifests: [Data],
         name: String? = nil,
         description: String? = nil,
-        layout: EppCollageLayout? = nil
+        layout: AuraCollageLayout? = nil
     ) throws -> Data {
-        var outCollage = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var outCollage = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let manifestCount = manifests.count
         let nameData = name.map { Data($0.utf8) } ?? Data()
         let descData = description.map { Data($0.utf8) } ?? Data()
@@ -814,11 +814,11 @@ public enum EppAttachment {
             if outCollage.data != nil { native_epp_buffer_release(&outCollage) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(outCollage) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
@@ -828,10 +828,10 @@ public enum EppAttachment {
         mimeType: String,
         data inlineData: Data,
         filename: String? = nil,
-        contentPolicy: EppContentPolicyConfig? = nil
+        contentPolicy: AuraContentPolicyConfig? = nil
     ) throws -> Data {
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let mimeData = Data(mimeType.utf8)
         let filenameData = filename.map { Data($0.utf8) } ?? Data()
         let hasPolicy: UInt8 = contentPolicy != nil ? 1 : 0
@@ -867,17 +867,17 @@ public enum EppAttachment {
             if buf.data != nil { native_epp_buffer_release(&buf) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(buf) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
 
     public static func validateInlineAttachment(_ bytes: Data) throws {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = bytes.withUnsafeBytes { ptr in
             native_epp_attachment_inline_validate(
                 ptr.baseAddress!.assumingMemoryBound(to: UInt8.self),
@@ -886,18 +886,18 @@ public enum EppAttachment {
             )
         }
         defer { native_epp_error_free(&err) }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
     }
 
     public static func createAttachmentReference(
         attachmentId: Data,
-        referenceType: EppReferenceType,
+        referenceType: AuraReferenceType,
         sourceMessageId: Data? = nil
     ) throws -> Data {
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let smid = sourceMessageId ?? Data()
         let code = attachmentId.withUnsafeBytes { aidPtr in
             smid.withUnsafeBytes { smidPtr in
@@ -916,17 +916,17 @@ public enum EppAttachment {
             if buf.data != nil { native_epp_buffer_release(&buf) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(buf) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
 
     public static func validateAttachmentReference(_ bytes: Data) throws {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = bytes.withUnsafeBytes { ptr in
             native_epp_attachment_reference_validate(
                 ptr.baseAddress!.assumingMemoryBound(to: UInt8.self),
@@ -935,8 +935,8 @@ public enum EppAttachment {
             )
         }
         defer { native_epp_error_free(&err) }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
     }
 
@@ -946,8 +946,8 @@ public enum EppAttachment {
         playbackSpeed: Float? = nil,
         isListened: Bool = false
     ) throws -> Data {
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let transcriptData = transcript.map { Data($0.utf8) } ?? Data()
         let hasSpeed: UInt8 = playbackSpeed != nil ? 1 : 0
         let speedVal: Float = playbackSpeed ?? 0.0
@@ -972,17 +972,17 @@ public enum EppAttachment {
             if buf.data != nil { native_epp_buffer_release(&buf) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(buf) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
 
     public static func validateVoiceMessageMeta(_ bytes: Data) throws {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = bytes.withUnsafeBytes { ptr in
             native_epp_attachment_voice_meta_validate(
                 ptr.baseAddress!.assumingMemoryBound(to: UInt8.self),
@@ -991,8 +991,8 @@ public enum EppAttachment {
             )
         }
         defer { native_epp_error_free(&err) }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
     }
 
@@ -1003,8 +1003,8 @@ public enum EppAttachment {
         label: String? = nil,
         timestamp: UInt64? = nil
     ) throws -> Data {
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let labelData = label.map { Data($0.utf8) } ?? Data()
         let hasAccuracy: UInt8 = accuracy != nil ? 1 : 0
         let accuracyVal: Double = accuracy ?? 0.0
@@ -1029,17 +1029,17 @@ public enum EppAttachment {
             if buf.data != nil { native_epp_buffer_release(&buf) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(buf) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
 
     public static func validateLocationAttachment(_ bytes: Data) throws {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = bytes.withUnsafeBytes { ptr in
             native_epp_attachment_location_validate(
                 ptr.baseAddress!.assumingMemoryBound(to: UInt8.self),
@@ -1048,8 +1048,8 @@ public enum EppAttachment {
             )
         }
         defer { native_epp_error_free(&err) }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
     }
 
@@ -1060,8 +1060,8 @@ public enum EppAttachment {
         avatar: Data? = nil,
         organization: String? = nil
     ) throws -> Data {
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let dnData = Data(displayName.utf8)
         let phoneData = phone.map { Data($0.utf8) } ?? Data()
         let emailData = email.map { Data($0.utf8) } ?? Data()
@@ -1096,17 +1096,17 @@ public enum EppAttachment {
             if buf.data != nil { native_epp_buffer_release(&buf) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(buf) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
 
     public static func validateContactCard(_ bytes: Data) throws {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = bytes.withUnsafeBytes { ptr in
             native_epp_attachment_contact_card_validate(
                 ptr.baseAddress!.assumingMemoryBound(to: UInt8.self),
@@ -1115,8 +1115,8 @@ public enum EppAttachment {
             )
         }
         defer { native_epp_error_free(&err) }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
     }
 
@@ -1128,8 +1128,8 @@ public enum EppAttachment {
         previewImageMime: String? = nil,
         domain: String? = nil
     ) throws -> Data {
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let urlData = Data(url.utf8)
         let titleData = title.map { Data($0.utf8) } ?? Data()
         let descData = description.map { Data($0.utf8) } ?? Data()
@@ -1169,17 +1169,17 @@ public enum EppAttachment {
             if buf.data != nil { native_epp_buffer_release(&buf) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(buf) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
 
     public static func validateLinkPreview(_ bytes: Data) throws {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = bytes.withUnsafeBytes { ptr in
             native_epp_attachment_link_preview_validate(
                 ptr.baseAddress!.assumingMemoryBound(to: UInt8.self),
@@ -1188,13 +1188,13 @@ public enum EppAttachment {
             )
         }
         defer { native_epp_error_free(&err) }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
     }
 }
 
-public final class EppStreamingEncryptor {
+public final class AuraStreamingEncryptor {
 
     private var handle: UnsafeMutableRawPointer?
 
@@ -1207,7 +1207,7 @@ public final class EppStreamingEncryptor {
         chunkCount: UInt32
     ) throws {
         var outHandle: UnsafeMutableRawPointer? = nil
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let mimeData = Data(mimeType.utf8)
         let code = fileKey.withUnsafeBytes { fkPtr in
             attachmentId.withUnsafeBytes { aidPtr in
@@ -1229,8 +1229,8 @@ public final class EppStreamingEncryptor {
             }
         }
         defer { native_epp_error_free(&err) }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         self.handle = outHandle
     }
@@ -1243,11 +1243,11 @@ public final class EppStreamingEncryptor {
 
     public func write(_ data: Data) throws -> (chunks: Data, chunkCount: UInt32) {
         guard let h = handle else {
-            throw EppError.objectDisposed
+            throw AuraError.objectDisposed
         }
-        var outChunks = NativeEppBuffer(data: nil, length: 0)
+        var outChunks = NativeAuraBuffer(data: nil, length: 0)
         var outCount: UInt32 = 0
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = data.withUnsafeBytes { dPtr in
             native_epp_attachment_streaming_encryptor_write(
                 h,
@@ -1262,8 +1262,8 @@ public final class EppStreamingEncryptor {
             if outChunks.data != nil { native_epp_buffer_release(&outChunks) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         let chunksData = dataFromBuffer(outChunks) ?? Data()
         return (chunks: chunksData, chunkCount: outCount)
@@ -1271,12 +1271,12 @@ public final class EppStreamingEncryptor {
 
     public func finish() throws -> Data? {
         guard let h = handle else {
-            throw EppError.objectDisposed
+            throw AuraError.objectDisposed
         }
         handle = nil
-        var outChunk = NativeEppBuffer(data: nil, length: 0)
+        var outChunk = NativeAuraBuffer(data: nil, length: 0)
         var hasChunk: UInt8 = 0
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = native_epp_attachment_streaming_encryptor_finish(
             h,
             &outChunk,
@@ -1287,8 +1287,8 @@ public final class EppStreamingEncryptor {
             if outChunk.data != nil { native_epp_buffer_release(&outChunk) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         if hasChunk != 0 {
             return dataFromBuffer(outChunk)
@@ -1297,7 +1297,7 @@ public final class EppStreamingEncryptor {
     }
 }
 
-public final class EppStreamingDecryptor {
+public final class AuraStreamingDecryptor {
 
     private var handle: UnsafeMutableRawPointer?
 
@@ -1310,7 +1310,7 @@ public final class EppStreamingDecryptor {
         chunkCount: UInt32
     ) throws {
         var outHandle: UnsafeMutableRawPointer? = nil
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let mimeData = Data(mimeType.utf8)
         let code = fileKey.withUnsafeBytes { fkPtr in
             attachmentId.withUnsafeBytes { aidPtr in
@@ -1332,8 +1332,8 @@ public final class EppStreamingDecryptor {
             }
         }
         defer { native_epp_error_free(&err) }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         self.handle = outHandle
     }
@@ -1350,10 +1350,10 @@ public final class EppStreamingDecryptor {
         ciphertext: Data
     ) throws -> Data {
         guard let h = handle else {
-            throw EppError.objectDisposed
+            throw AuraError.objectDisposed
         }
-        var outPlaintext = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var outPlaintext = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = nonce.withUnsafeBytes { noncePtr in
             ciphertext.withUnsafeBytes { ctPtr in
                 native_epp_attachment_streaming_decryptor_write(
@@ -1372,11 +1372,11 @@ public final class EppStreamingDecryptor {
             if outPlaintext.data != nil { native_epp_buffer_release(&outPlaintext) }
             native_epp_error_free(&err)
         }
-        guard code == EPP_SUCCESS else {
-            throw EppError.from(code: code, nativeError: err)
+        guard code == AURA_SUCCESS else {
+            throw AuraError.from(code: code, nativeError: err)
         }
         guard let data = dataFromBuffer(outPlaintext) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }

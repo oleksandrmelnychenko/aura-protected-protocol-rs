@@ -1,15 +1,15 @@
-# Ecliptix Protected Protocol
+# Aura Protected Protocol
 
-[![CI](https://github.com/oleksandrmelnychenko/ecliptix-protected-protocol-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/oleksandrmelnychenko/ecliptix-protected-protocol-rs/actions/workflows/ci.yml)
-[![Security Scan](https://github.com/oleksandrmelnychenko/ecliptix-protected-protocol-rs/actions/workflows/security-scan.yml/badge.svg)](https://github.com/oleksandrmelnychenko/ecliptix-protected-protocol-rs/actions/workflows/security-scan.yml)
-[![Benchmarks](https://github.com/oleksandrmelnychenko/ecliptix-protected-protocol-rs/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/oleksandrmelnychenko/ecliptix-protected-protocol-rs/actions/workflows/benchmarks.yml)
+[![CI](https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs/actions/workflows/ci.yml)
+[![Security Scan](https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs/actions/workflows/security-scan.yml/badge.svg)](https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs/actions/workflows/security-scan.yml)
+[![Benchmarks](https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs/actions/workflows/benchmarks.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Hybrid post-quantum secure messaging protocol combining **X25519 + Kyber-768** with a Double Ratchet, **AES-256-GCM-SIV**, per-epoch metadata encryption, and an **MLS-inspired group messaging protocol** with hybrid PQ TreeKEM — featuring **Shield mode**, sealed messages, disappearing messages, and message franking.
 
 ## Key Differentiators
 
-| Feature | Signal X3DH | Signal PQXDH | **Ecliptix** |
+| Feature | Signal X3DH | Signal PQXDH | **Aura** |
 |---------|------------|-------------|--------------|
 | Per-ratchet PQ protection | No | No | **Yes** (X25519 + Kyber-768) |
 | Metadata encryption | Sealed Sender | Sealed Sender | **Per-epoch rotating key** |
@@ -66,21 +66,21 @@ Shield mode is an enhanced security policy for group sessions that enables stric
 
 ```swift
 // Swift — create a shielded group
-let group = try EppGroupSession.createShielded(identity: identity, credential: cred)
+let group = try AuraGroupSession.createShielded(identity: identity, credential: cred)
 
 // Or with custom policy
-let policy = EppGroupSecurityPolicy(
+let policy = AuraGroupSecurityPolicy(
     maxMessagesPerEpoch: 500,
     blockExternalJoin: true,
     enhancedKeySchedule: true,
     mandatoryFranking: true
 )
-let group = try EppGroupSession.create(identity: identity, credential: cred, policy: policy)
+let group = try AuraGroupSession.create(identity: identity, credential: cred, policy: policy)
 ```
 
 ```rust
 // Rust — create a shielded group
-let group = EcliptixProtocol::group_create_shielded(&identity, &credential)?;
+let group = AuraProtocol::group_create_shielded(&identity, &credential)?;
 
 // Query shield status
 let is_shielded = group.is_shielded();
@@ -248,7 +248,7 @@ cargo +nightly fuzz run <target> -- -max_total_time=300
 
 ### Tamarin Prover (10/10 lemmas verified)
 
-**Handshake model** (`formal/tamarin/ecliptix_handshake.spthy`) — 6 lemmas:
+**Handshake model** (`formal/tamarin/aura_handshake.spthy`) — 6 lemmas:
 - `session_key_secrecy` — hybrid root secret secure unless compromised
 - `mutual_authentication` — bilateral key confirmation prevents UKS
 - `responder_authentication` — symmetric authentication
@@ -256,7 +256,7 @@ cargo +nightly fuzz run <target> -- -max_total_time=300
 - `key_confirmation` — same session derives identical keys
 - `session_exists` — reachability
 
-**Ratchet model** (`formal/tamarin/ecliptix_ratchet.spthy`) — 4 lemmas:
+**Ratchet model** (`formal/tamarin/aura_ratchet.spthy`) — 4 lemmas:
 - `pcs_sender_compromise` — 1-step PCS after sender state compromise
 - `ratchet_key_secrecy` — ratchet key secret unless both parties compromised
 - `key_agreement` — both parties derive same root key
@@ -264,7 +264,7 @@ cargo +nightly fuzz run <target> -- -max_total_time=300
 
 ### ProVerif (4/6 queries proven)
 
-`formal/proverif/ecliptix.pv` — session key secrecy, authentication (non-injective + injective), forward secrecy. Q4/Q5 (message secrecy/integrity) are known ProVerif DH overapproximation limitations, covered by game-based proofs.
+`formal/proverif/aura.pv` — session key secrecy, authentication (non-injective + injective), forward secrecy. Q4/Q5 (message secrecy/integrity) are known ProVerif DH overapproximation limitations, covered by game-based proofs.
 
 ### Game-Based Security Proofs
 
@@ -307,19 +307,19 @@ src/
     mod.rs        Client Rust API facade
     relay.rs      Server relay API (validation + routing)
 swift/
-  Sources/EcliptixProtectedProtocol/
+  Sources/AuraProtectedProtocol/
     Shim.swift          @_silgen_name symbol bindings + native struct mirrors
-    EppError.swift      Swift error mapping for native FFI codes
-    EppIdentity.swift   Identity (create, seed, keys, prekey bundle)
-    EppSession.swift    1:1 session (encrypt, decrypt, serialize, nonce)
-    EppHandshake.swift  Handshake (initiator, responder) + namespace
-    EppGroupSession.swift  Group session (full API + Shield mode)
-    EppTimeProvider.swift  Manual clock / trusted-time binding
-    EppSealedStateCounterTracker.swift  Managed anti-rollback tracker
-    EppSealedStateSlot.swift  Single-record sealed-state persistence helper
-    EppVoipSession.swift  VoIP call setup, media, rekey, persistence
-    EppAttachment.swift  Attachment/media manifests, chunk crypto, streaming
-    EppCrypto.swift     Shamir SSS + envelope validation
+    AuraError.swift      Swift error mapping for native FFI codes
+    AuraIdentity.swift   Identity (create, seed, keys, prekey bundle)
+    AuraSession.swift    1:1 session (encrypt, decrypt, serialize, nonce)
+    AuraHandshake.swift  Handshake (initiator, responder) + namespace
+    AuraGroupSession.swift  Group session (full API + Shield mode)
+    AuraTimeProvider.swift  Manual clock / trusted-time binding
+    AuraSealedStateCounterTracker.swift  Managed anti-rollback tracker
+    AuraSealedStateSlot.swift  Single-record sealed-state persistence helper
+    AuraVoipSession.swift  VoIP call setup, media, rekey, persistence
+    AuraAttachment.swift  Attachment/media manifests, chunk crypto, streaming
+    AuraCrypto.swift     Shamir SSS + envelope validation
 formal/
   tamarin/        Tamarin models (handshake 6/6, ratchet 4/4)
   proverif/       ProVerif model (4/6 queries)
@@ -332,7 +332,7 @@ docs/
     message-franking.md      Message franking design doc
     shield-mode.md           Shield mode design doc
   ffi-swift.md            Swift FFI guide
-  epp-relay-swift-alignment.md  Cross-repo contract (EPP <-> Relay <-> Swift)
+  epp-relay-swift-alignment.md  Cross-repo contract (AURA <-> Relay <-> Swift)
   relay-server.md         Relay server guide
 proto/
   protocol/       Protobuf message definitions
@@ -351,24 +351,24 @@ tests/
 
 Use a tagged release that ships a matching XCFramework snapshot. The checked-in [`Package.swift`](Package.swift) is the source of truth for the current binary target URL, checksum, and minimum platform versions.
 
-The Swift package manifest currently targets iOS 18+ and macOS 15+. The high-level Swift layer binds exported Rust symbols via `@_silgen_name`, while the XCFramework still ships `epp_api.h` / `module.modulemap` for C and Objective-C consumers.
+The Swift package manifest currently targets iOS 18+ and macOS 15+. The high-level Swift layer binds exported Rust symbols via `@_silgen_name`, while the XCFramework still ships `aura_api.h` / `module.modulemap` for C and Objective-C consumers.
 
 ### Quick Start
 
 ```swift
-import EcliptixProtectedProtocol
+import AuraProtectedProtocol
 
 // Initialize
-try EcliptixProtectedProtocol.initialize()
+try AuraProtectedProtocol.initialize()
 
 // Create identities
-let alice = try EppIdentity.create()
-let bob = try EppIdentity.create()
+let alice = try AuraIdentity.create()
+let bob = try AuraIdentity.create()
 
 // 1:1 handshake
 let bobBundle = try bob.createPrekeyBundle()
-let (initiator, handshakeInit) = try EppHandshakeInitiator.start(identity: alice, peerPrekeyBundle: bobBundle)
-let (responder, handshakeAck) = try EppHandshakeResponder.start(identity: bob, localPrekeyBundle: bobBundle, handshakeInit: handshakeInit)
+let (initiator, handshakeInit) = try AuraHandshakeInitiator.start(identity: alice, peerPrekeyBundle: bobBundle)
+let (responder, handshakeAck) = try AuraHandshakeResponder.start(identity: bob, localPrekeyBundle: bobBundle, handshakeInit: handshakeInit)
 let aliceSession = try initiator.finishVerifyingPeer(
     handshakeAck: handshakeAck,
     expectedPeerEd25519PublicKey: bob.ed25519PublicKey,
@@ -384,7 +384,7 @@ let ciphertext = try aliceSession.encrypt(plaintext: "Hello".data(using: .utf8)!
 let plaintext = try bobSession.decrypt(encryptedEnvelope: ciphertext)
 
 // Group session (shielded)
-let group = try EppGroupSession.createShielded(identity: alice, credential: "alice".data(using: .utf8)!)
+let group = try AuraGroupSession.createShielded(identity: alice, credential: "alice".data(using: .utf8)!)
 let encrypted = try group.encrypt("Hello group".data(using: .utf8)!)
 
 // Special message types
@@ -400,7 +400,7 @@ let delete = try group.encryptDelete(targetMessageId: msgId)
 | Category | Methods |
 |----------|---------|
 | **Identity** | create, create(fromSeed:), create(fromSeed:membershipId:), x25519/ed25519/kyberPublicKey, createPrekeyBundle |
-| **1:1 Handshake** | EppHandshakeInitiator.start/finish, EppHandshakeResponder.start/finish |
+| **1:1 Handshake** | AuraHandshakeInitiator.start/finish, AuraHandshakeResponder.start/finish |
 | **1:1 Session** | encrypt, decrypt, serialize, deserialize, nonceRemaining |
 | **Group Session** | create, createShielded, create(policy:), join, joinExternal |
 | **Group Membership** | addMember, removeMember, update, processCommit, generateKeyPackage |
@@ -409,9 +409,9 @@ let delete = try group.encryptDelete(targetMessageId: msgId)
 | **Crypto Verification** | computeMessageId, revealSealed, verifyFranking |
 | **Group State** | groupId, epoch, myLeafIndex, memberCount, memberLeafIndices, isShielded, securityPolicy |
 | **Serialization** | serialize/deserialize (group + 1:1), exportPublicState |
-| **Shield Mode** | EppGroupSecurityPolicy, .shield preset, createShielded, isShielded |
-| **Managed State** | EppSealedStateCounterTracker, EppSealedStateSlot, persisted-state export/restore |
-| **Time Provider** | EppTimeProvider.manual, setNowUnix, identity/session/VoIP trusted-time binding |
+| **Shield Mode** | AuraGroupSecurityPolicy, .shield preset, createShielded, isShielded |
+| **Managed State** | AuraSealedStateCounterTracker, AuraSealedStateSlot, persisted-state export/restore |
+| **Time Provider** | AuraTimeProvider.manual, setNowUnix, identity/session/VoIP trusted-time binding |
 | **VoIP** | call init/accept/finish, media encrypt/decrypt, rekey, sealed/persisted state |
 | **Attachments** | manifest/chunk helpers, thumbnails, TTL, collages, streaming encrypt/decrypt |
 | **Utilities** | initialize, shutdown, version, deriveRootKey, secureWipe, validateEnvelope, shamirSplit/Reconstruct |
@@ -420,7 +420,7 @@ let delete = try group.encryptDelete(targetMessageId: msgId)
 
 The server never decrypts traffic — it validates format, routes by `group_id`, and stores/delivers events.
 
-All relay functions are in `ecliptix_protocol::api::relay`:
+All relay functions are in `aura_protected_protocol::api::relay`:
 
 - `validate_crypto_envelope()` — validate 1:1 envelope structure
 - `validate_commit_for_relay_strict()` — structural group-commit validation + sender identity binding from auth context

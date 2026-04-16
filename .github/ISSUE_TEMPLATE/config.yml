@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security Vulnerability
-    url: https://github.com/oleksandrmelnychenko/ecliptix-protected-protocol-rs/security/advisories/new
+    url: https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs/security/advisories/new
     about: "Report security vulnerabilities privately through GitHub Security Advisories. DO NOT use public issues for security reports."
   - name: Documentation
-    url: https://github.com/oleksandrmelnychenko/ecliptix-protected-protocol-rs/tree/main/docs
+    url: https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs/tree/main/docs
     about: "Check documentation before opening an issue"
   - name: Discussions
-    url: https://github.com/oleksandrmelnychenko/ecliptix-protected-protocol-rs/discussions
+    url: https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs/discussions
     about: "For questions and general discussion"

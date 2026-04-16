@@ -1,7 +1,7 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::protocol::voip::media_crypto::MediaCrypto;
+use aura_protected_protocol::protocol::voip::media_crypto::MediaCrypto;
 
 fuzz_target!(|data: &[u8]| {
     if data.len() < 32 + 4 + 8 + 16 {

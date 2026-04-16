@@ -1,13 +1,13 @@
 [package]
-name = "ecliptix-protocol"
-version = "1.2.0"
+name = "aura-protected-protocol"
+version = "2.0.0"
 edition = "2021"
 rust-version = "1.86"
-description = "Ecliptix Signal Protocol-like double ratchet with X3DH and post-quantum hybrid encryption"
+description = "Aura Protected Protocol — Signal-like double ratchet with X3DH and post-quantum hybrid encryption"
 license = "MIT"
 
 [lib]
-name = "ecliptix_protocol"
+name = "aura_protected_protocol"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]

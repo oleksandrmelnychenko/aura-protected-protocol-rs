@@ -2,7 +2,7 @@
 use libfuzzer_sys::fuzz_target;
 use prost::Message;
 
-use ecliptix_protocol::proto::{
+use aura_protected_protocol::proto::{
     EnvelopeMetadata, GroupCommit, GroupKeyPackage, GroupMessage, GroupWelcome, HandshakeAck,
     HandshakeInit, PreKeyBundle, ProtocolState, SealedState, SecureEnvelope,
 };

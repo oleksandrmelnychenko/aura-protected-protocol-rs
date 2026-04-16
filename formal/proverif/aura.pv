@@ -1,5 +1,5 @@
 (* ═══════════════════════════════════════════════════════════════════════════════
- * Ecliptix Protection Protocol — ProVerif Formal Model
+ * Aura Protection Protocol — ProVerif Formal Model
  *
  * Symbolic verification of:
  *   - Session key secrecy (absent long-term key compromise)
@@ -10,7 +10,7 @@
  *
  * Reference implementation: src/protocol/handshake.rs, src/protocol/session.rs
  * Companion proofs:         docs/security-proof.tex (Theorems 1-6)
- * Companion Tamarin model:  formal/tamarin/ecliptix.spthy
+ * Companion Tamarin model:  formal/tamarin/aura.spthy
  *
  * Style follows: Bhargavan et al. PQXDH (USENIX Security 2024)
  * ═══════════════════════════════════════════════════════════════════════════════ *)
@@ -87,7 +87,7 @@ fun transcript_hash(bitstring, bitstring): bitstring.
 fun derive_msg_key(key): key.
 fun derive_chain_key(key): key.
 
-(* --- Augmented HKDF info: "Ecliptix-Hybrid-Ratchet" || new_kyber_pk --- *)
+(* --- Augmented HKDF info: "Aura-Hybrid-Ratchet" || new_kyber_pk --- *)
 fun augmented_info(kyber_pkey): bitstring.
 
 (* --- Protocol constants (HKDF info strings for domain separation) --- *)

@@ -1,18 +1,18 @@
 #![allow(clippy::pedantic, clippy::nursery)]
 
-use ecliptix_protocol::core::constants::*;
-use ecliptix_protocol::core::errors::ProtocolError;
-use ecliptix_protocol::crypto::{CryptoInterop, SecureMemoryHandle};
-use ecliptix_protocol::identity::IdentityKeys;
-use ecliptix_protocol::protocol::voip::call_key_exchange::{
+use aura_protected_protocol::core::constants::*;
+use aura_protected_protocol::core::errors::ProtocolError;
+use aura_protected_protocol::crypto::{CryptoInterop, SecureMemoryHandle};
+use aura_protected_protocol::identity::IdentityKeys;
+use aura_protected_protocol::protocol::voip::call_key_exchange::{
     callee_accept_with_context, caller_finish_with_context, caller_init_with_context,
     CallAcceptOutput, CallInitAuthContext, CallInitOutput, CallKeyMaterial,
 };
-use ecliptix_protocol::protocol::voip::frame::{build_frame_aad, FrameHeader};
-use ecliptix_protocol::protocol::voip::key_ratchet::MediaKeyRatchet;
-use ecliptix_protocol::protocol::voip::media_crypto::MediaCrypto;
-use ecliptix_protocol::protocol::voip::replay_window::ReplayWindow;
-use ecliptix_protocol::protocol::voip::{
+use aura_protected_protocol::protocol::voip::frame::{build_frame_aad, FrameHeader};
+use aura_protected_protocol::protocol::voip::key_ratchet::MediaKeyRatchet;
+use aura_protected_protocol::protocol::voip::media_crypto::MediaCrypto;
+use aura_protected_protocol::protocol::voip::replay_window::ReplayWindow;
+use aura_protected_protocol::protocol::voip::{
     CallControlType, CallRole, CallState, EncryptedFrame, VoipSession,
 };
 

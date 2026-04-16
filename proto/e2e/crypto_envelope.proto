@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-package ecliptix.proto.e2e;
-option csharp_namespace = "Ecliptix.Protobuf.E2E";
-option swift_prefix = "Ecliptix_Proto_E2E_";
+package aura.proto.e2e;
+option csharp_namespace = "Aura.Protobuf.E2E";
+option swift_prefix = "Aura_Proto_E2E_";
 
 enum CryptoPayloadType {
   CRYPTO_PAYLOAD_UNSPECIFIED = 0;

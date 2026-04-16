@@ -6,18 +6,18 @@
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use ecliptix_protocol::core::constants::{
+use aura_protected_protocol::core::constants::{
     DEFAULT_MESSAGES_PER_CHAIN, NONCE_EXHAUSTION_WARNING_PERCENT,
 };
-use ecliptix_protocol::core::errors::ProtocolError;
-use ecliptix_protocol::crypto::CryptoInterop;
-use ecliptix_protocol::identity::IdentityKeys;
-use ecliptix_protocol::interfaces::{
+use aura_protected_protocol::core::errors::ProtocolError;
+use aura_protected_protocol::crypto::CryptoInterop;
+use aura_protected_protocol::identity::IdentityKeys;
+use aura_protected_protocol::interfaces::{
     IGroupEventHandler, IProtocolEventHandler, StaticStateKeyProvider,
 };
-use ecliptix_protocol::proto::PreKeyBundle;
-use ecliptix_protocol::protocol::group::{self, GroupSession};
-use ecliptix_protocol::protocol::{HandshakeInitiator, HandshakeResponder, Session};
+use aura_protected_protocol::proto::PreKeyBundle;
+use aura_protected_protocol::protocol::group::{self, GroupSession};
+use aura_protected_protocol::protocol::{HandshakeInitiator, HandshakeResponder, Session};
 use prost::Message;
 
 fn init() {
@@ -25,7 +25,7 @@ fn init() {
 }
 
 fn build_proto_bundle(ik: &IdentityKeys) -> Vec<u8> {
-    use ecliptix_protocol::proto::OneTimePreKey;
+    use aura_protected_protocol::proto::OneTimePreKey;
     let lb = ik.create_public_bundle().unwrap();
     let opks: Vec<OneTimePreKey> = lb
         .one_time_pre_keys()
@@ -71,8 +71,8 @@ fn create_session_pair_with_chain_limit(max_messages_per_chain: u32) -> (Session
     (alice_session, bob_session)
 }
 
-const fn external_join_policy() -> ecliptix_protocol::protocol::group::GroupSecurityPolicy {
-    let mut policy = ecliptix_protocol::protocol::group::GroupSecurityPolicy::shield();
+const fn external_join_policy() -> aura_protected_protocol::protocol::group::GroupSecurityPolicy {
+    let mut policy = aura_protected_protocol::protocol::group::GroupSecurityPolicy::shield();
     policy.block_external_join = false;
     policy
 }
@@ -596,7 +596,7 @@ fn attack_external_init_small_order_ephemeral_key() {
         authorize_and_join_external(&alice_session, &joiner_id, b"joiner");
 
     let commit =
-        ecliptix_protocol::proto::GroupCommit::decode(ext_commit_bytes.as_slice()).unwrap();
+        aura_protected_protocol::proto::GroupCommit::decode(ext_commit_bytes.as_slice()).unwrap();
 
     let joiner_sk_bytes = joiner_id.get_identity_ed25519_private_key_copy().unwrap();
     let joiner_sk_arr: [u8; 64] = joiner_sk_bytes.as_slice().try_into().unwrap();
@@ -620,7 +620,7 @@ fn attack_external_init_small_order_ephemeral_key() {
     for (i, small_order) in small_order_points.iter().enumerate() {
         let mut tampered = commit.clone();
         for proposal in &mut tampered.proposals {
-            if let Some(ecliptix_protocol::proto::group_proposal::Proposal::ExternalInit(
+            if let Some(aura_protected_protocol::proto::group_proposal::Proposal::ExternalInit(
                 ref mut ext,
             )) = proposal.proposal
             {
@@ -1606,7 +1606,7 @@ fn attack_sealed_state_counter_non_monotonic() {
 
 #[test]
 fn attack_padding_embedded_sentinel() {
-    use ecliptix_protocol::crypto::MessagePadding;
+    use aura_protected_protocol::crypto::MessagePadding;
 
     let test_cases: Vec<Vec<u8>> = vec![
         vec![0x01],

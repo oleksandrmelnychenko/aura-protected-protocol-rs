@@ -1,10 +1,10 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::crypto::CryptoInterop;
-use ecliptix_protocol::identity::IdentityKeys;
-use ecliptix_protocol::proto::PreKeyBundle;
-use ecliptix_protocol::protocol::HandshakeResponder;
+use aura_protected_protocol::crypto::CryptoInterop;
+use aura_protected_protocol::identity::IdentityKeys;
+use aura_protected_protocol::proto::PreKeyBundle;
+use aura_protected_protocol::protocol::HandshakeResponder;
 use prost::Message;
 use std::sync::Once;
 
@@ -33,10 +33,10 @@ fuzz_target!(|data: &[u8]| {
 
 fn build_bundle(ik: &IdentityKeys) -> Option<Vec<u8>> {
     let lb = ik.create_public_bundle().ok()?;
-    let opks: Vec<ecliptix_protocol::proto::OneTimePreKey> = lb
+    let opks: Vec<aura_protected_protocol::proto::OneTimePreKey> = lb
         .one_time_pre_keys()
         .iter()
-        .map(|o| ecliptix_protocol::proto::OneTimePreKey {
+        .map(|o| aura_protected_protocol::proto::OneTimePreKey {
             one_time_pre_key_id: o.id(),
             public_key: o.public_key_vec(),
         })

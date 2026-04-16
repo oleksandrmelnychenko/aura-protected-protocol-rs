@@ -1,7 +1,7 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::protocol::voip::frame::FrameHeader;
+use aura_protected_protocol::protocol::voip::frame::FrameHeader;
 
 fuzz_target!(|data: &[u8]| {
     if let Ok(header) = FrameHeader::deserialize(data) {

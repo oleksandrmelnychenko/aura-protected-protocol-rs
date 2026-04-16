@@ -1,4 +1,4 @@
-theory EcliptixVoIP
+theory AuraVoIP
 begin
 
 builtins: diffie-hellman, hashing, signing

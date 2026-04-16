@@ -1,7 +1,7 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::protocol::voip::replay_window::ReplayWindow;
+use aura_protected_protocol::protocol::voip::replay_window::ReplayWindow;
 
 fuzz_target!(|data: &[u8]| {
     if data.len() < 8 {

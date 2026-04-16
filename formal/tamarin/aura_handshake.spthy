@@ -1,5 +1,5 @@
 /*
- * Ecliptix Protection Protocol — Handshake-Only Tamarin Model
+ * Aura Protection Protocol — Handshake-Only Tamarin Model
  *
  * Simplified model focusing on the Hybrid X3DH key exchange.
  *
@@ -30,7 +30,7 @@
  * Reference: src/protocol/handshake.rs, docs/security-proof.tex Theorems 2-3
  */
 
-theory EcliptixHandshake
+theory AuraHandshake
 begin
 
 builtins: diffie-hellman, hashing, signing

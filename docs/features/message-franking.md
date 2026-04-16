@@ -100,5 +100,5 @@ assert!(!valid);
 |----------|-----------|---------------|
 | Signal | Немає (скріншот) | Так |
 | WhatsApp | Report → forward plaintext | Частково (сервер бачить скаргу) |
-| **Ecliptix** | Cryptographic franking | **Так** (HMAC verification) |
+| **Aura** | Cryptographic franking | **Так** (HMAC verification) |
 | Facebook Messenger | Message franking (наша модель) | Так |

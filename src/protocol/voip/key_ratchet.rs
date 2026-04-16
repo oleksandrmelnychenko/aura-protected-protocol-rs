@@ -42,7 +42,7 @@ fn derive_at_generation(
         chain_bytes,
         VOIP_MEDIA_KEY_BYTES,
         &salt,
-        b"Ecliptix-VoIP-NextChain",
+        b"Aura-VoIP-NextChain",
     )?;
 
     Ok((output_key, next_chain))

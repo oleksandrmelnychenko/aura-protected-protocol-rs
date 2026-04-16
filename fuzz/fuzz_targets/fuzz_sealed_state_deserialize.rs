@@ -1,8 +1,8 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::crypto::CryptoInterop;
-use ecliptix_protocol::protocol::group::GroupSession;
+use aura_protected_protocol::crypto::CryptoInterop;
+use aura_protected_protocol::protocol::group::GroupSession;
 use std::sync::Once;
 use zeroize::Zeroizing;
 

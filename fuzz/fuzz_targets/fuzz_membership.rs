@@ -2,10 +2,10 @@
 use libfuzzer_sys::fuzz_target;
 use prost::Message;
 
-use ecliptix_protocol::crypto::{CryptoInterop, KyberInterop};
-use ecliptix_protocol::proto::GroupProposal;
-use ecliptix_protocol::protocol::group::membership;
-use ecliptix_protocol::protocol::group::RatchetTree;
+use aura_protected_protocol::crypto::{CryptoInterop, KyberInterop};
+use aura_protected_protocol::proto::GroupProposal;
+use aura_protected_protocol::protocol::group::membership;
+use aura_protected_protocol::protocol::group::RatchetTree;
 use std::sync::Once;
 
 static INIT: Once = Once::new();

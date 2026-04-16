@@ -76,7 +76,7 @@ fn append_recording_consent_signature_input(
     consent: i32,
     timestamp_unix: u64,
 ) {
-    out.extend_from_slice(b"Ecliptix-VoIP-RecordingConsent-v1");
+    out.extend_from_slice(b"Aura-VoIP-RecordingConsent-v1");
     out.extend_from_slice(call_id);
     out.extend_from_slice(&consent.to_le_bytes());
     out.extend_from_slice(&timestamp_unix.to_le_bytes());
@@ -718,7 +718,7 @@ impl VoipSession {
             state_key,
             HMAC_BYTES,
             &external_counter.to_le_bytes(),
-            b"Ecliptix-VoIP-StateHMAC",
+            b"Aura-VoIP-StateHMAC",
         )?;
         let mut mac = HmacSha256::new_from_slice(&hmac_key)
             .map_err(|_| ProtocolError::voip_call("state HMAC init failed"))?;
@@ -778,7 +778,7 @@ impl VoipSession {
             state_key,
             HMAC_BYTES,
             &stored_counter.to_le_bytes(),
-            b"Ecliptix-VoIP-StateHMAC",
+            b"Aura-VoIP-StateHMAC",
         )?;
         let mut mac = HmacSha256::new_from_slice(&hmac_key)
             .map_err(|_| ProtocolError::voip_call("state HMAC init failed"))?;

@@ -2,10 +2,10 @@
 use libfuzzer_sys::fuzz_target;
 use prost::Message;
 
-use ecliptix_protocol::crypto::CryptoInterop;
-use ecliptix_protocol::identity::IdentityKeys;
-use ecliptix_protocol::proto::{GroupCommit, GroupUpdatePath};
-use ecliptix_protocol::protocol::group::GroupSession;
+use aura_protected_protocol::crypto::CryptoInterop;
+use aura_protected_protocol::identity::IdentityKeys;
+use aura_protected_protocol::proto::{GroupCommit, GroupUpdatePath};
+use aura_protected_protocol::protocol::group::GroupSession;
 use std::sync::Once;
 
 static INIT: Once = Once::new();

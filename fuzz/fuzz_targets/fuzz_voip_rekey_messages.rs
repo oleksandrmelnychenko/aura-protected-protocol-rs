@@ -1,15 +1,15 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::core::constants::*;
-use ecliptix_protocol::crypto::CryptoInterop;
-use ecliptix_protocol::identity::IdentityKeys;
-use ecliptix_protocol::proto::{CallRekey, CallRekeyAck};
-use ecliptix_protocol::protocol::voip::call_key_exchange::{
+use aura_protected_protocol::core::constants::*;
+use aura_protected_protocol::crypto::CryptoInterop;
+use aura_protected_protocol::identity::IdentityKeys;
+use aura_protected_protocol::proto::{CallRekey, CallRekeyAck};
+use aura_protected_protocol::protocol::voip::call_key_exchange::{
     callee_accept_with_context, caller_finish_with_context, caller_init_with_context,
     sign_rekey_material, CallInitAuthContext,
 };
-use ecliptix_protocol::protocol::voip::{CallRole, VoipSession};
+use aura_protected_protocol::protocol::voip::{CallRole, VoipSession};
 use prost::Message;
 
 fn default_call_context() -> CallInitAuthContext {
@@ -23,7 +23,7 @@ fn default_call_context() -> CallInitAuthContext {
 }
 
 fn setup_voip_pair(
-) -> Result<(IdentityKeys, IdentityKeys, VoipSession, VoipSession), ecliptix_protocol::core::errors::ProtocolError>
+) -> Result<(IdentityKeys, IdentityKeys, VoipSession, VoipSession), aura_protected_protocol::core::errors::ProtocolError>
 {
     let alice = IdentityKeys::create(111)?;
     let bob = IdentityKeys::create(222)?;

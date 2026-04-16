@@ -1,8 +1,8 @@
 /*
- * Ecliptix Protection Protocol — Tamarin Prover Formal Model
+ * Aura Protection Protocol — Tamarin Prover Formal Model
  *
  * This model captures the hybrid post-quantum key exchange (X25519 + Kyber-768)
- * and the per-direction hybrid double ratchet used in the Ecliptix protocol.
+ * and the per-direction hybrid double ratchet used in the Aura protocol.
  *
  * Properties verified:
  *   - Session key secrecy (absent compromise)
@@ -19,7 +19,7 @@
  * Style follows: Cohn-Gordon et al. (EUROCRYPT 2020), Apple iMessage PQ3 (USENIX 2025)
  */
 
-theory Ecliptix
+theory Aura
 begin
 
 builtins: diffie-hellman, hashing, signing
@@ -47,15 +47,15 @@ functions:
     /* Transcript hash (HMAC-based, not raw SHA-256) */
     transcript_hash/2,      // transcript_hash(bundle, init) → hash
     /* Protocol constants as distinct symbols */
-    x3dh_info/0,            // "Ecliptix-X3DH"
-    hybrid_x3dh_info/0,     // "Ecliptix-Hybrid-X3DH"
-    hybrid_ratchet_info/0,  // "Ecliptix-Hybrid-Ratchet"
-    chain_info/0,           // "Ecliptix-Chain"
-    msg_info/0,             // "Ecliptix-Msg"
-    session_id_info/0,      // "Ecliptix-SessionId"
-    metadata_key_info/0,    // "Ecliptix-MetadataKey"
-    kc_init_info/0,         // "Ecliptix-KeyConfirm-I"
-    kc_resp_info/0,         // "Ecliptix-KeyConfirm-R"
+    x3dh_info/0,            // "Aura-X3DH"
+    hybrid_x3dh_info/0,     // "Aura-Hybrid-X3DH"
+    hybrid_ratchet_info/0,  // "Aura-Hybrid-Ratchet"
+    chain_info/0,           // "Aura-Chain"
+    msg_info/0,             // "Aura-Msg"
+    session_id_info/0,      // "Aura-SessionId"
+    metadata_key_info/0,    // "Aura-MetadataKey"
+    kc_init_info/0,         // "Aura-KeyConfirm-I"
+    kc_resp_info/0,         // "Aura-KeyConfirm-R"
     /* Key derivation helpers */
     derive_chain_key/1,     // derive_chain_key(chain_key) → new_chain_key
     derive_msg_key/1,       // derive_msg_key(chain_key) → message_key
@@ -164,9 +164,9 @@ rule Register_PreKey_Bundle:
  *        DH3 = EK_I ^ SPK_R   (ephemeral × signed-pre-key)
  *        DH4 = EK_I ^ OPK_R   (ephemeral × one-time-pre-key)
  *   4. Classical IKM = 0xFF^32 || DH1 || DH2 || DH3 || DH4
- *      classical_shared = HKDF(IKM, [], "Ecliptix-X3DH")
+ *      classical_shared = HKDF(IKM, [], "Aura-X3DH")
  *   5. Kyber encapsulation: (ct, ss) ← Encaps(kyber_pk_R)
- *   6. Hybrid root = HKDF(ikm=kyber_ss, salt=classical, info="Ecliptix-Hybrid-X3DH")
+ *   6. Hybrid root = HKDF(ikm=kyber_ss, salt=classical, info="Aura-Hybrid-X3DH")
  *   7. Derive session_id, metadata_key, kc_init, kc_resp from root
  *   8. Key confirmation MAC: HMAC(kc_init, transcript_hash)
  */
@@ -371,7 +371,7 @@ rule Recv_Message:
 /*
  * Send ratchet: triggered on direction change (after receiving a message).
  *
- * This is the core of Ecliptix's per-direction hybrid ratcheting, which is
+ * This is the core of Aura's per-direction hybrid ratcheting, which is
  * more aggressive than Signal's per-DH-change ratcheting.
  *
  * Corresponds to Session::maybe_rotate_send_ratchet() in session.rs:1062-1208
@@ -381,7 +381,7 @@ rule Recv_Message:
  *   2. Compute DH: dh_secret = dh_remote_pub ^ new_priv
  *   3. Kyber encapsulate: (ct, ss) ← Encaps(kyber_pk_remote)
  *   4. Generate fresh Kyber keypair: (new_kyber_sk, new_kyber_pk)
- *   5. Augmented info = "Ecliptix-Hybrid-Ratchet" || new_kyber_pk
+ *   5. Augmented info = "Aura-Hybrid-Ratchet" || new_kyber_pk
  *   6. Hybrid HKDF: ratchet_out = HKDF(ikm = dh_secret || kyber_ss,
  *                                       salt = current_root_key,
  *                                       info = augmented_info)
@@ -438,7 +438,7 @@ rule Send_Ratchet:
  *   1. Extract peer's new DH public key + Kyber ciphertext + new Kyber PK
  *   2. Compute DH: dh_secret = new_dh_remote ^ local_dh_priv
  *   3. Kyber decapsulate: ss = Decaps(kyber_ct, kyber_sk_local)
- *   4. Augmented info = "Ecliptix-Hybrid-Ratchet" || new_kyber_pk_remote
+ *   4. Augmented info = "Aura-Hybrid-Ratchet" || new_kyber_pk_remote
  *   5. Hybrid HKDF: same derivation as sender
  *   6. Advance recv epoch, update remote keys
  *   7. Set send_ratchet_pending = true (direction change)
@@ -607,7 +607,7 @@ lemma pcs_classical_one_step:
  *   - At epoch e+2: Kyber encapsulation uses kyber_pk_{e+1} which was
  *     generated at the uncompromised epoch e+1 → IND-CCA2 applies
  *
- * This is the key subtlety of Ecliptix's hybrid ratchet design.
+ * This is the key subtlety of Aura's hybrid ratchet design.
  */
 lemma pcs_hybrid_two_step [heuristic=S]:
     "All A B k epoch_new #i #j #c.

@@ -1,5 +1,5 @@
 % ============================================================================
-%  Ecliptix Protection Protocol — Formal Security Analysis
+%  Aura Protection Protocol — Formal Security Analysis
 %  Companion document for CRYPTO / USENIX Security / IEEE S&P submission
 % ============================================================================
 \documentclass[11pt,a4paper]{article}
@@ -84,19 +84,19 @@
 \newcommand{\bits}{\{0,1\}}
 
 % ── Title ──────────────────────────────────────────────────────────────────
-\title{\textbf{Formal Security Analysis of the\\Ecliptix Protection Protocol}\\[6pt]
+\title{\textbf{Formal Security Analysis of the\\Aura Protection Protocol}\\[6pt]
 \large A Hybrid Post-Quantum Authenticated Key Exchange\\with Per-Direction Ratcheting}
-\author{Ecliptix Protocol Team}
+\author{Aura Protocol Team}
 \date{\today}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-We provide a rigorous game-based security analysis of the Ecliptix Protection
-Protocol (EPP), a hybrid post-quantum secure messaging protocol combining
+We provide a rigorous game-based security analysis of the Aura Protection
+Protocol (AURA), a hybrid post-quantum secure messaging protocol combining
 X25519 Diffie--Hellman key exchange with Kyber-768 KEM and AES-256-GCM-SIV
-authenticated encryption.  EPP extends the Signal X3DH/Double Ratchet paradigm
+authenticated encryption.  AURA extends the Signal X3DH/Double Ratchet paradigm
 with (i)~a hybrid combiner achieving IND-CCA2 security under the
 \emph{either-or} assumption (classical Gap-CDH \emph{or} Kyber IND-CCA2),
 (ii)~per-direction hybrid ratcheting providing stronger forward secrecy and
@@ -201,7 +201,7 @@ $\AEAD$ satisfies \emph{misuse-resistant authenticated encryption} ($\MRAE$):
 We write $\adv^{\MRAE}_{\AEAD}(\advA)$ for the combined advantage.
 \end{definition}
 
-\subsection{Ecliptix-Specific Notation}
+\subsection{Aura-Specific Notation}
 \label{subsec:epp-notation}
 
 \begin{center}
@@ -237,7 +237,7 @@ $N_{\max}$ & Maximum chain length ($= 10000$) \\
 \subsection{Hybrid X3DH Key Agreement}
 \label{subsec:x3dh}
 
-The Ecliptix hybrid X3DH extends the Signal X3DH~\cite{signal-x3dh} with a
+The Aura hybrid X3DH extends the Signal X3DH~\cite{signal-x3dh} with a
 Kyber-768 KEM component.  We formalize the protocol between initiator $I$ and
 responder~$R$.
 
@@ -273,7 +273,7 @@ Responder $R$ publishes a \emph{pre-key bundle}:
       \mathit{dh}_1 \concat \mathit{dh}_2 \concat \mathit{dh}_3
       [\concat \mathit{dh}_4],\;
       \ell = 32,\; \mathsf{salt} = \epsilon,\;
-      \mathsf{info} = \texttt{"Ecliptix-X3DH"}\bigr)
+      \mathsf{info} = \texttt{"Aura-X3DH"}\bigr)
   \]
   \item Kyber encapsulation:
   $(\mathit{ct}_{\mathsf{ky}}, \mathit{ss}_{\mathsf{ky}}) \gets \KEM.\Encaps(\mathit{kpk}_R)$.
@@ -282,19 +282,19 @@ Responder $R$ publishes a \emph{pre-key bundle}:
     \rk_0 = \HKDF\bigl(\mathsf{ikm} = \mathit{ss}_{\mathsf{ky}},\;
       \ell = 32,\;
       \mathsf{salt} = \mathit{cs},\;
-      \mathsf{info} = \texttt{"Ecliptix-Hybrid-X3DH"}\bigr)
+      \mathsf{info} = \texttt{"Aura-Hybrid-X3DH"}\bigr)
   \]
   \item Derive session ID, metadata key, and key confirmation keys:
   \begin{align*}
-    \sid &= \HKDF(\rk_0,\; 16,\; \epsilon,\; \texttt{"Ecliptix-SessionId"}) \\
-    \mdk_0 &= \HKDF(\rk_0,\; 32,\; \mathit{ctx}_{\mathsf{md}},\; \texttt{"Ecliptix-MetadataKey"}) \\
-    \mathit{kc}_I &= \HKDF(\rk_0,\; 32,\; \epsilon,\; \texttt{"Ecliptix-KeyConfirm-I"}) \\
-    \mathit{kc}_R &= \HKDF(\rk_0,\; 32,\; \epsilon,\; \texttt{"Ecliptix-KeyConfirm-R"})
+    \sid &= \HKDF(\rk_0,\; 16,\; \epsilon,\; \texttt{"Aura-SessionId"}) \\
+    \mdk_0 &= \HKDF(\rk_0,\; 32,\; \mathit{ctx}_{\mathsf{md}},\; \texttt{"Aura-MetadataKey"}) \\
+    \mathit{kc}_I &= \HKDF(\rk_0,\; 32,\; \epsilon,\; \texttt{"Aura-KeyConfirm-I"}) \\
+    \mathit{kc}_R &= \HKDF(\rk_0,\; 32,\; \epsilon,\; \texttt{"Aura-KeyConfirm-R"})
   \end{align*}
   where $\mathit{ctx}_{\mathsf{md}} = \mathsf{sort}(\EK_I^{\mathsf{pub}}, \SPK_R^{\mathsf{pub}}) \concat \sid$.
   \item Compute transcript hash:
   \begin{multline*}
-    \mathit{th} = \HMAC\bigl(\texttt{"Ecliptix-Handshake-Transcript"},\\
+    \mathit{th} = \HMAC\bigl(\texttt{"Aura-Handshake-Transcript"},\\
     \mathsf{len}(\mathsf{Bundle}_R) \concat \mathsf{Bundle}_R \concat
     \mathsf{len}(\mathsf{Init}) \concat \mathsf{Init}\bigr).
   \end{multline*}
@@ -330,8 +330,8 @@ $(\rk_0, \ck_0, \mdk_0, \sid)$.
 
 Given chain key $\ck$, derive message key and advance the chain:
 \begin{align*}
-  \mk &= \HKDF(\ck,\; 32,\; \epsilon,\; \texttt{"Ecliptix-Msg"}) \\
-  \ck' &= \HKDF(\ck,\; 32,\; \epsilon,\; \texttt{"Ecliptix-Chain"})
+  \mk &= \HKDF(\ck,\; 32,\; \epsilon,\; \texttt{"Aura-Msg"}) \\
+  \ck' &= \HKDF(\ck,\; 32,\; \epsilon,\; \texttt{"Aura-Chain"})
 \end{align*}
 
 \subsubsection{Hybrid Ratchet Step $R$}
@@ -354,7 +354,7 @@ on DH public key change.
     (\rk_{e+1},\; \ck_{e+1},\; \mdk_{e+1}^{\mathsf{send}}) =
     \HKDF\bigl(\mathit{ikm},\; 96,\;
       \rk_e,\;
-      \texttt{"Ecliptix-Hybrid-Ratchet"} \concat \mathit{kpk}_{e+1}\bigr)
+      \texttt{"Aura-Hybrid-Ratchet"} \concat \mathit{kpk}_{e+1}\bigr)
   \]
   \item Attach $(D_{e+1}, \mathit{ct}_{e+1}, \mathit{kpk}_{e+1})$ to the envelope.
   \item Erase $d_e$, $\mathit{ksk}_e$, $\rk_e$, $\mathit{dh}_{e+1}$, $\mathit{ss}_{e+1}$.
@@ -491,11 +491,11 @@ epoch $\geq e + k$ are secure, provided the adversary does not compromise the
 \begin{theorem}[Hybrid Combiner IND-CCA2]
 \label{thm:combiner}
 If $\KEM$ is $\INDCCA$ secure \textbf{or} $\DH$ satisfies $\GapCDH$ in the
-$\ROM$, then the Ecliptix hybrid combiner
+$\ROM$, then the Aura hybrid combiner
 \[
   \rk_0 = \HKDF(\mathsf{ikm} = \mathit{ss}_{\mathsf{ky}},\;
     \mathsf{salt} = \mathit{cs},\;
-    \mathsf{info} = \texttt{"Ecliptix-Hybrid-X3DH"})
+    \mathsf{info} = \texttt{"Aura-Hybrid-X3DH"})
 \]
 is $\INDCCA$ secure as a KEM.  Concretely, for any $\ppt$ adversary $\advA$:
 \[
@@ -518,7 +518,7 @@ $\mathit{cs}$ via HKDF over the concatenated DH outputs, encapsulates
 $(\mathit{ct}_{\mathsf{ky}}, \mathit{ss}_{\mathsf{ky}}) \gets
 \KEM.\Encaps(\mathit{kpk}_R)$, then derives
 $\rk_0 = \HKDF(\mathit{ss}_{\mathsf{ky}},\, \mathit{cs},\,
-\texttt{"Ecliptix-Hybrid-X3DH"})$.  With probability $1/2$, the challenger
+\texttt{"Aura-Hybrid-X3DH"})$.  With probability $1/2$, the challenger
 replaces $\rk_0$ with a uniform random value.  $\advA$'s advantage is
 $\adv^{\INDCCA}_{\mathsf{Hybrid}}(\advA)$.
 
@@ -572,16 +572,16 @@ The last term accounts for random oracle collisions. \qedhere
 
 \begin{lemma}[Domain Separation]
 \label{lem:domain-sep}
-The 15 distinct HKDF info strings used in EPP%
+The 15 distinct HKDF info strings used in AURA%
 \footnote{%
-\texttt{Ecliptix-X3DH}, \texttt{Ecliptix-Hybrid-X3DH},
-\texttt{Ecliptix-Hybrid-Ratchet}, \texttt{Ecliptix-DH-Ratchet},
-\texttt{Ecliptix-ChainInit}, \texttt{Ecliptix-Chain},
-\texttt{Ecliptix-Msg}, \texttt{Ecliptix-SessionId},
-\texttt{Ecliptix-MetadataKey}, \texttt{Ecliptix-OPAQUE-Root},
-\texttt{Ecliptix-State-HMAC}, \texttt{Ecliptix-KeyConfirm-I},
-\texttt{Ecliptix-KeyConfirm-R}, \texttt{Ecliptix-Handshake-Transcript},
-\texttt{Ecliptix-Identity-Binding}.%
+\texttt{Aura-X3DH}, \texttt{Aura-Hybrid-X3DH},
+\texttt{Aura-Hybrid-Ratchet}, \texttt{Aura-DH-Ratchet},
+\texttt{Aura-ChainInit}, \texttt{Aura-Chain},
+\texttt{Aura-Msg}, \texttt{Aura-SessionId},
+\texttt{Aura-MetadataKey}, \texttt{Aura-OPAQUE-Root},
+\texttt{Aura-State-HMAC}, \texttt{Aura-KeyConfirm-I},
+\texttt{Aura-KeyConfirm-R}, \texttt{Aura-Handshake-Transcript},
+\texttt{Aura-Identity-Binding}.%
 }
 ensure that keys derived for different purposes are cryptographically
 independent, even when derived from the same root key.  In the ROM,
@@ -618,12 +618,12 @@ fallback if lattice-based assumptions are weakened.
 
 \begin{theorem}[AKE Security in the $\eCK$ Model]
 \label{thm:ake}
-The Ecliptix hybrid X3DH satisfies $\eCK$-AKE security (\cref{def:ake})
+The Aura hybrid X3DH satisfies $\eCK$-AKE security (\cref{def:ake})
 under the $\GapCDH$, $\INDCCA$ (Kyber-768), $\dualPRF$ (HKDF-SHA256), and
 $\ROM$ assumptions.  For any $\ppt$ adversary $\advA$ making at most $q_s$
 session queries:
 \begin{multline*}
-  \adv^{\eCK}_{\mathsf{EPP}}(\advA) \;\leq\;
+  \adv^{\eCK}_{\mathsf{AURA}}(\advA) \;\leq\;
   q_s \cdot \bigl(
     4 \cdot \adv^{\GapCDH}_{\DH}(\advB_1) +
     \adv^{\INDCCA}_{\KEM}(\advB_2) \\
@@ -638,16 +638,16 @@ where the $q_s^2 / 2^{128}$ term bounds session ID collisions (128-bit session I
 We proceed via a sequence of five games.
 
 \paragraph{Game 0: Real AKE game.}
-The challenger runs the EPP protocol honestly.  The adversary interacts via
+The challenger runs the AURA protocol honestly.  The adversary interacts via
 oracles from \cref{def:oracles} and makes a $\mathsf{Test}$ query on a fresh
-session.  $\advA$'s advantage is $\adv^{\eCK}_{\mathsf{EPP}}(\advA)$.
+session.  $\advA$'s advantage is $\adv^{\eCK}_{\mathsf{AURA}}(\advA)$.
 
 \paragraph{Game 1: Guess the tested session.}
 The challenger guesses the index $s^*$ of the tested session uniformly at
 random from $[q_s]$.  If the guess is wrong, the challenger aborts.
 This introduces a loss factor of $q_s$:
 \[
-  \adv^{\eCK}_{\mathsf{EPP}}(\advA)
+  \adv^{\eCK}_{\mathsf{AURA}}(\advA)
   \;\leq\; q_s \cdot \left|\Pr[S_1] - \frac{1}{2}\right|.
 \]
 
@@ -705,7 +705,7 @@ independent of $\advA$'s view.  The adversary's advantage is zero.
 
 Combining all transitions:
 \begin{multline*}
-  \adv^{\eCK}_{\mathsf{EPP}}(\advA) \;\leq\;
+  \adv^{\eCK}_{\mathsf{AURA}}(\advA) \;\leq\;
   q_s \cdot \bigl(4 \cdot \adv^{\GapCDH}_{\DH}(\advB_1) +
   \adv^{\INDCCA}_{\KEM}(\advB_2) \\
   {} + \adv^{\dualPRF}_{\HKDF}(\advB_3)
@@ -735,7 +735,7 @@ identities are misbinding.  Then $\advA$ must either:
         $\leq \adv^{\PRF}_{\HMAC}(\advA)$).
   \item Find a transcript collision $\mathit{th} = \mathit{th}'$ for different
         sessions: reduces to finding a collision in HMAC-SHA256 with key
-        \texttt{"Ecliptix-Handshake-Transcript"}, which is computationally
+        \texttt{"Aura-Handshake-Transcript"}, which is computationally
         infeasible (advantage $\leq q_s^2 / 2^{256}$). \qedhere
 \end{enumerate}
 \end{proof}
@@ -744,7 +744,7 @@ identities are misbinding.  Then $\advA$ must either:
 \label{lem:identity}
 The identity binding hash
 \[
-  \SHA\bigl(\texttt{"Ecliptix-Identity-Binding"} \concat
+  \SHA\bigl(\texttt{"Aura-Identity-Binding"} \concat
   \mathsf{sort}(\mathit{ed}_I, \mathit{ed}_R) \concat
   \mathsf{sort}(\mathit{x}_I, \mathit{x}_R)\bigr)
 \]
@@ -761,11 +761,11 @@ AEAD authentication.
 
 \begin{theorem}[Forward Secrecy]
 \label{thm:fs}
-The Ecliptix protocol achieves forward secrecy (\cref{def:fs}).  Specifically,
+The Aura protocol achieves forward secrecy (\cref{def:fs}).  Specifically,
 for any $\ppt$ adversary $\advA$ who obtains all long-term keys
 $(\IK_I, \IK_R, \mathit{ksk}_I, \mathit{ksk}_R)$ at time $t$:
 \[
-  \adv^{\mathsf{FS}}_{\mathsf{EPP}}(\advA)
+  \adv^{\mathsf{FS}}_{\mathsf{AURA}}(\advA)
   \;\leq\;
   \adv^{\GapCDH}_{\DH}(\advB_1) +
   \adv^{\INDCCA}_{\KEM}(\advB_2) +
@@ -867,14 +867,14 @@ $\mathsf{RevealState}$), then:
   \item \textbf{Classical PCS (1-step)}: Messages at epoch $\geq e{+}1$ are
         secure under $\GapCDH$:
         \[
-          \adv^{\mathsf{PCS\text{-}1}}_{\mathsf{EPP}}(\advA)
+          \adv^{\mathsf{PCS\text{-}1}}_{\mathsf{AURA}}(\advA)
           \;\leq\; \adv^{\GapCDH}_{\DH}(\advB_1) +
           \adv^{\dualPRF}_{\HKDF}(\advB_2).
         \]
   \item \textbf{Hybrid PCS (2-step)}: Messages at epoch $\geq e{+}2$ are
         secure under $\GapCDH$ \textbf{and} $\KEM$-$\INDCCA$:
         \[
-          \adv^{\mathsf{PCS\text{-}2}}_{\mathsf{EPP}}(\advA)
+          \adv^{\mathsf{PCS\text{-}2}}_{\mathsf{AURA}}(\advA)
           \;\leq\; \adv^{\GapCDH}_{\DH}(\advB_1) +
           \adv^{\INDCCA}_{\KEM}(\advB_3) +
           2 \cdot \adv^{\dualPRF}_{\HKDF}(\advB_2).
@@ -963,13 +963,13 @@ part~(b): 2-step hybrid PCS. \qedhere
 
 \begin{lemma}[Per-Direction Ratcheting]
 \label{lem:per-dir}
-EPP's per-direction ratcheting (\texttt{send\_ratchet\_pending} flag set after
+AURA's per-direction ratcheting (\texttt{send\_ratchet\_pending} flag set after
 every received message) ensures that \emph{every direction change} triggers a
 fresh hybrid ratchet step.  This is strictly stronger than Signal's ratcheting
 (which only triggers on DH public key change) because:
 \begin{enumerate}[nosep]
   \item In Signal, if Alice sends 100 messages then Bob replies, only Bob's
-        reply triggers a ratchet.  In EPP, Bob's reply triggers a ratchet
+        reply triggers a ratchet.  In AURA, Bob's reply triggers a ratchet
         \emph{and} Alice's next message also triggers a ratchet.
   \item This means PCS recovery occurs at the \emph{first} message after
         compromise, not just after the first direction change.
@@ -980,7 +980,7 @@ fresh hybrid ratchet step.  This is strictly stronger than Signal's ratcheting
 \label{lem:augmented-info}
 The ratchet HKDF uses an augmented info string:
 \[
-  \mathsf{info} = \texttt{"Ecliptix-Hybrid-Ratchet"} \concat \mathit{kpk}_{e+1}.
+  \mathsf{info} = \texttt{"Aura-Hybrid-Ratchet"} \concat \mathit{kpk}_{e+1}.
 \]
 This binds the new Kyber public key $\mathit{kpk}_{e+1}$ into the key
 derivation.  If an adversary substitutes a different Kyber public key
@@ -995,12 +995,12 @@ Suppose adversary $\advA$ modifies the ratchet header, replacing
 $\mathit{kpk}_{e+1}$ with $\mathit{kpk}'$.  The receiver computes:
 \[
   \rk'_{e+1} = \HKDF(\mathit{ikm},\; \rk_e,\;
-    \texttt{"Ecliptix-Hybrid-Ratchet"} \concat \mathit{kpk}').
+    \texttt{"Aura-Hybrid-Ratchet"} \concat \mathit{kpk}').
 \]
 The sender computed:
 \[
   \rk_{e+1} = \HKDF(\mathit{ikm},\; \rk_e,\;
-    \texttt{"Ecliptix-Hybrid-Ratchet"} \concat \mathit{kpk}_{e+1}).
+    \texttt{"Aura-Hybrid-Ratchet"} \concat \mathit{kpk}_{e+1}).
 \]
 Since $\mathit{kpk}' \neq \mathit{kpk}_{e+1}$, the info strings differ.
 By the PRF property of HKDF-Expand, $\rk'_{e+1}$ and $\rk_{e+1}$ are
@@ -1022,9 +1022,9 @@ chain KDF, each message key $\mk_{e,n}$ is indistinguishable from random
 and each ciphertext provides $\INDCPA$ + $\INTCTXT$ security.
 For any $\ppt$ adversary $\advA$ over $q_m$ messages in $q_s$ sessions:
 \begin{multline*}
-  \adv^{\mathsf{Conf}}_{\mathsf{EPP}}(\advA)
+  \adv^{\mathsf{Conf}}_{\mathsf{AURA}}(\advA)
   \;\leq\;
-  \adv^{\eCK}_{\mathsf{EPP}}(\advB_0) +
+  \adv^{\eCK}_{\mathsf{AURA}}(\advB_0) +
   q_m \cdot \adv^{\PRF}_{\mathsf{chain\text{-}KDF}}(\advB_1) \\
   {} + q_m \cdot \adv^{\MRAE}_{\AEAD}(\advB_2) +
   \frac{q_m^2}{2^{96}}
@@ -1046,14 +1046,14 @@ corruption pattern), the root key $\rk_0$ is computationally random.  For
 ratcheted root keys $\rk_e$ ($e > 0$), each is derived from the previous
 root key plus fresh DH/Kyber material, so by induction and \cref{thm:pcs}:
 \[
-  |\Pr[S_1] - \Pr[S_0]| \;\leq\; \adv^{\eCK}_{\mathsf{EPP}}(\advB_0).
+  |\Pr[S_1] - \Pr[S_0]| \;\leq\; \adv^{\eCK}_{\mathsf{AURA}}(\advB_0).
 \]
 
 \paragraph{Game 2: Chain KDF is a PRF.}
 Given a pseudorandom root key $\rk_e$, the initial chain key $\ck_e$ is
 derived via HKDF and is therefore pseudorandom.  The chain KDF
-$(\mk, \ck') = (\HKDF(\ck, \texttt{"Ecliptix-Msg"}),\;
-\HKDF(\ck, \texttt{"Ecliptix-Chain"}))$
+$(\mk, \ck') = (\HKDF(\ck, \texttt{"Aura-Msg"}),\;
+\HKDF(\ck, \texttt{"Aura-Chain"}))$
 is a PRF keyed by $\ck$.
 
 We replace each message key $\mk_{e,n}$ with a truly random key via a
@@ -1062,8 +1062,8 @@ hybrid argument over chain indices $n = 0, 1, \ldots$:
   |\Pr[S_2] - \Pr[S_1]| \;\leq\; q_m \cdot \adv^{\PRF}_{\mathsf{chain\text{-}KDF}}(\advB_1).
 \]
 
-The domain separation between \texttt{"Ecliptix-Msg"} and
-\texttt{"Ecliptix-Chain"} ensures the message key and next chain key are
+The domain separation between \texttt{"Aura-Msg"} and
+\texttt{"Aura-Chain"} ensures the message key and next chain key are
 independent (\cref{lem:domain-sep}).
 
 \paragraph{Game 3: AEAD with random keys.}
@@ -1126,7 +1126,7 @@ AES-256-GCM-SIV~\cite{rfc8452} provides:
         identical nonces produce identical ciphertexts.  $\INTCTXT$ is
         preserved.
 \end{itemize}
-Since EPP uses monotonic counters for nonces within each chain, nonce reuse
+Since AURA uses monotonic counters for nonces within each chain, nonce reuse
 does not occur in normal operation.  GCM-SIV provides defense-in-depth
 against implementation bugs.
 \end{lemma}
@@ -1143,7 +1143,7 @@ The combination of unique nonces and the bounded seen-nonce cache provides
 replay resistance.  For any adversary replaying at most $q_r$ messages
 within a window of $W = \mathsf{MAX\_SEEN\_NONCES} = 2048$ nonces:
 \[
-  \adv^{\mathsf{Replay}}_{\mathsf{EPP}}(\advA) \;\leq\;
+  \adv^{\mathsf{Replay}}_{\mathsf{AURA}}(\advA) \;\leq\;
   \frac{W \cdot q_r}{2^{96}} + \adv^{\INTCTXT}_{\AEAD}(\advB).
 \]
 \end{theorem}
@@ -1187,7 +1187,7 @@ security of the AEAD:
   |\Pr[S_2] - \Pr[S_1]| \;\leq\; \adv^{\INTCTXT}_{\AEAD}(\advB).
 \]
 
-Combining: $\adv^{\mathsf{Replay}}_{\mathsf{EPP}}(\advA) \leq
+Combining: $\adv^{\mathsf{Replay}}_{\mathsf{AURA}}(\advA) \leq
 W \cdot q_r / 2^{96} + \adv^{\INTCTXT}_{\AEAD}(\advB)$. \qedhere
 \end{proof}
 
@@ -1208,7 +1208,7 @@ the most recent entries for replay detection.
 \begin{table}[htb]
 \centering
 \renewcommand{\arraystretch}{1.3}
-\caption{Concrete security levels for EPP components and composite bounds.}
+\caption{Concrete security levels for AURA components and composite bounds.}
 \label{tab:bounds}
 \small
 \begin{tabular}{@{}llr@{}}
@@ -1261,7 +1261,7 @@ message contains a new DH public key (i.e., the peer has started sending
 with a fresh keypair).  This means multiple consecutive messages in the
 same direction reuse the same DH ratchet epoch.
 
-EPP uses \emph{per-direction} ratcheting: every received message sets
+AURA uses \emph{per-direction} ratcheting: every received message sets
 $\mathsf{send\_ratchet\_pending} = \mathsf{true}$, triggering a full
 hybrid ratchet (X25519 + Kyber-768) on the next outgoing message.  This
 provides:
@@ -1290,7 +1290,7 @@ A subtle consequence of the hybrid design is the asymmetry in PCS recovery:
   \item \textbf{Signal (classical only)}: 1-step PCS recovery via fresh DH.
         After compromise, the first ratchet step with a new DH keypair fully
         recovers security.
-  \item \textbf{EPP (hybrid)}: 1-step \emph{classical} PCS, 2-step
+  \item \textbf{AURA (hybrid)}: 1-step \emph{classical} PCS, 2-step
         \emph{hybrid} PCS.  At step $e{+}1$, the new DH component is
         secure (fresh keypair) but the Kyber encapsulation uses the
         \emph{old} Kyber public key (from the compromised state).
@@ -1305,9 +1305,9 @@ encapsulation against that keypair.
 
 \subsection{Identity Binding}
 
-EPP computes the identity binding hash as
+AURA computes the identity binding hash as
 \[
-  \SHA\bigl(\texttt{"Ecliptix-Identity-Binding"} \concat
+  \SHA\bigl(\texttt{"Aura-Identity-Binding"} \concat
   \mathsf{sort}(\mathit{ed}_{I}, \mathit{ed}_{R}) \concat
   \mathsf{sort}(\mathit{x}_{I}, \mathit{x}_{R})\bigr)
 \]
@@ -1317,7 +1317,7 @@ alone for identity binding) because:
 \begin{enumerate}[nosep]
   \item Identity keys are explicitly included in the authenticated data.
   \item The sorted canonicalization prevents role confusion attacks.
-  \item SHA-256 domain separation (\texttt{"Ecliptix-Identity-Binding"})
+  \item SHA-256 domain separation (\texttt{"Aura-Identity-Binding"})
         prevents cross-protocol attacks.
 \end{enumerate}
 
@@ -1327,7 +1327,7 @@ alone for identity binding) because:
 \label{sec:conclusion}
 % ============================================================================
 
-We have provided a comprehensive game-based security analysis of the Ecliptix
+We have provided a comprehensive game-based security analysis of the Aura
 Protection Protocol, establishing six security properties through constructive
 reductions.  The hybrid combiner achieves an either-or guarantee (secure if
 \emph{at least one} of X25519 or Kyber-768 is secure), the per-direction

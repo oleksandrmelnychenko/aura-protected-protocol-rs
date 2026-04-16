@@ -1,10 +1,10 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::core::constants::*;
-use ecliptix_protocol::crypto::CryptoInterop;
-use ecliptix_protocol::identity::IdentityKeys;
-use ecliptix_protocol::protocol::voip::call_key_exchange::{sign_rekey_material, verify_rekey_signature};
+use aura_protected_protocol::core::constants::*;
+use aura_protected_protocol::crypto::CryptoInterop;
+use aura_protected_protocol::identity::IdentityKeys;
+use aura_protected_protocol::protocol::voip::call_key_exchange::{sign_rekey_material, verify_rekey_signature};
 
 fn take_bytes(data: &[u8], offset: usize, max_len: usize) -> Vec<u8> {
     if data.is_empty() {

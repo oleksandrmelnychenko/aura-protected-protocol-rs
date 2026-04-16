@@ -1,20 +1,20 @@
 // Copyright (c) 2026 Oleksandr Melnychenko. All rights reserved.
 // SPDX-License-Identifier: MIT
 
-use ecliptix_protocol::api::{
-    EcliptixGroupSession, EcliptixProtocol, EcliptixSession, EcliptixVoipSession,
+use aura_protected_protocol::api::{
+    AuraGroupSession, AuraProtocol, AuraSession, AuraVoipSession,
     SealedStateCounterTracker, SealedStateSlot,
 };
-use ecliptix_protocol::core::constants::{
+use aura_protected_protocol::core::constants::{
     HMAC_BYTES, MAX_BUFFER_SIZE, MAX_ENVELOPE_MESSAGE_SIZE, MAX_GROUP_MESSAGE_SIZE,
     MAX_INFLIGHT_HANDSHAKE_INITS, MAX_ONE_TIME_PRE_KEYS_PER_BUNDLE, MAX_PROTOBUF_MESSAGE_SIZE,
 };
-use ecliptix_protocol::crypto::CryptoInterop;
-use ecliptix_protocol::identity::IdentityKeys;
-use ecliptix_protocol::proto::{
+use aura_protected_protocol::crypto::CryptoInterop;
+use aura_protected_protocol::identity::IdentityKeys;
+use aura_protected_protocol::proto::{
     GroupCommit, GroupExternalJoinAuthorization, OneTimePreKey, PreKeyBundle,
 };
-use ecliptix_protocol::protocol::GroupSecurityPolicy;
+use aura_protected_protocol::protocol::GroupSecurityPolicy;
 use prost::Message;
 use std::sync::Once;
 
@@ -37,8 +37,8 @@ const fn permissive_group_policy() -> GroupSecurityPolicy {
 }
 
 fn authorize_external_join_api(
-    group: &EcliptixGroupSession,
-    joiner: &EcliptixProtocol,
+    group: &AuraGroupSession,
+    joiner: &AuraProtocol,
     credential: &[u8],
 ) -> Vec<u8> {
     group
@@ -91,15 +91,15 @@ fn extract_voip_peer_material(bundle_bytes: &[u8]) -> (Vec<u8>, Vec<u8>) {
 }
 
 fn create_api_voip_session_pair() -> (
-    EcliptixProtocol,
-    EcliptixProtocol,
-    EcliptixVoipSession,
-    EcliptixVoipSession,
+    AuraProtocol,
+    AuraProtocol,
+    AuraVoipSession,
+    AuraVoipSession,
     Vec<u8>,
     Vec<u8>,
 ) {
-    let alice = EcliptixProtocol::new(5).unwrap();
-    let bob = EcliptixProtocol::new(5).unwrap();
+    let alice = AuraProtocol::new(5).unwrap();
+    let bob = AuraProtocol::new(5).unwrap();
     let (alice_kyber, alice_ed25519) = extract_voip_peer_material(&alice.pre_key_bundle().unwrap());
     let (bob_kyber, bob_ed25519) = extract_voip_peer_material(&bob.pre_key_bundle().unwrap());
     let (initiator, call_init) = alice.initiate_call(&bob_kyber, false, 512, 60).unwrap();
@@ -116,13 +116,13 @@ fn create_api_voip_session_pair() -> (
 }
 
 // ---------------------------------------------------------------------------
-// EcliptixProtocol construction
+// AuraProtocol construction
 // ---------------------------------------------------------------------------
 
 #[test]
 fn api_protocol_new_creates_instance() {
     init();
-    let proto = EcliptixProtocol::new(5).unwrap();
+    let proto = AuraProtocol::new(5).unwrap();
     let bundle = proto.pre_key_bundle().unwrap();
     assert!(!bundle.is_empty());
 }
@@ -131,8 +131,8 @@ fn api_protocol_new_creates_instance() {
 fn api_protocol_from_seed_is_deterministic() {
     init();
     let seed = vec![0xABu8; 32];
-    let p1 = EcliptixProtocol::from_seed(&seed, "user-1", 2).unwrap();
-    let p2 = EcliptixProtocol::from_seed(&seed, "user-1", 2).unwrap();
+    let p1 = AuraProtocol::from_seed(&seed, "user-1", 2).unwrap();
+    let p2 = AuraProtocol::from_seed(&seed, "user-1", 2).unwrap();
 
     let b1 = p1.pre_key_bundle().unwrap();
     let b2 = p2.pre_key_bundle().unwrap();
@@ -142,8 +142,8 @@ fn api_protocol_from_seed_is_deterministic() {
 #[test]
 fn api_protocol_different_seeds_produce_different_bundles() {
     init();
-    let p1 = EcliptixProtocol::from_seed(&[0x11u8; 32], "a", 2).unwrap();
-    let p2 = EcliptixProtocol::from_seed(&[0x22u8; 32], "a", 2).unwrap();
+    let p1 = AuraProtocol::from_seed(&[0x11u8; 32], "a", 2).unwrap();
+    let p2 = AuraProtocol::from_seed(&[0x22u8; 32], "a", 2).unwrap();
 
     assert_ne!(p1.pre_key_bundle().unwrap(), p2.pre_key_bundle().unwrap());
 }
@@ -156,8 +156,8 @@ fn api_protocol_different_seeds_produce_different_bundles() {
 fn api_p2p_full_handshake_encrypt_decrypt() {
     init();
 
-    let mut alice = EcliptixProtocol::new(5).unwrap();
-    let mut bob = EcliptixProtocol::new(5).unwrap();
+    let mut alice = AuraProtocol::new(5).unwrap();
+    let mut bob = AuraProtocol::new(5).unwrap();
 
     let bob_bundle = bob.pre_key_bundle().unwrap();
 
@@ -177,8 +177,8 @@ fn api_p2p_full_handshake_encrypt_decrypt() {
 fn api_p2p_bidirectional_messaging() {
     init();
 
-    let mut alice = EcliptixProtocol::new(5).unwrap();
-    let mut bob = EcliptixProtocol::new(5).unwrap();
+    let mut alice = AuraProtocol::new(5).unwrap();
+    let mut bob = AuraProtocol::new(5).unwrap();
 
     let bob_bundle = bob.pre_key_bundle().unwrap();
     let (initiator, init_msg) = alice.begin_session(&bob_bundle).unwrap();
@@ -204,8 +204,8 @@ fn api_p2p_bidirectional_messaging() {
 fn api_p2p_with_correlation_id() {
     init();
 
-    let mut alice = EcliptixProtocol::new(5).unwrap();
-    let mut bob = EcliptixProtocol::new(5).unwrap();
+    let mut alice = AuraProtocol::new(5).unwrap();
+    let mut bob = AuraProtocol::new(5).unwrap();
 
     let bob_bundle = bob.pre_key_bundle().unwrap();
     let (initiator, init_msg) = alice.begin_session(&bob_bundle).unwrap();
@@ -225,8 +225,8 @@ fn api_p2p_with_correlation_id() {
 fn api_p2p_session_serialize_deserialize() {
     init();
 
-    let mut alice = EcliptixProtocol::new(5).unwrap();
-    let mut bob = EcliptixProtocol::new(5).unwrap();
+    let mut alice = AuraProtocol::new(5).unwrap();
+    let mut bob = AuraProtocol::new(5).unwrap();
 
     let bob_bundle = bob.pre_key_bundle().unwrap();
     let (initiator, init_msg) = alice.begin_session(&bob_bundle).unwrap();
@@ -242,11 +242,11 @@ fn api_p2p_session_serialize_deserialize() {
     let sealed = alice_session.serialize(&key, 1).unwrap();
 
     let counter =
-        ecliptix_protocol::api::EcliptixSession::sealed_external_counter(&sealed).unwrap();
+        aura_protected_protocol::api::AuraSession::sealed_external_counter(&sealed).unwrap();
     assert_eq!(counter, 1);
 
     let (mut restored, restored_counter) =
-        ecliptix_protocol::api::EcliptixSession::deserialize(&sealed, &key, 0).unwrap();
+        aura_protected_protocol::api::AuraSession::deserialize(&sealed, &key, 0).unwrap();
     assert_eq!(restored_counter, 1);
 
     let ct2 = restored.encrypt(b"after restore", 0, 2, None).unwrap();
@@ -286,8 +286,8 @@ fn api_sealed_state_slot_serialization_roundtrip() {
 fn api_p2p_session_counter_tracker_restores_latest_and_rejects_rollback() {
     init();
 
-    let mut alice = EcliptixProtocol::new(5).unwrap();
-    let mut bob = EcliptixProtocol::new(5).unwrap();
+    let mut alice = AuraProtocol::new(5).unwrap();
+    let mut bob = AuraProtocol::new(5).unwrap();
 
     let bob_bundle = bob.pre_key_bundle().unwrap();
     let (initiator, init_msg) = alice.begin_session(&bob_bundle).unwrap();
@@ -308,7 +308,7 @@ fn api_p2p_session_counter_tracker_restores_latest_and_rejects_rollback() {
 
     let mut restart_tracker = SealedStateCounterTracker::deserialize(&tracker_bytes).unwrap();
     let mut restored =
-        EcliptixSession::deserialize_with_counter_tracker(&sealed1, &key, &mut restart_tracker)
+        AuraSession::deserialize_with_counter_tracker(&sealed1, &key, &mut restart_tracker)
             .unwrap();
     assert_eq!(restart_tracker.max_restored_counter(), 1);
     assert_eq!(restart_tracker.latest_issued_counter(), 1);
@@ -328,11 +328,11 @@ fn api_p2p_session_counter_tracker_restores_latest_and_rejects_rollback() {
     let tracker_after_export = restart_tracker.serialize();
     let mut next_restart = SealedStateCounterTracker::deserialize(&tracker_after_export).unwrap();
     assert!(
-        EcliptixSession::deserialize_with_counter_tracker(&sealed1, &key, &mut next_restart)
+        AuraSession::deserialize_with_counter_tracker(&sealed1, &key, &mut next_restart)
             .is_err()
     );
     let mut latest =
-        EcliptixSession::deserialize_with_counter_tracker(&sealed2, &key, &mut next_restart)
+        AuraSession::deserialize_with_counter_tracker(&sealed2, &key, &mut next_restart)
             .unwrap();
     assert_eq!(next_restart.max_restored_counter(), 2);
     assert_eq!(next_restart.latest_issued_counter(), 2);
@@ -346,8 +346,8 @@ fn api_p2p_session_counter_tracker_restores_latest_and_rejects_rollback() {
 fn api_p2p_session_slot_roundtrip() {
     init();
 
-    let mut alice = EcliptixProtocol::new(5).unwrap();
-    let mut bob = EcliptixProtocol::new(5).unwrap();
+    let mut alice = AuraProtocol::new(5).unwrap();
+    let mut bob = AuraProtocol::new(5).unwrap();
 
     let bob_bundle = bob.pre_key_bundle().unwrap();
     let (initiator, init_msg) = alice.begin_session(&bob_bundle).unwrap();
@@ -365,7 +365,7 @@ fn api_p2p_session_slot_roundtrip() {
     let slot_bytes = slot.serialize().unwrap();
 
     let mut restart_slot = SealedStateSlot::deserialize(&slot_bytes).unwrap();
-    let mut restored = EcliptixSession::restore_from_slot(&mut restart_slot, &key).unwrap();
+    let mut restored = AuraSession::restore_from_slot(&mut restart_slot, &key).unwrap();
     assert_eq!(restart_slot.max_restored_counter(), 1);
     assert_eq!(restart_slot.latest_issued_counter(), 1);
 
@@ -376,7 +376,7 @@ fn api_p2p_session_slot_roundtrip() {
     restored.export_to_slot(&key, &mut restart_slot).unwrap();
     let next_slot_bytes = restart_slot.serialize().unwrap();
     let mut next_restart = SealedStateSlot::deserialize(&next_slot_bytes).unwrap();
-    let mut latest = EcliptixSession::restore_from_slot(&mut next_restart, &key).unwrap();
+    let mut latest = AuraSession::restore_from_slot(&mut next_restart, &key).unwrap();
     assert_eq!(next_restart.max_restored_counter(), 2);
     assert_eq!(next_restart.latest_issued_counter(), 2);
 
@@ -389,8 +389,8 @@ fn api_p2p_session_slot_roundtrip() {
 fn api_p2p_session_serialize_wrong_key_fails() {
     init();
 
-    let mut alice = EcliptixProtocol::new(5).unwrap();
-    let mut bob = EcliptixProtocol::new(5).unwrap();
+    let mut alice = AuraProtocol::new(5).unwrap();
+    let mut bob = AuraProtocol::new(5).unwrap();
 
     let bob_bundle = bob.pre_key_bundle().unwrap();
     let (initiator, init_msg) = alice.begin_session(&bob_bundle).unwrap();
@@ -403,14 +403,14 @@ fn api_p2p_session_serialize_wrong_key_fails() {
     let sealed = alice_session.serialize(&key, 1).unwrap();
 
     let wrong_key = vec![0xAAu8; 32];
-    let result = ecliptix_protocol::api::EcliptixSession::deserialize(&sealed, &wrong_key, 0);
+    let result = aura_protected_protocol::api::AuraSession::deserialize(&sealed, &wrong_key, 0);
     assert!(result.is_err());
 }
 
 #[test]
 fn api_p2p_begin_session_with_invalid_bundle_fails() {
     init();
-    let mut alice = EcliptixProtocol::new(5).unwrap();
+    let mut alice = AuraProtocol::new(5).unwrap();
     let result = alice.begin_session(b"garbage");
     assert!(result.is_err());
 }
@@ -418,7 +418,7 @@ fn api_p2p_begin_session_with_invalid_bundle_fails() {
 #[test]
 fn api_p2p_accept_session_with_invalid_init_fails() {
     init();
-    let mut bob = EcliptixProtocol::new(5).unwrap();
+    let mut bob = AuraProtocol::new(5).unwrap();
     let result = bob.accept_session(b"garbage");
     assert!(result.is_err());
 }
@@ -426,8 +426,8 @@ fn api_p2p_accept_session_with_invalid_init_fails() {
 #[test]
 fn api_p2p_decrypt_with_oversized_envelope_fails() {
     init();
-    let mut alice = EcliptixProtocol::new(5).unwrap();
-    let mut bob = EcliptixProtocol::new(5).unwrap();
+    let mut alice = AuraProtocol::new(5).unwrap();
+    let mut bob = AuraProtocol::new(5).unwrap();
     let bob_bundle = bob.pre_key_bundle().unwrap();
     let (initiator, init_msg) = alice.begin_session(&bob_bundle).unwrap();
     let (responder, ack_msg) = bob.accept_session(&init_msg).unwrap();
@@ -442,8 +442,8 @@ fn api_p2p_decrypt_with_oversized_envelope_fails() {
 #[test]
 fn api_p2p_encrypt_with_oversized_plaintext_fails() {
     init();
-    let mut alice = EcliptixProtocol::new(5).unwrap();
-    let mut bob = EcliptixProtocol::new(5).unwrap();
+    let mut alice = AuraProtocol::new(5).unwrap();
+    let mut bob = AuraProtocol::new(5).unwrap();
     let bob_bundle = bob.pre_key_bundle().unwrap();
     let (initiator, init_msg) = alice.begin_session(&bob_bundle).unwrap();
     let (_responder, ack_msg) = bob.accept_session(&init_msg).unwrap();
@@ -457,7 +457,7 @@ fn api_p2p_encrypt_with_oversized_plaintext_fails() {
 #[test]
 fn api_p2p_begin_session_with_oversized_bundle_fails() {
     init();
-    let mut alice = EcliptixProtocol::new(5).unwrap();
+    let mut alice = AuraProtocol::new(5).unwrap();
     let oversized = vec![0u8; MAX_PROTOBUF_MESSAGE_SIZE + 1];
     let result = alice.begin_session(&oversized);
     assert!(result.is_err());
@@ -466,8 +466,8 @@ fn api_p2p_begin_session_with_oversized_bundle_fails() {
 #[test]
 fn api_p2p_begin_session_rejects_bundle_with_too_many_opks() {
     init();
-    let mut alice = EcliptixProtocol::new(5).unwrap();
-    let bob = EcliptixProtocol::new(5).unwrap();
+    let mut alice = AuraProtocol::new(5).unwrap();
+    let bob = AuraProtocol::new(5).unwrap();
     let bundle_bytes = bob.pre_key_bundle().unwrap();
     let mut bundle = PreKeyBundle::decode(bundle_bytes.as_slice()).unwrap();
 
@@ -540,9 +540,9 @@ fn identity_reserve_handshake_init_release_restores_capacity() {
 fn api_p2p_decrypt_wrong_session_fails() {
     init();
 
-    let mut alice = EcliptixProtocol::new(5).unwrap();
-    let mut bob = EcliptixProtocol::new(5).unwrap();
-    let mut charlie = EcliptixProtocol::new(5).unwrap();
+    let mut alice = AuraProtocol::new(5).unwrap();
+    let mut bob = AuraProtocol::new(5).unwrap();
+    let mut charlie = AuraProtocol::new(5).unwrap();
 
     let bob_bundle = bob.pre_key_bundle().unwrap();
     let charlie_bundle = charlie.pre_key_bundle().unwrap();
@@ -646,13 +646,13 @@ fn api_voip_counter_tracker_restores_latest_and_rejects_rollback() {
     let tracker_after_export = restart_tracker.serialize();
 
     let mut next_restart = SealedStateCounterTracker::deserialize(&tracker_after_export).unwrap();
-    assert!(EcliptixVoipSession::from_sealed_state_with_counter_tracker(
+    assert!(AuraVoipSession::from_sealed_state_with_counter_tracker(
         &sealed1,
         &state_key,
         &mut next_restart,
     )
     .is_err());
-    let latest = EcliptixVoipSession::from_sealed_state_with_counter_tracker(
+    let latest = AuraVoipSession::from_sealed_state_with_counter_tracker(
         &sealed2,
         &state_key,
         &mut next_restart,
@@ -698,7 +698,7 @@ fn api_voip_slot_roundtrip() {
         .unwrap();
     let next_slot_bytes = restart_slot.serialize().unwrap();
     let mut next_restart = SealedStateSlot::deserialize(&next_slot_bytes).unwrap();
-    let latest = EcliptixVoipSession::restore_from_slot(&mut next_restart, &state_key).unwrap();
+    let latest = AuraVoipSession::restore_from_slot(&mut next_restart, &state_key).unwrap();
     assert_eq!(next_restart.max_restored_counter(), 2);
     assert_eq!(next_restart.latest_issued_counter(), 2);
 
@@ -717,8 +717,8 @@ fn api_voip_slot_roundtrip() {
 fn api_group_two_member_lifecycle() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
-    let bob_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let bob_proto = AuraProtocol::new(5).unwrap();
 
     let alice_group = alice_proto.create_group(b"alice".to_vec()).unwrap();
     assert_eq!(alice_group.epoch().unwrap(), 0);
@@ -752,7 +752,7 @@ fn api_group_two_member_lifecycle() {
 fn api_group_update_advances_epoch() {
     init();
 
-    let proto = EcliptixProtocol::new(0).unwrap();
+    let proto = AuraProtocol::new(0).unwrap();
     let session = proto.create_group(b"cred".to_vec()).unwrap();
 
     assert_eq!(session.epoch().unwrap(), 0);
@@ -766,8 +766,8 @@ fn api_group_update_advances_epoch() {
 fn api_group_remove_member() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
-    let bob_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let bob_proto = AuraProtocol::new(5).unwrap();
 
     let alice_group = alice_proto.create_group(b"alice".to_vec()).unwrap();
 
@@ -793,7 +793,7 @@ fn api_group_remove_member() {
 fn api_group_external_join() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
     let alice_group = alice_proto
         .create_group_with_policy(b"alice".to_vec(), permissive_group_policy())
         .unwrap();
@@ -801,7 +801,7 @@ fn api_group_external_join() {
     let public_state = alice_group.export_public_state().unwrap();
     assert!(!public_state.is_empty());
 
-    let charlie_proto = EcliptixProtocol::new(5).unwrap();
+    let charlie_proto = AuraProtocol::new(5).unwrap();
     let authorization = authorize_external_join_api(&alice_group, &charlie_proto, b"charlie");
     let (charlie_group, ext_commit) = charlie_proto
         .join_group_external(&public_state, &authorization, b"charlie".to_vec())
@@ -822,12 +822,12 @@ fn api_group_external_join() {
 fn api_group_external_join_rejects_stale_authorization() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
     let alice_group = alice_proto
         .create_group_with_policy(b"alice".to_vec(), permissive_group_policy())
         .unwrap();
 
-    let charlie_proto = EcliptixProtocol::new(5).unwrap();
+    let charlie_proto = AuraProtocol::new(5).unwrap();
     let authorization = authorize_external_join_api(&alice_group, &charlie_proto, b"charlie");
 
     let _commit = alice_group.update().unwrap();
@@ -842,13 +842,13 @@ fn api_group_external_join_rejects_stale_authorization() {
 fn api_group_external_join_rejects_expired_authorization() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
     let alice_group = alice_proto
         .create_group_with_policy(b"alice".to_vec(), permissive_group_policy())
         .unwrap();
     let public_state = alice_group.export_public_state().unwrap();
 
-    let charlie_proto = EcliptixProtocol::new(5).unwrap();
+    let charlie_proto = AuraProtocol::new(5).unwrap();
     let mut authorization = GroupExternalJoinAuthorization::decode(
         authorize_external_join_api(&alice_group, &charlie_proto, b"charlie").as_slice(),
     )
@@ -874,13 +874,13 @@ fn api_group_external_join_rejects_expired_authorization() {
 fn api_group_external_join_rejects_unsupported_authorization_format() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
     let alice_group = alice_proto
         .create_group_with_policy(b"alice".to_vec(), permissive_group_policy())
         .unwrap();
     let public_state = alice_group.export_public_state().unwrap();
 
-    let charlie_proto = EcliptixProtocol::new(5).unwrap();
+    let charlie_proto = AuraProtocol::new(5).unwrap();
     let mut authorization = GroupExternalJoinAuthorization::decode(
         authorize_external_join_api(&alice_group, &charlie_proto, b"charlie").as_slice(),
     )
@@ -905,9 +905,9 @@ fn api_group_external_join_rejects_unsupported_authorization_format() {
 fn api_group_external_join_commit_accepts_delayed_apply_after_authorization_expiry() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
-    let bob_proto = EcliptixProtocol::new(5).unwrap();
-    let carol_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let bob_proto = AuraProtocol::new(5).unwrap();
+    let carol_proto = AuraProtocol::new(5).unwrap();
 
     let alice_group = alice_proto
         .create_group_with_policy(b"alice".to_vec(), permissive_group_policy())
@@ -934,7 +934,7 @@ fn api_group_external_join_commit_accepts_delayed_apply_after_authorization_expi
         .proposals
         .iter_mut()
         .find_map(|proposal| match proposal.proposal.as_mut() {
-            Some(ecliptix_protocol::proto::group_proposal::Proposal::ExternalInit(ext)) => {
+            Some(aura_protected_protocol::proto::group_proposal::Proposal::ExternalInit(ext)) => {
                 Some(ext)
             }
             _ => None,
@@ -957,7 +957,7 @@ fn api_group_external_join_commit_accepts_delayed_apply_after_authorization_expi
 
     let bob_secret = bob_proto.get_identity_ed25519_private_key_copy().unwrap();
     let (bob_restored, restored_counter) =
-        EcliptixGroupSession::deserialize(&bob_sealed, &state_key, bob_secret, 0).unwrap();
+        AuraGroupSession::deserialize(&bob_sealed, &state_key, bob_secret, 0).unwrap();
     assert_eq!(restored_counter, 1);
     bob_restored.process_commit(&expired_commit).unwrap();
 
@@ -974,7 +974,7 @@ fn api_group_external_join_commit_accepts_delayed_apply_after_authorization_expi
 fn api_group_serialize_deserialize() {
     init();
 
-    let proto = EcliptixProtocol::new(5).unwrap();
+    let proto = AuraProtocol::new(5).unwrap();
     let ed_secret = proto.get_identity_ed25519_private_key_copy().unwrap();
     let session = proto.create_group(b"cred".to_vec()).unwrap();
 
@@ -983,11 +983,11 @@ fn api_group_serialize_deserialize() {
     let key = vec![0x99u8; 32];
     let sealed = session.serialize(&key, 1).unwrap();
 
-    let counter = EcliptixGroupSession::sealed_external_counter(&sealed).unwrap();
+    let counter = AuraGroupSession::sealed_external_counter(&sealed).unwrap();
     assert_eq!(counter, 1);
 
     let (restored, restored_counter) =
-        EcliptixGroupSession::deserialize(&sealed, &key, ed_secret, 0).unwrap();
+        AuraGroupSession::deserialize(&sealed, &key, ed_secret, 0).unwrap();
     assert_eq!(restored_counter, 1);
     assert_eq!(session.group_id().unwrap(), restored.group_id().unwrap());
     assert_eq!(session.epoch().unwrap(), restored.epoch().unwrap());
@@ -1001,7 +1001,7 @@ fn api_group_serialize_deserialize() {
 fn api_group_counter_tracker_restores_latest_and_rejects_rollback() {
     init();
 
-    let proto = EcliptixProtocol::new(5).unwrap();
+    let proto = AuraProtocol::new(5).unwrap();
     let session = proto.create_group(b"cred".to_vec()).unwrap();
     let key = vec![0x77u8; 32];
     let mut tracker = SealedStateCounterTracker::new();
@@ -1012,7 +1012,7 @@ fn api_group_counter_tracker_restores_latest_and_rejects_rollback() {
     let tracker_bytes = tracker.serialize();
 
     let mut restart_tracker = SealedStateCounterTracker::deserialize(&tracker_bytes).unwrap();
-    let restored = EcliptixGroupSession::deserialize_with_counter_tracker(
+    let restored = AuraGroupSession::deserialize_with_counter_tracker(
         &sealed1,
         &key,
         proto.get_identity_ed25519_private_key_copy().unwrap(),
@@ -1029,14 +1029,14 @@ fn api_group_counter_tracker_restores_latest_and_rejects_rollback() {
     let tracker_after_export = restart_tracker.serialize();
 
     let mut next_restart = SealedStateCounterTracker::deserialize(&tracker_after_export).unwrap();
-    assert!(EcliptixGroupSession::deserialize_with_counter_tracker(
+    assert!(AuraGroupSession::deserialize_with_counter_tracker(
         &sealed1,
         &key,
         proto.get_identity_ed25519_private_key_copy().unwrap(),
         &mut next_restart,
     )
     .is_err());
-    let latest = EcliptixGroupSession::deserialize_with_counter_tracker(
+    let latest = AuraGroupSession::deserialize_with_counter_tracker(
         &sealed2,
         &key,
         proto.get_identity_ed25519_private_key_copy().unwrap(),
@@ -1052,7 +1052,7 @@ fn api_group_counter_tracker_restores_latest_and_rejects_rollback() {
 fn api_group_slot_roundtrip() {
     init();
 
-    let proto = EcliptixProtocol::new(5).unwrap();
+    let proto = AuraProtocol::new(5).unwrap();
     let session = proto.create_group(b"cred".to_vec()).unwrap();
     let key = vec![0x87u8; 32];
     let mut slot = SealedStateSlot::new();
@@ -1061,7 +1061,7 @@ fn api_group_slot_roundtrip() {
     let slot_bytes = slot.serialize().unwrap();
 
     let mut restart_slot = SealedStateSlot::deserialize(&slot_bytes).unwrap();
-    let restored = EcliptixGroupSession::restore_from_slot(
+    let restored = AuraGroupSession::restore_from_slot(
         &mut restart_slot,
         &key,
         proto.get_identity_ed25519_private_key_copy().unwrap(),
@@ -1074,7 +1074,7 @@ fn api_group_slot_roundtrip() {
     restored.export_to_slot(&key, &mut restart_slot).unwrap();
     let next_slot_bytes = restart_slot.serialize().unwrap();
     let mut next_restart = SealedStateSlot::deserialize(&next_slot_bytes).unwrap();
-    let latest = EcliptixGroupSession::restore_from_slot(
+    let latest = AuraGroupSession::restore_from_slot(
         &mut next_restart,
         &key,
         proto.get_identity_ed25519_private_key_copy().unwrap(),
@@ -1089,7 +1089,7 @@ fn api_group_slot_roundtrip() {
 fn api_group_serialize_wrong_key_fails() {
     init();
 
-    let proto = EcliptixProtocol::new(0).unwrap();
+    let proto = AuraProtocol::new(0).unwrap();
     let ed_secret = proto.get_identity_ed25519_private_key_copy().unwrap();
     let session = proto.create_group(b"cred".to_vec()).unwrap();
 
@@ -1097,7 +1097,7 @@ fn api_group_serialize_wrong_key_fails() {
     let sealed = session.serialize(&key, 1).unwrap();
 
     let wrong_key = vec![0xFFu8; 32];
-    let result = EcliptixGroupSession::deserialize(&sealed, &wrong_key, ed_secret, 0);
+    let result = AuraGroupSession::deserialize(&sealed, &wrong_key, ed_secret, 0);
     assert!(result.is_err());
 }
 
@@ -1105,8 +1105,8 @@ fn api_group_serialize_wrong_key_fails() {
 fn api_group_deserialize_wrong_identity_secret_rejected() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(0).unwrap();
-    let mallory_proto = EcliptixProtocol::new(0).unwrap();
+    let alice_proto = AuraProtocol::new(0).unwrap();
+    let mallory_proto = AuraProtocol::new(0).unwrap();
     let session = alice_proto.create_group(b"cred".to_vec()).unwrap();
 
     let key = vec![0x99u8; 32];
@@ -1115,7 +1115,7 @@ fn api_group_deserialize_wrong_identity_secret_rejected() {
     let wrong_secret = mallory_proto
         .get_identity_ed25519_private_key_copy()
         .unwrap();
-    let result = EcliptixGroupSession::deserialize(&sealed, &key, wrong_secret, 0);
+    let result = AuraGroupSession::deserialize(&sealed, &key, wrong_secret, 0);
     let Err(err) = result else {
         panic!("Mismatched identity secret must be rejected");
     };
@@ -1130,8 +1130,8 @@ fn api_group_deserialize_wrong_identity_secret_rejected() {
 fn api_group_member_leaf_indices() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
-    let bob_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let bob_proto = AuraProtocol::new(5).unwrap();
 
     let alice_group = alice_proto.create_group(b"alice".to_vec()).unwrap();
     let (bob_kp, bob_x25519, bob_kyber) = bob_proto.generate_key_package(b"bob".to_vec()).unwrap();
@@ -1150,8 +1150,8 @@ fn api_group_member_leaf_indices() {
 fn api_group_encrypt_sealed_roundtrip() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
-    let bob_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let bob_proto = AuraProtocol::new(5).unwrap();
 
     let alice_group = alice_proto.create_group(b"alice".to_vec()).unwrap();
     let (bob_kp, bob_x25519, bob_kyber) = bob_proto.generate_key_package(b"bob".to_vec()).unwrap();
@@ -1167,7 +1167,7 @@ fn api_group_encrypt_sealed_roundtrip() {
     let result = bob_group.decrypt(&ct).unwrap();
 
     if let Some(sealed) = &result.sealed_payload {
-        let revealed = EcliptixGroupSession::reveal_sealed(sealed).unwrap();
+        let revealed = AuraGroupSession::reveal_sealed(sealed).unwrap();
         assert_eq!(revealed, b"secret content");
     } else {
         assert_eq!(result.plaintext, b"secret content");
@@ -1178,8 +1178,8 @@ fn api_group_encrypt_sealed_roundtrip() {
 fn api_group_encrypt_frankable_roundtrip() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
-    let bob_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let bob_proto = AuraProtocol::new(5).unwrap();
 
     let alice_group = alice_proto.create_group(b"alice".to_vec()).unwrap();
     let (bob_kp, bob_x25519, bob_kyber) = bob_proto.generate_key_package(b"bob".to_vec()).unwrap();
@@ -1194,7 +1194,7 @@ fn api_group_encrypt_frankable_roundtrip() {
     assert_eq!(result.plaintext, b"frankable msg");
 
     if let Some(franking) = &result.franking_data {
-        let valid = EcliptixGroupSession::verify_franking(franking).unwrap();
+        let valid = AuraGroupSession::verify_franking(franking).unwrap();
         assert!(valid);
     }
 }
@@ -1203,8 +1203,8 @@ fn api_group_encrypt_frankable_roundtrip() {
 fn api_group_encrypt_disappearing_roundtrip() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
-    let bob_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let bob_proto = AuraProtocol::new(5).unwrap();
 
     let alice_group = alice_proto.create_group(b"alice".to_vec()).unwrap();
     let (bob_kp, bob_x25519, bob_kyber) = bob_proto.generate_key_package(b"bob".to_vec()).unwrap();
@@ -1225,7 +1225,7 @@ fn api_group_encrypt_disappearing_roundtrip() {
 fn api_group_process_commit_invalid_data_fails() {
     init();
 
-    let proto = EcliptixProtocol::new(0).unwrap();
+    let proto = AuraProtocol::new(0).unwrap();
     let session = proto.create_group(b"cred".to_vec()).unwrap();
 
     let result = session.process_commit(b"not a valid commit");
@@ -1236,7 +1236,7 @@ fn api_group_process_commit_invalid_data_fails() {
 fn api_group_decrypt_invalid_data_fails() {
     init();
 
-    let proto = EcliptixProtocol::new(0).unwrap();
+    let proto = AuraProtocol::new(0).unwrap();
     let session = proto.create_group(b"cred".to_vec()).unwrap();
 
     let result = session.decrypt(b"not a valid message");
@@ -1247,7 +1247,7 @@ fn api_group_decrypt_invalid_data_fails() {
 fn api_group_add_member_invalid_key_package_fails() {
     init();
 
-    let proto = EcliptixProtocol::new(0).unwrap();
+    let proto = AuraProtocol::new(0).unwrap();
     let session = proto.create_group(b"cred".to_vec()).unwrap();
 
     let result = session.add_member(b"invalid key package");
@@ -1258,7 +1258,7 @@ fn api_group_add_member_invalid_key_package_fails() {
 fn api_group_add_member_oversized_key_package_fails() {
     init();
 
-    let proto = EcliptixProtocol::new(0).unwrap();
+    let proto = AuraProtocol::new(0).unwrap();
     let session = proto.create_group(b"cred".to_vec()).unwrap();
 
     let oversized = vec![0xAB; MAX_GROUP_MESSAGE_SIZE + 1];
@@ -1270,7 +1270,7 @@ fn api_group_add_member_oversized_key_package_fails() {
 fn api_group_join_external_invalid_state_fails() {
     init();
 
-    let proto = EcliptixProtocol::new(0).unwrap();
+    let proto = AuraProtocol::new(0).unwrap();
     let result = proto.join_group_external(b"garbage", b"invalid-auth", b"cred".to_vec());
     assert!(result.is_err());
 }
@@ -1279,13 +1279,13 @@ fn api_group_join_external_invalid_state_fails() {
 fn api_group_join_external_oversized_authorization_fails() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
     let alice_group = alice_proto
         .create_group_with_policy(b"alice".to_vec(), permissive_group_policy())
         .unwrap();
     let public_state = alice_group.export_public_state().unwrap();
 
-    let joiner = EcliptixProtocol::new(5).unwrap();
+    let joiner = AuraProtocol::new(5).unwrap();
     let oversized_auth = vec![0xCD; MAX_GROUP_MESSAGE_SIZE + 1];
     let result = joiner.join_group_external(&public_state, &oversized_auth, b"join".to_vec());
     assert!(result.is_err());
@@ -1295,8 +1295,8 @@ fn api_group_join_external_oversized_authorization_fails() {
 fn api_group_join_rejects_oversized_welcome() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
-    let bob_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let bob_proto = AuraProtocol::new(5).unwrap();
 
     let alice_group = alice_proto.create_group(b"alice".to_vec()).unwrap();
     let (bob_kp, bob_x25519, bob_kyber) = bob_proto.generate_key_package(b"bob".to_vec()).unwrap();
@@ -1313,7 +1313,7 @@ fn api_group_join_rejects_oversized_welcome() {
 fn api_group_pending_reinit_none_by_default() {
     init();
 
-    let proto = EcliptixProtocol::new(0).unwrap();
+    let proto = AuraProtocol::new(0).unwrap();
     let session = proto.create_group(b"cred".to_vec()).unwrap();
 
     let reinit = session.pending_reinit().unwrap();
@@ -1324,7 +1324,7 @@ fn api_group_pending_reinit_none_by_default() {
 fn api_group_id_stable_across_epochs() {
     init();
 
-    let proto = EcliptixProtocol::new(0).unwrap();
+    let proto = AuraProtocol::new(0).unwrap();
     let session = proto.create_group(b"cred".to_vec()).unwrap();
 
     let gid1 = session.group_id().unwrap();
@@ -1343,15 +1343,15 @@ fn api_group_id_stable_across_epochs() {
 
 #[test]
 fn api_compute_message_id_deterministic() {
-    let id1 = EcliptixGroupSession::compute_message_id(b"group-1", 0, 0, 0);
-    let id2 = EcliptixGroupSession::compute_message_id(b"group-1", 0, 0, 0);
+    let id1 = AuraGroupSession::compute_message_id(b"group-1", 0, 0, 0);
+    let id2 = AuraGroupSession::compute_message_id(b"group-1", 0, 0, 0);
     assert_eq!(id1, id2);
     assert_eq!(id1.len(), 32);
 
-    let id3 = EcliptixGroupSession::compute_message_id(b"group-1", 0, 0, 1);
+    let id3 = AuraGroupSession::compute_message_id(b"group-1", 0, 0, 1);
     assert_ne!(id1, id3);
 
-    let id4 = EcliptixGroupSession::compute_message_id(b"group-2", 0, 0, 0);
+    let id4 = AuraGroupSession::compute_message_id(b"group-2", 0, 0, 0);
     assert_ne!(id1, id4);
 }
 
@@ -1359,8 +1359,8 @@ fn api_compute_message_id_deterministic() {
 fn api_group_edit_roundtrip() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
-    let bob_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let bob_proto = AuraProtocol::new(5).unwrap();
 
     let alice_group = alice_proto.create_group(b"alice".to_vec()).unwrap();
     let (bob_kp, bob_x25519, bob_kyber) = bob_proto.generate_key_package(b"bob".to_vec()).unwrap();
@@ -1382,7 +1382,7 @@ fn api_group_edit_roundtrip() {
     assert_eq!(edit_result.plaintext, b"edited message");
     assert_eq!(
         edit_result.content_type,
-        ecliptix_protocol::protocol::group::ContentType::Edit
+        aura_protected_protocol::protocol::group::ContentType::Edit
     );
     assert_eq!(
         edit_result.referenced_message_id,
@@ -1396,8 +1396,8 @@ fn api_group_edit_roundtrip() {
 fn api_group_delete_roundtrip() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
-    let bob_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let bob_proto = AuraProtocol::new(5).unwrap();
 
     let alice_group = alice_proto.create_group(b"alice".to_vec()).unwrap();
     let (bob_kp, bob_x25519, bob_kyber) = bob_proto.generate_key_package(b"bob".to_vec()).unwrap();
@@ -1417,7 +1417,7 @@ fn api_group_delete_roundtrip() {
     assert!(delete_result.plaintext.is_empty());
     assert_eq!(
         delete_result.content_type,
-        ecliptix_protocol::protocol::group::ContentType::Delete
+        aura_protected_protocol::protocol::group::ContentType::Delete
     );
     assert_eq!(
         delete_result.referenced_message_id,
@@ -1429,7 +1429,7 @@ fn api_group_delete_roundtrip() {
 fn api_group_edit_requires_valid_message_id() {
     init();
 
-    let proto = EcliptixProtocol::new(0).unwrap();
+    let proto = AuraProtocol::new(0).unwrap();
     let session = proto.create_group(b"cred".to_vec()).unwrap();
 
     let result = session.encrypt_edit(b"new content", b"too-short");
@@ -1443,7 +1443,7 @@ fn api_group_edit_requires_valid_message_id() {
 fn api_group_delete_requires_valid_message_id() {
     init();
 
-    let proto = EcliptixProtocol::new(0).unwrap();
+    let proto = AuraProtocol::new(0).unwrap();
     let session = proto.create_group(b"cred".to_vec()).unwrap();
 
     let result = session.encrypt_delete(b"too-short");
@@ -1457,8 +1457,8 @@ fn api_group_delete_requires_valid_message_id() {
 fn api_group_normal_message_has_empty_referenced_id() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
-    let bob_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let bob_proto = AuraProtocol::new(5).unwrap();
 
     let alice_group = alice_proto.create_group(b"alice".to_vec()).unwrap();
     let (bob_kp, bob_x25519, bob_kyber) = bob_proto.generate_key_package(b"bob".to_vec()).unwrap();
@@ -1473,7 +1473,7 @@ fn api_group_normal_message_has_empty_referenced_id() {
     assert!(result.referenced_message_id.is_empty());
     assert_eq!(
         result.content_type,
-        ecliptix_protocol::protocol::group::ContentType::Normal
+        aura_protected_protocol::protocol::group::ContentType::Normal
     );
 }
 
@@ -1481,8 +1481,8 @@ fn api_group_normal_message_has_empty_referenced_id() {
 fn api_group_decrypt_always_returns_message_id() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
-    let bob_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let bob_proto = AuraProtocol::new(5).unwrap();
 
     let alice_group = alice_proto.create_group(b"alice".to_vec()).unwrap();
     let (bob_kp, bob_x25519, bob_kyber) = bob_proto.generate_key_package(b"bob".to_vec()).unwrap();
@@ -1504,8 +1504,8 @@ fn api_group_decrypt_always_returns_message_id() {
 fn api_group_message_id_matches_compute() {
     init();
 
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
-    let bob_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let bob_proto = AuraProtocol::new(5).unwrap();
 
     let alice_group = alice_proto.create_group(b"alice".to_vec()).unwrap();
     let (bob_kp, bob_x25519, bob_kyber) = bob_proto.generate_key_package(b"bob".to_vec()).unwrap();
@@ -1517,7 +1517,7 @@ fn api_group_message_id_matches_compute() {
     let ct = alice_group.encrypt(b"test").unwrap();
     let result = bob_group.decrypt(&ct).unwrap();
 
-    let computed = EcliptixGroupSession::compute_message_id(
+    let computed = AuraGroupSession::compute_message_id(
         &bob_group.group_id().unwrap(),
         bob_group.epoch().unwrap(),
         result.sender_leaf_index,
@@ -1533,7 +1533,7 @@ fn api_group_message_id_matches_compute() {
 #[test]
 fn shield_mode_creation() {
     init();
-    let proto = EcliptixProtocol::new(0).unwrap();
+    let proto = AuraProtocol::new(0).unwrap();
     let session = proto.create_shielded_group(b"cred".to_vec()).unwrap();
     assert!(session.is_shielded().unwrap());
     let policy = session.security_policy().unwrap();
@@ -1547,11 +1547,11 @@ fn shield_mode_creation() {
 #[test]
 fn shield_blocks_external_join() {
     init();
-    let creator = EcliptixProtocol::new(0).unwrap();
+    let creator = AuraProtocol::new(0).unwrap();
     let session = creator.create_shielded_group(b"cred".to_vec()).unwrap();
     let public_state = session.export_public_state().unwrap();
 
-    let joiner = EcliptixProtocol::new(0).unwrap();
+    let joiner = AuraProtocol::new(0).unwrap();
     let result = joiner.join_group_external(&public_state, b"invalid-auth", b"join".to_vec());
     assert!(
         result.is_err(),
@@ -1562,7 +1562,7 @@ fn shield_blocks_external_join() {
 #[test]
 fn shield_forces_rotation() {
     init();
-    let proto = EcliptixProtocol::new(0).unwrap();
+    let proto = AuraProtocol::new(0).unwrap();
     let mut policy = GroupSecurityPolicy::shield();
     policy.max_messages_per_epoch = 10;
     policy.block_external_join = false;
@@ -1580,7 +1580,7 @@ fn shield_forces_rotation() {
 #[test]
 fn shield_after_rotation_can_continue() {
     init();
-    let proto = EcliptixProtocol::new(0).unwrap();
+    let proto = AuraProtocol::new(0).unwrap();
     let mut policy = GroupSecurityPolicy::shield();
     policy.max_messages_per_epoch = 10;
     policy.block_external_join = false;
@@ -1600,7 +1600,7 @@ fn shield_after_rotation_can_continue() {
 #[test]
 fn shield_enhanced_keys_differ() {
     init();
-    let proto = EcliptixProtocol::new(0).unwrap();
+    let proto = AuraProtocol::new(0).unwrap();
     let default_session = proto.create_group(b"cred".to_vec()).unwrap();
     let shield_session = proto.create_shielded_group(b"cred".to_vec()).unwrap();
 
@@ -1612,7 +1612,7 @@ fn shield_enhanced_keys_differ() {
 #[test]
 fn shield_policy_bound_in_context_hash() {
     init();
-    let proto = EcliptixProtocol::new(0).unwrap();
+    let proto = AuraProtocol::new(0).unwrap();
 
     let default_session = proto.create_group(b"cred".to_vec()).unwrap();
     let shield_session = proto.create_shielded_group(b"cred".to_vec()).unwrap();
@@ -1626,14 +1626,14 @@ fn shield_policy_bound_in_context_hash() {
 #[test]
 fn shield_policy_survives_serialization() {
     init();
-    let proto = EcliptixProtocol::new(0).unwrap();
+    let proto = AuraProtocol::new(0).unwrap();
     let session = proto.create_shielded_group(b"cred".to_vec()).unwrap();
     let ed25519_sk = proto.get_identity_ed25519_private_key_copy().unwrap();
 
     let key = vec![0xABu8; 32];
     let data = session.serialize(&key, 42).unwrap();
     let (restored, restored_counter) =
-        EcliptixGroupSession::deserialize(&data, &key, ed25519_sk, 0).unwrap();
+        AuraGroupSession::deserialize(&data, &key, ed25519_sk, 0).unwrap();
     assert_eq!(restored_counter, 42);
 
     assert!(restored.is_shielded().unwrap());
@@ -1647,8 +1647,8 @@ fn shield_policy_survives_serialization() {
 #[test]
 fn shield_reduced_skip_window() {
     init();
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
-    let bob_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let bob_proto = AuraProtocol::new(5).unwrap();
 
     let mut policy = GroupSecurityPolicy::shield();
     policy.max_skipped_keys_per_sender = 2;
@@ -1679,8 +1679,8 @@ fn shield_reduced_skip_window() {
 #[test]
 fn shield_mandatory_franking() {
     init();
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
-    let bob_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let bob_proto = AuraProtocol::new(5).unwrap();
 
     let alice_group = alice_proto
         .create_shielded_group(b"alice".to_vec())
@@ -1705,7 +1705,7 @@ fn shield_mandatory_franking() {
 #[test]
 fn default_policy_is_shielded() {
     init();
-    let proto = EcliptixProtocol::new(0).unwrap();
+    let proto = AuraProtocol::new(0).unwrap();
     let session = proto.create_group(b"cred".to_vec()).unwrap();
     assert!(session.is_shielded().unwrap());
 
@@ -1719,8 +1719,8 @@ fn default_policy_is_shielded() {
 #[test]
 fn shield_welcome_carries_policy() {
     init();
-    let alice_proto = EcliptixProtocol::new(5).unwrap();
-    let bob_proto = EcliptixProtocol::new(5).unwrap();
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let bob_proto = AuraProtocol::new(5).unwrap();
 
     let alice_group = alice_proto
         .create_shielded_group(b"alice".to_vec())

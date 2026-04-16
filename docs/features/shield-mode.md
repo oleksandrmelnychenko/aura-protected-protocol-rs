@@ -49,8 +49,8 @@ Creator                              Member
 ```
 Звичайний:  epoch_secret →─ HKDF-Expand(info) ─→ sub_key
 
-Enhanced:   epoch_secret →─ HKDF-Expand(info ‖ "Ecliptix-Enhanced-Pass1") ─→ intermediate
-            intermediate →─ HKDF-Expand(info ‖ "Ecliptix-Enhanced-Pass2") ─→ sub_key
+Enhanced:   epoch_secret →─ HKDF-Expand(info ‖ "Aura-Enhanced-Pass1") ─→ intermediate
+            intermediate →─ HKDF-Expand(info ‖ "Aura-Enhanced-Pass2") ─→ sub_key
 ```
 
 Компрометація одного HKDF-виклику не дає ключ — потрібно зламати обидва проходи з різними info strings.
@@ -61,7 +61,7 @@ Enhanced:   epoch_secret →─ HKDF-Expand(info ‖ "Ecliptix-Enhanced-Pass1") 
 Звичайний:  chain_key →─ HKDF-Expand("chain") ─→ next_chain_key
 
 Enhanced:   chain_key →─ HKDF-Expand("chain") ─→ tmp
-            tmp →─ BLAKE2b("Ecliptix-B2Chain", tmp) ─→ next_chain_key
+            tmp →─ BLAKE2b("Aura-B2Chain", tmp) ─→ next_chain_key
             secure_wipe(tmp)
 ```
 
@@ -163,25 +163,25 @@ session.encrypt(b"continues")?; // OK
 
 ```c
 // Shielded (preset)
-EppGroupSessionHandle* group = NULL;
-epp_group_create_shielded(identity, cred, cred_len, &group, &err);
+AuraGroupSessionHandle* group = NULL;
+aura_group_create_shielded(identity, cred, cred_len, &group, &err);
 
 // Custom policy
-EppGroupSecurityPolicy policy = {
+AuraGroupSecurityPolicy policy = {
     .max_messages_per_epoch = 500,
     .max_skipped_keys_per_sender = 2,
     .block_external_join = 1,
     .enhanced_key_schedule = 1,
     .mandatory_franking = 1,
 };
-epp_group_create_with_policy(identity, cred, cred_len, &policy, &group, &err);
+aura_group_create_with_policy(identity, cred, cred_len, &policy, &group, &err);
 
 // Query
 uint8_t shielded = 0;
-epp_group_is_shielded(group, &shielded, &err);
+aura_group_is_shielded(group, &shielded, &err);
 
-EppGroupSecurityPolicy out_policy = {0};
-epp_group_get_security_policy(group, &out_policy, &err);
+AuraGroupSecurityPolicy out_policy = {0};
+aura_group_get_security_policy(group, &out_policy, &err);
 printf("max messages: %u\n", out_policy.max_messages_per_epoch);
 ```
 

@@ -1,4 +1,4 @@
-# Ecliptix Protocol — Formal Verification
+# Aura Protocol — Formal Verification
 #
 # Targets:
 #   make all            — run all verification (handshake + ratchet + proverif)
@@ -12,10 +12,10 @@
 TAMARIN  := tamarin-prover
 PROVERIF := proverif
 
-SPTHY_FULL      := tamarin/ecliptix.spthy
-SPTHY_HANDSHAKE := tamarin/ecliptix_handshake.spthy
-SPTHY_RATCHET   := tamarin/ecliptix_ratchet.spthy
-PV              := proverif/ecliptix.pv
+SPTHY_FULL      := tamarin/aura.spthy
+SPTHY_HANDSHAKE := tamarin/aura_handshake.spthy
+SPTHY_RATCHET   := tamarin/aura_ratchet.spthy
+PV              := proverif/aura.pv
 
 .PHONY: all tamarin handshake ratchet tamarin-full proverif clean check-tamarin check-proverif
 

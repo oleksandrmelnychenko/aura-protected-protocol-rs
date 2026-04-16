@@ -1,14 +1,14 @@
-# Ecliptix Protocol vs Signal Protocol vs PQXDH — Comparative Analysis
+# Aura Protocol vs Signal Protocol vs PQXDH — Comparative Analysis
 
-> For inclusion as supplementary material or Section 6 (Related Work / Comparison) in the Ecliptix protocol publication.
+> For inclusion as supplementary material or Section 6 (Related Work / Comparison) in the Aura protocol publication.
 >
-> Data sources: Signal specifications (signal.org/docs/specifications/{pqxdh,doubleratchet,x3dh}), Ecliptix source code, NIST PQC standards, published benchmarks.
+> Data sources: Signal specifications (signal.org/docs/specifications/{pqxdh,doubleratchet,x3dh}), Aura source code, NIST PQC standards, published benchmarks.
 
 ---
 
 ## 1. Protocol Architecture Overview
 
-| Aspect | Signal (X3DH + DR) | Signal PQXDH (2023) | **Ecliptix** |
+| Aspect | Signal (X3DH + DR) | Signal PQXDH (2023) | **Aura** |
 |--------|-------------------|---------------------|--------------|
 | Handshake | X3DH (3–4 ECDH) | PQXDH (3–4 ECDH + 1 KEM) | Hybrid X3DH (3–4 ECDH + 1 KEM) |
 | Ratchet | Double Ratchet (X25519 DH) | Double Ratchet (X25519 DH) | **Hybrid Double Ratchet (X25519 + Kyber-768)** |
@@ -16,29 +16,29 @@
 | AEAD | AES-256-CBC + HMAC-SHA256 | AES-256-CBC + HMAC-SHA256 | **AES-256-GCM-SIV** |
 | Metadata encryption | Sealed Sender (sender identity) | Sealed Sender | **Per-message metadata AEAD (rotating key)** |
 | Wire format | Protobuf | Protobuf | Protobuf |
-| Implementation | libsignal (Rust/Java/Swift) | libsignal | **ecliptix-protocol-rs (Rust + C FFI)** |
+| Implementation | libsignal (Rust/Java/Swift) | libsignal | **aura-protocol-rs (Rust + C FFI)** |
 
 ---
 
 ## 2. Cryptographic Primitives
 
-| Primitive | Signal / PQXDH | **Ecliptix** | Notes |
+| Primitive | Signal / PQXDH | **Aura** | Notes |
 |-----------|----------------|--------------|-------|
 | Key agreement (classical) | X25519 | X25519 | Identical |
-| Key agreement (PQ) | ML-KEM-1024 (Kyber-1024) | **Kyber-768** | Ecliptix: NIST Security Level 3; Signal: Level 5 |
+| Key agreement (PQ) | ML-KEM-1024 (Kyber-1024) | **Kyber-768** | Aura: NIST Security Level 3; Signal: Level 5 |
 | Digital signatures | Ed25519 | Ed25519 | Identical |
 | Symmetric encryption | AES-256-CBC | **AES-256-GCM-SIV** | GCM-SIV: nonce-misuse resistant |
-| Authentication (messages) | HMAC-SHA256 (Encrypt-then-MAC) | AEAD tag (GCM-SIV) | Signal: separate MAC; Ecliptix: integrated |
+| Authentication (messages) | HMAC-SHA256 (Encrypt-then-MAC) | AEAD tag (GCM-SIV) | Signal: separate MAC; Aura: integrated |
 | Key derivation | HKDF-SHA256 | HKDF-SHA256 | Identical primitive |
-| Master key derivation | — | **BLAKE2b** (keyed, length-prefixed) | Ecliptix: deterministic key hierarchy from master key |
-| Secret sharing | — | **Shamir GF(2^8)** (HMAC-authenticated) | Ecliptix: key backup/recovery |
-| Secure memory | Platform-dependent | **mlock + zeroize** (guard pages on Linux) | Ecliptix: explicit secure memory API |
+| Master key derivation | — | **BLAKE2b** (keyed, length-prefixed) | Aura: deterministic key hierarchy from master key |
+| Secret sharing | — | **Shamir GF(2^8)** (HMAC-authenticated) | Aura: key backup/recovery |
+| Secure memory | Platform-dependent | **mlock + zeroize** (guard pages on Linux) | Aura: explicit secure memory API |
 
 ### Why Kyber-768 vs Kyber-1024?
 
-Signal chose Kyber-1024 (NIST Level 5) for maximum security margin at the handshake. Ecliptix uses Kyber-768 (Level 3) because:
+Signal chose Kyber-1024 (NIST Level 5) for maximum security margin at the handshake. Aura uses Kyber-768 (Level 3) because:
 
-1. **Ratchet frequency**: Ecliptix runs Kyber on every direction-change ratchet, not just the handshake. Even if a single Kyber encapsulation is broken, the next ratchet step generates independent PQ material. This amortized approach provides comparable security to a single Kyber-1024 exchange.
+1. **Ratchet frequency**: Aura runs Kyber on every direction-change ratchet, not just the handshake. Even if a single Kyber encapsulation is broken, the next ratchet step generates independent PQ material. This amortized approach provides comparable security to a single Kyber-1024 exchange.
 2. **Performance**: Kyber-768 is ~25% faster than Kyber-1024 for keygen/encap/decap (see Section 5), which matters when PQ operations occur on every ratchet.
 3. **Bandwidth**: Kyber-768 public keys are 1,184 bytes vs 1,568 bytes for Kyber-1024 — relevant for mobile/IoT.
 
@@ -48,7 +48,7 @@ Signal chose Kyber-1024 (NIST Level 5) for maximum security margin at the handsh
 
 This is the most significant architectural difference between the three protocols.
 
-| Property | Signal X3DH | Signal PQXDH | **Ecliptix** |
+| Property | Signal X3DH | Signal PQXDH | **Aura** |
 |----------|------------|--------------|--------------|
 | PQ-protected handshake | No | **Yes** (1× KEM) | **Yes** (1× KEM) |
 | PQ-protected ratchet | No | No (X25519 only) | **Yes** (Kyber-768 per ratchet step) |
@@ -68,14 +68,14 @@ The PQXDH handshake key is only the initial seed — once the ratchet evolves pa
 
 Signal has documented future plans for a **Sparse Post-Quantum Ratchet (SPQR)** and a **Triple Ratchet** design (running Double Ratchet + SPQR in parallel), but as of the PQXDH specification these are not yet deployed.
 
-### Ecliptix Approach
+### Aura Approach
 
-Ecliptix integrates Kyber-768 into every hybrid ratchet step:
+Aura integrates Kyber-768 into every hybrid ratchet step:
 
 ```
 hybrid_ikm = DH(new_x25519_priv, peer_x25519_pub) || Kyber.Decap(ct, sk)
-salt        = old_root_key || "Ecliptix-PQ-Hybrid::" || kyber_shared_secret
-ratchet_out = HKDF(hybrid_ikm, 96, salt, "Ecliptix-Hybrid-Ratchet")
+salt        = old_root_key || "Aura-PQ-Hybrid::" || kyber_shared_secret
+ratchet_out = HKDF(hybrid_ikm, 96, salt, "Aura-Hybrid-Ratchet")
   → new_root_key(32) || new_chain_key(32) || new_metadata_key(32)
 ```
 
@@ -88,7 +88,7 @@ Each direction change generates a fresh Kyber-768 keypair locally and sends the 
 
 ## 4. Security Properties Comparison
 
-| Property | Signal X3DH+DR | Signal PQXDH | **Ecliptix** |
+| Property | Signal X3DH+DR | Signal PQXDH | **Aura** |
 |----------|---------------|--------------|--------------|
 | **Confidentiality** | AES-256-CBC + HMAC | AES-256-CBC + HMAC | AES-256-GCM-SIV |
 | **Forward secrecy (classical)** | Yes (DH ratchet) | Yes (DH ratchet) | Yes (DH ratchet) |
@@ -109,21 +109,21 @@ Each direction change generates a fresh Kyber-768 keypair locally and sends the 
 
 Signal uses AES-256-CBC, which requires unique IVs but does not provide nonce-misuse resistance. If an IV is accidentally reused, CBC leaks information about plaintext blocks.
 
-Ecliptix uses AES-256-GCM-SIV (RFC 8452), which maintains authenticity even under nonce reuse and only leaks whether two plaintexts are identical (not their content). This is a strictly stronger security property.
+Aura uses AES-256-GCM-SIV (RFC 8452), which maintains authenticity even under nonce reuse and only leaks whether two plaintexts are identical (not their content). This is a strictly stronger security property.
 
 ### Metadata Privacy
 
 Signal's Sealed Sender hides the sender's identity from the server but does not encrypt per-message metadata (message index, payload nonce, envelope type). This metadata is visible in the outer envelope.
 
-Ecliptix encrypts all envelope metadata with a dedicated metadata key that rotates on each ratchet step, providing forward secrecy for metadata. Old-epoch metadata keys are cached (up to 100 entries) for out-of-order delivery.
+Aura encrypts all envelope metadata with a dedicated metadata key that rotates on each ratchet step, providing forward secrecy for metadata. Old-epoch metadata keys are cached (up to 100 entries) for out-of-order delivery.
 
 ---
 
 ## 5. Performance Comparison
 
-### Ecliptix Benchmarks (Apple M1 Pro, Rust, Criterion)
+### Aura Benchmarks (Apple M1 Pro, Rust, Criterion)
 
-| Operation | Ecliptix | Notes |
+| Operation | Aura | Notes |
 |-----------|----------|-------|
 | Identity creation (5 OPKs) | ~450 µs | Ed25519 + X25519 + Kyber-768 keygen |
 | Full handshake (keygen + X3DH + confirm) | ~1.5 ms | Hybrid: 4× DH + 1× Kyber encap/decap |
@@ -167,13 +167,13 @@ Ecliptix encrypts all envelope metadata with a dedicated metadata key that rotat
 | Decrypt (256 B) | ~5–15 µs | Verify HMAC + AES-256-CBC |
 | DH ratchet step | ~35–50 µs | X25519 DH + HKDF (classical only) |
 
-> **Note**: Signal's ratchet step is ~7× faster than Ecliptix's because it performs only X25519 DH (no Kyber). However, Signal's ratchet provides no post-quantum protection. The ~430 µs Ecliptix ratchet is still sub-millisecond and imperceptible in interactive messaging.
+> **Note**: Signal's ratchet step is ~7× faster than Aura's because it performs only X25519 DH (no Kyber). However, Signal's ratchet provides no post-quantum protection. The ~430 µs Aura ratchet is still sub-millisecond and imperceptible in interactive messaging.
 
 ---
 
 ## 6. Wire Format and Bandwidth
 
-| Metric | Signal | Signal PQXDH | **Ecliptix** |
+| Metric | Signal | Signal PQXDH | **Aura** |
 |--------|--------|-------------|--------------|
 | Handshake init size | ~130 B | ~1,250 B (+Kyber-1024 CT) | ~1,170 B (+Kyber-768 CT) |
 | Pre-key bundle size | ~200 B | ~1,800 B (+Kyber-1024 PK) | ~1,400 B (+Kyber-768 PK) |
@@ -184,7 +184,7 @@ Ecliptix encrypts all envelope metadata with a dedicated metadata key that rotat
 
 ### Bandwidth Trade-off
 
-Ecliptix's ratchet messages are ~1,300 bytes larger than Signal's due to the embedded Kyber-768 public key and ciphertext. This overhead occurs only on direction changes (when one party starts responding after receiving), not on every message in a burst. For typical messaging patterns (alternating messages), the overhead is:
+Aura's ratchet messages are ~1,300 bytes larger than Signal's due to the embedded Kyber-768 public key and ciphertext. This overhead occurs only on direction changes (when one party starts responding after receiving), not on every message in a burst. For typical messaging patterns (alternating messages), the overhead is:
 
 - **~1.3 KB per direction change** (Kyber-768 PK: 1,184 B + CT: 1,088 B, partially compressed by protobuf)
 - Versus **0 B per direction change** for Signal (classical DH key only: 32 B)
@@ -214,7 +214,7 @@ Identity Key (Ed25519 + X25519, long-term)
 Levels: **4** (SK → Root → Chain → Message)
 Distinct HKDF info strings: ~3–4
 
-### Ecliptix
+### Aura
 
 ```
 Master Key (BLAKE2b, optional — for deterministic derivation)
@@ -241,7 +241,7 @@ Key separation: encryption / authentication / metadata / HMAC / identity — all
 
 ## 8. State Management
 
-| Feature | Signal | **Ecliptix** |
+| Feature | Signal | **Aura** |
 |---------|--------|--------------|
 | State persistence | Platform session store (abstract interface) | **Sealed export/import** (AES-GCM double encryption) |
 | State integrity | Database-level (SQLCipher) | **Cryptographic HMAC-SHA256 anti-rollback** |
@@ -256,7 +256,7 @@ Key separation: encryption / authentication / metadata / HMAC / identity — all
 
 ## 9. Feature Matrix Summary
 
-| Feature | Signal X3DH | PQXDH | **Ecliptix** |
+| Feature | Signal X3DH | PQXDH | **Aura** |
 |---------|------------|-------|--------------|
 | Classical key exchange | ✅ | ✅ | ✅ |
 | Post-quantum handshake | ❌ | ✅ | ✅ |
@@ -283,13 +283,13 @@ Key separation: encryption / authentication / metadata / HMAC / identity — all
 ² libsignal has Java/Swift/TypeScript bindings but not a standalone C API.
 ³ Signal uses message counter + key consumption, not a separate nonce cache.
 ⁴ PQXDH forward secrecy against quantum applies to handshake session key only; ratchet keys are classical.
-⁵ Ecliptix is a research protocol; Signal is deployed to billions of users.
+⁵ Aura is a research protocol; Signal is deployed to billions of users.
 
 ---
 
 ## 10. Threat Model Comparison
 
-| Threat | Signal X3DH | PQXDH | **Ecliptix** |
+| Threat | Signal X3DH | PQXDH | **Aura** |
 |--------|------------|-------|--------------|
 | Passive eavesdropper (classical) | ✅ Protected | ✅ Protected | ✅ Protected |
 | Active MITM (classical) | ✅ Protected (identity keys) | ✅ Protected | ✅ Protected |
@@ -305,7 +305,7 @@ Key separation: encryption / authentication / metadata / HMAC / identity — all
 
 ## 11. Summary and Positioning
 
-### Ecliptix's Contributions
+### Aura's Contributions
 
 1. **Hybrid post-quantum ratchet**: The primary contribution — extending the Double Ratchet with Kyber-768 KEM on every direction change, providing per-epoch PQ forward secrecy and PQ post-compromise security. Signal's PQXDH and planned SPQR/Triple Ratchet target similar goals but with different trade-offs.
 
@@ -319,7 +319,7 @@ Key separation: encryption / authentication / metadata / HMAC / identity — all
 
 ### Trade-offs
 
-| Ecliptix advantage | Ecliptix cost |
+| Aura advantage | Aura cost |
 |---|---|
 | Per-epoch PQ protection | ~94 µs overhead per ratchet step |
 | Nonce-misuse resistance (GCM-SIV) | Slightly larger ciphertext (16-byte tag, same as GCM) |
@@ -330,7 +330,7 @@ Key separation: encryption / authentication / metadata / HMAC / identity — all
 
 ### Positioning Statement
 
-Ecliptix targets the **post-quantum gap** in current messaging protocols: the period between NIST PQC standardization and full integration of PQ primitives into ongoing ratcheting. While Signal's PQXDH protects the initial handshake, Ecliptix extends PQ protection to the entire session lifetime through a hybrid Double Ratchet with Kyber-768.
+Aura targets the **post-quantum gap** in current messaging protocols: the period between NIST PQC standardization and full integration of PQ primitives into ongoing ratcheting. While Signal's PQXDH protects the initial handshake, Aura extends PQ protection to the entire session lifetime through a hybrid Double Ratchet with Kyber-768.
 
 ---
 

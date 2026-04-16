@@ -1,5 +1,5 @@
 /*
- * Ecliptix Protection Protocol — Ratchet-Only Tamarin Model
+ * Aura Protection Protocol — Ratchet-Only Tamarin Model
  *
  * Abstracts the handshake as trusted setup. Models a SINGLE hybrid ratchet
  * step to verify post-compromise security (PCS) properties.
@@ -21,7 +21,7 @@
  * Reference: src/protocol/session.rs, docs/security-proof.tex Theorems 4-6
  */
 
-theory EcliptixRatchet
+theory AuraRatchet
 begin
 
 builtins: hashing

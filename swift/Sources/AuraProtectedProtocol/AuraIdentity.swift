@@ -9,12 +9,12 @@ private extension Data {
     }
 }
 
-/// Represents a cryptographic identity in the Ecliptix Protected Protocol.
+/// Represents a cryptographic identity in the Aura Protected Protocol.
 ///
 /// An identity encapsulates X25519, Ed25519, and Kyber key pairs used for
 /// key exchange, signing, and post-quantum key encapsulation. Identities can
 /// be created randomly or deterministically from a seed.
-public final class EppIdentity {
+public final class AuraIdentity {
 
     /// The opaque handle to the native identity object.
     internal var handle: UnsafeMutableRawPointer?
@@ -31,17 +31,17 @@ public final class EppIdentity {
 
     /// Creates a new random identity with freshly generated key material.
     ///
-    /// - Returns: A new `EppIdentity` instance.
-    /// - Throws: `EppError` if key generation fails.
-    public static func create() throws -> EppIdentity {
+    /// - Returns: A new `AuraIdentity` instance.
+    /// - Throws: `AuraError` if key generation fails.
+    public static func create() throws -> AuraIdentity {
         var outHandle: UnsafeMutableRawPointer?
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = native_epp_identity_create(&outHandle, &outError)
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS, let handle = outHandle else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let handle = outHandle else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
-        return EppIdentity(handle: handle)
+        return AuraIdentity(handle: handle)
     }
 
     /// Creates a deterministic identity from a seed.
@@ -50,11 +50,11 @@ public final class EppIdentity {
     /// which is useful for recovery and testing.
     ///
     /// - Parameter seed: The seed bytes used to derive the identity.
-    /// - Returns: A new `EppIdentity` instance derived from the seed.
-    /// - Throws: `EppError` if identity creation fails.
-    public static func create(fromSeed seed: Data) throws -> EppIdentity {
+    /// - Returns: A new `AuraIdentity` instance derived from the seed.
+    /// - Throws: `AuraError` if identity creation fails.
+    public static func create(fromSeed seed: Data) throws -> AuraIdentity {
         var outHandle: UnsafeMutableRawPointer?
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = seed.withUnsafeBytes { seedBytes in
             native_epp_identity_create_from_seed(
                 seedBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
@@ -64,10 +64,10 @@ public final class EppIdentity {
             )
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS, let handle = outHandle else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let handle = outHandle else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
-        return EppIdentity(handle: handle)
+        return AuraIdentity(handle: handle)
     }
 
     /// Creates a deterministic identity from a seed and a membership identifier.
@@ -78,11 +78,11 @@ public final class EppIdentity {
     /// - Parameters:
     ///   - seed: The seed bytes used to derive the identity.
     ///   - membershipId: A string identifier for the membership context.
-    /// - Returns: A new `EppIdentity` instance.
-    /// - Throws: `EppError` if identity creation fails.
-    public static func create(fromSeed seed: Data, membershipId: String) throws -> EppIdentity {
+    /// - Returns: A new `AuraIdentity` instance.
+    /// - Throws: `AuraError` if identity creation fails.
+    public static func create(fromSeed seed: Data, membershipId: String) throws -> AuraIdentity {
         var outHandle: UnsafeMutableRawPointer?
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = seed.withUnsafeBytes { seedBytes in
             membershipId.withCString { membershipPtr in
                 native_epp_identity_create_with_context(
@@ -96,21 +96,21 @@ public final class EppIdentity {
             }
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS, let handle = outHandle else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let handle = outHandle else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
-        return EppIdentity(handle: handle)
+        return AuraIdentity(handle: handle)
     }
 
     /// The X25519 public key (32 bytes) used for Diffie-Hellman key exchange.
     ///
-    /// - Throws: `EppError.objectDisposed` if the identity has been destroyed,
-    ///   or another `EppError` if the key cannot be retrieved.
+    /// - Throws: `AuraError.objectDisposed` if the identity has been destroyed,
+    ///   or another `AuraError` if the key cannot be retrieved.
     public var x25519PublicKey: Data {
         get throws {
-            guard handle != nil else { throw EppError.objectDisposed }
+            guard handle != nil else { throw AuraError.objectDisposed }
             var key = Data(count: 32)
-            var outError = NativeEppError(code: 0, message: nil)
+            var outError = NativeAuraError(code: 0, message: nil)
             let result = key.withUnsafeMutableBytes { keyBytes in
                 native_epp_identity_get_x25519_public(
                     handle,
@@ -120,8 +120,8 @@ public final class EppIdentity {
                 )
             }
             defer { native_epp_error_free(&outError) }
-            guard result == EPP_SUCCESS else {
-                throw EppError.from(code: result, nativeError: outError)
+            guard result == AURA_SUCCESS else {
+                throw AuraError.from(code: result, nativeError: outError)
             }
             return key
         }
@@ -129,13 +129,13 @@ public final class EppIdentity {
 
     /// The Ed25519 public key (32 bytes) used for digital signatures.
     ///
-    /// - Throws: `EppError.objectDisposed` if the identity has been destroyed,
-    ///   or another `EppError` if the key cannot be retrieved.
+    /// - Throws: `AuraError.objectDisposed` if the identity has been destroyed,
+    ///   or another `AuraError` if the key cannot be retrieved.
     public var ed25519PublicKey: Data {
         get throws {
-            guard handle != nil else { throw EppError.objectDisposed }
+            guard handle != nil else { throw AuraError.objectDisposed }
             var key = Data(count: 32)
-            var outError = NativeEppError(code: 0, message: nil)
+            var outError = NativeAuraError(code: 0, message: nil)
             let result = key.withUnsafeMutableBytes { keyBytes in
                 native_epp_identity_get_ed25519_public(
                     handle,
@@ -145,8 +145,8 @@ public final class EppIdentity {
                 )
             }
             defer { native_epp_error_free(&outError) }
-            guard result == EPP_SUCCESS else {
-                throw EppError.from(code: result, nativeError: outError)
+            guard result == AURA_SUCCESS else {
+                throw AuraError.from(code: result, nativeError: outError)
             }
             return key
         }
@@ -154,13 +154,13 @@ public final class EppIdentity {
 
     /// The Kyber public key (1184 bytes) used for post-quantum key encapsulation.
     ///
-    /// - Throws: `EppError.objectDisposed` if the identity has been destroyed,
-    ///   or another `EppError` if the key cannot be retrieved.
+    /// - Throws: `AuraError.objectDisposed` if the identity has been destroyed,
+    ///   or another `AuraError` if the key cannot be retrieved.
     public var kyberPublicKey: Data {
         get throws {
-            guard handle != nil else { throw EppError.objectDisposed }
+            guard handle != nil else { throw AuraError.objectDisposed }
             var key = Data(count: 1184)
-            var outError = NativeEppError(code: 0, message: nil)
+            var outError = NativeAuraError(code: 0, message: nil)
             let result = key.withUnsafeMutableBytes { keyBytes in
                 native_epp_identity_get_kyber_public(
                     handle,
@@ -170,15 +170,15 @@ public final class EppIdentity {
                 )
             }
             defer { native_epp_error_free(&outError) }
-            guard result == EPP_SUCCESS else {
-                throw EppError.from(code: result, nativeError: outError)
+            guard result == AURA_SUCCESS else {
+                throw AuraError.from(code: result, nativeError: outError)
             }
             return key
         }
     }
 
-    public func sessionIdentity() throws -> EppSessionIdentity {
-        EppSessionIdentity(
+    public func sessionIdentity() throws -> AuraSessionIdentity {
+        AuraSessionIdentity(
             ed25519PublicKey: try ed25519PublicKey,
             x25519PublicKey: try x25519PublicKey
         )
@@ -187,17 +187,17 @@ public final class EppIdentity {
     /// Bind this identity to a manual or application-managed clock.
     ///
     /// Pass `nil` to reset the identity back to the native system clock.
-    public func setTimeProvider(_ timeProvider: EppTimeProvider?) throws {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outError = NativeEppError(code: 0, message: nil)
+    public func setTimeProvider(_ timeProvider: AuraTimeProvider?) throws {
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = native_epp_identity_set_time_provider(
             handle,
             timeProvider?.handle,
             &outError
         )
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
     }
 
@@ -215,40 +215,40 @@ public final class EppIdentity {
     /// a handshake with this identity.
     ///
     /// - Returns: The serialized pre-key bundle as `Data`.
-    /// - Throws: `EppError.objectDisposed` if the identity has been destroyed,
-    ///   or another `EppError` if bundle creation fails.
+    /// - Throws: `AuraError.objectDisposed` if the identity has been destroyed,
+    ///   or another `AuraError` if bundle creation fails.
     public func createPrekeyBundle() throws -> Data {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outBuffer = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outBuffer = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = native_epp_prekey_bundle_create(handle, &outBuffer, &outError)
         defer {
             if outBuffer.data != nil { native_epp_buffer_release(&outBuffer) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let data = dataFromBuffer(outBuffer) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
 
     public func replenishOneTimePrekeys(count: UInt32) throws -> Data {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outBuffer = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outBuffer = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = native_epp_prekey_bundle_replenish(handle, count, &outBuffer, &outError)
         defer {
             if outBuffer.data != nil { native_epp_buffer_release(&outBuffer) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let data = dataFromBuffer(outBuffer) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }

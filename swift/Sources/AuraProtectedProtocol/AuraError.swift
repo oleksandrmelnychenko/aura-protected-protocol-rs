@@ -3,11 +3,11 @@
 
 import Foundation
 
-/// Represents all possible errors returned by the Ecliptix Protected Protocol library.
+/// Represents all possible errors returned by the Aura Protected Protocol library.
 ///
 /// Each case corresponds to a specific error code from the native FFI layer.
 /// Use `errorDescription` for a human-readable description of the error.
-public enum EppError: Error, LocalizedError {
+public enum AuraError: Error, LocalizedError {
     case generic(String)
     case invalidInput(String)
     case keyGeneration(String)
@@ -39,13 +39,13 @@ public enum EppError: Error, LocalizedError {
     case busy(String)
     case unknown(UInt32)
 
-    /// Creates an `EppError` from a native error code and error struct.
+    /// Creates an `AuraError` from a native error code and error struct.
     ///
     /// - Parameters:
     ///   - code: The native FFI error code.
     ///   - nativeError: The native error struct containing an optional error message.
-    /// - Returns: The corresponding `EppError` case.
-    internal static func from(code: UInt32, nativeError: NativeEppError) -> EppError {
+    /// - Returns: The corresponding `AuraError` case.
+    internal static func from(code: UInt32, nativeError: NativeAuraError) -> AuraError {
         let message: String
         if let msg = nativeError.message {
             message = String(cString: msg)
@@ -55,42 +55,42 @@ public enum EppError: Error, LocalizedError {
             message = "Unknown error"
         }
         switch code {
-        case EPP_ERROR_GENERIC: return .generic(message)
-        case EPP_ERROR_INVALID_INPUT: return .invalidInput(message)
-        case EPP_ERROR_KEY_GENERATION: return .keyGeneration(message)
-        case EPP_ERROR_DERIVE_KEY: return .deriveKey(message)
-        case EPP_ERROR_HANDSHAKE: return .handshake(message)
-        case EPP_ERROR_ENCRYPTION: return .encryption(message)
-        case EPP_ERROR_DECRYPTION: return .decryption(message)
-        case EPP_ERROR_DECODE: return .decode(message)
-        case EPP_ERROR_ENCODE: return .encode(message)
-        case EPP_ERROR_BUFFER_TOO_SMALL: return .bufferTooSmall
-        case EPP_ERROR_OBJECT_DISPOSED: return .objectDisposed
-        case EPP_ERROR_PREPARE_LOCAL: return .prepareLocal(message)
-        case EPP_ERROR_OUT_OF_MEMORY: return .outOfMemory
-        case EPP_ERROR_CRYPTO_FAILURE: return .cryptoFailure(message)
-        case EPP_ERROR_NULL_POINTER: return .nullPointer
-        case EPP_ERROR_INVALID_STATE: return .invalidState(message)
-        case EPP_ERROR_REPLAY_ATTACK: return .replayAttack
-        case EPP_ERROR_SESSION_EXPIRED: return .sessionExpired
-        case EPP_ERROR_PQ_MISSING: return .postQuantumMissing
-        case EPP_ERROR_GROUP_PROTOCOL: return .groupProtocol(message)
-        case EPP_ERROR_GROUP_MEMBERSHIP: return .groupMembership(message)
-        case EPP_ERROR_TREE_INTEGRITY: return .treeIntegrity(message)
-        case EPP_ERROR_WELCOME: return .welcome(message)
-        case EPP_ERROR_MESSAGE_EXPIRED: return .messageExpired
-        case EPP_ERROR_FRANKING: return .franking(message)
-        case EPP_ERROR_VOIP_CALL: return .voipCall(message)
-        case EPP_ERROR_VOIP_MEDIA: return .voipMedia(message)
-        case EPP_ERROR_VOIP_REKEY: return .voipRekey(message)
-        case EPP_ERROR_BUSY: return .busy(message)
+        case AURA_ERROR_GENERIC: return .generic(message)
+        case AURA_ERROR_INVALID_INPUT: return .invalidInput(message)
+        case AURA_ERROR_KEY_GENERATION: return .keyGeneration(message)
+        case AURA_ERROR_DERIVE_KEY: return .deriveKey(message)
+        case AURA_ERROR_HANDSHAKE: return .handshake(message)
+        case AURA_ERROR_ENCRYPTION: return .encryption(message)
+        case AURA_ERROR_DECRYPTION: return .decryption(message)
+        case AURA_ERROR_DECODE: return .decode(message)
+        case AURA_ERROR_ENCODE: return .encode(message)
+        case AURA_ERROR_BUFFER_TOO_SMALL: return .bufferTooSmall
+        case AURA_ERROR_OBJECT_DISPOSED: return .objectDisposed
+        case AURA_ERROR_PREPARE_LOCAL: return .prepareLocal(message)
+        case AURA_ERROR_OUT_OF_MEMORY: return .outOfMemory
+        case AURA_ERROR_CRYPTO_FAILURE: return .cryptoFailure(message)
+        case AURA_ERROR_NULL_POINTER: return .nullPointer
+        case AURA_ERROR_INVALID_STATE: return .invalidState(message)
+        case AURA_ERROR_REPLAY_ATTACK: return .replayAttack
+        case AURA_ERROR_SESSION_EXPIRED: return .sessionExpired
+        case AURA_ERROR_PQ_MISSING: return .postQuantumMissing
+        case AURA_ERROR_GROUP_PROTOCOL: return .groupProtocol(message)
+        case AURA_ERROR_GROUP_MEMBERSHIP: return .groupMembership(message)
+        case AURA_ERROR_TREE_INTEGRITY: return .treeIntegrity(message)
+        case AURA_ERROR_WELCOME: return .welcome(message)
+        case AURA_ERROR_MESSAGE_EXPIRED: return .messageExpired
+        case AURA_ERROR_FRANKING: return .franking(message)
+        case AURA_ERROR_VOIP_CALL: return .voipCall(message)
+        case AURA_ERROR_VOIP_MEDIA: return .voipMedia(message)
+        case AURA_ERROR_VOIP_REKEY: return .voipRekey(message)
+        case AURA_ERROR_BUSY: return .busy(message)
         default: return .unknown(code)
         }
     }
 
     public var errorDescription: String? {
         switch self {
-        case .generic(let msg): return "EPP error: \(msg)"
+        case .generic(let msg): return "AURA error: \(msg)"
         case .invalidInput(let msg): return "Invalid input: \(msg)"
         case .keyGeneration(let msg): return "Key generation failed: \(msg)"
         case .deriveKey(let msg): return "Key derivation failed: \(msg)"
@@ -119,7 +119,7 @@ public enum EppError: Error, LocalizedError {
         case .voipMedia(let msg): return "VoIP media: \(msg)"
         case .voipRekey(let msg): return "VoIP rekey: \(msg)"
         case .busy(let msg): return "Handle busy: \(msg)"
-        case .unknown(let code): return "Unknown EPP error (code: \(code))"
+        case .unknown(let code): return "Unknown AURA error (code: \(code))"
         }
     }
 }

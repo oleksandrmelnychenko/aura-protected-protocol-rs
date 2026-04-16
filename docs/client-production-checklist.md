@@ -1,6 +1,6 @@
 # Client Production Checklist
 
-Цей файл описує, що ще треба зробити на стороні клієнта перед production rollout поверх `ecliptix-protocol-rs`.
+Цей файл описує, що ще треба зробити на стороні клієнта перед production rollout поверх `aura-protocol-rs`.
 
 ## Identity Verification
 

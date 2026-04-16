@@ -1,8 +1,8 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::crypto::SecureMemoryHandle;
-use ecliptix_protocol::protocol::voip::key_ratchet::MediaKeyRatchet;
+use aura_protected_protocol::crypto::SecureMemoryHandle;
+use aura_protected_protocol::protocol::voip::key_ratchet::MediaKeyRatchet;
 
 fuzz_target!(|data: &[u8]| {
     if data.len() < 36 {

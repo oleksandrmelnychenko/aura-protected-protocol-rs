@@ -6,8 +6,8 @@
 use std::ptr;
 use std::sync::Once;
 
-use ecliptix_protocol::crypto::CryptoInterop;
-use ecliptix_protocol::ffi::api::*;
+use aura_protected_protocol::crypto::CryptoInterop;
+use aura_protected_protocol::ffi::api::*;
 use proptest::collection::vec;
 use proptest::prelude::*;
 
@@ -16,25 +16,25 @@ static INIT_ONCE: Once = Once::new();
 fn init_lib() {
     INIT_ONCE.call_once(|| {
         CryptoInterop::initialize().unwrap();
-        assert_eq!(epp_init(), EppErrorCode::EppSuccess);
+        assert_eq!(aura_init(), AuraErrorCode::AuraSuccess);
     });
 }
 
-const fn null_error() -> EppError {
-    EppError {
-        code: EppErrorCode::EppSuccess,
+const fn null_error() -> AuraError {
+    AuraError {
+        code: AuraErrorCode::AuraSuccess,
         message: ptr::null_mut(),
     }
 }
 
-const fn null_buffer() -> EppBuffer {
-    EppBuffer {
+const fn null_buffer() -> AuraBuffer {
+    AuraBuffer {
         data: ptr::null_mut(),
         length: 0,
     }
 }
 
-fn buffer_to_vec(buffer: &EppBuffer) -> Vec<u8> {
+fn buffer_to_vec(buffer: &AuraBuffer) -> Vec<u8> {
     unsafe { std::slice::from_raw_parts(buffer.data, buffer.length) }.to_vec()
 }
 
@@ -98,37 +98,37 @@ fn mutate_bytes(base: &[u8], ops: &[u8]) -> Vec<u8> {
 }
 
 fn build_session_sealed_state() -> Vec<u8> {
-    let mut alice_h: *mut EppIdentityHandle = ptr::null_mut();
-    let mut bob_h: *mut EppIdentityHandle = ptr::null_mut();
-    let mut init_h: *mut EppHandshakeInitiatorHandle = ptr::null_mut();
-    let mut resp_h: *mut EppHandshakeResponderHandle = ptr::null_mut();
-    let mut alice_session_h: *mut EppSessionHandle = ptr::null_mut();
-    let mut bob_session_h: *mut EppSessionHandle = ptr::null_mut();
+    let mut alice_h: *mut AuraIdentityHandle = ptr::null_mut();
+    let mut bob_h: *mut AuraIdentityHandle = ptr::null_mut();
+    let mut init_h: *mut AuraHandshakeInitiatorHandle = ptr::null_mut();
+    let mut resp_h: *mut AuraHandshakeResponderHandle = ptr::null_mut();
+    let mut alice_session_h: *mut AuraSessionHandle = ptr::null_mut();
+    let mut bob_session_h: *mut AuraSessionHandle = ptr::null_mut();
     let mut bob_bundle = null_buffer();
     let mut init_msg = null_buffer();
     let mut ack_msg = null_buffer();
     let mut sealed = null_buffer();
     let mut err = null_error();
     let state_key = [0x44u8; 32];
-    let config = EppSessionConfig {
+    let config = AuraSessionConfig {
         max_messages_per_chain: 1000,
     };
 
     unsafe {
         assert_eq!(
-            epp_identity_create(&mut alice_h, &mut err),
-            EppErrorCode::EppSuccess
+            aura_identity_create(&mut alice_h, &mut err),
+            AuraErrorCode::AuraSuccess
         );
         assert_eq!(
-            epp_identity_create(&mut bob_h, &mut err),
-            EppErrorCode::EppSuccess
+            aura_identity_create(&mut bob_h, &mut err),
+            AuraErrorCode::AuraSuccess
         );
         assert_eq!(
-            epp_prekey_bundle_create(bob_h, &mut bob_bundle, &mut err),
-            EppErrorCode::EppSuccess
+            aura_prekey_bundle_create(bob_h, &mut bob_bundle, &mut err),
+            AuraErrorCode::AuraSuccess
         );
         assert_eq!(
-            epp_handshake_initiator_start(
+            aura_handshake_initiator_start(
                 alice_h,
                 bob_bundle.data,
                 bob_bundle.length,
@@ -137,10 +137,10 @@ fn build_session_sealed_state() -> Vec<u8> {
                 &mut init_msg,
                 &mut err,
             ),
-            EppErrorCode::EppSuccess
+            AuraErrorCode::AuraSuccess
         );
         assert_eq!(
-            epp_handshake_responder_start(
+            aura_handshake_responder_start(
                 bob_h,
                 bob_bundle.data,
                 bob_bundle.length,
@@ -151,24 +151,24 @@ fn build_session_sealed_state() -> Vec<u8> {
                 &mut ack_msg,
                 &mut err,
             ),
-            EppErrorCode::EppSuccess
+            AuraErrorCode::AuraSuccess
         );
         assert_eq!(
-            epp_handshake_responder_finish(resp_h, &mut bob_session_h, &mut err),
-            EppErrorCode::EppSuccess
+            aura_handshake_responder_finish(resp_h, &mut bob_session_h, &mut err),
+            AuraErrorCode::AuraSuccess
         );
         assert_eq!(
-            epp_handshake_initiator_finish(
+            aura_handshake_initiator_finish(
                 init_h,
                 ack_msg.data,
                 ack_msg.length,
                 &mut alice_session_h,
                 &mut err,
             ),
-            EppErrorCode::EppSuccess
+            AuraErrorCode::AuraSuccess
         );
         assert_eq!(
-            epp_session_serialize_sealed(
+            aura_session_serialize_sealed(
                 alice_session_h,
                 state_key.as_ptr(),
                 state_key.len(),
@@ -176,29 +176,29 @@ fn build_session_sealed_state() -> Vec<u8> {
                 &mut sealed,
                 &mut err,
             ),
-            EppErrorCode::EppSuccess
+            AuraErrorCode::AuraSuccess
         );
 
         let out = buffer_to_vec(&sealed);
-        epp_buffer_release(&mut bob_bundle);
-        epp_buffer_release(&mut init_msg);
-        epp_buffer_release(&mut ack_msg);
-        epp_buffer_release(&mut sealed);
-        epp_session_destroy(&mut alice_session_h);
-        epp_session_destroy(&mut bob_session_h);
-        epp_identity_destroy(&mut alice_h);
-        epp_identity_destroy(&mut bob_h);
-        epp_error_free(&mut err);
+        aura_buffer_release(&mut bob_bundle);
+        aura_buffer_release(&mut init_msg);
+        aura_buffer_release(&mut ack_msg);
+        aura_buffer_release(&mut sealed);
+        aura_session_destroy(&mut alice_session_h);
+        aura_session_destroy(&mut bob_session_h);
+        aura_identity_destroy(&mut alice_h);
+        aura_identity_destroy(&mut bob_h);
+        aura_error_free(&mut err);
         out
     }
 }
 
 fn build_voip_sealed_state() -> Vec<u8> {
-    let mut alice_h: *mut EppIdentityHandle = ptr::null_mut();
-    let mut bob_h: *mut EppIdentityHandle = ptr::null_mut();
-    let mut init_h: *mut EppVoipCallInitiatorHandle = ptr::null_mut();
-    let mut alice_session_h: *mut EppVoipSessionHandle = ptr::null_mut();
-    let mut bob_session_h: *mut EppVoipSessionHandle = ptr::null_mut();
+    let mut alice_h: *mut AuraIdentityHandle = ptr::null_mut();
+    let mut bob_h: *mut AuraIdentityHandle = ptr::null_mut();
+    let mut init_h: *mut AuraVoipCallInitiatorHandle = ptr::null_mut();
+    let mut alice_session_h: *mut AuraVoipSessionHandle = ptr::null_mut();
+    let mut bob_session_h: *mut AuraVoipSessionHandle = ptr::null_mut();
     let mut init_buf = null_buffer();
     let mut accept_buf = null_buffer();
     let mut sealed = null_buffer();
@@ -207,30 +207,30 @@ fn build_voip_sealed_state() -> Vec<u8> {
 
     unsafe {
         assert_eq!(
-            epp_identity_create(&mut alice_h, &mut err),
-            EppErrorCode::EppSuccess
+            aura_identity_create(&mut alice_h, &mut err),
+            AuraErrorCode::AuraSuccess
         );
         assert_eq!(
-            epp_identity_create(&mut bob_h, &mut err),
-            EppErrorCode::EppSuccess
+            aura_identity_create(&mut bob_h, &mut err),
+            AuraErrorCode::AuraSuccess
         );
         let mut alice_kyber = vec![0u8; 1184];
         let mut bob_kyber = vec![0u8; 1184];
         assert_eq!(
-            epp_identity_get_kyber_public(
+            aura_identity_get_kyber_public(
                 alice_h,
                 alice_kyber.as_mut_ptr(),
                 alice_kyber.len(),
                 &mut err
             ),
-            EppErrorCode::EppSuccess
+            AuraErrorCode::AuraSuccess
         );
         assert_eq!(
-            epp_identity_get_kyber_public(bob_h, bob_kyber.as_mut_ptr(), bob_kyber.len(), &mut err),
-            EppErrorCode::EppSuccess
+            aura_identity_get_kyber_public(bob_h, bob_kyber.as_mut_ptr(), bob_kyber.len(), &mut err),
+            AuraErrorCode::AuraSuccess
         );
         assert_eq!(
-            epp_voip_call_init_start(
+            aura_voip_call_init_start(
                 alice_h,
                 bob_kyber.as_ptr(),
                 bob_kyber.len(),
@@ -241,10 +241,10 @@ fn build_voip_sealed_state() -> Vec<u8> {
                 &mut init_h,
                 &mut err,
             ),
-            EppErrorCode::EppSuccess
+            AuraErrorCode::AuraSuccess
         );
         assert_eq!(
-            epp_voip_accept_call(
+            aura_voip_accept_call(
                 bob_h,
                 init_buf.data,
                 init_buf.length,
@@ -254,10 +254,10 @@ fn build_voip_sealed_state() -> Vec<u8> {
                 &mut bob_session_h,
                 &mut err,
             ),
-            EppErrorCode::EppSuccess
+            AuraErrorCode::AuraSuccess
         );
         assert_eq!(
-            epp_voip_call_init_complete(
+            aura_voip_call_init_complete(
                 init_h,
                 alice_h,
                 accept_buf.data,
@@ -265,10 +265,10 @@ fn build_voip_sealed_state() -> Vec<u8> {
                 &mut alice_session_h,
                 &mut err,
             ),
-            EppErrorCode::EppSuccess
+            AuraErrorCode::AuraSuccess
         );
         assert_eq!(
-            epp_voip_export_sealed_state(
+            aura_voip_export_sealed_state(
                 alice_session_h,
                 state_key.as_ptr(),
                 state_key.len(),
@@ -276,19 +276,19 @@ fn build_voip_sealed_state() -> Vec<u8> {
                 &mut sealed,
                 &mut err,
             ),
-            EppErrorCode::EppSuccess
+            AuraErrorCode::AuraSuccess
         );
 
         let out = buffer_to_vec(&sealed);
-        epp_buffer_release(&mut init_buf);
-        epp_buffer_release(&mut accept_buf);
-        epp_buffer_release(&mut sealed);
-        epp_voip_call_initiator_destroy(&mut init_h);
-        epp_voip_session_destroy(&mut alice_session_h);
-        epp_voip_session_destroy(&mut bob_session_h);
-        epp_identity_destroy(&mut alice_h);
-        epp_identity_destroy(&mut bob_h);
-        epp_error_free(&mut err);
+        aura_buffer_release(&mut init_buf);
+        aura_buffer_release(&mut accept_buf);
+        aura_buffer_release(&mut sealed);
+        aura_voip_call_initiator_destroy(&mut init_h);
+        aura_voip_session_destroy(&mut alice_session_h);
+        aura_voip_session_destroy(&mut bob_session_h);
+        aura_identity_destroy(&mut alice_h);
+        aura_identity_destroy(&mut bob_h);
+        aura_error_free(&mut err);
         out
     }
 }
@@ -303,18 +303,18 @@ proptest! {
         let mutated = mutate_bytes(&sealed, &ops);
         prop_assert_ne!(mutated.as_slice(), sealed.as_slice());
 
-        let mut provider_h: *mut EppTimeProviderHandle = ptr::null_mut();
-        let mut restored_h: *mut EppSessionHandle = ptr::null_mut();
+        let mut provider_h: *mut AuraTimeProviderHandle = ptr::null_mut();
+        let mut restored_h: *mut AuraSessionHandle = ptr::null_mut();
         let mut counter = 0u64;
         let mut err = null_error();
         let state_key = [0x44u8; 32];
 
         unsafe {
             prop_assert_eq!(
-                epp_time_provider_manual_create(1_700_000_000, &mut provider_h, &mut err),
-                EppErrorCode::EppSuccess
+                aura_time_provider_manual_create(1_700_000_000, &mut provider_h, &mut err),
+                AuraErrorCode::AuraSuccess
             );
-            let code = epp_session_deserialize_sealed_with_time_provider(
+            let code = aura_session_deserialize_sealed_with_time_provider(
                 mutated.as_ptr(),
                 mutated.len(),
                 state_key.as_ptr(),
@@ -325,13 +325,13 @@ proptest! {
                 &mut restored_h,
                 &mut err,
             );
-            prop_assert_ne!(code, EppErrorCode::EppSuccess);
+            prop_assert_ne!(code, AuraErrorCode::AuraSuccess);
 
             if !restored_h.is_null() {
-                epp_session_destroy(&mut restored_h);
+                aura_session_destroy(&mut restored_h);
             }
-            epp_time_provider_destroy(&mut provider_h);
-            epp_error_free(&mut err);
+            aura_time_provider_destroy(&mut provider_h);
+            aura_error_free(&mut err);
         }
     }
 
@@ -342,17 +342,17 @@ proptest! {
         let mutated = mutate_bytes(&sealed, &ops);
         prop_assert_ne!(mutated.as_slice(), sealed.as_slice());
 
-        let mut provider_h: *mut EppTimeProviderHandle = ptr::null_mut();
-        let mut restored_h: *mut EppVoipSessionHandle = ptr::null_mut();
+        let mut provider_h: *mut AuraTimeProviderHandle = ptr::null_mut();
+        let mut restored_h: *mut AuraVoipSessionHandle = ptr::null_mut();
         let mut err = null_error();
         let state_key = [0x55u8; 32];
 
         unsafe {
             prop_assert_eq!(
-                epp_time_provider_manual_create(1_710_000_000, &mut provider_h, &mut err),
-                EppErrorCode::EppSuccess
+                aura_time_provider_manual_create(1_710_000_000, &mut provider_h, &mut err),
+                AuraErrorCode::AuraSuccess
             );
-            let code = epp_voip_import_sealed_state_with_time_provider(
+            let code = aura_voip_import_sealed_state_with_time_provider(
                 mutated.as_ptr(),
                 mutated.len(),
                 state_key.as_ptr(),
@@ -362,13 +362,13 @@ proptest! {
                 &mut restored_h,
                 &mut err,
             );
-            prop_assert_ne!(code, EppErrorCode::EppSuccess);
+            prop_assert_ne!(code, AuraErrorCode::AuraSuccess);
 
             if !restored_h.is_null() {
-                epp_voip_session_destroy(&mut restored_h);
+                aura_voip_session_destroy(&mut restored_h);
             }
-            epp_time_provider_destroy(&mut provider_h);
-            epp_error_free(&mut err);
+            aura_time_provider_destroy(&mut provider_h);
+            aura_error_free(&mut err);
         }
     }
 }

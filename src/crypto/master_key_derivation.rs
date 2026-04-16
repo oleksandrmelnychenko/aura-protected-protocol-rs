@@ -11,7 +11,7 @@ use crate::core::constants::{
 use crate::core::errors::ProtocolError;
 use crate::crypto::HkdfSha256;
 
-const MKD_LABEL: &[u8] = b"ecliptix-mkd";
+const MKD_LABEL: &[u8] = b"aura-mkd";
 const MAX_OUTPUT_BYTES: usize = 64;
 
 pub struct MasterKeyDerivation;

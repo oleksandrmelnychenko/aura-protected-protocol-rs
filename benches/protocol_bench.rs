@@ -4,13 +4,13 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::hint::black_box;
 
-use ecliptix_protocol::crypto::{
+use aura_protected_protocol::crypto::{
     AesGcm, CryptoInterop, HkdfSha256, KyberInterop, ShamirSecretSharing,
 };
-use ecliptix_protocol::identity::IdentityKeys;
-use ecliptix_protocol::interfaces::StaticStateKeyProvider;
-use ecliptix_protocol::proto::{OneTimePreKey, PreKeyBundle};
-use ecliptix_protocol::protocol::{HandshakeInitiator, HandshakeResponder, Session};
+use aura_protected_protocol::identity::IdentityKeys;
+use aura_protected_protocol::interfaces::StaticStateKeyProvider;
+use aura_protected_protocol::proto::{OneTimePreKey, PreKeyBundle};
+use aura_protected_protocol::protocol::{HandshakeInitiator, HandshakeResponder, Session};
 use prost::Message;
 
 fn init() {
@@ -169,7 +169,7 @@ fn bench_hkdf_derive(c: &mut Criterion) {
     init();
     let ikm = CryptoInterop::get_random_bytes(32);
     let salt = CryptoInterop::get_random_bytes(32);
-    let info = b"Ecliptix-Bench";
+    let info = b"Aura-Bench";
 
     c.bench_function("hkdf_sha256_derive (32B out)", |b| {
         b.iter(|| {
@@ -649,7 +649,7 @@ fn bench_session_lifecycle_allocations(c: &mut Criterion) {
     );
 }
 
-use ecliptix_protocol::protocol::group::GroupSession;
+use aura_protected_protocol::protocol::group::GroupSession;
 
 fn bench_group_create(c: &mut Criterion) {
     init();
@@ -672,7 +672,7 @@ fn bench_group_add_member(c: &mut Criterion) {
             for _ in 0..iters {
                 let bob_ik = IdentityKeys::create(5).unwrap();
                 let (kp, _x, _k) =
-                    ecliptix_protocol::protocol::group::key_package::create_key_package(
+                    aura_protected_protocol::protocol::group::key_package::create_key_package(
                         &bob_ik,
                         b"bob".to_vec(),
                     )
@@ -692,7 +692,7 @@ fn create_group_pair() -> (GroupSession, GroupSession) {
 
     let alice_session = GroupSession::create(&alice_ik, b"alice".to_vec()).unwrap();
     let (kp, x25519_priv, kyber_sec) =
-        ecliptix_protocol::protocol::group::key_package::create_key_package(
+        aura_protected_protocol::protocol::group::key_package::create_key_package(
             &bob_ik,
             b"bob".to_vec(),
         )
@@ -846,10 +846,10 @@ criterion_group! {
 criterion_main!(benches);
 
 fn create_voip_session_pair() -> (
-    ecliptix_protocol::protocol::voip::VoipSession,
-    ecliptix_protocol::protocol::voip::VoipSession,
+    aura_protected_protocol::protocol::voip::VoipSession,
+    aura_protected_protocol::protocol::voip::VoipSession,
 ) {
-    use ecliptix_protocol::protocol::voip::{
+    use aura_protected_protocol::protocol::voip::{
         callee_accept_with_context, caller_finish_with_context, caller_init_with_context,
         CallInitAuthContext, CallRole, VoipSession,
     };
@@ -941,7 +941,7 @@ fn bench_voip_encrypt_frame(c: &mut Criterion) {
     c.bench_function("voip_encrypt_frame_320B", |b| {
         let mut seq = 0u16;
         b.iter(|| {
-            let header = ecliptix_protocol::protocol::voip::frame::FrameHeader {
+            let header = aura_protected_protocol::protocol::voip::frame::FrameHeader {
                 payload_type: 111,
                 ssrc: alice.ssrc(),
                 timestamp: u32::from(seq) * 160,
@@ -961,7 +961,7 @@ fn bench_voip_decrypt_frame(c: &mut Criterion) {
 
     let mut frames = Vec::new();
     for i in 0u16..1000 {
-        let header = ecliptix_protocol::protocol::voip::frame::FrameHeader {
+        let header = aura_protected_protocol::protocol::voip::frame::FrameHeader {
             payload_type: 111,
             ssrc: alice.ssrc(),
             timestamp: u32::from(i) * 160,
@@ -994,8 +994,8 @@ fn bench_voip_key_exchange(c: &mut Criterion) {
 
 fn bench_voip_ratchet_advance(c: &mut Criterion) {
     init();
-    use ecliptix_protocol::crypto::SecureMemoryHandle;
-    use ecliptix_protocol::protocol::voip::key_ratchet::MediaKeyRatchet;
+    use aura_protected_protocol::crypto::SecureMemoryHandle;
+    use aura_protected_protocol::protocol::voip::key_ratchet::MediaKeyRatchet;
 
     let key_bytes = CryptoInterop::get_random_bytes(32);
     let mut handle = SecureMemoryHandle::allocate(32).unwrap();

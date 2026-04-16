@@ -2,9 +2,9 @@
 use libfuzzer_sys::fuzz_target;
 use prost::Message;
 
-use ecliptix_protocol::crypto::CryptoInterop;
-use ecliptix_protocol::proto::GroupTreeNode;
-use ecliptix_protocol::protocol::group::RatchetTree;
+use aura_protected_protocol::crypto::CryptoInterop;
+use aura_protected_protocol::proto::GroupTreeNode;
+use aura_protected_protocol::protocol::group::RatchetTree;
 use std::sync::Once;
 
 static INIT: Once = Once::new();

@@ -1,12 +1,12 @@
 # Attachment Flow (without transport implementation)
 
-This document defines the EPP attachment contract when file upload/download is implemented outside the protocol stack (gRPC, HTTP, object storage, CDN, etc.).
+This document defines the AURA attachment contract when file upload/download is implemented outside the protocol stack (gRPC, HTTP, object storage, CDN, etc.).
 
 ## Scope
 
-- EPP provides cryptography and strict validation for attachment metadata/chunks.
+- AURA provides cryptography and strict validation for attachment metadata/chunks.
 - Integrator transport provides upload/download, storage, authz, and delivery semantics.
-- EPP chat messages carry only metadata plus wrapped keys, not raw media bytes.
+- AURA chat messages carry only metadata plus wrapped keys, not raw media bytes.
 
 ## Security model
 
@@ -21,13 +21,13 @@ Relay/storage never gets plaintext media or plaintext `file_key`.
 
 ## FFI API responsibilities
 
-- `epp_attachment_generate_id`: returns a new 32-byte id.
-- `epp_attachment_generate_file_key`: returns a new 32-byte DEK.
-- `epp_attachment_encrypt_chunk`: encrypts one plaintext chunk.
-- `epp_attachment_decrypt_chunk`: decrypts one encrypted chunk.
-- `epp_attachment_manifest_create`: builds protobuf `AttachmentManifest`.
-- `epp_attachment_manifest_validate`: validates full manifest.
-- `epp_attachment_chunk_validate`: validates encrypted chunk structure against manifest.
+- `aura_attachment_generate_id`: returns a new 32-byte id.
+- `aura_attachment_generate_file_key`: returns a new 32-byte DEK.
+- `aura_attachment_encrypt_chunk`: encrypts one plaintext chunk.
+- `aura_attachment_decrypt_chunk`: decrypts one encrypted chunk.
+- `aura_attachment_manifest_create`: builds protobuf `AttachmentManifest`.
+- `aura_attachment_manifest_validate`: validates full manifest.
+- `aura_attachment_chunk_validate`: validates encrypted chunk structure against manifest.
 
 `AttachmentManifest` also includes optional `collage_index` for collage Threads ordering.
 
@@ -45,21 +45,21 @@ Relay/storage never gets plaintext media or plaintext `file_key`.
 
 1. Create `attachment_id` and `file_key`.
 2. Split file into chunks under policy max chunk size.
-3. Encrypt each chunk with `epp_attachment_encrypt_chunk`.
+3. Encrypt each chunk with `aura_attachment_encrypt_chunk`.
 4. Compute whole-file hash over plaintext (or enforce documented policy consistently).
 5. Wrap `file_key` using session/group channel crypto.
-6. Create manifest via `epp_attachment_manifest_create`.
+6. Create manifest via `aura_attachment_manifest_create`.
 7. Send manifest through chat channel.
 8. Upload encrypted chunks to transport endpoint.
 
 ## Recommended receiver flow
 
 1. Receive manifest from chat channel.
-2. Validate manifest via `epp_attachment_manifest_validate`.
+2. Validate manifest via `aura_attachment_manifest_validate`.
 3. Unwrap `encrypted_file_key` through channel crypto.
 4. Download encrypted chunks from transport by `attachment_id`.
-5. For each chunk, run `epp_attachment_chunk_validate`.
-6. Decrypt chunk via `epp_attachment_decrypt_chunk`.
+5. For each chunk, run `aura_attachment_chunk_validate`.
+6. Decrypt chunk via `aura_attachment_decrypt_chunk`.
 7. Reassemble file and verify declared file hash/size.
 
 ## Failure handling

@@ -1,7 +1,7 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::crypto::MessagePadding;
+use aura_protected_protocol::crypto::MessagePadding;
 
 fuzz_target!(|data: &[u8]| {
     // Fuzz unpad with arbitrary bytes — must never panic

@@ -39,34 +39,34 @@ jobs:
       - name: Create fat simulator library
         run: |
           lipo -create \
-            target/aarch64-apple-ios-sim/release/libecliptix_protocol.a \
-            target/x86_64-apple-ios/release/libecliptix_protocol.a \
-            -output target/libecliptix_protocol_sim.a
+            target/aarch64-apple-ios-sim/release/libaura_protocol.a \
+            target/x86_64-apple-ios/release/libaura_protocol.a \
+            -output target/libaura_protocol_sim.a
 
       - name: Create framework bundles with headers
         run: |
           create_framework() {
             local lib="$1" dst="$2"
-            local fw="$dst/EcliptixProtocolC.framework"
+            local fw="$dst/AuraProtectedProtocolC.framework"
             mkdir -p "$fw/Headers" "$fw/Modules"
-            cp "$lib" "$fw/EcliptixProtocolC"
+            cp "$lib" "$fw/AuraProtectedProtocolC"
             cp include/*.h "$fw/Headers/"
             cp include/module.modulemap "$fw/Modules/"
           }
-          create_framework target/aarch64-apple-darwin/release/libecliptix_protocol.a dist/frameworks/macos-arm64
-          create_framework target/aarch64-apple-ios/release/libecliptix_protocol.a     dist/frameworks/ios-arm64
-          create_framework target/libecliptix_protocol_sim.a                           dist/frameworks/ios-sim
+          create_framework target/aarch64-apple-darwin/release/libaura_protocol.a dist/frameworks/macos-arm64
+          create_framework target/aarch64-apple-ios/release/libaura_protocol.a     dist/frameworks/ios-arm64
+          create_framework target/libaura_protocol_sim.a                           dist/frameworks/ios-sim
 
       - name: Create XCFramework
         run: |
           mkdir -p dist/apple
           xcodebuild -create-xcframework \
-            -framework dist/frameworks/macos-arm64/EcliptixProtocolC.framework \
-            -framework dist/frameworks/ios-arm64/EcliptixProtocolC.framework \
-            -framework dist/frameworks/ios-sim/EcliptixProtocolC.framework \
-            -output dist/apple/ecliptix-protected-protocol.xcframework
-          cd dist/apple && zip -r ecliptix-protected-protocol.xcframework.zip ecliptix-protected-protocol.xcframework
-          shasum -a 256 ecliptix-protected-protocol.xcframework.zip > ecliptix-protected-protocol.xcframework.zip.sha256
+            -framework dist/frameworks/macos-arm64/AuraProtectedProtocolC.framework \
+            -framework dist/frameworks/ios-arm64/AuraProtectedProtocolC.framework \
+            -framework dist/frameworks/ios-sim/AuraProtectedProtocolC.framework \
+            -output dist/apple/aura-protected-protocol.xcframework
+          cd dist/apple && zip -r aura-protected-protocol.xcframework.zip aura-protected-protocol.xcframework
+          shasum -a 256 aura-protected-protocol.xcframework.zip > aura-protected-protocol.xcframework.zip.sha256
 
       - uses: actions/upload-artifact@v4
         with:
@@ -97,17 +97,17 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/apple-xcframework/ecliptix-protected-protocol.xcframework.zip
-            artifacts/apple-xcframework/ecliptix-protected-protocol.xcframework.zip.sha256
+            artifacts/apple-xcframework/aura-protected-protocol.xcframework.zip
+            artifacts/apple-xcframework/aura-protected-protocol.xcframework.zip.sha256
           body: |
-            ## Ecliptix Protected Protocol v${{ steps.version.outputs.VERSION }}
+            ## Aura Protected Protocol v${{ steps.version.outputs.VERSION }}
 
             ### Swift Package Manager
             ```swift
             .binaryTarget(
-                name: "EcliptixProtectedProtocol",
-                url: "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/ecliptix-protected-protocol.xcframework.zip",
-                checksum: "$(cat artifacts/apple-xcframework/ecliptix-protected-protocol.xcframework.zip.sha256 | cut -d' ' -f1)"
+                name: "AuraProtectedProtocol",
+                url: "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/aura-protected-protocol.xcframework.zip",
+                checksum: "$(cat artifacts/apple-xcframework/aura-protected-protocol.xcframework.zip.sha256 | cut -d' ' -f1)"
             )
             ```
 

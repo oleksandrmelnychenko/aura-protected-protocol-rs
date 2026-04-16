@@ -27,9 +27,9 @@ The safe pattern is therefore:
 1. On export, issue `next = latest_issued_counter + 1`, seal the state with that counter, then persist the blob and update `latest_issued_counter = next`.
 2. On restore, pass `max_restored_counter` as `min_external_counter`. If restore succeeds, update `max_restored_counter = sealed_counter` and also raise `latest_issued_counter` to at least that value.
 
-The public Rust API now exposes `api::SealedStateCounterTracker` plus managed helpers for session/group/VoIP sealed-state flows, and the C/Swift surfaces expose the same model via `epp_sealed_state_counter_tracker_*` and tracker-based `*_with_tracker` sealed-state APIs, so applications do not have to hand-roll this state machine.
+The public Rust API now exposes `api::SealedStateCounterTracker` plus managed helpers for session/group/VoIP sealed-state flows, and the C/Swift surfaces expose the same model via `aura_sealed_state_counter_tracker_*` and tracker-based `*_with_tracker` sealed-state APIs, so applications do not have to hand-roll this state machine.
 
-For crash consistency, the API also exposes a higher-level `SealedStateSlot` / `epp_sealed_state_slot_*` abstraction that stores the tracker and sealed blob together in one serialized record. This removes the "blob and tracker persisted separately" footgun.
+For crash consistency, the API also exposes a higher-level `SealedStateSlot` / `aura_sealed_state_slot_*` abstraction that stores the tracker and sealed blob together in one serialized record. This removes the "blob and tracker persisted separately" footgun.
 
 That higher-level slot improves atomicity, but it does **not** eliminate the fundamental rollback assumption by itself. If an attacker can replace the entire serialized slot with an older serialized slot, the library still cannot distinguish that from a legitimate older snapshot unless the application also relies on trusted monotonic storage outside the slot.
 
@@ -46,7 +46,7 @@ Expiry is enforced as: `sent_timestamp + ttl_seconds > recipient SystemTime::now
 
 This is a fundamental limitation of any disappearing-message design without a trusted time source. The protocol provides the check; the environment (clock trust) is the integrator’s responsibility.
 
-The Rust API now exposes an injectable `interfaces::ITimeProvider`, and the core session/group/VoIP entrypoints have `*_with_time_provider` variants plus `api::EcliptixProtocol::new_with_time_provider(...)`. The C/Swift surfaces now expose the same capability via `epp_time_provider_manual_*`, `epp_identity_set_time_provider(...)`, and explicit `*_with_time_provider` sealed-state restore APIs. Integrators that have a server-synchronized or otherwise trusted time source should pass it explicitly instead of relying on local wall-clock reads inside the protocol.
+The Rust API now exposes an injectable `interfaces::ITimeProvider`, and the core session/group/VoIP entrypoints have `*_with_time_provider` variants plus `api::AuraProtocol::new_with_time_provider(...)`. The C/Swift surfaces now expose the same capability via `aura_time_provider_manual_*`, `aura_identity_set_time_provider(...)`, and explicit `*_with_time_provider` sealed-state restore APIs. Integrators that have a server-synchronized or otherwise trusted time source should pass it explicitly instead of relying on local wall-clock reads inside the protocol.
 
 ### External join authorization freshness
 

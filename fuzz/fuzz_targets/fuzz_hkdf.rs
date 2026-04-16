@@ -2,7 +2,7 @@
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::crypto::HkdfSha256;
+use aura_protected_protocol::crypto::HkdfSha256;
 
 #[derive(Arbitrary, Debug)]
 struct HkdfInput<'a> {

@@ -1,7 +1,7 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::crypto::{CryptoInterop, KyberInterop};
+use aura_protected_protocol::crypto::{CryptoInterop, KyberInterop};
 use std::sync::Once;
 
 static INIT: Once = Once::new();

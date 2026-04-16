@@ -5,17 +5,17 @@
 
 use std::sync::{Arc, Mutex};
 
-use ecliptix_protocol::api::EcliptixProtocol;
-use ecliptix_protocol::core::constants::{
+use aura_protected_protocol::api::AuraProtocol;
+use aura_protected_protocol::core::constants::{
     EXTERNAL_JOIN_AUTH_VALIDITY_SECS, MAX_FUTURE_TIMESTAMP_SKEW_SECS,
 };
-use ecliptix_protocol::core::errors::ProtocolError;
-use ecliptix_protocol::crypto::CryptoInterop;
-use ecliptix_protocol::identity::IdentityKeys;
-use ecliptix_protocol::interfaces::ITimeProvider;
-use ecliptix_protocol::proto::{OneTimePreKey, PreKeyBundle};
-use ecliptix_protocol::protocol::group::GroupSecurityPolicy;
-use ecliptix_protocol::protocol::{HandshakeInitiator, HandshakeResponder, Session};
+use aura_protected_protocol::core::errors::ProtocolError;
+use aura_protected_protocol::crypto::CryptoInterop;
+use aura_protected_protocol::identity::IdentityKeys;
+use aura_protected_protocol::interfaces::ITimeProvider;
+use aura_protected_protocol::proto::{OneTimePreKey, PreKeyBundle};
+use aura_protected_protocol::protocol::group::GroupSecurityPolicy;
+use aura_protected_protocol::protocol::{HandshakeInitiator, HandshakeResponder, Session};
 use prost::Message;
 
 #[derive(Debug)]
@@ -61,7 +61,7 @@ fn encode_pre_key_bundle(identity: &IdentityKeys) -> PreKeyBundle {
         .collect();
 
     PreKeyBundle {
-        version: ecliptix_protocol::core::constants::PROTOCOL_VERSION,
+        version: aura_protected_protocol::core::constants::PROTOCOL_VERSION,
         identity_ed25519_public: bundle.identity_ed25519_public().to_vec(),
         identity_x25519_public: bundle.identity_x25519_public().to_vec(),
         identity_x25519_signature: bundle.identity_x25519_signature().to_vec(),
@@ -104,13 +104,13 @@ fn create_session_pair(
 fn create_two_member_group(
     time_provider: Arc<TestTimeProvider>,
 ) -> (
-    EcliptixProtocol,
-    EcliptixProtocol,
-    ecliptix_protocol::api::EcliptixGroupSession,
-    ecliptix_protocol::api::EcliptixGroupSession,
+    AuraProtocol,
+    AuraProtocol,
+    aura_protected_protocol::api::AuraGroupSession,
+    aura_protected_protocol::api::AuraGroupSession,
 ) {
-    let alice = EcliptixProtocol::new_with_time_provider(8, time_provider.clone()).unwrap();
-    let bob = EcliptixProtocol::new_with_time_provider(8, time_provider).unwrap();
+    let alice = AuraProtocol::new_with_time_provider(8, time_provider.clone()).unwrap();
+    let bob = AuraProtocol::new_with_time_provider(8, time_provider).unwrap();
     let alice_group = alice
         .create_group_with_policy(
             b"alice".to_vec(),
@@ -153,7 +153,7 @@ fn group_external_join_uses_injected_time_provider() {
     let initial_now = 1_710_000_000;
     let time_provider = Arc::new(TestTimeProvider::new(initial_now));
     let (_alice, _bob, alice_group, _bob_group) = create_two_member_group(time_provider.clone());
-    let carol = EcliptixProtocol::new_with_time_provider(8, time_provider.clone()).unwrap();
+    let carol = AuraProtocol::new_with_time_provider(8, time_provider.clone()).unwrap();
 
     let public_state = alice_group.export_public_state().unwrap();
     let authorization = alice_group
@@ -186,8 +186,8 @@ fn voip_uses_injected_time_provider_for_duration_and_consent_freshness() {
     init();
     let initial_now = 1_730_000_000;
     let time_provider = Arc::new(TestTimeProvider::new(initial_now));
-    let alice = EcliptixProtocol::new_with_time_provider(8, time_provider.clone()).unwrap();
-    let bob = EcliptixProtocol::new_with_time_provider(8, time_provider.clone()).unwrap();
+    let alice = AuraProtocol::new_with_time_provider(8, time_provider.clone()).unwrap();
+    let bob = AuraProtocol::new_with_time_provider(8, time_provider.clone()).unwrap();
 
     let bob_bundle = bob.pre_key_bundle().unwrap();
     let alice_bundle = alice.pre_key_bundle().unwrap();

@@ -11,7 +11,7 @@
     clippy::missing_const_for_fn
 )]
 mod proto_inner {
-    include!(concat!(env!("OUT_DIR"), "/ecliptix.proto.protocol.rs"));
+    include!(concat!(env!("OUT_DIR"), "/aura.proto.protocol.rs"));
 }
 pub use proto_inner::*;
 
@@ -26,7 +26,7 @@ pub mod e2e {
         clippy::missing_const_for_fn
     )]
     mod inner {
-        include!(concat!(env!("OUT_DIR"), "/ecliptix.proto.e2e.rs"));
+        include!(concat!(env!("OUT_DIR"), "/aura.proto.e2e.rs"));
     }
     pub use inner::*;
 }

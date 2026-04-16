@@ -1,12 +1,12 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::core::errors::ProtocolError;
-use ecliptix_protocol::crypto::{CryptoInterop, SecureMemoryHandle};
-use ecliptix_protocol::identity::IdentityKeys;
-use ecliptix_protocol::interfaces::IStateKeyProvider;
-use ecliptix_protocol::proto::{OneTimePreKey, PreKeyBundle};
-use ecliptix_protocol::protocol::{HandshakeInitiator, HandshakeResponder, Session};
+use aura_protected_protocol::core::errors::ProtocolError;
+use aura_protected_protocol::crypto::{CryptoInterop, SecureMemoryHandle};
+use aura_protected_protocol::identity::IdentityKeys;
+use aura_protected_protocol::interfaces::IStateKeyProvider;
+use aura_protected_protocol::proto::{OneTimePreKey, PreKeyBundle};
+use aura_protected_protocol::protocol::{HandshakeInitiator, HandshakeResponder, Session};
 use std::sync::Once;
 
 static INIT: Once = Once::new();

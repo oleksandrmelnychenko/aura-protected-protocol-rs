@@ -10,7 +10,7 @@ import Foundation
 /// The policy defines limits on messages per epoch, skipped keys, and whether
 /// features like external join, enhanced key schedule, and mandatory franking
 /// are enabled.
-public struct EppGroupSecurityPolicy: Sendable {
+public struct AuraGroupSecurityPolicy: Sendable {
 
     /// Maximum number of messages allowed per epoch before a commit is required.
     public var maxMessagesPerEpoch: UInt32
@@ -51,7 +51,7 @@ public struct EppGroupSecurityPolicy: Sendable {
 
     /// A "shield" preset with enhanced security: external join blocked,
     /// enhanced key schedule enabled, and mandatory franking.
-    public static let shield = EppGroupSecurityPolicy(
+    public static let shield = AuraGroupSecurityPolicy(
         maxMessagesPerEpoch: 1000,
         maxSkippedKeysPerSender: 4,
         blockExternalJoin: true,
@@ -60,8 +60,8 @@ public struct EppGroupSecurityPolicy: Sendable {
     )
 
     /// Converts to the native C representation.
-    internal var native: NativeEppGroupSecurityPolicy {
-        NativeEppGroupSecurityPolicy(
+    internal var native: NativeAuraGroupSecurityPolicy {
+        NativeAuraGroupSecurityPolicy(
             max_messages_per_epoch: maxMessagesPerEpoch,
             max_skipped_keys_per_sender: maxSkippedKeysPerSender,
             block_external_join: blockExternalJoin ? 1 : 0,
@@ -70,9 +70,9 @@ public struct EppGroupSecurityPolicy: Sendable {
         )
     }
 
-    /// Creates an `EppGroupSecurityPolicy` from its native C representation.
-    internal static func from(native: NativeEppGroupSecurityPolicy) -> EppGroupSecurityPolicy {
-        EppGroupSecurityPolicy(
+    /// Creates an `AuraGroupSecurityPolicy` from its native C representation.
+    internal static func from(native: NativeAuraGroupSecurityPolicy) -> AuraGroupSecurityPolicy {
+        AuraGroupSecurityPolicy(
             maxMessagesPerEpoch: native.max_messages_per_epoch,
             maxSkippedKeysPerSender: native.max_skipped_keys_per_sender,
             blockExternalJoin: native.block_external_join != 0,
@@ -86,9 +86,9 @@ public struct EppGroupSecurityPolicy: Sendable {
 
 /// The full result of decrypting a group message, including all metadata.
 ///
-/// This is returned by `EppGroupSession.decryptEx(_:)` and provides access to
+/// This is returned by `AuraGroupSession.decryptEx(_:)` and provides access to
 /// fields like message ID, content type, TTL, timestamps, and franking/sealed flags.
-public struct EppGroupDecryptResult {
+public struct AuraGroupDecryptResult {
 
     /// The decrypted plaintext content.
     public let plaintext: Data
@@ -136,7 +136,7 @@ public struct EppGroupDecryptResult {
 ///
 /// These secrets are consumed when joining a group via a welcome message.
 /// The secrets are automatically destroyed when this object is deallocated.
-public final class EppKeyPackageSecrets {
+public final class AuraKeyPackageSecrets {
 
     /// The opaque handle to the native key package secrets.
     internal var handle: UnsafeMutableRawPointer?
@@ -159,7 +159,7 @@ public final class EppKeyPackageSecrets {
 /// Group sessions support multi-party encryption with forward secrecy, post-compromise
 /// security, membership changes (add/remove/update), and advanced message types
 /// including sealed, disappearing, frankable, edit, and delete messages.
-public final class EppGroupSession {
+public final class AuraGroupSession {
 
     /// The opaque handle to the native group session object.
     internal var handle: UnsafeMutableRawPointer?
@@ -183,12 +183,12 @@ public final class EppGroupSession {
     /// - Parameters:
     ///   - identity: The local identity creating the group.
     ///   - credential: The credential bytes to associate with this member.
-    /// - Returns: A new `EppGroupSession`.
-    /// - Throws: `EppError` if group creation fails.
-    public static func create(identity: EppIdentity, credential: Data) throws -> EppGroupSession {
-        guard identity.handle != nil else { throw EppError.objectDisposed }
+    /// - Returns: A new `AuraGroupSession`.
+    /// - Throws: `AuraError` if group creation fails.
+    public static func create(identity: AuraIdentity, credential: Data) throws -> AuraGroupSession {
+        guard identity.handle != nil else { throw AuraError.objectDisposed }
         var outHandle: UnsafeMutableRawPointer?
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = credential.withUnsafeBytes { credBytes in
             native_epp_group_create(
                 identity.handle,
@@ -199,10 +199,10 @@ public final class EppGroupSession {
             )
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS, let handle = outHandle else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let handle = outHandle else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
-        return EppGroupSession(handle: handle)
+        return AuraGroupSession(handle: handle)
     }
 
     /// Creates a new group session with the "shielded" security policy preset.
@@ -213,12 +213,12 @@ public final class EppGroupSession {
     /// - Parameters:
     ///   - identity: The local identity creating the group.
     ///   - credential: The credential bytes to associate with this member.
-    /// - Returns: A new shielded `EppGroupSession`.
-    /// - Throws: `EppError` if group creation fails.
-    public static func createShielded(identity: EppIdentity, credential: Data) throws -> EppGroupSession {
-        guard identity.handle != nil else { throw EppError.objectDisposed }
+    /// - Returns: A new shielded `AuraGroupSession`.
+    /// - Throws: `AuraError` if group creation fails.
+    public static func createShielded(identity: AuraIdentity, credential: Data) throws -> AuraGroupSession {
+        guard identity.handle != nil else { throw AuraError.objectDisposed }
         var outHandle: UnsafeMutableRawPointer?
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = credential.withUnsafeBytes { credBytes in
             native_epp_group_create_shielded(
                 identity.handle,
@@ -229,10 +229,10 @@ public final class EppGroupSession {
             )
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS, let handle = outHandle else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let handle = outHandle else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
-        return EppGroupSession(handle: handle)
+        return AuraGroupSession(handle: handle)
     }
 
     /// Creates a new group session with a custom security policy.
@@ -241,16 +241,16 @@ public final class EppGroupSession {
     ///   - identity: The local identity creating the group.
     ///   - credential: The credential bytes to associate with this member.
     ///   - policy: The custom security policy for the group.
-    /// - Returns: A new `EppGroupSession` with the specified policy.
-    /// - Throws: `EppError` if group creation fails.
+    /// - Returns: A new `AuraGroupSession` with the specified policy.
+    /// - Throws: `AuraError` if group creation fails.
     public static func create(
-        identity: EppIdentity,
+        identity: AuraIdentity,
         credential: Data,
-        policy: EppGroupSecurityPolicy
-    ) throws -> EppGroupSession {
-        guard identity.handle != nil else { throw EppError.objectDisposed }
+        policy: AuraGroupSecurityPolicy
+    ) throws -> AuraGroupSession {
+        guard identity.handle != nil else { throw AuraError.objectDisposed }
         var outHandle: UnsafeMutableRawPointer?
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         var nativePolicy = policy.native
         let result = credential.withUnsafeBytes { credBytes in
             native_epp_group_create_with_policy(
@@ -263,10 +263,10 @@ public final class EppGroupSession {
             )
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS, let handle = outHandle else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let handle = outHandle else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
-        return EppGroupSession(handle: handle)
+        return AuraGroupSession(handle: handle)
     }
 
     // MARK: - Key Packages
@@ -281,15 +281,15 @@ public final class EppGroupSession {
     ///   - identity: The identity generating the key package.
     ///   - credential: The credential bytes for this member.
     /// - Returns: A tuple containing the serialized key package and its secrets.
-    /// - Throws: `EppError` if key package generation fails.
+    /// - Throws: `AuraError` if key package generation fails.
     public static func generateKeyPackage(
-        identity: EppIdentity,
+        identity: AuraIdentity,
         credential: Data
-    ) throws -> (keyPackage: Data, secrets: EppKeyPackageSecrets) {
-        guard identity.handle != nil else { throw EppError.objectDisposed }
-        var outKeyPackage = NativeEppBuffer(data: nil, length: 0)
+    ) throws -> (keyPackage: Data, secrets: AuraKeyPackageSecrets) {
+        guard identity.handle != nil else { throw AuraError.objectDisposed }
+        var outKeyPackage = NativeAuraBuffer(data: nil, length: 0)
         var outSecrets: UnsafeMutableRawPointer?
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = credential.withUnsafeBytes { credBytes in
             native_epp_group_generate_key_package(
                 identity.handle,
@@ -304,13 +304,13 @@ public final class EppGroupSession {
             if outKeyPackage.data != nil { native_epp_buffer_release(&outKeyPackage) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS, let secretsHandle = outSecrets else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let secretsHandle = outSecrets else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let kpData = dataFromBuffer(outKeyPackage) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
-        return (kpData, EppKeyPackageSecrets(handle: secretsHandle))
+        return (kpData, AuraKeyPackageSecrets(handle: secretsHandle))
     }
 
     // MARK: - Joining
@@ -321,17 +321,17 @@ public final class EppGroupSession {
     ///   - identity: The local identity joining the group.
     ///   - welcome: The welcome message received from an existing group member.
     ///   - secrets: The key package secrets from `generateKeyPackage(identity:credential:)`.
-    /// - Returns: The `EppGroupSession` for the joined group.
-    /// - Throws: `EppError` if joining fails (e.g., invalid welcome, mismatched secrets).
+    /// - Returns: The `AuraGroupSession` for the joined group.
+    /// - Throws: `AuraError` if joining fails (e.g., invalid welcome, mismatched secrets).
     public static func join(
-        identity: EppIdentity,
+        identity: AuraIdentity,
         welcome: Data,
-        secrets: EppKeyPackageSecrets
-    ) throws -> EppGroupSession {
-        guard identity.handle != nil else { throw EppError.objectDisposed }
-        guard secrets.handle != nil else { throw EppError.objectDisposed }
+        secrets: AuraKeyPackageSecrets
+    ) throws -> AuraGroupSession {
+        guard identity.handle != nil else { throw AuraError.objectDisposed }
+        guard secrets.handle != nil else { throw AuraError.objectDisposed }
         var outHandle: UnsafeMutableRawPointer?
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = welcome.withUnsafeBytes { welcomeBytes in
             native_epp_group_join(
                 identity.handle,
@@ -343,10 +343,10 @@ public final class EppGroupSession {
             )
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS, let handle = outHandle else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let handle = outHandle else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
-        return EppGroupSession(handle: handle)
+        return AuraGroupSession(handle: handle)
     }
 
     /// Joins a group externally using the group's public state plus an
@@ -359,18 +359,18 @@ public final class EppGroupSession {
     ///   - identity: The local identity joining the group.
     ///   - publicState: The group's exported public state.
     ///   - credential: The credential bytes for this member.
-    /// - Returns: A tuple containing the joined `EppGroupSession` and the commit to distribute.
-    /// - Throws: `EppError` if external join fails (e.g., blocked by policy).
+    /// - Returns: A tuple containing the joined `AuraGroupSession` and the commit to distribute.
+    /// - Throws: `AuraError` if external join fails (e.g., blocked by policy).
     public static func joinExternal(
-        identity: EppIdentity,
+        identity: AuraIdentity,
         publicState: Data,
         authorization: Data,
         credential: Data
-    ) throws -> (session: EppGroupSession, commit: Data) {
-        guard identity.handle != nil else { throw EppError.objectDisposed }
+    ) throws -> (session: AuraGroupSession, commit: Data) {
+        guard identity.handle != nil else { throw AuraError.objectDisposed }
         var outHandle: UnsafeMutableRawPointer?
-        var outCommit = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        var outCommit = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = publicState.withUnsafeBytes { stateBytes in
             authorization.withUnsafeBytes { authBytes in
                 credential.withUnsafeBytes { credBytes in
@@ -393,25 +393,25 @@ public final class EppGroupSession {
             if outCommit.data != nil { native_epp_buffer_release(&outCommit) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS, let handle = outHandle else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let handle = outHandle else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let commitData = dataFromBuffer(outCommit) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
-        return (EppGroupSession(handle: handle), commitData)
+        return (AuraGroupSession(handle: handle), commitData)
     }
 
     public func authorizeExternalJoin(
-        joinerIdentity: EppIdentity,
+        joinerIdentity: AuraIdentity,
         credential: Data
     ) throws -> Data {
-        guard handle != nil else { throw EppError.objectDisposed }
-        guard joinerIdentity.handle != nil else { throw EppError.objectDisposed }
+        guard handle != nil else { throw AuraError.objectDisposed }
+        guard joinerIdentity.handle != nil else { throw AuraError.objectDisposed }
         let joinerEd = try joinerIdentity.ed25519PublicKey
         let joinerX = try joinerIdentity.x25519PublicKey
-        var outAuthorization = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        var outAuthorization = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = joinerEd.withUnsafeBytes { edBytes in
             joinerX.withUnsafeBytes { xBytes in
                 credential.withUnsafeBytes { credBytes in
@@ -433,11 +433,11 @@ public final class EppGroupSession {
             if outAuthorization.data != nil { native_epp_buffer_release(&outAuthorization) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let data = dataFromBuffer(outAuthorization) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
@@ -451,12 +451,12 @@ public final class EppGroupSession {
     ///
     /// - Parameter keyPackage: The new member's key package.
     /// - Returns: A tuple containing the commit and welcome message.
-    /// - Throws: `EppError` if adding the member fails.
+    /// - Throws: `AuraError` if adding the member fails.
     public func addMember(keyPackage: Data) throws -> (commit: Data, welcome: Data) {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outCommit = NativeEppBuffer(data: nil, length: 0)
-        var outWelcome = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outCommit = NativeAuraBuffer(data: nil, length: 0)
+        var outWelcome = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = keyPackage.withUnsafeBytes { kpBytes in
             native_epp_group_add_member(
                 handle,
@@ -472,14 +472,14 @@ public final class EppGroupSession {
             if outWelcome.data != nil { native_epp_buffer_release(&outWelcome) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let commitData = dataFromBuffer(outCommit) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         guard let welcomeData = dataFromBuffer(outWelcome) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return (commitData, welcomeData)
     }
@@ -490,11 +490,11 @@ public final class EppGroupSession {
     ///
     /// - Parameter leafIndex: The leaf index of the member to remove.
     /// - Returns: The commit message to distribute.
-    /// - Throws: `EppError` if removal fails (e.g., invalid leaf index).
+    /// - Throws: `AuraError` if removal fails (e.g., invalid leaf index).
     public func removeMember(leafIndex: UInt32) throws -> Data {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outCommit = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outCommit = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = native_epp_group_remove_member(
             handle,
             leafIndex,
@@ -505,11 +505,11 @@ public final class EppGroupSession {
             if outCommit.data != nil { native_epp_buffer_release(&outCommit) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let commitData = dataFromBuffer(outCommit) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return commitData
     }
@@ -519,21 +519,21 @@ public final class EppGroupSession {
     /// Returns a commit that must be distributed to all members to advance the epoch.
     ///
     /// - Returns: The commit message to distribute.
-    /// - Throws: `EppError` if the update fails.
+    /// - Throws: `AuraError` if the update fails.
     public func update() throws -> Data {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outCommit = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outCommit = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = native_epp_group_update(handle, &outCommit, &outError)
         defer {
             if outCommit.data != nil { native_epp_buffer_release(&outCommit) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let commitData = dataFromBuffer(outCommit) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return commitData
     }
@@ -544,10 +544,10 @@ public final class EppGroupSession {
     /// changes contained in the commit.
     ///
     /// - Parameter commitBytes: The serialized commit message.
-    /// - Throws: `EppError` if commit processing fails (e.g., invalid commit, tree integrity violation).
+    /// - Throws: `AuraError` if commit processing fails (e.g., invalid commit, tree integrity violation).
     public func processCommit(_ commitBytes: Data) throws {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outError = NativeEppError(code: 0, message: nil)
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = commitBytes.withUnsafeBytes { commitBuf in
             native_epp_group_process_commit(
                 handle,
@@ -557,8 +557,8 @@ public final class EppGroupSession {
             )
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
     }
 
@@ -568,11 +568,11 @@ public final class EppGroupSession {
     ///
     /// - Parameter plaintext: The data to encrypt.
     /// - Returns: The encrypted ciphertext.
-    /// - Throws: `EppError` if encryption fails.
+    /// - Throws: `AuraError` if encryption fails.
     public func encrypt(_ plaintext: Data) throws -> Data {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outCiphertext = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outCiphertext = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = plaintext.withUnsafeBytes { ptBytes in
             native_epp_group_encrypt(
                 handle,
@@ -586,11 +586,11 @@ public final class EppGroupSession {
             if outCiphertext.data != nil { native_epp_buffer_release(&outCiphertext) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let data = dataFromBuffer(outCiphertext) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
@@ -599,13 +599,13 @@ public final class EppGroupSession {
     ///
     /// - Parameter ciphertext: The encrypted message to decrypt.
     /// - Returns: A tuple containing the plaintext, sender leaf index, and generation counter.
-    /// - Throws: `EppError` if decryption fails.
+    /// - Throws: `AuraError` if decryption fails.
     public func decrypt(_ ciphertext: Data) throws -> (plaintext: Data, senderLeafIndex: UInt32, generation: UInt32) {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outPlaintext = NativeEppBuffer(data: nil, length: 0)
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outPlaintext = NativeAuraBuffer(data: nil, length: 0)
         var outSenderLeaf: UInt32 = 0
         var outGeneration: UInt32 = 0
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = ciphertext.withUnsafeBytes { ctBytes in
             native_epp_group_decrypt(
                 handle,
@@ -621,11 +621,11 @@ public final class EppGroupSession {
             if outPlaintext.data != nil { native_epp_buffer_release(&outPlaintext) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let data = dataFromBuffer(outPlaintext) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return (data, outSenderLeaf, outGeneration)
     }
@@ -634,31 +634,31 @@ public final class EppGroupSession {
     /// TTL, timestamp, and franking/sealed flags.
     ///
     /// - Parameter ciphertext: The encrypted message to decrypt.
-    /// - Returns: An `EppGroupDecryptResult` with all available metadata.
-    /// - Throws: `EppError` if decryption fails.
-    public func decryptEx(_ ciphertext: Data) throws -> EppGroupDecryptResult {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var nativeResult = NativeEppGroupDecryptResult(
-            plaintext: NativeEppBuffer(data: nil, length: 0),
+    /// - Returns: An `AuraGroupDecryptResult` with all available metadata.
+    /// - Throws: `AuraError` if decryption fails.
+    public func decryptEx(_ ciphertext: Data) throws -> AuraGroupDecryptResult {
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var nativeResult = NativeAuraGroupDecryptResult(
+            plaintext: NativeAuraBuffer(data: nil, length: 0),
             sender_leaf_index: 0,
             generation: 0,
             content_type: 0,
             ttl_seconds: 0,
             sent_timestamp: 0,
-            message_id: NativeEppBuffer(data: nil, length: 0),
-            referenced_message_id: NativeEppBuffer(data: nil, length: 0),
+            message_id: NativeAuraBuffer(data: nil, length: 0),
+            referenced_message_id: NativeAuraBuffer(data: nil, length: 0),
             has_sealed_payload: 0,
             has_franking_data: 0,
-            sealed_hint: NativeEppBuffer(data: nil, length: 0),
-            sealed_encrypted_content: NativeEppBuffer(data: nil, length: 0),
-            sealed_nonce: NativeEppBuffer(data: nil, length: 0),
-            sealed_key: NativeEppBuffer(data: nil, length: 0),
-            franking_tag: NativeEppBuffer(data: nil, length: 0),
-            franking_key: NativeEppBuffer(data: nil, length: 0),
-            franking_content: NativeEppBuffer(data: nil, length: 0),
-            franking_sealed_content: NativeEppBuffer(data: nil, length: 0)
+            sealed_hint: NativeAuraBuffer(data: nil, length: 0),
+            sealed_encrypted_content: NativeAuraBuffer(data: nil, length: 0),
+            sealed_nonce: NativeAuraBuffer(data: nil, length: 0),
+            sealed_key: NativeAuraBuffer(data: nil, length: 0),
+            franking_tag: NativeAuraBuffer(data: nil, length: 0),
+            franking_key: NativeAuraBuffer(data: nil, length: 0),
+            franking_content: NativeAuraBuffer(data: nil, length: 0),
+            franking_sealed_content: NativeAuraBuffer(data: nil, length: 0)
         )
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = ciphertext.withUnsafeBytes { ctBytes in
             native_epp_group_decrypt_ex(
                 handle,
@@ -672,14 +672,14 @@ public final class EppGroupSession {
             native_epp_group_decrypt_result_free(&nativeResult)
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let plaintext = dataFromBuffer(nativeResult.plaintext) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         guard let messageId = dataFromBuffer(nativeResult.message_id) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         let referencedMessageId = dataFromBuffer(nativeResult.referenced_message_id)
         let sealedHint = dataFromBuffer(nativeResult.sealed_hint)
@@ -690,7 +690,7 @@ public final class EppGroupSession {
         let frankingKey = dataFromBuffer(nativeResult.franking_key)
         let frankingContent = dataFromBuffer(nativeResult.franking_content)
         let frankingSealedContent = dataFromBuffer(nativeResult.franking_sealed_content)
-        return EppGroupDecryptResult(
+        return AuraGroupDecryptResult(
             plaintext: plaintext,
             senderLeafIndex: nativeResult.sender_leaf_index,
             generation: nativeResult.generation,
@@ -723,11 +723,11 @@ public final class EppGroupSession {
     ///   - plaintext: The data to encrypt.
     ///   - hint: The hint data used for the seal layer.
     /// - Returns: The sealed encrypted ciphertext.
-    /// - Throws: `EppError` if encryption fails.
+    /// - Throws: `AuraError` if encryption fails.
     public func encryptSealed(_ plaintext: Data, hint: Data) throws -> Data {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outCiphertext = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outCiphertext = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = plaintext.withUnsafeBytes { ptBytes in
             hint.withUnsafeBytes { hintBytes in
                 native_epp_group_encrypt_sealed(
@@ -745,11 +745,11 @@ public final class EppGroupSession {
             if outCiphertext.data != nil { native_epp_buffer_release(&outCiphertext) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let data = dataFromBuffer(outCiphertext) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
@@ -763,11 +763,11 @@ public final class EppGroupSession {
     ///   - plaintext: The data to encrypt.
     ///   - ttlSeconds: The time-to-live in seconds after which the message should be deleted.
     /// - Returns: The encrypted ciphertext with TTL metadata.
-    /// - Throws: `EppError` if encryption fails.
+    /// - Throws: `AuraError` if encryption fails.
     public func encryptDisappearing(_ plaintext: Data, ttlSeconds: UInt32) throws -> Data {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outCiphertext = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outCiphertext = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = plaintext.withUnsafeBytes { ptBytes in
             native_epp_group_encrypt_disappearing(
                 handle,
@@ -782,11 +782,11 @@ public final class EppGroupSession {
             if outCiphertext.data != nil { native_epp_buffer_release(&outCiphertext) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let data = dataFromBuffer(outCiphertext) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
@@ -798,11 +798,11 @@ public final class EppGroupSession {
     ///
     /// - Parameter plaintext: The data to encrypt.
     /// - Returns: The encrypted ciphertext with franking data.
-    /// - Throws: `EppError` if encryption fails.
+    /// - Throws: `AuraError` if encryption fails.
     public func encryptFrankable(_ plaintext: Data) throws -> Data {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outCiphertext = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outCiphertext = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = plaintext.withUnsafeBytes { ptBytes in
             native_epp_group_encrypt_frankable(
                 handle,
@@ -816,11 +816,11 @@ public final class EppGroupSession {
             if outCiphertext.data != nil { native_epp_buffer_release(&outCiphertext) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let data = dataFromBuffer(outCiphertext) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
@@ -831,11 +831,11 @@ public final class EppGroupSession {
     ///   - newContent: The replacement content.
     ///   - targetMessageId: The message ID of the original message being edited.
     /// - Returns: The encrypted edit ciphertext.
-    /// - Throws: `EppError` if encryption fails.
+    /// - Throws: `AuraError` if encryption fails.
     public func encryptEdit(newContent: Data, targetMessageId: Data) throws -> Data {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outCiphertext = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outCiphertext = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = newContent.withUnsafeBytes { contentBytes in
             targetMessageId.withUnsafeBytes { midBytes in
                 native_epp_group_encrypt_edit(
@@ -853,11 +853,11 @@ public final class EppGroupSession {
             if outCiphertext.data != nil { native_epp_buffer_release(&outCiphertext) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let data = dataFromBuffer(outCiphertext) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
@@ -866,11 +866,11 @@ public final class EppGroupSession {
     ///
     /// - Parameter targetMessageId: The message ID of the message to delete.
     /// - Returns: The encrypted delete ciphertext.
-    /// - Throws: `EppError` if encryption fails.
+    /// - Throws: `AuraError` if encryption fails.
     public func encryptDelete(targetMessageId: Data) throws -> Data {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outCiphertext = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outCiphertext = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = targetMessageId.withUnsafeBytes { midBytes in
             native_epp_group_encrypt_delete(
                 handle,
@@ -884,11 +884,11 @@ public final class EppGroupSession {
             if outCiphertext.data != nil { native_epp_buffer_release(&outCiphertext) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let data = dataFromBuffer(outCiphertext) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
@@ -905,15 +905,15 @@ public final class EppGroupSession {
     ///   - senderLeafIndex: The sender's leaf index.
     ///   - generation: The generation counter.
     /// - Returns: The computed message ID.
-    /// - Throws: `EppError` if computation fails.
+    /// - Throws: `AuraError` if computation fails.
     public static func computeMessageId(
         groupId: Data,
         epoch: UInt64,
         senderLeafIndex: UInt32,
         generation: UInt32
     ) throws -> Data {
-        var outMessageId = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        var outMessageId = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = groupId.withUnsafeBytes { gidBytes in
             native_epp_group_compute_message_id(
                 gidBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
@@ -929,11 +929,11 @@ public final class EppGroupSession {
             if outMessageId.data != nil { native_epp_buffer_release(&outMessageId) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let data = dataFromBuffer(outMessageId) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
@@ -946,15 +946,15 @@ public final class EppGroupSession {
     ///   - nonce: The nonce used in the seal encryption.
     ///   - sealKey: The key used to encrypt the sealed content.
     /// - Returns: The revealed plaintext.
-    /// - Throws: `EppError` if reveal fails (e.g., wrong key, corrupted data).
+    /// - Throws: `AuraError` if reveal fails (e.g., wrong key, corrupted data).
     public static func revealSealed(
         hint: Data,
         encryptedContent: Data,
         nonce: Data,
         sealKey: Data
     ) throws -> Data {
-        var outPlaintext = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        var outPlaintext = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = hint.withUnsafeBytes { hintBytes in
             encryptedContent.withUnsafeBytes { contentBytes in
                 nonce.withUnsafeBytes { nonceBytes in
@@ -979,11 +979,11 @@ public final class EppGroupSession {
             if outPlaintext.data != nil { native_epp_buffer_release(&outPlaintext) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let data = dataFromBuffer(outPlaintext) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
@@ -996,7 +996,7 @@ public final class EppGroupSession {
     ///   - content: The original plaintext content.
     ///   - sealedContent: The sealed (encrypted) content.
     /// - Returns: `true` if the franking tag is valid, `false` otherwise.
-    /// - Throws: `EppError` if verification encounters an error.
+    /// - Throws: `AuraError` if verification encounters an error.
     public static func verifyFranking(
         frankingTag: Data,
         frankingKey: Data,
@@ -1004,7 +1004,7 @@ public final class EppGroupSession {
         sealedContent: Data
     ) throws -> Bool {
         var outValid: UInt8 = 0
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = frankingTag.withUnsafeBytes { tagBytes in
             frankingKey.withUnsafeBytes { keyBytes in
                 content.withUnsafeBytes { contentBytes in
@@ -1026,8 +1026,8 @@ public final class EppGroupSession {
             }
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         return outValid != 0
     }
@@ -1036,22 +1036,22 @@ public final class EppGroupSession {
 
     /// The unique identifier of this group.
     ///
-    /// - Throws: `EppError` if the group ID cannot be retrieved.
+    /// - Throws: `AuraError` if the group ID cannot be retrieved.
     public var groupId: Data {
         get throws {
-            guard handle != nil else { throw EppError.objectDisposed }
-            var outBuffer = NativeEppBuffer(data: nil, length: 0)
-            var outError = NativeEppError(code: 0, message: nil)
+            guard handle != nil else { throw AuraError.objectDisposed }
+            var outBuffer = NativeAuraBuffer(data: nil, length: 0)
+            var outError = NativeAuraError(code: 0, message: nil)
             let result = native_epp_group_get_id(handle, &outBuffer, &outError)
             defer {
                 if outBuffer.data != nil { native_epp_buffer_release(&outBuffer) }
                 native_epp_error_free(&outError)
             }
-            guard result == EPP_SUCCESS else {
-                throw EppError.from(code: result, nativeError: outError)
+            guard result == AURA_SUCCESS else {
+                throw AuraError.from(code: result, nativeError: outError)
             }
             guard let data = dataFromBuffer(outBuffer) else {
-                throw EppError.bufferTooSmall
+                throw AuraError.bufferTooSmall
             }
             return data
         }
@@ -1080,21 +1080,21 @@ public final class EppGroupSession {
     /// identify specific members (e.g., for removal).
     ///
     /// - Returns: An array of member leaf indices.
-    /// - Throws: `EppError` if the query fails.
+    /// - Throws: `AuraError` if the query fails.
     public func memberLeafIndices() throws -> [UInt32] {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outBuffer = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outBuffer = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = native_epp_group_get_member_leaf_indices(handle, &outBuffer, &outError)
         defer {
             if outBuffer.data != nil { native_epp_buffer_release(&outBuffer) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let ptr = outBuffer.data else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         let count = outBuffer.length / MemoryLayout<UInt32>.size
         var indices = [UInt32]()
@@ -1108,16 +1108,16 @@ public final class EppGroupSession {
 
     /// Whether this group session uses the shielded security policy.
     ///
-    /// - Throws: `EppError` if the query fails.
+    /// - Throws: `AuraError` if the query fails.
     public var isShielded: Bool {
         get throws {
-            guard handle != nil else { throw EppError.objectDisposed }
+            guard handle != nil else { throw AuraError.objectDisposed }
             var outShielded: UInt8 = 0
-            var outError = NativeEppError(code: 0, message: nil)
+            var outError = NativeAuraError(code: 0, message: nil)
             let result = native_epp_group_is_shielded(handle, &outShielded, &outError)
             defer { native_epp_error_free(&outError) }
-            guard result == EPP_SUCCESS else {
-                throw EppError.from(code: result, nativeError: outError)
+            guard result == AURA_SUCCESS else {
+                throw AuraError.from(code: result, nativeError: outError)
             }
             return outShielded != 0
         }
@@ -1125,24 +1125,24 @@ public final class EppGroupSession {
 
     /// Returns the current security policy of the group session.
     ///
-    /// - Returns: The `EppGroupSecurityPolicy` in effect.
-    /// - Throws: `EppError` if the query fails.
-    public func securityPolicy() throws -> EppGroupSecurityPolicy {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var nativePolicy = NativeEppGroupSecurityPolicy(
+    /// - Returns: The `AuraGroupSecurityPolicy` in effect.
+    /// - Throws: `AuraError` if the query fails.
+    public func securityPolicy() throws -> AuraGroupSecurityPolicy {
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var nativePolicy = NativeAuraGroupSecurityPolicy(
             max_messages_per_epoch: 0,
             max_skipped_keys_per_sender: 0,
             block_external_join: 0,
             enhanced_key_schedule: 0,
             mandatory_franking: 0
         )
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = native_epp_group_get_security_policy(handle, &nativePolicy, &outError)
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
-        return EppGroupSecurityPolicy.from(native: nativePolicy)
+        return AuraGroupSecurityPolicy.from(native: nativePolicy)
     }
 
     // MARK: - PSK
@@ -1155,10 +1155,10 @@ public final class EppGroupSession {
     /// - Parameters:
     ///   - pskId: The identifier for the PSK.
     ///   - psk: The pre-shared key bytes.
-    /// - Throws: `EppError` if setting the PSK fails.
+    /// - Throws: `AuraError` if setting the PSK fails.
     public func setPsk(pskId: Data, psk: Data) throws {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outError = NativeEppError(code: 0, message: nil)
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = pskId.withUnsafeBytes { pskIdBytes in
             psk.withUnsafeBytes { pskBytes in
                 native_epp_group_set_psk(
@@ -1172,8 +1172,8 @@ public final class EppGroupSession {
             }
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
     }
 
@@ -1187,12 +1187,12 @@ public final class EppGroupSession {
     ///
     /// - Returns: A tuple containing the new group ID and protocol version if a reinit is pending,
     ///   or `nil` if no reinit is pending.
-    /// - Throws: `EppError` if the query fails.
+    /// - Throws: `AuraError` if the query fails.
     public func pendingReinit() throws -> (newGroupId: Data, newVersion: UInt32)? {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outGroupId = NativeEppBuffer(data: nil, length: 0)
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outGroupId = NativeAuraBuffer(data: nil, length: 0)
         var outVersion: UInt32 = 0
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = native_epp_group_get_pending_reinit(
             handle,
             &outGroupId,
@@ -1203,8 +1203,8 @@ public final class EppGroupSession {
             if outGroupId.data != nil { native_epp_buffer_release(&outGroupId) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let groupIdData = dataFromBuffer(outGroupId) else {
             return nil
@@ -1223,11 +1223,11 @@ public final class EppGroupSession {
     ///   - key: The encryption key used to seal the state.
     ///   - externalCounter: A monotonically increasing counter value.
     /// - Returns: The sealed group session state.
-    /// - Throws: `EppError` if serialization fails.
+    /// - Throws: `AuraError` if serialization fails.
     public func serialize(key: Data, externalCounter: UInt64) throws -> Data {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outBuffer = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outBuffer = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = key.withUnsafeBytes { keyBytes in
             native_epp_group_serialize(
                 handle,
@@ -1242,21 +1242,21 @@ public final class EppGroupSession {
             if outBuffer.data != nil { native_epp_buffer_release(&outBuffer) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let data = dataFromBuffer(outBuffer) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
 
     /// Serializes the group session state using a managed anti-rollback tracker.
-    public func serialize(key: Data, tracker: EppSealedStateCounterTracker) throws -> Data {
-        guard handle != nil else { throw EppError.objectDisposed }
-        guard tracker.handle != nil else { throw EppError.objectDisposed }
-        var outBuffer = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+    public func serialize(key: Data, tracker: AuraSealedStateCounterTracker) throws -> Data {
+        guard handle != nil else { throw AuraError.objectDisposed }
+        guard tracker.handle != nil else { throw AuraError.objectDisposed }
+        var outBuffer = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = key.withUnsafeBytes { keyBytes in
             native_epp_group_serialize_with_tracker(
                 handle,
@@ -1271,20 +1271,20 @@ public final class EppGroupSession {
             if outBuffer.data != nil { native_epp_buffer_release(&outBuffer) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let data = dataFromBuffer(outBuffer) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }
 
     /// Exports the group session state into a managed persisted slot.
-    public func exportPersistedState(key: Data, slot: EppSealedStateSlot) throws {
-        guard handle != nil else { throw EppError.objectDisposed }
-        guard slot.handle != nil else { throw EppError.objectDisposed }
-        var outError = NativeEppError(code: 0, message: nil)
+    public func exportPersistedState(key: Data, slot: AuraSealedStateSlot) throws {
+        guard handle != nil else { throw AuraError.objectDisposed }
+        guard slot.handle != nil else { throw AuraError.objectDisposed }
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = key.withUnsafeBytes { keyBytes in
             native_epp_group_export_persisted_state(
                 handle,
@@ -1295,8 +1295,8 @@ public final class EppGroupSession {
             )
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
     }
 
@@ -1310,18 +1310,18 @@ public final class EppGroupSession {
     ///   - key: The encryption key used to unseal the state.
     ///   - minExternalCounter: The minimum acceptable external counter value.
     ///   - identity: The identity associated with this group membership.
-    /// - Returns: A tuple containing the restored `EppGroupSession` and its external counter.
-    /// - Throws: `EppError` if deserialization or authentication fails.
+    /// - Returns: A tuple containing the restored `AuraGroupSession` and its external counter.
+    /// - Throws: `AuraError` if deserialization or authentication fails.
     public static func deserialize(
         sealedState: Data,
         key: Data,
         minExternalCounter: UInt64,
-        identity: EppIdentity
-    ) throws -> (session: EppGroupSession, externalCounter: UInt64) {
-        guard identity.handle != nil else { throw EppError.objectDisposed }
+        identity: AuraIdentity
+    ) throws -> (session: AuraGroupSession, externalCounter: UInt64) {
+        guard identity.handle != nil else { throw AuraError.objectDisposed }
         var outHandle: UnsafeMutableRawPointer?
         var outCounter: UInt64 = 0
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = sealedState.withUnsafeBytes { stateBytes in
             key.withUnsafeBytes { keyBytes in
                 native_epp_group_deserialize(
@@ -1338,10 +1338,10 @@ public final class EppGroupSession {
             }
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS, let handle = outHandle else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let handle = outHandle else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
-        return (EppGroupSession(handle: handle), outCounter)
+        return (AuraGroupSession(handle: handle), outCounter)
     }
 
     /// Deserializes a sealed group session using a managed anti-rollback
@@ -1350,13 +1350,13 @@ public final class EppGroupSession {
     public static func deserialize(
         sealedState: Data,
         key: Data,
-        tracker: EppSealedStateCounterTracker,
-        identity: EppIdentity
-    ) throws -> EppGroupSession {
-        guard tracker.handle != nil else { throw EppError.objectDisposed }
-        guard identity.handle != nil else { throw EppError.objectDisposed }
+        tracker: AuraSealedStateCounterTracker,
+        identity: AuraIdentity
+    ) throws -> AuraGroupSession {
+        guard tracker.handle != nil else { throw AuraError.objectDisposed }
+        guard identity.handle != nil else { throw AuraError.objectDisposed }
         var outHandle: UnsafeMutableRawPointer?
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = sealedState.withUnsafeBytes { stateBytes in
             key.withUnsafeBytes { keyBytes in
                 native_epp_group_deserialize_with_tracker(
@@ -1372,22 +1372,22 @@ public final class EppGroupSession {
             }
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS, let handle = outHandle else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let handle = outHandle else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
-        return EppGroupSession(handle: handle)
+        return AuraGroupSession(handle: handle)
     }
 
     /// Restores a group session from a managed persisted slot.
     public static func restorePersistedState(
-        slot: EppSealedStateSlot,
+        slot: AuraSealedStateSlot,
         key: Data,
-        identity: EppIdentity
-    ) throws -> EppGroupSession {
-        guard slot.handle != nil else { throw EppError.objectDisposed }
-        guard identity.handle != nil else { throw EppError.objectDisposed }
+        identity: AuraIdentity
+    ) throws -> AuraGroupSession {
+        guard slot.handle != nil else { throw AuraError.objectDisposed }
+        guard identity.handle != nil else { throw AuraError.objectDisposed }
         var outHandle: UnsafeMutableRawPointer?
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = key.withUnsafeBytes { keyBytes in
             native_epp_group_restore_persisted_state(
                 slot.handle,
@@ -1399,10 +1399,10 @@ public final class EppGroupSession {
             )
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS, let handle = outHandle else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let handle = outHandle else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
-        return EppGroupSession(handle: handle)
+        return AuraGroupSession(handle: handle)
     }
 
     /// Exports the public state of the group for external join operations.
@@ -1411,21 +1411,21 @@ public final class EppGroupSession {
     /// without receiving a welcome message.
     ///
     /// - Returns: The serialized public group state.
-    /// - Throws: `EppError` if export fails.
+    /// - Throws: `AuraError` if export fails.
     public func exportPublicState() throws -> Data {
-        guard handle != nil else { throw EppError.objectDisposed }
-        var outBuffer = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outBuffer = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = native_epp_group_export_public_state(handle, &outBuffer, &outError)
         defer {
             if outBuffer.data != nil { native_epp_buffer_release(&outBuffer) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let data = dataFromBuffer(outBuffer) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return data
     }

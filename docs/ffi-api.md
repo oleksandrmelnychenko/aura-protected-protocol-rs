@@ -1,9 +1,9 @@
-# Ecliptix Protocol — C FFI API Reference
+# Aura Protocol — C FFI API Reference
 
-C API для інтеграції Ecliptix Protocol у будь-яку мову (Swift, Kotlin, C#, Python, C++, Go, etc.).
+C API для інтеграції Aura Protocol у будь-яку мову (Swift, Kotlin, C#, Python, C++, Go, etc.).
 
-Headers: `include/epp_api.h` (umbrella), `include/epp_client_api.h`, `include/epp_common_api.h`
-Бібліотека: `libecliptix_protocol.a` (staticlib) або `.dylib`/`.so`/`.dll` (cdylib)
+Headers: `include/aura_api.h` (umbrella), `include/aura_client_api.h`, `include/aura_common_api.h`
+Бібліотека: `libaura_protocol.a` (staticlib) або `.dylib`/`.so`/`.dll` (cdylib)
 
 ---
 
@@ -14,8 +14,8 @@ API розрахований на три ролі:
 | Роль | Опис | Прапор збірки |
 |------|------|---------------|
 | **Client (Agent)** | Кінцевий пристрій користувача — ініціює handshake, шифрує/дешифрує, бере участь у групах | За замовчуванням (без прапорів) |
-| **Server (Endpoint)** | Сервер, що приймає з'єднання від клієнтів — відповідає на handshake, шифрує/дешифрує | `EPP_SERVER_BUILD` (ховає initiator) |
-| **Relay** | Проміжний сервер — лише пересилає зашифровані байти, не має ключів | `EPP_SERVER_BUILD` (використовує мінімум API) |
+| **Server (Endpoint)** | Сервер, що приймає з'єднання від клієнтів — відповідає на handshake, шифрує/дешифрує | `AURA_SERVER_BUILD` (ховає initiator) |
+| **Relay** | Проміжний сервер — лише пересилає зашифровані байти, не має ключів | `AURA_SERVER_BUILD` (використовує мінімум API) |
 
 ### Зведена таблиця функцій за ролями
 
@@ -24,119 +24,119 @@ API розрахований на три ролі:
 | Функція | C | S | R | Опис |
 |---------|:-:|:-:|:-:|------|
 | **Ініціалізація** | | | |
-| `epp_version` | + | + | + | Версія бібліотеки |
-| `epp_init` | + | + | + | Ініціалізація крипто |
-| `epp_shutdown` | + | + | + | Завершення роботи |
+| `aura_version` | + | + | + | Версія бібліотеки |
+| `aura_init` | + | + | + | Ініціалізація крипто |
+| `aura_shutdown` | + | + | + | Завершення роботи |
 | **Identity** | | | |
-| `epp_identity_create` | + | + | - | Створити identity (випадкова) |
-| `epp_identity_create_from_seed` | + | + | - | Створити identity (з seed) |
-| `epp_identity_create_with_context` | + | + | - | Створити identity (seed + context) |
-| `epp_identity_get_x25519_public` | + | + | - | Отримати X25519 public key |
-| `epp_identity_get_ed25519_public` | + | + | - | Отримати Ed25519 public key |
-| `epp_identity_get_kyber_public` | + | + | - | Отримати Kyber public key |
-| `epp_identity_destroy` | + | + | - | Знищити identity |
-| `epp_time_provider_manual_create` | + | + | - | Створити manual clock |
-| `epp_time_provider_manual_set_now_unix` | + | + | - | Пересунути manual clock вперед |
-| `epp_identity_set_time_provider` | + | + | - | Прив'язати identity до explicit clock |
-| `epp_time_provider_destroy` | + | + | - | Знищити manual clock |
+| `aura_identity_create` | + | + | - | Створити identity (випадкова) |
+| `aura_identity_create_from_seed` | + | + | - | Створити identity (з seed) |
+| `aura_identity_create_with_context` | + | + | - | Створити identity (seed + context) |
+| `aura_identity_get_x25519_public` | + | + | - | Отримати X25519 public key |
+| `aura_identity_get_ed25519_public` | + | + | - | Отримати Ed25519 public key |
+| `aura_identity_get_kyber_public` | + | + | - | Отримати Kyber public key |
+| `aura_identity_destroy` | + | + | - | Знищити identity |
+| `aura_time_provider_manual_create` | + | + | - | Створити manual clock |
+| `aura_time_provider_manual_set_now_unix` | + | + | - | Пересунути manual clock вперед |
+| `aura_identity_set_time_provider` | + | + | - | Прив'язати identity до explicit clock |
+| `aura_time_provider_destroy` | + | + | - | Знищити manual clock |
 | **Pre-Key Bundle** | | | |
-| `epp_prekey_bundle_create` | + | + | - | Створити PreKey bundle |
+| `aura_prekey_bundle_create` | + | + | - | Створити PreKey bundle |
 | **Handshake — Initiator** | | | |
-| `epp_handshake_initiator_start` | + | - | - | Почати handshake (клієнт) |
-| `epp_handshake_initiator_finish` | + | - | - | Завершити handshake (клієнт) |
-| `epp_handshake_initiator_destroy` | + | - | - | Знищити initiator handle |
+| `aura_handshake_initiator_start` | + | - | - | Почати handshake (клієнт) |
+| `aura_handshake_initiator_finish` | + | - | - | Завершити handshake (клієнт) |
+| `aura_handshake_initiator_destroy` | + | - | - | Знищити initiator handle |
 | **Handshake — Responder** | | | |
-| `epp_handshake_responder_start` | + | + | - | Прийняти handshake (сервер) |
-| `epp_handshake_responder_finish` | + | + | - | Завершити handshake (сервер) |
-| `epp_handshake_responder_destroy` | + | + | - | Знищити responder handle |
+| `aura_handshake_responder_start` | + | + | - | Прийняти handshake (сервер) |
+| `aura_handshake_responder_finish` | + | + | - | Завершити handshake (сервер) |
+| `aura_handshake_responder_destroy` | + | + | - | Знищити responder handle |
 | **Session (1:1)** | | | |
-| `epp_session_encrypt` | + | + | - | Шифрування |
-| `epp_session_decrypt` | + | + | - | Дешифрування |
-| `epp_session_nonce_remaining` | + | + | - | Залишок nonce |
-| `epp_session_destroy` | + | + | - | Знищити сесію |
-| `epp_session_serialize_sealed` | + | + | - | Зберегти стан |
-| `epp_session_deserialize_sealed` | + | + | - | Відновити стан |
+| `aura_session_encrypt` | + | + | - | Шифрування |
+| `aura_session_decrypt` | + | + | - | Дешифрування |
+| `aura_session_nonce_remaining` | + | + | - | Залишок nonce |
+| `aura_session_destroy` | + | + | - | Знищити сесію |
+| `aura_session_serialize_sealed` | + | + | - | Зберегти стан |
+| `aura_session_deserialize_sealed` | + | + | - | Відновити стан |
 | **Envelope** | | | |
-| `epp_envelope_validate` | + | + | + | Валідація формату (без ключів) |
+| `aura_envelope_validate` | + | + | + | Валідація формату (без ключів) |
 | **Key Derivation** | | | |
-| `epp_derive_root_key` | + | + | - | HKDF з OPAQUE key |
+| `aura_derive_root_key` | + | + | - | HKDF з OPAQUE key |
 | **Shamir SSS** | | | |
-| `epp_shamir_split` | + | + | - | Розщепити секрет |
-| `epp_shamir_reconstruct` | + | + | - | Відновити секрет |
+| `aura_shamir_split` | + | + | - | Розщепити секрет |
+| `aura_shamir_reconstruct` | + | + | - | Відновити секрет |
 | **Attachments / Media** | | | |
-| `epp_attachment_generate_id` | + | + | + | Згенерувати attachment ID |
-| `epp_attachment_generate_file_key` | + | + | - | Згенерувати file DEK |
-| `epp_attachment_encrypt_chunk` | + | + | - | Шифрувати chunk |
-| `epp_attachment_decrypt_chunk` | + | + | - | Дешифрувати chunk |
-| `epp_attachment_manifest_create` | + | + | - | Створити AttachmentManifest |
-| `epp_attachment_manifest_validate` | + | + | + | Валідувати AttachmentManifest |
-| `epp_attachment_chunk_validate` | + | + | + | Валідувати encrypted chunk shape |
+| `aura_attachment_generate_id` | + | + | + | Згенерувати attachment ID |
+| `aura_attachment_generate_file_key` | + | + | - | Згенерувати file DEK |
+| `aura_attachment_encrypt_chunk` | + | + | - | Шифрувати chunk |
+| `aura_attachment_decrypt_chunk` | + | + | - | Дешифрувати chunk |
+| `aura_attachment_manifest_create` | + | + | - | Створити AttachmentManifest |
+| `aura_attachment_manifest_validate` | + | + | + | Валідувати AttachmentManifest |
+| `aura_attachment_chunk_validate` | + | + | + | Валідувати encrypted chunk shape |
 | **Group — Key Package** | | | |
-| `epp_group_generate_key_package` | + | + | - | Створити KeyPackage |
-| `epp_group_key_package_secrets_destroy` | + | + | - | Знищити секрети KP |
+| `aura_group_generate_key_package` | + | + | - | Створити KeyPackage |
+| `aura_group_key_package_secrets_destroy` | + | + | - | Знищити секрети KP |
 | **Group — Core** | | | |
-| `epp_group_create` | + | + | - | Створити групу |
-| `epp_group_create_shielded` | + | + | - | Створити shielded групу |
-| `epp_group_create_with_policy` | + | + | - | Створити групу з custom policy |
-| `epp_group_is_shielded` | + | + | - | Чи shield mode |
-| `epp_group_get_security_policy` | + | + | - | Отримати policy деталі |
-| `epp_group_join` | + | + | - | Приєднатися (Welcome) |
-| `epp_group_join_external` | + | + | - | Приєднатися (зовнішній) |
+| `aura_group_create` | + | + | - | Створити групу |
+| `aura_group_create_shielded` | + | + | - | Створити shielded групу |
+| `aura_group_create_with_policy` | + | + | - | Створити групу з custom policy |
+| `aura_group_is_shielded` | + | + | - | Чи shield mode |
+| `aura_group_get_security_policy` | + | + | - | Отримати policy деталі |
+| `aura_group_join` | + | + | - | Приєднатися (Welcome) |
+| `aura_group_join_external` | + | + | - | Приєднатися (зовнішній) |
 | **Group — Management** | | | |
-| `epp_group_add_member` | + | + | - | Додати учасника |
-| `epp_group_remove_member` | + | + | - | Видалити учасника |
-| `epp_group_update` | + | + | - | Оновити ключі |
-| `epp_group_process_commit` | + | + | - | Обробити commit |
+| `aura_group_add_member` | + | + | - | Додати учасника |
+| `aura_group_remove_member` | + | + | - | Видалити учасника |
+| `aura_group_update` | + | + | - | Оновити ключі |
+| `aura_group_process_commit` | + | + | - | Обробити commit |
 | **Group — Encrypt / Decrypt** | | | |
-| `epp_group_encrypt` | + | + | - | Шифрування (група) |
-| `epp_group_decrypt` | + | + | - | Дешифрування (група) |
-| `epp_group_encrypt_sealed` | + | + | - | Sealed (анонімне) |
-| `epp_group_encrypt_disappearing` | + | + | - | Disappearing (TTL) |
-| `epp_group_encrypt_frankable` | + | + | - | Frankable (доказ) |
-| `epp_group_reveal_sealed` | + | + | - | Розшифрувати sealed |
-| `epp_group_verify_franking` | + | + | + | Перевірити franking tag |
+| `aura_group_encrypt` | + | + | - | Шифрування (група) |
+| `aura_group_decrypt` | + | + | - | Дешифрування (група) |
+| `aura_group_encrypt_sealed` | + | + | - | Sealed (анонімне) |
+| `aura_group_encrypt_disappearing` | + | + | - | Disappearing (TTL) |
+| `aura_group_encrypt_frankable` | + | + | - | Frankable (доказ) |
+| `aura_group_reveal_sealed` | + | + | - | Розшифрувати sealed |
+| `aura_group_verify_franking` | + | + | + | Перевірити franking tag |
 | **Group — State** | | | |
-| `epp_group_get_id` | + | + | - | Group ID |
-| `epp_group_get_epoch` | + | + | - | Поточна epoch |
-| `epp_group_get_my_leaf_index` | + | + | - | Мій leaf index |
-| `epp_group_get_member_count` | + | + | - | К-ть учасників |
-| `epp_group_get_member_leaf_indices` | + | + | - | Leaf indices всіх |
-| `epp_group_destroy` | + | + | - | Знищити групу |
+| `aura_group_get_id` | + | + | - | Group ID |
+| `aura_group_get_epoch` | + | + | - | Поточна epoch |
+| `aura_group_get_my_leaf_index` | + | + | - | Мій leaf index |
+| `aura_group_get_member_count` | + | + | - | К-ть учасників |
+| `aura_group_get_member_leaf_indices` | + | + | - | Leaf indices всіх |
+| `aura_group_destroy` | + | + | - | Знищити групу |
 | **Group — Serialization** | | | |
-| `epp_group_serialize` | + | + | - | Зберегти стан групи |
-| `epp_group_deserialize` | + | + | - | Відновити стан групи |
-| `epp_group_export_public_state` | + | + | - | Публічний стан |
-| `epp_group_authorize_external_join` | + | + | - | Видати дозвіл на external join |
+| `aura_group_serialize` | + | + | - | Зберегти стан групи |
+| `aura_group_deserialize` | + | + | - | Відновити стан групи |
+| `aura_group_export_public_state` | + | + | - | Публічний стан |
+| `aura_group_authorize_external_join` | + | + | - | Видати дозвіл на external join |
 | **Group — PSK & ReInit** | | | |
-| `epp_group_set_psk` | + | + | - | Встановити PSK |
-| `epp_group_get_pending_reinit` | + | + | - | Перевірити ReInit |
+| `aura_group_set_psk` | + | + | - | Встановити PSK |
+| `aura_group_get_pending_reinit` | + | + | - | Перевірити ReInit |
 | **Group — Edit / Delete** | | | |
-| `epp_group_encrypt_edit` | + | + | - | Шифрувати edit-повідомлення |
-| `epp_group_encrypt_delete` | + | + | - | Шифрувати delete-повідомлення |
-| `epp_group_decrypt_ex` | + | + | - | Повне дешифрування (з sealed/franking) |
-| `epp_group_decrypt_result_free` | + | + | - | Звільнити EppGroupDecryptResult |
-| `epp_group_compute_message_id` | + | + | + | Обчислити стабільний Message ID |
+| `aura_group_encrypt_edit` | + | + | - | Шифрувати edit-повідомлення |
+| `aura_group_encrypt_delete` | + | + | - | Шифрувати delete-повідомлення |
+| `aura_group_decrypt_ex` | + | + | - | Повне дешифрування (з sealed/franking) |
+| `aura_group_decrypt_result_free` | + | + | - | Звільнити AuraGroupDecryptResult |
+| `aura_group_compute_message_id` | + | + | + | Обчислити стабільний Message ID |
 | **Session — Identity** | | | |
-| `epp_session_get_id` | + | + | - | Отримати Session ID |
-| `epp_session_get_identity_binding_hash` | + | + | - | Отримати Identity Binding Hash |
-| `epp_session_get_peer_identity` | + | + | - | Отримати identity peer-а |
-| `epp_session_get_local_identity` | + | + | - | Отримати локальну identity |
+| `aura_session_get_id` | + | + | - | Отримати Session ID |
+| `aura_session_get_identity_binding_hash` | + | + | - | Отримати Identity Binding Hash |
+| `aura_session_get_peer_identity` | + | + | - | Отримати identity peer-а |
+| `aura_session_get_local_identity` | + | + | - | Отримати локальну identity |
 | **OTK Replenishment** | | | |
-| `epp_prekey_bundle_replenish` | + | + | - | Поповнити OTK пул |
+| `aura_prekey_bundle_replenish` | + | + | - | Поповнити OTK пул |
 | **Envelope Metadata** | | | |
-| `epp_envelope_metadata_parse` | + | + | - | Розпарсити EnvelopeMetadata |
-| `epp_envelope_metadata_free` | + | + | - | Звільнити EnvelopeMetadata |
+| `aura_envelope_metadata_parse` | + | + | - | Розпарсити EnvelopeMetadata |
+| `aura_envelope_metadata_free` | + | + | - | Звільнити EnvelopeMetadata |
 | **Event Callbacks** | | | |
-| `epp_session_set_event_handler` | + | + | - | Реєстрація callback-ів сесії |
-| `epp_group_set_event_handler` | + | + | - | Реєстрація callback-ів групи |
-| `epp_identity_set_event_handler` | + | + | - | Реєстрація callback-ів identity |
+| `aura_session_set_event_handler` | + | + | - | Реєстрація callback-ів сесії |
+| `aura_group_set_event_handler` | + | + | - | Реєстрація callback-ів групи |
+| `aura_identity_set_event_handler` | + | + | - | Реєстрація callback-ів identity |
 | **Memory / Errors** | | | |
-| `epp_buffer_release` | + | + | + | Звільнити data буфера |
-| `epp_buffer_alloc` | + | + | + | Алокувати буфер |
-| `epp_buffer_free` | + | + | + | Звільнити буфер цілком |
-| `epp_error_free` | + | + | + | Звільнити помилку |
-| `epp_error_string` | + | + | + | Текст помилки |
-| `epp_secure_wipe` | + | + | + | Занулити пам'ять |
+| `aura_buffer_release` | + | + | + | Звільнити data буфера |
+| `aura_buffer_alloc` | + | + | + | Алокувати буфер |
+| `aura_buffer_free` | + | + | + | Звільнити буфер цілком |
+| `aura_error_free` | + | + | + | Звільнити помилку |
+| `aura_error_string` | + | + | + | Текст помилки |
+| `aura_secure_wipe` | + | + | + | Занулити пам'ять |
 
 ### Relay — мінімальний набір (9 функцій)
 
@@ -147,35 +147,35 @@ Relay-сервер НЕ має ключів і НЕ дешифрує повід�
 - може перевіряти franking tags (модерація контенту)
 
 ```
-epp_init / epp_shutdown / epp_version
-epp_envelope_validate
-epp_group_verify_franking
-epp_buffer_release / epp_buffer_alloc / epp_buffer_free
-epp_error_free / epp_error_string
-epp_secure_wipe
+aura_init / aura_shutdown / aura_version
+aura_envelope_validate
+aura_group_verify_franking
+aura_buffer_release / aura_buffer_alloc / aura_buffer_free
+aura_error_free / aura_error_string
+aura_secure_wipe
 ```
 
 ### Server Endpoint — все крім initiator
 
-При збірці з `EPP_SERVER_BUILD` handshake initiator функції та тип `EppHandshakeInitiatorHandle` не компілюються. Сервер приймає з'єднання через responder.
+При збірці з `AURA_SERVER_BUILD` handshake initiator функції та тип `AuraHandshakeInitiatorHandle` не компілюються. Сервер приймає з'єднання через responder.
 
-Примітка: low-level VoIP, managed sealed-state helpers і attachment streaming surface теж задекларовані в `include/epp_client_api.h`; для цих підрозділів header лишається найповнішим списком прототипів.
+Примітка: low-level VoIP, managed sealed-state helpers і attachment streaming surface теж задекларовані в `include/aura_client_api.h`; для цих підрозділів header лишається найповнішим списком прототипів.
 
 ## Current snapshot contract updates
 
 Поточний HEAD містить такі інтеграторсько-видимі зміни поверх hardening cycle:
 
-- більшість вхідних буферів мають жорсткі розмірні ліміти, а oversized input повертає `EPP_ERROR_INVALID_INPUT`;
-- manual time provider тепер тільки forward-only: спроба відкотити clock назад також повертає `EPP_ERROR_INVALID_INPUT`;
+- більшість вхідних буферів мають жорсткі розмірні ліміти, а oversized input повертає `AURA_ERROR_INVALID_INPUT`;
+- manual time provider тепер тільки forward-only: спроба відкотити clock назад також повертає `AURA_ERROR_INVALID_INPUT`;
 - low-level VoIP destroy entry points працюють через `**handle`, зануляють слот і безпечні при повторному destroy;
-- конкурентний доступ до одного й того самого native handle повертає `EPP_ERROR_BUSY` замість блокування.
+- конкурентний доступ до одного й того самого native handle повертає `AURA_ERROR_BUSY` замість блокування.
 
 Практичні дії для інтегратора:
 
 1. На клієнті перевіряти розміри payload локально до FFI-виклику (`encrypt/decrypt/handshake`), щоб уникати зайвих алокацій.
 2. На сервері ставити transport-level body limits (HTTP/WebSocket frame caps) не вище протокольних.
-3. Якщо отримали `EPP_ERROR_INVALID_INPUT` через розмір або rewind manual clock, трактувати як policy/usage rejection (не як retryable transport failure).
-4. Якщо отримали `EPP_ERROR_BUSY`, не reuse-ити той самий handle паралельно без зовнішньої синхронізації.
+3. Якщо отримали `AURA_ERROR_INVALID_INPUT` через розмір або rewind manual clock, трактувати як policy/usage rejection (не як retryable transport failure).
+4. Якщо отримали `AURA_ERROR_BUSY`, не reuse-ити той самий handle паралельно без зовнішньої синхронізації.
 
 ## Зміст
 
@@ -212,52 +212,52 @@ epp_secure_wipe
 
 ```c
 // Opaque handles — не дивитися всередину, тільки передавати у функції
-typedef struct EppIdentityHandle EppIdentityHandle;
-typedef struct EppSessionHandle EppSessionHandle;
-typedef struct EppVoipSessionHandle EppVoipSessionHandle;
-typedef struct EppGroupSessionHandle EppGroupSessionHandle;
-typedef struct EppKeyPackageSecretsHandle EppKeyPackageSecretsHandle;
-typedef struct EppHandshakeInitiatorHandle EppHandshakeInitiatorHandle;  // #ifndef EPP_SERVER_BUILD
-typedef struct EppHandshakeResponderHandle EppHandshakeResponderHandle;
-typedef struct EppVoipCallInitiatorHandle EppVoipCallInitiatorHandle;
-typedef struct EppSealedStateCounterTrackerHandle EppSealedStateCounterTrackerHandle;
-typedef struct EppSealedStateSlotHandle EppSealedStateSlotHandle;
-typedef struct EppTimeProviderHandle EppTimeProviderHandle;
+typedef struct AuraIdentityHandle AuraIdentityHandle;
+typedef struct AuraSessionHandle AuraSessionHandle;
+typedef struct AuraVoipSessionHandle AuraVoipSessionHandle;
+typedef struct AuraGroupSessionHandle AuraGroupSessionHandle;
+typedef struct AuraKeyPackageSecretsHandle AuraKeyPackageSecretsHandle;
+typedef struct AuraHandshakeInitiatorHandle AuraHandshakeInitiatorHandle;  // #ifndef AURA_SERVER_BUILD
+typedef struct AuraHandshakeResponderHandle AuraHandshakeResponderHandle;
+typedef struct AuraVoipCallInitiatorHandle AuraVoipCallInitiatorHandle;
+typedef struct AuraSealedStateCounterTrackerHandle AuraSealedStateCounterTrackerHandle;
+typedef struct AuraSealedStateSlotHandle AuraSealedStateSlotHandle;
+typedef struct AuraTimeProviderHandle AuraTimeProviderHandle;
 
-// Буфер для передачі бінарних даних. Звільняти через epp_buffer_release або epp_buffer_free.
-typedef struct EppBuffer {
+// Буфер для передачі бінарних даних. Звільняти через aura_buffer_release або aura_buffer_free.
+typedef struct AuraBuffer {
     uint8_t* data;
     size_t   length;
-} EppBuffer;
+} AuraBuffer;
 
-// Структура помилки. Звільняти message через epp_error_free.
-typedef struct EppError {
-    EppErrorCode code;
+// Структура помилки. Звільняти message через aura_error_free.
+typedef struct AuraError {
+    AuraErrorCode code;
     char*        message;   // UTF-8 null-terminated, або NULL
-} EppError;
+} AuraError;
 
 // Конфігурація сесії (опційна).
-typedef struct EppSessionConfig {
+typedef struct AuraSessionConfig {
     uint32_t max_messages_per_chain;  // за замовчуванням 1000
-} EppSessionConfig;
+} AuraSessionConfig;
 
 // Security policy для групових сесій (Shield Mode).
-typedef struct EppGroupSecurityPolicy {
+typedef struct AuraGroupSecurityPolicy {
     uint32_t max_messages_per_epoch;        // 10..100000 (0 = default)
     uint32_t max_skipped_keys_per_sender;   // 1..32 (0 = default)
     uint8_t  block_external_join;           // 0/1
     uint8_t  enhanced_key_schedule;         // 0/1
     uint8_t  mandatory_franking;            // 0/1
-} EppGroupSecurityPolicy;
+} AuraGroupSecurityPolicy;
 
 // Тип envelope для 1:1 повідомлень.
 typedef enum {
-    EPP_ENVELOPE_REQUEST        = 0,
-    EPP_ENVELOPE_RESPONSE       = 1,
-    EPP_ENVELOPE_NOTIFICATION   = 2,
-    EPP_ENVELOPE_HEARTBEAT      = 3,
-    EPP_ENVELOPE_ERROR_RESPONSE = 4
-} EppEnvelopeType;
+    AURA_ENVELOPE_REQUEST        = 0,
+    AURA_ENVELOPE_RESPONSE       = 1,
+    AURA_ENVELOPE_NOTIFICATION   = 2,
+    AURA_ENVELOPE_HEARTBEAT      = 3,
+    AURA_ENVELOPE_ERROR_RESPONSE = 4
+} AuraEnvelopeType;
 ```
 
 ### Розміри ключів (константи)
@@ -278,37 +278,37 @@ typedef enum {
 
 ```c
 typedef enum {
-    EPP_SUCCESS              = 0,   // OK
-    EPP_ERROR_GENERIC        = 1,   // Внутрішня помилка
-    EPP_ERROR_INVALID_INPUT  = 2,   // Невірні параметри
-    EPP_ERROR_KEY_GENERATION = 3,   // Помилка генерації ключів
-    EPP_ERROR_DERIVE_KEY     = 4,   // Помилка HKDF/KDF
-    EPP_ERROR_HANDSHAKE      = 5,   // Помилка handshake
-    EPP_ERROR_ENCRYPTION     = 6,   // Помилка шифрування
-    EPP_ERROR_DECRYPTION     = 7,   // Помилка дешифрування
-    EPP_ERROR_DECODE         = 8,   // Помилка Protobuf decode
-    EPP_ERROR_ENCODE         = 9,   // Помилка Protobuf encode
-    EPP_ERROR_BUFFER_TOO_SMALL = 10,// Буфер замалий
-    EPP_ERROR_OBJECT_DISPOSED  = 11,// Handle вже знищений
-    EPP_ERROR_PREPARE_LOCAL    = 12,// Локальні ключі не готові
-    EPP_ERROR_OUT_OF_MEMORY    = 13,// Не вдалося алокувати пам'ять
-    EPP_ERROR_CRYPTO_FAILURE   = 14,// Низькорівнева крипто-помилка
-    EPP_ERROR_NULL_POINTER     = 15,// Передано NULL
-    EPP_ERROR_INVALID_STATE    = 16,// Стан сесії невалідний
-    EPP_ERROR_REPLAY_ATTACK    = 17,// Виявлено повторне повідомлення
-    EPP_ERROR_SESSION_EXPIRED  = 18,// Сесія вичерпана
-    EPP_ERROR_PQ_MISSING       = 19,// Відсутній PQ матеріал
-    EPP_ERROR_GROUP_PROTOCOL   = 20,// Помилка групового протоколу
-    EPP_ERROR_GROUP_MEMBERSHIP = 21,// Помилка членства в групі
-    EPP_ERROR_TREE_INTEGRITY   = 22,// TreeKEM цілісність порушена
-    EPP_ERROR_WELCOME          = 23,// Помилка обробки Welcome
-    EPP_ERROR_MESSAGE_EXPIRED  = 24,// Повідомлення прострочене (TTL)
-    EPP_ERROR_FRANKING         = 25,// Franking-верифікація невдала
-    EPP_ERROR_VOIP_CALL        = 26,// Помилка VoIP call lifecycle
-    EPP_ERROR_VOIP_MEDIA       = 27,// Помилка VoIP media decrypt/encrypt
-    EPP_ERROR_VOIP_REKEY       = 28,// Помилка VoIP rekey
-    EPP_ERROR_BUSY             = 29 // Handle уже використовується іншим викликом
-} EppErrorCode;
+    AURA_SUCCESS              = 0,   // OK
+    AURA_ERROR_GENERIC        = 1,   // Внутрішня помилка
+    AURA_ERROR_INVALID_INPUT  = 2,   // Невірні параметри
+    AURA_ERROR_KEY_GENERATION = 3,   // Помилка генерації ключів
+    AURA_ERROR_DERIVE_KEY     = 4,   // Помилка HKDF/KDF
+    AURA_ERROR_HANDSHAKE      = 5,   // Помилка handshake
+    AURA_ERROR_ENCRYPTION     = 6,   // Помилка шифрування
+    AURA_ERROR_DECRYPTION     = 7,   // Помилка дешифрування
+    AURA_ERROR_DECODE         = 8,   // Помилка Protobuf decode
+    AURA_ERROR_ENCODE         = 9,   // Помилка Protobuf encode
+    AURA_ERROR_BUFFER_TOO_SMALL = 10,// Буфер замалий
+    AURA_ERROR_OBJECT_DISPOSED  = 11,// Handle вже знищений
+    AURA_ERROR_PREPARE_LOCAL    = 12,// Локальні ключі не готові
+    AURA_ERROR_OUT_OF_MEMORY    = 13,// Не вдалося алокувати пам'ять
+    AURA_ERROR_CRYPTO_FAILURE   = 14,// Низькорівнева крипто-помилка
+    AURA_ERROR_NULL_POINTER     = 15,// Передано NULL
+    AURA_ERROR_INVALID_STATE    = 16,// Стан сесії невалідний
+    AURA_ERROR_REPLAY_ATTACK    = 17,// Виявлено повторне повідомлення
+    AURA_ERROR_SESSION_EXPIRED  = 18,// Сесія вичерпана
+    AURA_ERROR_PQ_MISSING       = 19,// Відсутній PQ матеріал
+    AURA_ERROR_GROUP_PROTOCOL   = 20,// Помилка групового протоколу
+    AURA_ERROR_GROUP_MEMBERSHIP = 21,// Помилка членства в групі
+    AURA_ERROR_TREE_INTEGRITY   = 22,// TreeKEM цілісність порушена
+    AURA_ERROR_WELCOME          = 23,// Помилка обробки Welcome
+    AURA_ERROR_MESSAGE_EXPIRED  = 24,// Повідомлення прострочене (TTL)
+    AURA_ERROR_FRANKING         = 25,// Franking-верифікація невдала
+    AURA_ERROR_VOIP_CALL        = 26,// Помилка VoIP call lifecycle
+    AURA_ERROR_VOIP_MEDIA       = 27,// Помилка VoIP media decrypt/encrypt
+    AURA_ERROR_VOIP_REKEY       = 28,// Помилка VoIP rekey
+    AURA_ERROR_BUSY             = 29 // Handle уже використовується іншим викликом
+} AuraErrorCode;
 ```
 
 ---
@@ -316,28 +316,28 @@ typedef enum {
 ## Ініціалізація
 > Ролі: **Client** + **Server** + **Relay**
 
-### `epp_version`
+### `aura_version`
 
 ```c
-const char* epp_version(void);
+const char* aura_version(void);
 ```
 
 Повертає версію бібліотеки як C-рядок (наприклад `"1.2.0"`). Не потрібно звільняти — статичний рядок.
 
-### `epp_init`
+### `aura_init`
 
 ```c
-EppErrorCode epp_init(void);
+AuraErrorCode aura_init(void);
 ```
 
 Ініціалізує криптографічну підсистему. **Викликати один раз** при старті програми, перед усіма іншими функціями.
 
-- Повертає: `EPP_SUCCESS` або `EPP_ERROR_CRYPTO_FAILURE`
+- Повертає: `AURA_SUCCESS` або `AURA_ERROR_CRYPTO_FAILURE`
 
-### `epp_shutdown`
+### `aura_shutdown`
 
 ```c
-void epp_shutdown(void);
+void aura_shutdown(void);
 ```
 
 Завершення роботи бібліотеки. Викликати при виході з програми. Наразі no-op, але зарезервовано для майбутнього cleanup.
@@ -347,28 +347,28 @@ void epp_shutdown(void);
 ## Identity
 > Ролі: **Client** + **Server** (Relay не використовує — немає identity)
 
-### `epp_identity_create`
+### `aura_identity_create`
 
 ```c
-EppErrorCode epp_identity_create(
-    EppIdentityHandle** out_handle,  // [out] новий handle
-    EppError*           out_error    // [out] помилка
+AuraErrorCode aura_identity_create(
+    AuraIdentityHandle** out_handle,  // [out] новий handle
+    AuraError*           out_error    // [out] помилка
 );
 ```
 
 Створює нову випадкову ідентичність (Ed25519 + X25519 + Kyber-768 + Signed Pre-Key + 100 OPK).
 
-- `out_handle`: буде записано вказівник на новий `EppIdentityHandle`
-- Після використання знищити через `epp_identity_destroy`
+- `out_handle`: буде записано вказівник на новий `AuraIdentityHandle`
+- Після використання знищити через `aura_identity_destroy`
 
-### `epp_identity_create_from_seed`
+### `aura_identity_create_from_seed`
 
 ```c
-EppErrorCode epp_identity_create_from_seed(
+AuraErrorCode aura_identity_create_from_seed(
     const uint8_t* seed,          // [in] master seed, мін. 32 байти
     size_t         seed_length,   // [in] розмір seed
-    EppIdentityHandle** out_handle,
-    EppError*           out_error
+    AuraIdentityHandle** out_handle,
+    AuraError*           out_error
 );
 ```
 
@@ -377,64 +377,64 @@ EppErrorCode epp_identity_create_from_seed(
 - `seed`: мінімум 32 байти, максимум 10 МБ
 - Використовується для відновлення ідентичності на іншому пристрої
 
-### `epp_identity_create_with_context`
+### `aura_identity_create_with_context`
 
 ```c
-EppErrorCode epp_identity_create_with_context(
+AuraErrorCode aura_identity_create_with_context(
     const uint8_t* seed,
     size_t         seed_length,
     const char*    membership_id,         // [in] UTF-8 ідентифікатор контексту
     size_t         membership_id_length,  // [in] довжина без null-terminator
-    EppIdentityHandle** out_handle,
-    EppError*           out_error
+    AuraIdentityHandle** out_handle,
+    AuraError*           out_error
 );
 ```
 
 Як `create_from_seed`, але з явним `membership_id`. Різні `membership_id` з одним seed дають різні ключі. Корисно для multi-device / multi-account.
 
-### `epp_identity_get_x25519_public`
+### `aura_identity_get_x25519_public`
 
 ```c
-EppErrorCode epp_identity_get_x25519_public(
-    const EppIdentityHandle* handle,
+AuraErrorCode aura_identity_get_x25519_public(
+    const AuraIdentityHandle* handle,
     uint8_t* out_key,          // [out] буфер мін. 32 байти
     size_t   out_key_length,   // [in] розмір буфера (>= 32)
-    EppError* out_error
+    AuraError* out_error
 );
 ```
 
 Копіює X25519 identity public key (32 байти) у `out_key`.
 
-### `epp_identity_get_ed25519_public`
+### `aura_identity_get_ed25519_public`
 
 ```c
-EppErrorCode epp_identity_get_ed25519_public(
-    const EppIdentityHandle* handle,
+AuraErrorCode aura_identity_get_ed25519_public(
+    const AuraIdentityHandle* handle,
     uint8_t* out_key,          // [out] буфер мін. 32 байти
     size_t   out_key_length,   // [in] розмір буфера (>= 32)
-    EppError* out_error
+    AuraError* out_error
 );
 ```
 
 Копіює Ed25519 signing public key (32 байти) у `out_key`.
 
-### `epp_identity_get_kyber_public`
+### `aura_identity_get_kyber_public`
 
 ```c
-EppErrorCode epp_identity_get_kyber_public(
-    const EppIdentityHandle* handle,
+AuraErrorCode aura_identity_get_kyber_public(
+    const AuraIdentityHandle* handle,
     uint8_t* out_key,          // [out] буфер мін. 1184 байти
     size_t   out_key_length,   // [in] розмір буфера (>= 1184)
-    EppError* out_error
+    AuraError* out_error
 );
 ```
 
 Копіює Kyber-768 public key (1184 байти) у `out_key`.
 
-### `epp_identity_destroy`
+### `aura_identity_destroy`
 
 ```c
-void epp_identity_destroy(EppIdentityHandle** handle);
+void aura_identity_destroy(AuraIdentityHandle** handle);
 ```
 
 Знищує identity handle. Зануляє `*handle` в NULL. Безпечно при `handle == NULL` або `*handle == NULL`. Секретні ключі wiped з пам'яті.
@@ -446,46 +446,46 @@ void epp_identity_destroy(EppIdentityHandle** handle);
 
 Manual clock потрібен для deterministic tests, trusted-time restore flow та TTL/expiry перевірок без покладання на локальний wall clock.
 
-### `epp_time_provider_manual_create`
+### `aura_time_provider_manual_create`
 
 ```c
-EppErrorCode epp_time_provider_manual_create(
+AuraErrorCode aura_time_provider_manual_create(
     uint64_t                 initial_now_unix,
-    EppTimeProviderHandle**  out_handle,
-    EppError*                out_error
+    AuraTimeProviderHandle**  out_handle,
+    AuraError*                out_error
 );
 ```
 
 Створює mutable clock handle з початковим Unix timestamp.
 
-### `epp_time_provider_manual_set_now_unix`
+### `aura_time_provider_manual_set_now_unix`
 
 ```c
-EppErrorCode epp_time_provider_manual_set_now_unix(
-    EppTimeProviderHandle* handle,
+AuraErrorCode aura_time_provider_manual_set_now_unix(
+    AuraTimeProviderHandle* handle,
     uint64_t               now_unix,
-    EppError*              out_error
+    AuraError*              out_error
 );
 ```
 
-Пересуває manual clock тільки вперед. Значення, менші за поточний clock, відхиляються з `EPP_ERROR_INVALID_INPUT`.
+Пересуває manual clock тільки вперед. Значення, менші за поточний clock, відхиляються з `AURA_ERROR_INVALID_INPUT`.
 
-### `epp_identity_set_time_provider`
+### `aura_identity_set_time_provider`
 
 ```c
-EppErrorCode epp_identity_set_time_provider(
-    EppIdentityHandle*           identity_handle,
-    const EppTimeProviderHandle* time_provider_handle,
-    EppError*                    out_error
+AuraErrorCode aura_identity_set_time_provider(
+    AuraIdentityHandle*           identity_handle,
+    const AuraTimeProviderHandle* time_provider_handle,
+    AuraError*                    out_error
 );
 ```
 
 Прив'язує identity до explicit clock. Передайте `NULL`, щоб повернутися до системного часу.
 
-### `epp_time_provider_destroy`
+### `aura_time_provider_destroy`
 
 ```c
-void epp_time_provider_destroy(EppTimeProviderHandle** handle);
+void aura_time_provider_destroy(AuraTimeProviderHandle** handle);
 ```
 
 Знищує manual clock handle та зануляє `*handle`.
@@ -495,65 +495,65 @@ void epp_time_provider_destroy(EppTimeProviderHandle** handle);
 ## Pre-Key Bundle
 > Ролі: **Client** + **Server** (Relay зберігає bundles як opaque bytes — не викликає цю функцію)
 
-### `epp_prekey_bundle_create`
+### `aura_prekey_bundle_create`
 
 ```c
-EppErrorCode epp_prekey_bundle_create(
-    const EppIdentityHandle* identity_keys,  // [in] identity handle
-    EppBuffer*               out_bundle,     // [out] Protobuf-encoded PreKeyBundle
-    EppError*                out_error
+AuraErrorCode aura_prekey_bundle_create(
+    const AuraIdentityHandle* identity_keys,  // [in] identity handle
+    AuraBuffer*               out_bundle,     // [out] Protobuf-encoded PreKeyBundle
+    AuraError*                out_error
 );
 ```
 
 Створює PreKey bundle для передачі іншій стороні (через сервер/HTTPS). Bundle містить: identity public keys, signed pre-key, one-time pre-keys, Kyber public key.
 
-- `out_bundle.data`: звільнити через `epp_buffer_release`
-- Bundle передається peer'у, який використає його в `epp_handshake_initiator_start`
+- `out_bundle.data`: звільнити через `aura_buffer_release`
+- Bundle передається peer'у, який використає його в `aura_handshake_initiator_start`
 
-### `epp_prekey_bundle_replenish`
+### `aura_prekey_bundle_replenish`
 
 ```c
-EppErrorCode epp_prekey_bundle_replenish(
-    EppIdentityHandle* identity_handle,
+AuraErrorCode aura_prekey_bundle_replenish(
+    AuraIdentityHandle* identity_handle,
     uint32_t           count,           // [in] кількість нових OTK (> 0)
-    EppBuffer*         out_keys,        // [out] Protobuf PreKeyBundle з новими OTK
-    EppError*          out_error
+    AuraBuffer*         out_keys,        // [out] Protobuf PreKeyBundle з новими OTK
+    AuraError*          out_error
 );
 ```
 
 Генерує `count` нових One-Time Pre-Keys та додає їх до локального пулу. Повертає частковий `PreKeyBundle` proto (тільки поле `one_time_pre_keys`) для завантаження на сервер.
 
 - Викликати після отримання `on_otk_exhaustion_warning` callback (залишок < 10%)
-- `out_keys.data`: звільнити через `epp_buffer_release`
+- `out_keys.data`: звільнити через `aura_buffer_release`
 - Повернений bundle надіслати на сервер через ваш API; сервер додає нові OTK до сховища
 
 **Типовий OTK replenishment flow:**
 ```c
 // У callback on_otk_exhaustion_warning:
-EppBuffer new_keys = {0};
-EppError err = {0};
-epp_prekey_bundle_replenish(identity, 50, &new_keys, &err);
+AuraBuffer new_keys = {0};
+AuraError err = {0};
+aura_prekey_bundle_replenish(identity, 50, &new_keys, &err);
 // Надіслати new_keys.data на сервер
 upload_otks_to_server(new_keys.data, new_keys.length);
-epp_buffer_release(&new_keys);
+aura_buffer_release(&new_keys);
 ```
 
 ---
 
 ## Handshake — Initiator
-> Ролі: **Client only** — недоступні при `EPP_SERVER_BUILD`
+> Ролі: **Client only** — недоступні при `AURA_SERVER_BUILD`
 
-### `epp_handshake_initiator_start`
+### `aura_handshake_initiator_start`
 
 ```c
-EppErrorCode epp_handshake_initiator_start(
-    EppIdentityHandle*        identity_keys,           // [in] локальна identity
+AuraErrorCode aura_handshake_initiator_start(
+    AuraIdentityHandle*        identity_keys,           // [in] локальна identity
     const uint8_t*            peer_prekey_bundle,       // [in] Protobuf bundle від peer
     size_t                    peer_prekey_bundle_length, // [in] розмір bundle (макс. 16 КБ)
-    const EppSessionConfig*   config,                   // [in] NULL = defaults (1000 msgs/chain)
-    EppHandshakeInitiatorHandle** out_handle,           // [out] initiator handle
-    EppBuffer*                out_handshake_init,        // [out] повідомлення для відправки peer
-    EppError*                 out_error
+    const AuraSessionConfig*   config,                   // [in] NULL = defaults (1000 msgs/chain)
+    AuraHandshakeInitiatorHandle** out_handle,           // [out] initiator handle
+    AuraBuffer*                out_handshake_init,        // [out] повідомлення для відправки peer
+    AuraError*                 out_error
 );
 ```
 
@@ -565,24 +565,24 @@ EppErrorCode epp_handshake_initiator_start(
 3. Отримує `handshake_ack` від респондера
 4. Викликає `finish` → отримує `Session`
 
-### `epp_handshake_initiator_finish`
+### `aura_handshake_initiator_finish`
 
 ```c
-EppErrorCode epp_handshake_initiator_finish(
-    EppHandshakeInitiatorHandle* handle,           // [in] handle від start (consumed!)
+AuraErrorCode aura_handshake_initiator_finish(
+    AuraHandshakeInitiatorHandle* handle,           // [in] handle від start (consumed!)
     const uint8_t*               handshake_ack,     // [in] відповідь від респондера
     size_t                       handshake_ack_length,
-    EppSessionHandle**           out_session,       // [out] готова сесія
-    EppError*                    out_error
+    AuraSessionHandle**           out_session,       // [out] готова сесія
+    AuraError*                    out_error
 );
 ```
 
 Завершує handshake і створює готову сесію. **Handle consumed** — після виклику він порожній.
 
-### `epp_handshake_initiator_destroy`
+### `aura_handshake_initiator_destroy`
 
 ```c
-void epp_handshake_initiator_destroy(EppHandshakeInitiatorHandle** handle);
+void aura_handshake_initiator_destroy(AuraHandshakeInitiatorHandle** handle);
 ```
 
 Знищує initiator handle. Викликати якщо handshake не завершено (відміна).
@@ -592,40 +592,40 @@ void epp_handshake_initiator_destroy(EppHandshakeInitiatorHandle** handle);
 ## Handshake — Responder
 > Ролі: **Client** + **Server** (Relay не бере участі в handshake)
 
-### `epp_handshake_responder_start`
+### `aura_handshake_responder_start`
 
 ```c
-EppErrorCode epp_handshake_responder_start(
-    EppIdentityHandle*         identity_keys,
+AuraErrorCode aura_handshake_responder_start(
+    AuraIdentityHandle*         identity_keys,
     const uint8_t*             local_prekey_bundle,       // [in] свій Protobuf bundle
     size_t                     local_prekey_bundle_length,
     const uint8_t*             handshake_init,             // [in] від ініціатора
     size_t                     handshake_init_length,
-    const EppSessionConfig*    config,                     // [in] NULL = defaults
-    EppHandshakeResponderHandle** out_handle,
-    EppBuffer*                 out_handshake_ack,           // [out] відповідь для ініціатора
-    EppError*                  out_error
+    const AuraSessionConfig*    config,                     // [in] NULL = defaults
+    AuraHandshakeResponderHandle** out_handle,
+    AuraBuffer*                 out_handshake_ack,           // [out] відповідь для ініціатора
+    AuraError*                  out_error
 );
 ```
 
 Обробляє `handshake_init` від ініціатора, генерує `handshake_ack`.
 
-### `epp_handshake_responder_finish`
+### `aura_handshake_responder_finish`
 
 ```c
-EppErrorCode epp_handshake_responder_finish(
-    EppHandshakeResponderHandle* handle,     // [in] consumed!
-    EppSessionHandle**           out_session, // [out] готова сесія
-    EppError*                    out_error
+AuraErrorCode aura_handshake_responder_finish(
+    AuraHandshakeResponderHandle* handle,     // [in] consumed!
+    AuraSessionHandle**           out_session, // [out] готова сесія
+    AuraError*                    out_error
 );
 ```
 
 Завершує handshake і створює сесію. Handle consumed.
 
-### `epp_handshake_responder_destroy`
+### `aura_handshake_responder_destroy`
 
 ```c
-void epp_handshake_responder_destroy(EppHandshakeResponderHandle** handle);
+void aura_handshake_responder_destroy(AuraHandshakeResponderHandle** handle);
 ```
 
 ---
@@ -633,19 +633,19 @@ void epp_handshake_responder_destroy(EppHandshakeResponderHandle** handle);
 ## Session (1:1)
 > Ролі: **Client** + **Server** (Relay не шифрує/дешифрує)
 
-### `epp_session_encrypt`
+### `aura_session_encrypt`
 
 ```c
-EppErrorCode epp_session_encrypt(
-    EppSessionHandle* handle,
+AuraErrorCode aura_session_encrypt(
+    AuraSessionHandle* handle,
     const uint8_t*    plaintext,               // [in] payload
     size_t            plaintext_length,          // [in] макс. 1 МБ
-    EppEnvelopeType   envelope_type,            // [in] тип повідомлення
+    AuraEnvelopeType   envelope_type,            // [in] тип повідомлення
     uint32_t          envelope_id,              // [in] ідентифікатор (для кореляції)
     const char*       correlation_id,           // [in] UTF-8, може бути NULL
     size_t            correlation_id_length,     // [in] довжина, 0 якщо NULL
-    EppBuffer*        out_encrypted_envelope,   // [out] Protobuf SecureEnvelope
-    EppError*         out_error
+    AuraBuffer*        out_encrypted_envelope,   // [out] Protobuf SecureEnvelope
+    AuraError*         out_error
 );
 ```
 
@@ -653,19 +653,19 @@ EppErrorCode epp_session_encrypt(
 
 - `envelope_type`: визначає семантику (request/response/notification/heartbeat)
 - `envelope_id` + `correlation_id`: для зв'язки запит-відповідь (0 / NULL якщо не потрібно)
-- `out_encrypted_envelope.data`: звільнити через `epp_buffer_release`
-- Кожен `encrypt` споживає один nonce; коли nonce вичерпано — помилка `EPP_ERROR_SESSION_EXPIRED`
+- `out_encrypted_envelope.data`: звільнити через `aura_buffer_release`
+- Кожен `encrypt` споживає один nonce; коли nonce вичерпано — помилка `AURA_ERROR_SESSION_EXPIRED`
 
-### `epp_session_decrypt`
+### `aura_session_decrypt`
 
 ```c
-EppErrorCode epp_session_decrypt(
-    EppSessionHandle* handle,
+AuraErrorCode aura_session_decrypt(
+    AuraSessionHandle* handle,
     const uint8_t*    encrypted_envelope,        // [in] Protobuf SecureEnvelope
     size_t            encrypted_envelope_length,  // [in] макс. 1 МБ
-    EppBuffer*        out_plaintext,             // [out] розшифровані дані
-    EppBuffer*        out_metadata,              // [out] Protobuf EnvelopeMetadata
-    EppError*         out_error
+    AuraBuffer*        out_plaintext,             // [out] розшифровані дані
+    AuraBuffer*        out_metadata,              // [out] Protobuf EnvelopeMetadata
+    AuraError*         out_error
 );
 ```
 
@@ -673,25 +673,25 @@ EppErrorCode epp_session_decrypt(
 
 - `out_plaintext`: оригінальний payload
 - `out_metadata`: містить `envelope_type`, `envelope_id`, `correlation_id`, `message_index`, `epoch`
-- Обидва буфери звільнити через `epp_buffer_release`
-- Replay detection: повторне повідомлення → `EPP_ERROR_REPLAY_ATTACK`
+- Обидва буфери звільнити через `aura_buffer_release`
+- Replay detection: повторне повідомлення → `AURA_ERROR_REPLAY_ATTACK`
 
-### `epp_session_nonce_remaining`
+### `aura_session_nonce_remaining`
 
 ```c
-EppErrorCode epp_session_nonce_remaining(
-    EppSessionHandle* handle,
+AuraErrorCode aura_session_nonce_remaining(
+    AuraSessionHandle* handle,
     uint64_t*         out_remaining,   // [out] кількість залишкових nonce
-    EppError*         out_error
+    AuraError*         out_error
 );
 ```
 
 Повертає кількість nonce, що залишилось для шифрування. Максимум 65 535. Коли < 10% — рекомендовано ініціювати re-handshake.
 
-### `epp_session_destroy`
+### `aura_session_destroy`
 
 ```c
-void epp_session_destroy(EppSessionHandle** handle);
+void aura_session_destroy(AuraSessionHandle** handle);
 ```
 
 Знищує сесію. Всі ключі wiped з пам'яті.
@@ -701,13 +701,13 @@ void epp_session_destroy(EppSessionHandle** handle);
 ## Envelope Validation
 > Ролі: **Client** + **Server** + **Relay** — основна функція для relay
 
-### `epp_envelope_validate`
+### `aura_envelope_validate`
 
 ```c
-EppErrorCode epp_envelope_validate(
+AuraErrorCode aura_envelope_validate(
     const uint8_t* encrypted_envelope,
     size_t         encrypted_envelope_length,
-    EppError*      out_error
+    AuraError*      out_error
 );
 ```
 
@@ -718,16 +718,16 @@ EppErrorCode epp_envelope_validate(
 ## Session Serialization
 > Ролі: **Client** + **Server**
 
-### `epp_session_serialize_sealed`
+### `aura_session_serialize_sealed`
 
 ```c
-EppErrorCode epp_session_serialize_sealed(
-    EppSessionHandle* handle,
+AuraErrorCode aura_session_serialize_sealed(
+    AuraSessionHandle* handle,
     const uint8_t*    key,               // [in] 32 байти AES-256 ключ
     size_t            key_length,         // [in] == 32
     uint64_t          external_counter,   // [in] монотонно зростаючий, > 0
-    EppBuffer*        out_state,          // [out] зашифрований стан
-    EppError*         out_error
+    AuraBuffer*        out_state,          // [out] зашифрований стан
+    AuraError*         out_error
 );
 ```
 
@@ -735,27 +735,27 @@ EppErrorCode epp_session_serialize_sealed(
 
 - `key`: ключ шифрування стану (зберігати окремо!)
 - `external_counter`: кожен наступний виклик має мати більший counter
-- `out_state.data`: звільнити через `epp_buffer_release`
+- `out_state.data`: звільнити через `aura_buffer_release`
 
-### `epp_session_deserialize_sealed`
+### `aura_session_deserialize_sealed`
 
 ```c
-EppErrorCode epp_session_deserialize_sealed(
+AuraErrorCode aura_session_deserialize_sealed(
     const uint8_t* state_bytes,           // [in] blob від serialize
     size_t         state_length,
     const uint8_t* key,                   // [in] 32 байти (той самий ключ)
     size_t         key_length,
     uint64_t       min_external_counter,  // [in] останній прийнятий counter
     uint64_t*      out_external_counter,  // [out] counter з blob
-    EppSessionHandle** out_handle,        // [out] відновлена сесія
-    EppError*      out_error
+    AuraSessionHandle** out_handle,        // [out] відновлена сесія
+    AuraError*      out_error
 );
 ```
 
 Відновлює сесію із sealed state.
 
-- Якщо counter у blob `<= min_external_counter` → `EPP_ERROR_REPLAY_ATTACK`
-- `*out_external_counter` валідний тільки при `EPP_SUCCESS` (на помилці не використовувати/не persist-ити)
+- Якщо counter у blob `<= min_external_counter` → `AURA_ERROR_REPLAY_ATTACK`
+- `*out_external_counter` валідний тільки при `AURA_SUCCESS` (на помилці не використовувати/не persist-ити)
 - Після успішного імпорту зберегти `*out_external_counter` для наступного `min_external_counter`
 
 ---
@@ -763,50 +763,50 @@ EppErrorCode epp_session_deserialize_sealed(
 ## Session — Identity & Verification
 > Ролі: **Client** + **Server**
 
-Після завершення handshake (`epp_handshake_initiator_finish` / `epp_handshake_responder_finish`) сесія містить повну ідентифікаційну інформацію peer-а. Використовуйте ці функції для peer verification перед тим як вважати сесію trusted.
+Після завершення handshake (`aura_handshake_initiator_finish` / `aura_handshake_responder_finish`) сесія містить повну ідентифікаційну інформацію peer-а. Використовуйте ці функції для peer verification перед тим як вважати сесію trusted.
 
-### `EppSessionPeerIdentity`
+### `AuraSessionPeerIdentity`
 
 ```c
-typedef struct EppSessionPeerIdentity {
+typedef struct AuraSessionPeerIdentity {
     uint8_t ed25519_public[32];   // Ed25519 signing key (для fingerprint)
     uint8_t x25519_public[32];    // X25519 DH key
-} EppSessionPeerIdentity;
+} AuraSessionPeerIdentity;
 ```
 
 Фіксована структура, stack-allocated. Не потребує звільнення.
 
-### `epp_session_get_id`
+### `aura_session_get_id`
 
 ```c
-EppErrorCode epp_session_get_id(
-    EppSessionHandle* handle,
-    EppBuffer*        out_session_id,   // [out] 16 байт Session ID
-    EppError*         out_error
+AuraErrorCode aura_session_get_id(
+    AuraSessionHandle* handle,
+    AuraBuffer*        out_session_id,   // [out] 16 байт Session ID
+    AuraError*         out_error
 );
 ```
 
 Повертає 16-байтний Session ID — детермінований ідентифікатор сесії, однаковий у обох сторін.
 
-### `epp_session_get_identity_binding_hash`
+### `aura_session_get_identity_binding_hash`
 
 ```c
-EppErrorCode epp_session_get_identity_binding_hash(
-    EppSessionHandle* handle,
-    EppBuffer*        out_binding_hash,   // [out] 32 байти Identity Binding Hash
-    EppError*         out_error
+AuraErrorCode aura_session_get_identity_binding_hash(
+    AuraSessionHandle* handle,
+    AuraBuffer*        out_binding_hash,   // [out] 32 байти Identity Binding Hash
+    AuraError*         out_error
 );
 ```
 
 Повертає 32-байтний Identity Binding Hash — криптографічно прив'язує конкретну пару ключів peer-а до цієї сесії. Порівнювати з очікуваним значенням для peer verification. Однаковий у обох сторін.
 
-### `epp_session_get_peer_identity`
+### `aura_session_get_peer_identity`
 
 ```c
-EppErrorCode epp_session_get_peer_identity(
-    EppSessionHandle*      handle,
-    EppSessionPeerIdentity* out_identity,   // [out] stack-allocated struct
-    EppError*              out_error
+AuraErrorCode aura_session_get_peer_identity(
+    AuraSessionHandle*      handle,
+    AuraSessionPeerIdentity* out_identity,   // [out] stack-allocated struct
+    AuraError*              out_error
 );
 ```
 
@@ -815,13 +815,13 @@ EppErrorCode epp_session_get_peer_identity(
 - відображення fingerprint у UI
 - детектування key change attack
 
-### `epp_session_get_local_identity`
+### `aura_session_get_local_identity`
 
 ```c
-EppErrorCode epp_session_get_local_identity(
-    EppSessionHandle*      handle,
-    EppSessionPeerIdentity* out_identity,   // [out] stack-allocated struct
-    EppError*              out_error
+AuraErrorCode aura_session_get_local_identity(
+    AuraSessionHandle*      handle,
+    AuraSessionPeerIdentity* out_identity,   // [out] stack-allocated struct
+    AuraError*              out_error
 );
 ```
 
@@ -829,8 +829,8 @@ EppErrorCode epp_session_get_local_identity(
 
 **Типовий peer verification flow:**
 ```c
-EppSessionPeerIdentity peer_id = {0};
-epp_session_get_peer_identity(session, &peer_id, &err);
+AuraSessionPeerIdentity peer_id = {0};
+aura_session_get_peer_identity(session, &peer_id, &err);
 
 // Порівняти з відомими ключами:
 if (memcmp(peer_id.ed25519_public, known_key, 32) != 0) {
@@ -838,10 +838,10 @@ if (memcmp(peer_id.ed25519_public, known_key, 32) != 0) {
 }
 
 // Або отримати binding hash для верифікації:
-EppBuffer binding = {0};
-epp_session_get_identity_binding_hash(session, &binding, &err);
+AuraBuffer binding = {0};
+aura_session_get_identity_binding_hash(session, &binding, &err);
 // Показати binding.data як fingerprint і верифікувати з peer OOB
-epp_buffer_release(&binding);
+aura_buffer_release(&binding);
 ```
 
 ---
@@ -849,17 +849,17 @@ epp_buffer_release(&binding);
 ## Key Derivation
 > Ролі: **Client** + **Server**
 
-### `epp_derive_root_key`
+### `aura_derive_root_key`
 
 ```c
-EppErrorCode epp_derive_root_key(
+AuraErrorCode aura_derive_root_key(
     const uint8_t* opaque_session_key,        // [in] 32 байти (від OPAQUE)
     size_t         opaque_session_key_length,  // [in] == 32
     const uint8_t* user_context,              // [in] контекст (user ID, etc.)
     size_t         user_context_length,        // [in] > 0
     uint8_t*       out_root_key,              // [out] буфер мін. 32 байти
     size_t         out_root_key_length,        // [in] >= 32
-    EppError*      out_error
+    AuraError*      out_error
 );
 ```
 
@@ -870,19 +870,19 @@ EppErrorCode epp_derive_root_key(
 ## Shamir Secret Sharing
 > Ролі: **Client** + **Server**
 
-### `epp_shamir_split`
+### `aura_shamir_split`
 
 ```c
-EppErrorCode epp_shamir_split(
+AuraErrorCode aura_shamir_split(
     const uint8_t* secret,            // [in] секрет для розщеплення
     size_t         secret_length,      // [in] 1..65536 байт
     uint8_t        threshold,          // [in] мін. шарів для відновлення (>= 2)
     uint8_t        share_count,        // [in] загальна кількість шарів (>= threshold)
     const uint8_t* auth_key,           // [in] 32 байти HMAC ключ для автентикації
     size_t         auth_key_length,    // [in] == 32
-    EppBuffer*     out_shares,         // [out] конкатенація всіх шарів + auth tag
+    AuraBuffer*     out_shares,         // [out] конкатенація всіх шарів + auth tag
     size_t*        out_share_length,   // [out] розмір одного шару
-    EppError*      out_error
+    AuraError*      out_error
 );
 ```
 
@@ -897,18 +897,18 @@ EppErrorCode epp_shamir_split(
 - Загальний розмір: `share_count * (*out_share_length) + 32`
 - `auth_key`: використовується для HMAC верифікації при reconstruct
 
-### `epp_shamir_reconstruct`
+### `aura_shamir_reconstruct`
 
 ```c
-EppErrorCode epp_shamir_reconstruct(
+AuraErrorCode aura_shamir_reconstruct(
     const uint8_t* shares,            // [in] конкатенація шарів + auth tag
     size_t         shares_length,      // [in] == share_count * share_length + 32
     size_t         share_length,       // [in] розмір одного шару (з split)
     size_t         share_count,        // [in] кількість шарів (>= threshold)
     const uint8_t* auth_key,           // [in] 32 байти (той самий ключ)
     size_t         auth_key_length,
-    EppBuffer*     out_secret,         // [out] відновлений секрет
-    EppError*      out_error
+    AuraBuffer*     out_secret,         // [out] відновлений секрет
+    AuraError*      out_error
 );
 ```
 
@@ -921,32 +921,32 @@ EppErrorCode epp_shamir_reconstruct(
 
 Attachment flow у FFI працює як crypto/validation ядро. Transport (gRPC/HTTP/S3) поза межами бібліотеки.
 
-### `epp_attachment_generate_id`
+### `aura_attachment_generate_id`
 
 ```c
-EppErrorCode epp_attachment_generate_id(
-    EppBuffer* out_attachment_id,
-    EppError*  out_error
+AuraErrorCode aura_attachment_generate_id(
+    AuraBuffer* out_attachment_id,
+    AuraError*  out_error
 );
 ```
 
 Повертає випадковий 32-байтний `attachment_id`.
 
-### `epp_attachment_generate_file_key`
+### `aura_attachment_generate_file_key`
 
 ```c
-EppErrorCode epp_attachment_generate_file_key(
-    EppBuffer* out_file_key,
-    EppError*  out_error
+AuraErrorCode aura_attachment_generate_file_key(
+    AuraBuffer* out_file_key,
+    AuraError*  out_error
 );
 ```
 
 Повертає випадковий 32-байтний `file_key` (DEK) для одного файлу.
 
-### `epp_attachment_encrypt_chunk`
+### `aura_attachment_encrypt_chunk`
 
 ```c
-EppErrorCode epp_attachment_encrypt_chunk(
+AuraErrorCode aura_attachment_encrypt_chunk(
     const uint8_t* file_key,
     size_t         file_key_length,
     const uint8_t* attachment_id,
@@ -959,18 +959,18 @@ EppErrorCode epp_attachment_encrypt_chunk(
     uint32_t       chunk_count,
     const uint8_t* plaintext,
     size_t         plaintext_length,
-    EppBuffer*     out_nonce,
-    EppBuffer*     out_ciphertext,
-    EppError*      out_error
+    AuraBuffer*     out_nonce,
+    AuraBuffer*     out_ciphertext,
+    AuraError*      out_error
 );
 ```
 
 Шифрує один chunk через AES-256-GCM-SIV. Nonce детерміновано виводиться з `(file_key, attachment_id, chunk_index)`.
 
-### `epp_attachment_decrypt_chunk`
+### `aura_attachment_decrypt_chunk`
 
 ```c
-EppErrorCode epp_attachment_decrypt_chunk(
+AuraErrorCode aura_attachment_decrypt_chunk(
     const uint8_t* file_key,
     size_t         file_key_length,
     const uint8_t* attachment_id,
@@ -985,17 +985,17 @@ EppErrorCode epp_attachment_decrypt_chunk(
     size_t         nonce_length,
     const uint8_t* ciphertext,
     size_t         ciphertext_length,
-    EppBuffer*     out_plaintext,
-    EppError*      out_error
+    AuraBuffer*     out_plaintext,
+    AuraError*      out_error
 );
 ```
 
 Дешифрує один chunk. Перевіряє nonce/AAD відповідність контексту manifest.
 
-### `epp_attachment_manifest_create`
+### `aura_attachment_manifest_create`
 
 ```c
-EppErrorCode epp_attachment_manifest_create(
+AuraErrorCode aura_attachment_manifest_create(
     const uint8_t* attachment_id,
     size_t         attachment_id_length,
     const char*    mime_type,
@@ -1007,8 +1007,8 @@ EppErrorCode epp_attachment_manifest_create(
     size_t         file_sha256_length,
     const uint8_t* encrypted_file_key,
     size_t         encrypted_file_key_length,
-    EppBuffer*     out_manifest,
-    EppError*      out_error
+    AuraBuffer*     out_manifest,
+    AuraError*      out_error
 );
 ```
 
@@ -1016,22 +1016,22 @@ EppErrorCode epp_attachment_manifest_create(
 
 У `AttachmentManifest` доступне optional поле `collage_index` для порядку елементів у collage Threads.
 
-### `epp_attachment_manifest_validate`
+### `aura_attachment_manifest_validate`
 
 ```c
-EppErrorCode epp_attachment_manifest_validate(
+AuraErrorCode aura_attachment_manifest_validate(
     const uint8_t* manifest_bytes,
     size_t         manifest_length,
-    EppError*      out_error
+    AuraError*      out_error
 );
 ```
 
 Decode + strict validate `AttachmentManifest`.
 
-### `epp_attachment_chunk_validate`
+### `aura_attachment_chunk_validate`
 
 ```c
-EppErrorCode epp_attachment_chunk_validate(
+AuraErrorCode aura_attachment_chunk_validate(
     const uint8_t* manifest_bytes,
     size_t         manifest_length,
     uint32_t       chunk_index,
@@ -1039,7 +1039,7 @@ EppErrorCode epp_attachment_chunk_validate(
     size_t         nonce_length,
     const uint8_t* ciphertext,
     size_t         ciphertext_length,
-    EppError*      out_error
+    AuraError*      out_error
 );
 ```
 
@@ -1050,28 +1050,28 @@ Stateless валідація форми encrypted chunk (розмір/index/nonc
 ## Group — Key Package
 > Ролі: **Client** + **Server**
 
-### `epp_group_generate_key_package`
+### `aura_group_generate_key_package`
 
 ```c
-EppErrorCode epp_group_generate_key_package(
-    EppIdentityHandle*          identity_handle,  // [in] identity
+AuraErrorCode aura_group_generate_key_package(
+    AuraIdentityHandle*          identity_handle,  // [in] identity
     const uint8_t*              credential,        // [in] credential (або NULL)
     size_t                      credential_length, // [in] 0 якщо NULL
-    EppBuffer*                  out_key_package,   // [out] Protobuf GroupKeyPackage
-    EppKeyPackageSecretsHandle** out_secrets,       // [out] секрети (зберегти для join!)
-    EppError*                   out_error
+    AuraBuffer*                  out_key_package,   // [out] Protobuf GroupKeyPackage
+    AuraKeyPackageSecretsHandle** out_secrets,       // [out] секрети (зберегти для join!)
+    AuraError*                   out_error
 );
 ```
 
-Генерує KeyPackage для вступу в групу. Секрети (`out_secrets`) потрібні для `epp_group_join` — зберегти до отримання Welcome.
+Генерує KeyPackage для вступу в групу. Секрети (`out_secrets`) потрібні для `aura_group_join` — зберегти до отримання Welcome.
 
 - `credential`: опаковані дані (ім'я, роль, etc.) — вбудовуються в KeyPackage
 - `out_key_package.data`: надіслати тому, хто робить Add
 
-### `epp_group_key_package_secrets_destroy`
+### `aura_group_key_package_secrets_destroy`
 
 ```c
-void epp_group_key_package_secrets_destroy(EppKeyPackageSecretsHandle** handle);
+void aura_group_key_package_secrets_destroy(AuraKeyPackageSecretsHandle** handle);
 ```
 
 Знищити секрети key package (після join або при відміні).
@@ -1081,131 +1081,131 @@ void epp_group_key_package_secrets_destroy(EppKeyPackageSecretsHandle** handle);
 ## Group — Create / Join
 > Ролі: **Client** + **Server**
 
-### `epp_group_create`
+### `aura_group_create`
 
 ```c
-EppErrorCode epp_group_create(
-    EppIdentityHandle*      identity_handle,
+AuraErrorCode aura_group_create(
+    AuraIdentityHandle*      identity_handle,
     const uint8_t*          credential,        // [in] credential (або NULL)
     size_t                  credential_length,
-    EppGroupSessionHandle** out_handle,        // [out] нова група
-    EppError*               out_error
+    AuraGroupSessionHandle** out_handle,        // [out] нова група
+    AuraError*               out_error
 );
 ```
 
 Створює нову групу. Автор — єдиний член (leaf index 0, epoch 0).
 
-### `epp_group_create_shielded`
+### `aura_group_create_shielded`
 
 ```c
-EppErrorCode epp_group_create_shielded(
-    EppIdentityHandle*      identity_handle,
+AuraErrorCode aura_group_create_shielded(
+    AuraIdentityHandle*      identity_handle,
     const uint8_t*          credential,
     size_t                  credential_length,
-    EppGroupSessionHandle** out_handle,
-    EppError*               out_error
+    AuraGroupSessionHandle** out_handle,
+    AuraError*               out_error
 );
 ```
 
 Створює групу з preset Shield Mode policy: enhanced KDF, BLAKE2b chain, mandatory franking, blocked external join, max 1000 messages/epoch, max 4 skipped keys/sender.
 
-### `epp_group_create_with_policy`
+### `aura_group_create_with_policy`
 
 ```c
-typedef struct EppGroupSecurityPolicy {
+typedef struct AuraGroupSecurityPolicy {
     uint32_t max_messages_per_epoch;        // 10..100000 (0 = default 100000)
     uint32_t max_skipped_keys_per_sender;   // 1..32 (0 = default 32)
     uint8_t  block_external_join;           // 0 = false, 1 = true
     uint8_t  enhanced_key_schedule;         // 0 = false, 1 = true
     uint8_t  mandatory_franking;            // 0 = false, 1 = true
-} EppGroupSecurityPolicy;
+} AuraGroupSecurityPolicy;
 
-EppErrorCode epp_group_create_with_policy(
-    EppIdentityHandle*            identity_handle,
+AuraErrorCode aura_group_create_with_policy(
+    AuraIdentityHandle*            identity_handle,
     const uint8_t*                credential,
     size_t                        credential_length,
-    const EppGroupSecurityPolicy* policy,       // [in] custom policy
-    EppGroupSessionHandle**       out_handle,
-    EppError*                     out_error
+    const AuraGroupSecurityPolicy* policy,       // [in] custom policy
+    AuraGroupSessionHandle**       out_handle,
+    AuraError*                     out_error
 );
 ```
 
-Створює групу з custom security policy. Policy валідується при створенні — невалідні значення повертають `EPP_ERROR_INVALID_INPUT`. Policy прив'язується до group context hash і є **immutable** після створення.
+Створює групу з custom security policy. Policy валідується при створенні — невалідні значення повертають `AURA_ERROR_INVALID_INPUT`. Policy прив'язується до group context hash і є **immutable** після створення.
 
-### `epp_group_is_shielded`
+### `aura_group_is_shielded`
 
 ```c
-EppErrorCode epp_group_is_shielded(
-    EppGroupSessionHandle* handle,
+AuraErrorCode aura_group_is_shielded(
+    AuraGroupSessionHandle* handle,
     uint8_t*               out_shielded,   // [out] 1 = shielded, 0 = default
-    EppError*              out_error
+    AuraError*              out_error
 );
 ```
 
 Перевіряє чи група в Shield Mode (enhanced_key_schedule AND mandatory_franking AND block_external_join).
 
-### `epp_group_get_security_policy`
+### `aura_group_get_security_policy`
 
 ```c
-EppErrorCode epp_group_get_security_policy(
-    EppGroupSessionHandle*  handle,
-    EppGroupSecurityPolicy* out_policy,    // [out] заповнюється policy полями
-    EppError*               out_error
+AuraErrorCode aura_group_get_security_policy(
+    AuraGroupSessionHandle*  handle,
+    AuraGroupSecurityPolicy* out_policy,    // [out] заповнюється policy полями
+    AuraError*               out_error
 );
 ```
 
 Повертає повну security policy групи. Корисно для UI (показати ліміти) або логіки (перевірити конкретний прапорець).
 
-### `epp_group_join`
+### `aura_group_join`
 
 ```c
-EppErrorCode epp_group_join(
-    EppIdentityHandle*          identity_handle,
+AuraErrorCode aura_group_join(
+    AuraIdentityHandle*          identity_handle,
     const uint8_t*              welcome_bytes,     // [in] Welcome від add_member
     size_t                      welcome_length,
-    EppKeyPackageSecretsHandle* secrets_handle,     // [in] секрети від generate_key_package
-    EppGroupSessionHandle**     out_group_handle,  // [out] групова сесія
-    EppError*                   out_error
+    AuraKeyPackageSecretsHandle* secrets_handle,     // [in] секрети від generate_key_package
+    AuraGroupSessionHandle**     out_group_handle,  // [out] групова сесія
+    AuraError*                   out_error
 );
 ```
 
 Приєднується до групи через Welcome message (отриманий після Add-commit).
 
-### `epp_group_authorize_external_join`
+### `aura_group_authorize_external_join`
 
 ```c
-EppErrorCode epp_group_authorize_external_join(
-    EppGroupSessionHandle* handle,
+AuraErrorCode aura_group_authorize_external_join(
+    AuraGroupSessionHandle* handle,
     const uint8_t*         joiner_identity_ed25519_public,        // [in] 32 байти
     size_t                 joiner_identity_ed25519_public_length,  // [in] == 32
     const uint8_t*         joiner_identity_x25519_public,         // [in] 32 байти
     size_t                 joiner_identity_x25519_public_length,   // [in] == 32
     const uint8_t*         joiner_credential,      // [in] credential (або NULL)
     size_t                 joiner_credential_length,
-    EppBuffer*             out_authorization,       // [out] authorization artifact
-    EppError*              out_error
+    AuraBuffer*             out_authorization,       // [out] authorization artifact
+    AuraError*              out_error
 );
 ```
 
-Видає authorization artifact для зовнішнього учасника. Чинний член групи підписує дані joiner-а. `out_authorization` треба передати joiner-у, який передасть його в `epp_group_join_external`.
+Видає authorization artifact для зовнішнього учасника. Чинний член групи підписує дані joiner-а. `out_authorization` треба передати joiner-у, який передасть його в `aura_group_join_external`.
 
-- Викликається **до** того, як joiner викличе `epp_group_join_external`
-- `out_authorization.data`: звільнити через `epp_buffer_release`
+- Викликається **до** того, як joiner викличе `aura_group_join_external`
+- `out_authorization.data`: звільнити через `aura_buffer_release`
 
-### `epp_group_join_external`
+### `aura_group_join_external`
 
 ```c
-EppErrorCode epp_group_join_external(
-    EppIdentityHandle*      identity_handle,
+AuraErrorCode aura_group_join_external(
+    AuraIdentityHandle*      identity_handle,
     const uint8_t*          public_state,          // [in] від export_public_state
     size_t                  public_state_length,
     const uint8_t*          authorization,         // [in] artifact від authorize_external_join
     size_t                  authorization_length,
     const uint8_t*          credential,
     size_t                  credential_length,
-    EppGroupSessionHandle** out_group_handle,      // [out] групова сесія
-    EppBuffer*              out_commit,            // [out] commit для broadcast
-    EppError*               out_error
+    AuraGroupSessionHandle** out_group_handle,      // [out] групова сесія
+    AuraBuffer*              out_commit,            // [out] commit для broadcast
+    AuraError*               out_error
 );
 ```
 
@@ -1214,14 +1214,14 @@ EppErrorCode epp_group_join_external(
 **Повний flow external join:**
 ```
 Існуючий член:
-  epp_group_export_public_state() → public_state
-  epp_group_authorize_external_join(joiner_ed, joiner_x, ...) → authorization
+  aura_group_export_public_state() → public_state
+  aura_group_authorize_external_join(joiner_ed, joiner_x, ...) → authorization
 
 Joiner:
-  epp_group_join_external(public_state, authorization, ...) → group_handle + commit
+  aura_group_join_external(public_state, authorization, ...) → group_handle + commit
 
 Всі члени:
-  epp_group_process_commit(commit)
+  aura_group_process_commit(commit)
 ```
 
 ---
@@ -1229,57 +1229,57 @@ Joiner:
 ## Group — Member Management
 > Ролі: **Client** + **Server**
 
-### `epp_group_add_member`
+### `aura_group_add_member`
 
 ```c
-EppErrorCode epp_group_add_member(
-    EppGroupSessionHandle* handle,
+AuraErrorCode aura_group_add_member(
+    AuraGroupSessionHandle* handle,
     const uint8_t*         key_package_bytes,   // [in] KeyPackage нового учасника
     size_t                 key_package_length,
-    EppBuffer*             out_commit,           // [out] commit → broadcast всім
-    EppBuffer*             out_welcome,          // [out] welcome → надіслати новому
-    EppError*              out_error
+    AuraBuffer*             out_commit,           // [out] commit → broadcast всім
+    AuraBuffer*             out_welcome,          // [out] welcome → надіслати новому
+    AuraError*              out_error
 );
 ```
 
 Додає учасника в групу.
 
 - `out_commit`: надіслати **всім існуючим** учасникам (вони викличуть `process_commit`)
-- `out_welcome`: надіслати **тільки новому** учаснику (він викличе `epp_group_join`)
+- `out_welcome`: надіслати **тільки новому** учаснику (він викличе `aura_group_join`)
 
-### `epp_group_remove_member`
+### `aura_group_remove_member`
 
 ```c
-EppErrorCode epp_group_remove_member(
-    EppGroupSessionHandle* handle,
+AuraErrorCode aura_group_remove_member(
+    AuraGroupSessionHandle* handle,
     uint32_t               leaf_index,   // [in] leaf index учасника для видалення
-    EppBuffer*             out_commit,   // [out] commit → broadcast
-    EppError*              out_error
+    AuraBuffer*             out_commit,   // [out] commit → broadcast
+    AuraError*              out_error
 );
 ```
 
 Видаляє учасника за його leaf index. Commit надіслати всім.
 
-### `epp_group_update`
+### `aura_group_update`
 
 ```c
-EppErrorCode epp_group_update(
-    EppGroupSessionHandle* handle,
-    EppBuffer*             out_commit,   // [out] commit → broadcast
-    EppError*              out_error
+AuraErrorCode aura_group_update(
+    AuraGroupSessionHandle* handle,
+    AuraBuffer*             out_commit,   // [out] commit → broadcast
+    AuraError*              out_error
 );
 ```
 
 Оновлює власні ключі (key rotation). Commit надіслати всім.
 
-### `epp_group_process_commit`
+### `aura_group_process_commit`
 
 ```c
-EppErrorCode epp_group_process_commit(
-    EppGroupSessionHandle* handle,
+AuraErrorCode aura_group_process_commit(
+    AuraGroupSessionHandle* handle,
     const uint8_t*         commit_bytes,   // [in] commit від іншого учасника
     size_t                 commit_length,
-    EppError*              out_error
+    AuraError*              out_error
 );
 ```
 
@@ -1290,78 +1290,78 @@ EppErrorCode epp_group_process_commit(
 ## Group — Encrypt / Decrypt
 > Ролі: **Client** + **Server**
 
-### `epp_group_encrypt`
+### `aura_group_encrypt`
 
 ```c
-EppErrorCode epp_group_encrypt(
-    EppGroupSessionHandle* handle,
+AuraErrorCode aura_group_encrypt(
+    AuraGroupSessionHandle* handle,
     const uint8_t*         plaintext,
     size_t                 plaintext_length,   // [in] макс. 1 МБ
-    EppBuffer*             out_ciphertext,     // [out] зашифроване повідомлення
-    EppError*              out_error
+    AuraBuffer*             out_ciphertext,     // [out] зашифроване повідомлення
+    AuraError*              out_error
 );
 ```
 
 Шифрує повідомлення для групи (Sender Key).
 
-### `epp_group_decrypt`
+### `aura_group_decrypt`
 
 ```c
-EppErrorCode epp_group_decrypt(
-    EppGroupSessionHandle* handle,
+AuraErrorCode aura_group_decrypt(
+    AuraGroupSessionHandle* handle,
     const uint8_t*         ciphertext,
     size_t                 ciphertext_length,
-    EppBuffer*             out_plaintext,       // [out] розшифрований payload
+    AuraBuffer*             out_plaintext,       // [out] розшифрований payload
     uint32_t*              out_sender_leaf,     // [out] leaf index відправника
     uint32_t*              out_generation,      // [out] generation counter
-    EppError*              out_error
+    AuraError*              out_error
 );
 ```
 
 Дешифрує групове повідомлення. Повертає leaf index відправника і generation (для ordering).
 
-### `epp_group_decrypt_ex`
+### `aura_group_decrypt_ex`
 
 ```c
-typedef struct EppGroupDecryptResult {
-    EppBuffer plaintext;             // розшифрований payload
+typedef struct AuraGroupDecryptResult {
+    AuraBuffer plaintext;             // розшифрований payload
     uint32_t  sender_leaf_index;     // leaf index відправника
     uint32_t  generation;           // generation counter
     uint32_t  content_type;         // 0=Normal 1=Sealed 2=Disappearing 3=SealedDisappearing 4=Edit 5=Delete
     uint32_t  ttl_seconds;          // TTL (для Disappearing; 0 якщо не встановлено)
     uint64_t  sent_timestamp;       // unix timestamp відправника (для Disappearing)
-    EppBuffer message_id;           // 32 байти стабільний Message ID
-    EppBuffer referenced_message_id;// 32 байти ID повідомлення-цілі (для Edit/Delete; порожній інакше)
+    AuraBuffer message_id;           // 32 байти стабільний Message ID
+    AuraBuffer referenced_message_id;// 32 байти ID повідомлення-цілі (для Edit/Delete; порожній інакше)
     uint8_t   has_sealed_payload;   // 1 якщо є sealed payload
     uint8_t   has_franking_data;    // 1 якщо є franking data
-    EppBuffer sealed_hint;          // hint текст sealed-повідомлення (може бути порожнім)
-    EppBuffer sealed_encrypted_content; // зашифрований контент sealed-повідомлення
-    EppBuffer sealed_nonce;         // 12 байт nonce для reveal_sealed
-    EppBuffer sealed_key;           // 32 байти seal key для reveal_sealed
-    EppBuffer franking_tag;         // 32 байти HMAC commitment (для модерації)
-    EppBuffer franking_key;         // 32 байти franking key
-    EppBuffer franking_content;     // plaintext контент (для verify_franking)
-    EppBuffer franking_sealed_content; // sealed контент (для verify_franking; може бути порожнім)
-} EppGroupDecryptResult;
+    AuraBuffer sealed_hint;          // hint текст sealed-повідомлення (може бути порожнім)
+    AuraBuffer sealed_encrypted_content; // зашифрований контент sealed-повідомлення
+    AuraBuffer sealed_nonce;         // 12 байт nonce для reveal_sealed
+    AuraBuffer sealed_key;           // 32 байти seal key для reveal_sealed
+    AuraBuffer franking_tag;         // 32 байти HMAC commitment (для модерації)
+    AuraBuffer franking_key;         // 32 байти franking key
+    AuraBuffer franking_content;     // plaintext контент (для verify_franking)
+    AuraBuffer franking_sealed_content; // sealed контент (для verify_franking; може бути порожнім)
+} AuraGroupDecryptResult;
 
-EppErrorCode epp_group_decrypt_ex(
-    EppGroupSessionHandle*  handle,
+AuraErrorCode aura_group_decrypt_ex(
+    AuraGroupSessionHandle*  handle,
     const uint8_t*          ciphertext,
     size_t                  ciphertext_length,
-    EppGroupDecryptResult*  out_result,   // [out] caller-allocated struct (stack або heap)
-    EppError*               out_error
+    AuraGroupDecryptResult*  out_result,   // [out] caller-allocated struct (stack або heap)
+    AuraError*               out_error
 );
 ```
 
-Розширена версія `epp_group_decrypt`. Повертає повну структуру з усіма полями: content_type, TTL, message ID, referenced ID (для Edit/Delete), sealed payload (для `reveal_sealed`), franking data (для `verify_franking`).
+Розширена версія `aura_group_decrypt`. Повертає повну структуру з усіма полями: content_type, TTL, message ID, referenced ID (для Edit/Delete), sealed payload (для `reveal_sealed`), franking data (для `verify_franking`).
 
 **Використання:**
 ```c
-EppGroupDecryptResult result = {0};  // нульова ініціалізація обов'язкова!
-EppError err = {0};
+AuraGroupDecryptResult result = {0};  // нульова ініціалізація обов'язкова!
+AuraError err = {0};
 
-EppErrorCode code = epp_group_decrypt_ex(group, ct, ct_len, &result, &err);
-if (code == EPP_SUCCESS) {
+AuraErrorCode code = aura_group_decrypt_ex(group, ct, ct_len, &result, &err);
+if (code == AURA_SUCCESS) {
     printf("From leaf %u, gen %u\n", result.sender_leaf_index, result.generation);
     if (result.content_type == 1 && result.has_sealed_payload) {
         // Є sealed payload — можна викликати reveal_sealed пізніше
@@ -1370,74 +1370,74 @@ if (code == EPP_SUCCESS) {
     if (result.has_franking_data) {
         // Є franking data — можна verify_franking
     }
-    epp_group_decrypt_result_free(&result);
+    aura_group_decrypt_result_free(&result);
 }
 ```
 
-### `epp_group_decrypt_result_free`
+### `aura_group_decrypt_result_free`
 
 ```c
-void epp_group_decrypt_result_free(EppGroupDecryptResult* result);
+void aura_group_decrypt_result_free(AuraGroupDecryptResult* result);
 ```
 
-Звільняє всі heap-allocated буфери всередині `EppGroupDecryptResult` через `epp_buffer_release`. **Не** звільняє сам struct (caller-allocated).
+Звільняє всі heap-allocated буфери всередині `AuraGroupDecryptResult` через `aura_buffer_release`. **Не** звільняє сам struct (caller-allocated).
 
-**Важливо:** Викликати лише після успішного `epp_group_decrypt_ex` (код `EPP_SUCCESS`). Якщо функція повернула помилку — struct не повністю заповнений; `epp_group_decrypt_result_free` все одно безпечний якщо struct був нульово-ініціалізований (`= {0}`), оскільки `epp_buffer_release` перевіряє `data != NULL`.
+**Важливо:** Викликати лише після успішного `aura_group_decrypt_ex` (код `AURA_SUCCESS`). Якщо функція повернула помилку — struct не повністю заповнений; `aura_group_decrypt_result_free` все одно безпечний якщо struct був нульово-ініціалізований (`= {0}`), оскільки `aura_buffer_release` перевіряє `data != NULL`.
 
 ---
 
 ## Group — Sealed / Disappearing / Frankable
-> Ролі: **Client** + **Server** (крім `epp_group_verify_franking` — також **Relay** для модерації)
+> Ролі: **Client** + **Server** (крім `aura_group_verify_franking` — також **Relay** для модерації)
 
-### `epp_group_encrypt_sealed`
+### `aura_group_encrypt_sealed`
 
 ```c
-EppErrorCode epp_group_encrypt_sealed(
-    EppGroupSessionHandle* handle,
+AuraErrorCode aura_group_encrypt_sealed(
+    AuraGroupSessionHandle* handle,
     const uint8_t* plaintext,
     size_t         plaintext_length,
     const uint8_t* hint,              // [in] підказка (може бути NULL)
     size_t         hint_length,
-    EppBuffer*     out_ciphertext,
-    EppError*      out_error
+    AuraBuffer*     out_ciphertext,
+    AuraError*      out_error
 );
 ```
 
 Шифрує sealed-повідомлення (анонімний відправник). Одержувачі бачать повідомлення, але не знають від кого. `hint` — опціональна підказка для розкриття.
 
-### `epp_group_encrypt_disappearing`
+### `aura_group_encrypt_disappearing`
 
 ```c
-EppErrorCode epp_group_encrypt_disappearing(
-    EppGroupSessionHandle* handle,
+AuraErrorCode aura_group_encrypt_disappearing(
+    AuraGroupSessionHandle* handle,
     const uint8_t* plaintext,
     size_t         plaintext_length,
     uint32_t       ttl_seconds,       // [in] час життя в секундах (макс. 7 днів)
-    EppBuffer*     out_ciphertext,
-    EppError*      out_error
+    AuraBuffer*     out_ciphertext,
+    AuraError*      out_error
 );
 ```
 
-Шифрує повідомлення з TTL. Після `ttl_seconds` дешифрування поверне `EPP_ERROR_MESSAGE_EXPIRED`.
+Шифрує повідомлення з TTL. Після `ttl_seconds` дешифрування поверне `AURA_ERROR_MESSAGE_EXPIRED`.
 
-### `epp_group_encrypt_frankable`
+### `aura_group_encrypt_frankable`
 
 ```c
-EppErrorCode epp_group_encrypt_frankable(
-    EppGroupSessionHandle* handle,
+AuraErrorCode aura_group_encrypt_frankable(
+    AuraGroupSessionHandle* handle,
     const uint8_t* plaintext,
     size_t         plaintext_length,
-    EppBuffer*     out_ciphertext,
-    EppError*      out_error
+    AuraBuffer*     out_ciphertext,
+    AuraError*      out_error
 );
 ```
 
 Шифрує frankable-повідомлення. Одержувач може довести третій стороні (модератору), що це повідомлення автентичне.
 
-### `epp_group_reveal_sealed`
+### `aura_group_reveal_sealed`
 
 ```c
-EppErrorCode epp_group_reveal_sealed(
+AuraErrorCode aura_group_reveal_sealed(
     const uint8_t* hint,                     // [in] hint (або NULL)
     size_t         hint_length,
     const uint8_t* encrypted_content,        // [in] зашифрований контент
@@ -1446,17 +1446,17 @@ EppErrorCode epp_group_reveal_sealed(
     size_t         nonce_length,             // [in] == 12
     const uint8_t* seal_key,                 // [in] 32 байти seal key
     size_t         seal_key_length,          // [in] == 32
-    EppBuffer*     out_plaintext,
-    EppError*      out_error
+    AuraBuffer*     out_plaintext,
+    AuraError*      out_error
 );
 ```
 
 Розшифровує sealed-повідомлення за допомогою seal key (отриманого з decrypt result).
 
-### `epp_group_verify_franking`
+### `aura_group_verify_franking`
 
 ```c
-EppErrorCode epp_group_verify_franking(
+AuraErrorCode aura_group_verify_franking(
     const uint8_t* franking_tag,             // [in] 32 байти
     size_t         franking_tag_length,
     const uint8_t* franking_key,             // [in] 32 байти
@@ -1466,7 +1466,7 @@ EppErrorCode epp_group_verify_franking(
     const uint8_t* sealed_content,           // [in] або NULL/0
     size_t         sealed_content_length,
     uint8_t*       out_valid,                // [out] 1 = valid, 0 = invalid
-    EppError*      out_error
+    AuraError*      out_error
 );
 ```
 
@@ -1477,31 +1477,31 @@ EppErrorCode epp_group_verify_franking(
 ## Group — Edit / Delete
 > Ролі: **Client** + **Server**
 
-### `epp_group_encrypt_edit`
+### `aura_group_encrypt_edit`
 
 ```c
-EppErrorCode epp_group_encrypt_edit(
-    EppGroupSessionHandle* handle,
+AuraErrorCode aura_group_encrypt_edit(
+    AuraGroupSessionHandle* handle,
     const uint8_t*         new_content,              // [in] новий текст повідомлення
     size_t                 new_content_length,        // [in] макс. 1 МБ
     const uint8_t*         target_message_id,        // [in] 32 байти — ID редагованого повідомлення
     size_t                 target_message_id_length,  // [in] == 32
-    EppBuffer*             out_ciphertext,
-    EppError*              out_error
+    AuraBuffer*             out_ciphertext,
+    AuraError*              out_error
 );
 ```
 
-Шифрує Edit-повідомлення — заміну вмісту раніше надісланого повідомлення. `target_message_id` — стабільний ID (з `epp_group_compute_message_id` або `epp_group_decrypt_ex.message_id`) редагованого повідомлення. При decrypt `content_type == 4` (Edit), `referenced_message_id` вказує на ціль.
+Шифрує Edit-повідомлення — заміну вмісту раніше надісланого повідомлення. `target_message_id` — стабільний ID (з `aura_group_compute_message_id` або `aura_group_decrypt_ex.message_id`) редагованого повідомлення. При decrypt `content_type == 4` (Edit), `referenced_message_id` вказує на ціль.
 
-### `epp_group_encrypt_delete`
+### `aura_group_encrypt_delete`
 
 ```c
-EppErrorCode epp_group_encrypt_delete(
-    EppGroupSessionHandle* handle,
+AuraErrorCode aura_group_encrypt_delete(
+    AuraGroupSessionHandle* handle,
     const uint8_t*         target_message_id,        // [in] 32 байти — ID повідомлення для видалення
     size_t                 target_message_id_length,  // [in] == 32
-    EppBuffer*             out_ciphertext,
-    EppError*              out_error
+    AuraBuffer*             out_ciphertext,
+    AuraError*              out_error
 );
 ```
 
@@ -1523,47 +1523,47 @@ EppErrorCode epp_group_encrypt_delete(
 ## Group — State & Getters
 > Ролі: **Client** + **Server**
 
-### `epp_group_get_id`
+### `aura_group_get_id`
 
 ```c
-EppErrorCode epp_group_get_id(
-    EppGroupSessionHandle* handle,
-    EppBuffer*             out_group_id,   // [out] 32 байти group ID
-    EppError*              out_error
+AuraErrorCode aura_group_get_id(
+    AuraGroupSessionHandle* handle,
+    AuraBuffer*             out_group_id,   // [out] 32 байти group ID
+    AuraError*              out_error
 );
 ```
 
-### `epp_group_get_epoch`
+### `aura_group_get_epoch`
 
 ```c
-uint64_t epp_group_get_epoch(EppGroupSessionHandle* handle);
+uint64_t aura_group_get_epoch(AuraGroupSessionHandle* handle);
 ```
 
 Повертає поточну epoch групи. 0 при помилці або NULL handle.
 
-### `epp_group_get_my_leaf_index`
+### `aura_group_get_my_leaf_index`
 
 ```c
-uint32_t epp_group_get_my_leaf_index(EppGroupSessionHandle* handle);
+uint32_t aura_group_get_my_leaf_index(AuraGroupSessionHandle* handle);
 ```
 
 Повертає мій leaf index у дереві. `UINT32_MAX` при помилці.
 
-### `epp_group_get_member_count`
+### `aura_group_get_member_count`
 
 ```c
-uint32_t epp_group_get_member_count(EppGroupSessionHandle* handle);
+uint32_t aura_group_get_member_count(AuraGroupSessionHandle* handle);
 ```
 
 Повертає кількість учасників. 0 при помилці.
 
-### `epp_group_get_member_leaf_indices`
+### `aura_group_get_member_leaf_indices`
 
 ```c
-EppErrorCode epp_group_get_member_leaf_indices(
-    EppGroupSessionHandle* handle,
-    EppBuffer*             out_indices,   // [out] масив u32 little-endian
-    EppError*              out_error
+AuraErrorCode aura_group_get_member_leaf_indices(
+    AuraGroupSessionHandle* handle,
+    AuraBuffer*             out_indices,   // [out] масив u32 little-endian
+    AuraError*              out_error
 );
 ```
 
@@ -1572,30 +1572,30 @@ EppErrorCode epp_group_get_member_leaf_indices(
 - Кількість елементів: `out_indices.length / 4`
 - Зчитувати: `uint32_t idx = *(uint32_t*)(out_indices.data + i * 4)`
 
-### `epp_group_compute_message_id`
+### `aura_group_compute_message_id`
 
 ```c
-EppErrorCode epp_group_compute_message_id(
+AuraErrorCode aura_group_compute_message_id(
     const uint8_t* group_id,            // [in] 32 байти group ID
     size_t         group_id_length,      // [in] == 32
     uint64_t       epoch,               // [in] epoch в якій надіслано повідомлення
     uint32_t       sender_leaf_index,   // [in] leaf index відправника
     uint32_t       generation,          // [in] generation counter з encrypt/decrypt
-    EppBuffer*     out_message_id,      // [out] 32 байти стабільний Message ID
-    EppError*      out_error
+    AuraBuffer*     out_message_id,      // [out] 32 байти стабільний Message ID
+    AuraError*      out_error
 );
 ```
 
 Обчислює детермінований 32-байтний Message ID з `(group_id, epoch, sender_leaf_index, generation)`. ID однаковий у відправника і всіх отримувачів — використовується для Edit/Delete targeting та дедублікації. Relay може викликати без identity (Relay-роль).
 
 - Усі чотири вхідні параметри повинні точно збігатися між відправником і отримувачем
-- `generation` береться з `epp_group_decrypt_ex.generation` або з `epp_group_encrypt` (якщо відправник зберігає його)
-- `out_message_id.data`: звільнити через `epp_buffer_release`
+- `generation` береться з `aura_group_decrypt_ex.generation` або з `aura_group_encrypt` (якщо відправник зберігає його)
+- `out_message_id.data`: звільнити через `aura_buffer_release`
 
-### `epp_group_destroy`
+### `aura_group_destroy`
 
 ```c
-void epp_group_destroy(EppGroupSessionHandle** handle);
+void aura_group_destroy(AuraGroupSessionHandle** handle);
 ```
 
 ---
@@ -1603,81 +1603,81 @@ void epp_group_destroy(EppGroupSessionHandle** handle);
 ## Group — Serialization
 > Ролі: **Client** + **Server**
 
-### `epp_group_serialize`
+### `aura_group_serialize`
 
 ```c
-EppErrorCode epp_group_serialize(
-    EppGroupSessionHandle* handle,
+AuraErrorCode aura_group_serialize(
+    AuraGroupSessionHandle* handle,
     const uint8_t*         key,               // [in] 32 байти AES key
     size_t                 key_length,
     uint64_t               external_counter,  // [in] > 0, монотонно зростаючий
-    EppBuffer*             out_state,
-    EppError*              out_error
+    AuraBuffer*             out_state,
+    AuraError*              out_error
 );
 ```
 
 Серіалізує групову сесію у sealed blob. Аналогічно session serialization.
 
-### `epp_group_deserialize`
+### `aura_group_deserialize`
 
 ```c
-EppErrorCode epp_group_deserialize(
+AuraErrorCode aura_group_deserialize(
     const uint8_t*          state_bytes,
     size_t                  state_length,
     const uint8_t*          key,                   // [in] 32 байти
     size_t                  key_length,
     uint64_t                min_external_counter,  // [in] anti-rollback
     uint64_t*               out_external_counter,  // [out] counter з blob
-    EppIdentityHandle*      identity_handle,       // [in] identity (для Ed25519 signing)
-    EppGroupSessionHandle** out_handle,
-    EppError*               out_error
+    AuraIdentityHandle*      identity_handle,       // [in] identity (для Ed25519 signing)
+    AuraGroupSessionHandle** out_handle,
+    AuraError*               out_error
 );
 ```
 
 Відновлює групову сесію. `identity_handle` потрібен для Ed25519 private key.
 
-- `*out_external_counter` валідний тільки при `EPP_SUCCESS` (на помилці не використовувати/не persist-ити)
+- `*out_external_counter` валідний тільки при `AURA_SUCCESS` (на помилці не використовувати/не persist-ити)
 
-### `epp_group_export_public_state`
+### `aura_group_export_public_state`
 
 ```c
-EppErrorCode epp_group_export_public_state(
-    EppGroupSessionHandle* handle,
-    EppBuffer*             out_public_state,   // [out] публічний стан
-    EppError*              out_error
+AuraErrorCode aura_group_export_public_state(
+    AuraGroupSessionHandle* handle,
+    AuraBuffer*             out_public_state,   // [out] публічний стан
+    AuraError*              out_error
 );
 ```
 
-Експортує публічний стан групи (для `epp_group_join_external`). Не містить секретів.
+Експортує публічний стан групи (для `aura_group_join_external`). Не містить секретів.
 
 ---
 
 ## Group — PSK & ReInit
 > Ролі: **Client** + **Server**
 
-### `epp_group_set_psk`
+### `aura_group_set_psk`
 
 ```c
-EppErrorCode epp_group_set_psk(
-    EppGroupSessionHandle* handle,
+AuraErrorCode aura_group_set_psk(
+    AuraGroupSessionHandle* handle,
     const uint8_t*         psk_id,         // [in] ідентифікатор PSK
     size_t                 psk_id_length,   // [in] > 0
     const uint8_t*         psk,            // [in] Pre-Shared Key (мін. 32 байти)
     size_t                 psk_length,      // [in] >= 32
-    EppError*              out_error
+    AuraError*              out_error
 );
 ```
 
 Встановлює PSK для наступного commit. PSK вмішується в epoch secret через HKDF.
 
-### `epp_group_get_pending_reinit`
+### `aura_group_get_pending_reinit`
 
 ```c
-EppErrorCode epp_group_get_pending_reinit(
-    EppGroupSessionHandle* handle,
-    EppBuffer*             out_new_group_id,   // [out] новий group ID (або порожній)
+AuraErrorCode aura_group_get_pending_reinit(
+    AuraGroupSessionHandle* handle,
+    AuraBuffer*             out_new_group_id,   // [out] новий group ID (або порожній)
     uint32_t*              out_new_version,    // [out] нова версія (0 якщо немає)
-    EppError*              out_error
+    AuraError*              out_error
 );
 ```
 
@@ -1688,52 +1688,52 @@ EppErrorCode epp_group_get_pending_reinit(
 ## Envelope Metadata
 > Ролі: **Client** + **Server**
 
-### `EppEnvelopeMetadata`
+### `AuraEnvelopeMetadata`
 
 ```c
-typedef struct EppEnvelopeMetadata {
-    EppEnvelopeType envelope_type;       // тип конверта
+typedef struct AuraEnvelopeMetadata {
+    AuraEnvelopeType envelope_type;       // тип конверта
     uint32_t        envelope_id;         // id повідомлення
     uint64_t        message_index;       // порядковий номер у chain
     char*           correlation_id;      // heap-allocated UTF-8 рядок (або NULL)
     size_t          correlation_id_length;
-} EppEnvelopeMetadata;
+} AuraEnvelopeMetadata;
 ```
 
-Caller-allocated struct (stack). Поле `correlation_id` — heap-allocated, звільняється через `epp_envelope_metadata_free`. Сам struct **не** звільняти.
+Caller-allocated struct (stack). Поле `correlation_id` — heap-allocated, звільняється через `aura_envelope_metadata_free`. Сам struct **не** звільняти.
 
-### `epp_envelope_metadata_parse`
+### `aura_envelope_metadata_parse`
 
 ```c
-EppErrorCode epp_envelope_metadata_parse(
-    const uint8_t*      metadata_bytes,   // [in] Protobuf EnvelopeMetadata bytes (з epp_session_decrypt)
+AuraErrorCode aura_envelope_metadata_parse(
+    const uint8_t*      metadata_bytes,   // [in] Protobuf EnvelopeMetadata bytes (з aura_session_decrypt)
     size_t              metadata_length,
-    EppEnvelopeMetadata* out_meta,        // [out] caller-allocated struct
-    EppError*           out_error
+    AuraEnvelopeMetadata* out_meta,        // [out] caller-allocated struct
+    AuraError*           out_error
 );
 ```
 
-Парсить `out_metadata` blob, повернутий `epp_session_decrypt`, у зручну C-структуру.
+Парсить `out_metadata` blob, повернутий `aura_session_decrypt`, у зручну C-структуру.
 
 ```c
-EppBuffer plaintext = {0}, metadata_buf = {0};
-EppError err = {0};
-epp_session_decrypt(session, ct, ct_len, &plaintext, &metadata_buf, &err);
+AuraBuffer plaintext = {0}, metadata_buf = {0};
+AuraError err = {0};
+aura_session_decrypt(session, ct, ct_len, &plaintext, &metadata_buf, &err);
 
-EppEnvelopeMetadata meta = {0};
-epp_envelope_metadata_parse(metadata_buf.data, metadata_buf.length, &meta, &err);
+AuraEnvelopeMetadata meta = {0};
+aura_envelope_metadata_parse(metadata_buf.data, metadata_buf.length, &meta, &err);
 printf("Type=%d id=%u corr=%s\n", meta.envelope_type, meta.envelope_id,
        meta.correlation_id ? meta.correlation_id : "(none)");
 
-epp_envelope_metadata_free(&meta);
-epp_buffer_release(&metadata_buf);
-epp_buffer_release(&plaintext);
+aura_envelope_metadata_free(&meta);
+aura_buffer_release(&metadata_buf);
+aura_buffer_release(&plaintext);
 ```
 
-### `epp_envelope_metadata_free`
+### `aura_envelope_metadata_free`
 
 ```c
-void epp_envelope_metadata_free(EppEnvelopeMetadata* meta);
+void aura_envelope_metadata_free(AuraEnvelopeMetadata* meta);
 ```
 
 Звільняє heap-allocated `correlation_id` та обнуляє відповідні поля. **Не** звільняє сам struct.
@@ -1751,35 +1751,35 @@ Event callbacks дозволяють отримувати сповіщення �
 
 ```c
 // Тип: виклик після завершення handshake. session_id — 16 байт.
-typedef void (*EppOnHandshakeCompleted)(const uint8_t* session_id, size_t session_id_len,
+typedef void (*AuraOnHandshakeCompleted)(const uint8_t* session_id, size_t session_id_len,
                                         void* user_data);
 
 // Тип: виклик при кожній ротації DH ratchet.
-typedef void (*EppOnRatchetRotated)(uint64_t epoch, void* user_data);
+typedef void (*AuraOnRatchetRotated)(uint64_t epoch, void* user_data);
 
 // Тип: виклик при внутрішній помилці протоколу (non-fatal).
-typedef void (*EppOnSessionError)(EppErrorCode code, const char* message, void* user_data);
+typedef void (*AuraOnSessionError)(AuraErrorCode code, const char* message, void* user_data);
 
 // Тип: виклик коли залишок nonce падає нижче ~20%.
-typedef void (*EppOnNonceExhaustionWarning)(uint64_t remaining, uint64_t max_capacity,
+typedef void (*AuraOnNonceExhaustionWarning)(uint64_t remaining, uint64_t max_capacity,
                                              void* user_data);
 
 // Тип: виклик коли багато повідомлень без DH ratchet кроку.
-typedef void (*EppOnRatchetStallingWarning)(uint64_t messages_since_ratchet, void* user_data);
+typedef void (*AuraOnRatchetStallingWarning)(uint64_t messages_since_ratchet, void* user_data);
 
-typedef struct EppSessionEventCallbacks {
-    EppOnHandshakeCompleted    on_handshake_completed;     // або NULL
-    EppOnRatchetRotated        on_ratchet_rotated;         // або NULL
-    EppOnSessionError          on_error;                   // або NULL
-    EppOnNonceExhaustionWarning on_nonce_exhaustion_warning; // або NULL
-    EppOnRatchetStallingWarning on_ratchet_stalling_warning; // або NULL
+typedef struct AuraSessionEventCallbacks {
+    AuraOnHandshakeCompleted    on_handshake_completed;     // або NULL
+    AuraOnRatchetRotated        on_ratchet_rotated;         // або NULL
+    AuraOnSessionError          on_error;                   // або NULL
+    AuraOnNonceExhaustionWarning on_nonce_exhaustion_warning; // або NULL
+    AuraOnRatchetStallingWarning on_ratchet_stalling_warning; // або NULL
     void*                      user_data;                  // передається кожному callback
-} EppSessionEventCallbacks;
+} AuraSessionEventCallbacks;
 
-EppErrorCode epp_session_set_event_handler(
-    EppSessionHandle*               handle,
-    const EppSessionEventCallbacks* callbacks,   // [in] копіюється за значенням
-    EppError*                       out_error
+AuraErrorCode aura_session_set_event_handler(
+    AuraSessionHandle*               handle,
+    const AuraSessionEventCallbacks* callbacks,   // [in] копіюється за значенням
+    AuraError*                       out_error
 );
 ```
 
@@ -1790,38 +1790,38 @@ EppErrorCode epp_session_set_event_handler(
 ```c
 // Тип: виклик при додаванні нового учасника через Commit.
 // identity_ed25519 — 32 байти Ed25519 public key нового учасника.
-typedef void (*EppOnMemberAdded)(uint32_t leaf_index,
+typedef void (*AuraOnMemberAdded)(uint32_t leaf_index,
                                   const uint8_t* identity_ed25519, size_t identity_ed25519_len,
                                   void* user_data);
 
 // Тип: виклик при видаленні учасника через Commit.
-typedef void (*EppOnMemberRemoved)(uint32_t leaf_index, void* user_data);
+typedef void (*AuraOnMemberRemoved)(uint32_t leaf_index, void* user_data);
 
 // Тип: виклик при кожному просуванні epoch.
-typedef void (*EppOnEpochAdvanced)(uint64_t new_epoch, uint32_t member_count, void* user_data);
+typedef void (*AuraOnEpochAdvanced)(uint64_t new_epoch, uint32_t member_count, void* user_data);
 
 // Тип: виклик коли sender key generation наближається до max_messages_per_epoch.
-typedef void (*EppOnSenderKeyExhaustionWarning)(uint32_t remaining, uint32_t max_capacity,
+typedef void (*AuraOnSenderKeyExhaustionWarning)(uint32_t remaining, uint32_t max_capacity,
                                                  void* user_data);
 
 // Тип: виклик коли Commit містить ReInit proposal. Група застаріла — мігрувати.
 // new_group_id / new_group_id_len дійсні тільки під час callback.
-typedef void (*EppOnReInitProposed)(const uint8_t* new_group_id, size_t new_group_id_len,
+typedef void (*AuraOnReInitProposed)(const uint8_t* new_group_id, size_t new_group_id_len,
                                      uint32_t new_version, void* user_data);
 
-typedef struct EppGroupEventCallbacks {
-    EppOnMemberAdded                on_member_added;                  // або NULL
-    EppOnMemberRemoved              on_member_removed;                // або NULL
-    EppOnEpochAdvanced              on_epoch_advanced;                // або NULL
-    EppOnSenderKeyExhaustionWarning on_sender_key_exhaustion_warning; // або NULL
-    EppOnReInitProposed             on_reinit_proposed;               // або NULL
+typedef struct AuraGroupEventCallbacks {
+    AuraOnMemberAdded                on_member_added;                  // або NULL
+    AuraOnMemberRemoved              on_member_removed;                // або NULL
+    AuraOnEpochAdvanced              on_epoch_advanced;                // або NULL
+    AuraOnSenderKeyExhaustionWarning on_sender_key_exhaustion_warning; // або NULL
+    AuraOnReInitProposed             on_reinit_proposed;               // або NULL
     void*                           user_data;
-} EppGroupEventCallbacks;
+} AuraGroupEventCallbacks;
 
-EppErrorCode epp_group_set_event_handler(
-    EppGroupSessionHandle*        handle,
-    const EppGroupEventCallbacks* callbacks,   // [in] копіюється за значенням
-    EppError*                     out_error
+AuraErrorCode aura_group_set_event_handler(
+    AuraGroupSessionHandle*        handle,
+    const AuraGroupEventCallbacks* callbacks,   // [in] копіюється за значенням
+    AuraError*                     out_error
 );
 ```
 
@@ -1829,19 +1829,19 @@ EppErrorCode epp_group_set_event_handler(
 
 ```c
 // Тип: виклик коли OTK пул падає нижче ~10% від DEFAULT_ONE_TIME_KEY_COUNT (100).
-// Потрібно викликати epp_prekey_bundle_replenish та завантажити нові OTK на сервер.
-typedef void (*EppOnOtkExhaustionWarning)(uint32_t remaining, uint32_t max_capacity,
+// Потрібно викликати aura_prekey_bundle_replenish та завантажити нові OTK на сервер.
+typedef void (*AuraOnOtkExhaustionWarning)(uint32_t remaining, uint32_t max_capacity,
                                            void* user_data);
 
-typedef struct EppIdentityEventCallbacks {
-    EppOnOtkExhaustionWarning on_otk_exhaustion_warning;   // або NULL
+typedef struct AuraIdentityEventCallbacks {
+    AuraOnOtkExhaustionWarning on_otk_exhaustion_warning;   // або NULL
     void*                     user_data;
-} EppIdentityEventCallbacks;
+} AuraIdentityEventCallbacks;
 
-EppErrorCode epp_identity_set_event_handler(
-    EppIdentityHandle*              handle,
-    const EppIdentityEventCallbacks* callbacks,   // [in] копіюється за значенням
-    EppError*                       out_error
+AuraErrorCode aura_identity_set_event_handler(
+    AuraIdentityHandle*              handle,
+    const AuraIdentityEventCallbacks* callbacks,   // [in] копіюється за значенням
+    AuraError*                       out_error
 );
 ```
 
@@ -1853,20 +1853,20 @@ static void on_nonce_warn(uint64_t remaining, uint64_t max, void* ud) {
 
 static void on_otk_warn(uint32_t remaining, uint32_t max, void* ud) {
     // replenish OTKs
-    epp_prekey_bundle_replenish((EppIdentityHandle*)ud, 50, &keys, &err);
+    aura_prekey_bundle_replenish((AuraIdentityHandle*)ud, 50, &keys, &err);
     upload_to_server(keys.data, keys.length);
-    epp_buffer_release(&keys);
+    aura_buffer_release(&keys);
 }
 
-EppSessionEventCallbacks session_cbs = {0};
+AuraSessionEventCallbacks session_cbs = {0};
 session_cbs.on_nonce_exhaustion_warning = on_nonce_warn;
 session_cbs.user_data = NULL;
-epp_session_set_event_handler(session, &session_cbs, &err);
+aura_session_set_event_handler(session, &session_cbs, &err);
 
-EppIdentityEventCallbacks id_cbs = {0};
+AuraIdentityEventCallbacks id_cbs = {0};
 id_cbs.on_otk_exhaustion_warning = on_otk_warn;
 id_cbs.user_data = identity;
-epp_identity_set_event_handler(identity, &id_cbs, &err);
+aura_identity_set_event_handler(identity, &id_cbs, &err);
 ```
 
 ---
@@ -1874,41 +1874,41 @@ epp_identity_set_event_handler(identity, &id_cbs, &err);
 ## Buffer & Memory Management
 > Ролі: **Client** + **Server** + **Relay**
 
-### `epp_buffer_release`
+### `aura_buffer_release`
 
 ```c
-void epp_buffer_release(EppBuffer* buffer);
+void aura_buffer_release(AuraBuffer* buffer);
 ```
 
-Зануляє та звільняє `buffer->data`. **Не** звільняє сам struct `EppBuffer`. Використовувати для stack-allocated `EppBuffer`:
+Зануляє та звільняє `buffer->data`. **Не** звільняє сам struct `AuraBuffer`. Використовувати для stack-allocated `AuraBuffer`:
 
 ```c
-EppBuffer buf = {0};
-epp_session_encrypt(handle, ..., &buf, &err);
+AuraBuffer buf = {0};
+aura_session_encrypt(handle, ..., &buf, &err);
 // використати buf.data / buf.length
-epp_buffer_release(&buf);  // звільнити data, struct на стеку
+aura_buffer_release(&buf);  // звільнити data, struct на стеку
 ```
 
-### `epp_buffer_alloc`
+### `aura_buffer_alloc`
 
 ```c
-EppBuffer* epp_buffer_alloc(size_t capacity);
+AuraBuffer* aura_buffer_alloc(size_t capacity);
 ```
 
-Алокує `EppBuffer` на heap із заданим розміром. Повертає NULL якщо `capacity == 0`.
+Алокує `AuraBuffer` на heap із заданим розміром. Повертає NULL якщо `capacity == 0`.
 
-### `epp_buffer_free`
+### `aura_buffer_free`
 
 ```c
-void epp_buffer_free(EppBuffer* buffer);
+void aura_buffer_free(AuraBuffer* buffer);
 ```
 
-Зануляє та звільняє і data, і сам struct. Для heap-allocated буферів (від `epp_buffer_alloc`).
+Зануляє та звільняє і data, і сам struct. Для heap-allocated буферів (від `aura_buffer_alloc`).
 
-### `epp_secure_wipe`
+### `aura_secure_wipe`
 
 ```c
-EppErrorCode epp_secure_wipe(uint8_t* data, size_t length);
+AuraErrorCode aura_secure_wipe(uint8_t* data, size_t length);
 ```
 
 Гарантовано зануляє пам'ять (з compiler fence). Для видалення секретів з пам'яті.
@@ -1918,46 +1918,46 @@ EppErrorCode epp_secure_wipe(uint8_t* data, size_t length);
 ## Error Handling
 > Ролі: **Client** + **Server** + **Relay**
 
-### `epp_error_free`
+### `aura_error_free`
 
 ```c
-void epp_error_free(EppError* error);
+void aura_error_free(AuraError* error);
 ```
 
 Звільняє `error->message`. Викликати після обробки помилки. Безпечно при NULL.
 
-### `epp_error_string`
+### `aura_error_string`
 
 ```c
-const char* epp_error_string(EppErrorCode code);
+const char* aura_error_string(AuraErrorCode code);
 ```
 
 Повертає людиночитабельний опис коду помилки (статичний рядок, не звільняти).
 
 Практично важливо:
 
-- `EPP_ERROR_INVALID_INPUT` покриває oversize input, malformed payload і rewind manual clock;
-- `EPP_ERROR_BUSY` означає, що той самий native handle уже використовується іншим викликом;
-- VoIP-specific помилки мапляться в `EPP_ERROR_VOIP_CALL`, `EPP_ERROR_VOIP_MEDIA`, `EPP_ERROR_VOIP_REKEY`.
+- `AURA_ERROR_INVALID_INPUT` покриває oversize input, malformed payload і rewind manual clock;
+- `AURA_ERROR_BUSY` означає, що той самий native handle уже використовується іншим викликом;
+- VoIP-specific помилки мапляться в `AURA_ERROR_VOIP_CALL`, `AURA_ERROR_VOIP_MEDIA`, `AURA_ERROR_VOIP_REKEY`.
 
 ### Патерн обробки помилок
 
 ```c
-EppError err = {0};
-EppBuffer buf = {0};
+AuraError err = {0};
+AuraBuffer buf = {0};
 
-EppErrorCode code = epp_session_encrypt(handle, data, len,
-    EPP_ENVELOPE_REQUEST, 0, NULL, 0, &buf, &err);
+AuraErrorCode code = aura_session_encrypt(handle, data, len,
+    AURA_ENVELOPE_REQUEST, 0, NULL, 0, &buf, &err);
 
-if (code != EPP_SUCCESS) {
+if (code != AURA_SUCCESS) {
     printf("Error %d: %s\n", err.code, err.message);
-    epp_error_free(&err);
+    aura_error_free(&err);
     return;
 }
 
 // використати buf.data, buf.length
 send_to_peer(buf.data, buf.length);
-epp_buffer_release(&buf);
+aura_buffer_release(&buf);
 ```
 
 ---
@@ -1966,66 +1966,66 @@ epp_buffer_release(&buf);
 
 ### Правила ownership
 
-1. **Handle** — caller owns. Завжди знищувати через відповідний `_destroy(Epp*Handle** handle)`; destroy зануляє `*handle`
-2. **EppBuffer.data** — caller owns. Звільняти через `epp_buffer_release` (stack) або `epp_buffer_free` (heap)
-3. **EppError.message** — caller owns. Звільняти через `epp_error_free`
+1. **Handle** — caller owns. Завжди знищувати через відповідний `_destroy(Aura*Handle** handle)`; destroy зануляє `*handle`
+2. **AuraBuffer.data** — caller owns. Звільняти через `aura_buffer_release` (stack) або `aura_buffer_free` (heap)
+3. **AuraError.message** — caller owns. Звільняти через `aura_error_free`
 4. **Consumed handles** — `_finish` забирає ownership, handle стає порожнім
 
 ### Типовий lifecycle 1:1 сесії (Client)
 
 ```
-epp_init()
+aura_init()
   ↓
-epp_identity_create() → identity_handle
+aura_identity_create() → identity_handle
   ↓
-epp_prekey_bundle_create() → bundle bytes
+aura_prekey_bundle_create() → bundle bytes
   ↓                    (передати peer)
-epp_handshake_initiator_start() → initiator_handle + init_msg
+aura_handshake_initiator_start() → initiator_handle + init_msg
   ↓                    (надіслати init_msg)
   ↓                    (отримати ack_msg)
-epp_handshake_initiator_finish() → session_handle
+aura_handshake_initiator_finish() → session_handle
   ↓
-epp_session_encrypt() / epp_session_decrypt()  (повторювати)
+aura_session_encrypt() / aura_session_decrypt()  (повторювати)
   ↓
-epp_session_serialize_sealed() → зберегти на диск
+aura_session_serialize_sealed() → зберегти на диск
   ↓
-epp_session_destroy()
-epp_identity_destroy()
-epp_shutdown()
+aura_session_destroy()
+aura_identity_destroy()
+aura_shutdown()
 ```
 
 ### Типовий lifecycle групи (Client / Server)
 
 ```
-epp_group_create() → group_handle              (або epp_group_join)
+aura_group_create() → group_handle              (або aura_group_join)
   ↓
-epp_group_add_member() → commit + welcome      (надіслати учасникам)
+aura_group_add_member() → commit + welcome      (надіслати учасникам)
   ↓
-epp_group_encrypt() / epp_group_decrypt()       (повторювати)
+aura_group_encrypt() / aura_group_decrypt()       (повторювати)
   ↓
-epp_group_process_commit()                      (при отриманні commit)
+aura_group_process_commit()                      (при отриманні commit)
   ↓
-epp_group_serialize() → зберегти на диск
+aura_group_serialize() → зберегти на диск
   ↓
-epp_group_destroy()
+aura_group_destroy()
 ```
 
 ### Типовий lifecycle Relay
 
 ```
-epp_init()
+aura_init()
   ↓
 // Отримати encrypted_envelope від клієнта
-epp_envelope_validate(envelope, len, &err)    // перевірити формат
+aura_envelope_validate(envelope, len, &err)    // перевірити формат
   ↓
 // Переслати envelope одержувачу(ям) as-is
 forward_to_recipients(envelope, len)
   ↓
 // Модерація (опційно): перевірити franking tag
-epp_group_verify_franking(tag, tag_len, key, key_len,
+aura_group_verify_franking(tag, tag_len, key, key_len,
     content, content_len, sealed, sealed_len, &valid, &err)
   ↓
-epp_shutdown()
+aura_shutdown()
 ```
 
 Relay **ніколи не бачить plaintext** — працює виключно з зашифрованими байтами.
@@ -2035,6 +2035,6 @@ Relay **ніколи не бачить plaintext** — працює виключ
 ## Thread Safety
 
 - **Різні** handle можна використовувати з різних потоків одночасно
-- **Один і той самий** handle — НЕ thread-safe; конкурентний доступ може повернути `EPP_ERROR_BUSY`
-- `epp_init` / `epp_shutdown` — викликати з одного потоку
-- `epp_version`, `epp_error_string` — thread-safe (статичні дані)
+- **Один і той самий** handle — НЕ thread-safe; конкурентний доступ може повернути `AURA_ERROR_BUSY`
+- `aura_init` / `aura_shutdown` — викликати з одного потоку
+- `aura_version`, `aura_error_string` — thread-safe (статичні дані)

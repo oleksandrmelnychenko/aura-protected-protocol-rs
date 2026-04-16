@@ -1,7 +1,7 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use ecliptix_protocol::crypto::AesGcm;
+use aura_protected_protocol::crypto::AesGcm;
 
 fuzz_target!(|data: &[u8]| {
     // Need at least 32 (key) + 12 (nonce) + 1 (ciphertext) bytes

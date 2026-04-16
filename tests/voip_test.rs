@@ -3,22 +3,22 @@
 
 #![allow(clippy::pedantic, clippy::nursery)]
 
-use ecliptix_protocol::api::EcliptixProtocol;
-use ecliptix_protocol::core::constants::*;
-use ecliptix_protocol::core::errors::ProtocolError;
-use ecliptix_protocol::crypto::{AesGcm, CryptoInterop, HkdfSha256, SecureMemoryHandle};
-use ecliptix_protocol::identity::IdentityKeys;
-use ecliptix_protocol::proto::{
+use aura_protected_protocol::api::AuraProtocol;
+use aura_protected_protocol::core::constants::*;
+use aura_protected_protocol::core::errors::ProtocolError;
+use aura_protected_protocol::crypto::{AesGcm, CryptoInterop, HkdfSha256, SecureMemoryHandle};
+use aura_protected_protocol::identity::IdentityKeys;
+use aura_protected_protocol::proto::{
     CallRekey, CallRekeyAck, PreKeyBundle, RecordingConsentMessage, VoipSessionState,
 };
-use ecliptix_protocol::protocol::voip::call_key_exchange::{
+use aura_protected_protocol::protocol::voip::call_key_exchange::{
     callee_accept_with_context, caller_finish_with_context, caller_init_with_context,
     CallInitAuthContext,
 };
-use ecliptix_protocol::protocol::voip::frame::{build_frame_aad, FrameHeader};
-use ecliptix_protocol::protocol::voip::key_ratchet::MediaKeyRatchet;
-use ecliptix_protocol::protocol::voip::media_crypto::MediaCrypto;
-use ecliptix_protocol::protocol::voip::{CallRole, CallState, VoipSession};
+use aura_protected_protocol::protocol::voip::frame::{build_frame_aad, FrameHeader};
+use aura_protected_protocol::protocol::voip::key_ratchet::MediaKeyRatchet;
+use aura_protected_protocol::protocol::voip::media_crypto::MediaCrypto;
+use aura_protected_protocol::protocol::voip::{CallRole, CallState, VoipSession};
 use hmac::Mac;
 use prost::Message;
 
@@ -337,7 +337,7 @@ fn call_init(
     identity_ed25519_public: &[u8],
     peer_kyber_public: &[u8],
     shield_mode: bool,
-) -> Result<ecliptix_protocol::protocol::voip::call_key_exchange::CallInitOutput, ProtocolError> {
+) -> Result<aura_protected_protocol::protocol::voip::call_key_exchange::CallInitOutput, ProtocolError> {
     let auth_context = default_call_context(shield_mode);
     caller_init_with_context(
         identity_ed25519_secret,
@@ -360,7 +360,7 @@ fn call_accept(
     peer_signature: &[u8],
     peer_key_confirm_mac: &[u8],
     shield_mode: bool,
-) -> Result<ecliptix_protocol::protocol::voip::call_key_exchange::CallAcceptOutput, ProtocolError> {
+) -> Result<aura_protected_protocol::protocol::voip::call_key_exchange::CallAcceptOutput, ProtocolError> {
     let auth_context = default_call_context(shield_mode);
     callee_accept_with_context(
         identity_ed25519_secret,
@@ -379,7 +379,7 @@ fn call_accept(
 
 #[allow(clippy::too_many_arguments)]
 fn call_finish(
-    init_output: &ecliptix_protocol::protocol::voip::call_key_exchange::CallInitOutput,
+    init_output: &aura_protected_protocol::protocol::voip::call_key_exchange::CallInitOutput,
     identity_kyber_secret: &SecureMemoryHandle,
     call_id: &[u8],
     peer_eph_x25519_public: &[u8],
@@ -388,7 +388,7 @@ fn call_finish(
     peer_signature: &[u8],
     peer_key_confirm_mac: &[u8],
     shield_mode: bool,
-) -> Result<ecliptix_protocol::protocol::voip::call_key_exchange::CallKeyMaterial, ProtocolError> {
+) -> Result<aura_protected_protocol::protocol::voip::call_key_exchange::CallKeyMaterial, ProtocolError> {
     let auth_context = default_call_context(shield_mode);
     caller_finish_with_context(
         init_output,
@@ -1405,7 +1405,7 @@ fn voip_rekey_short_ephemeral_key_rejected_without_panic() {
         .unwrap();
     let mut rekey = CallRekey::decode(rekey_bytes.as_slice()).unwrap();
     rekey.ephemeral_x25519_public = vec![0xAA; 3];
-    rekey.signature = ecliptix_protocol::protocol::voip::call_key_exchange::sign_rekey_material(
+    rekey.signature = aura_protected_protocol::protocol::voip::call_key_exchange::sign_rekey_material(
         &alice_ed_secret,
         &rekey.call_id,
         rekey.rekey_generation,
@@ -1496,7 +1496,7 @@ fn voip_rekey_ack_short_ephemeral_key_rejected_without_panic() {
         .unwrap();
     let mut ack = CallRekeyAck::decode(ack_bytes.as_slice()).unwrap();
     ack.ephemeral_x25519_public = vec![0xBB; 5];
-    ack.signature = ecliptix_protocol::protocol::voip::call_key_exchange::sign_rekey_material(
+    ack.signature = aura_protected_protocol::protocol::voip::call_key_exchange::sign_rekey_material(
         &bob_ed_secret,
         &ack.call_id,
         ack.rekey_generation,
@@ -1535,7 +1535,7 @@ fn api_voip_caller_init_protobuf_roundtrip() {
 
     // Build the protobuf manually and verify roundtrip
     let call_id = init_output.call_id.clone();
-    let proto_init = ecliptix_protocol::proto::CallInit {
+    let proto_init = aura_protected_protocol::proto::CallInit {
         version: VOIP_PROTOCOL_VERSION,
         caller_device_id: vec![1, 2, 3, 4],
         call_id: call_id.clone(),
@@ -1553,7 +1553,7 @@ fn api_voip_caller_init_protobuf_roundtrip() {
 
     let mut buf = Vec::new();
     proto_init.encode(&mut buf).unwrap();
-    let decoded = ecliptix_protocol::proto::CallInit::decode(buf.as_slice()).unwrap();
+    let decoded = aura_protected_protocol::proto::CallInit::decode(buf.as_slice()).unwrap();
 
     assert_eq!(decoded.version, VOIP_PROTOCOL_VERSION);
     assert_eq!(decoded.call_id, call_id);
@@ -1609,8 +1609,8 @@ fn api_voip_full_call_flow_via_low_level() {
 fn api_voip_full_call_flow_via_public_api() {
     init();
 
-    let alice = EcliptixProtocol::new(1).unwrap();
-    let bob = EcliptixProtocol::new(1).unwrap();
+    let alice = AuraProtocol::new(1).unwrap();
+    let bob = AuraProtocol::new(1).unwrap();
 
     let alice_bundle = alice.pre_key_bundle().unwrap();
     let bob_bundle = bob.pre_key_bundle().unwrap();
@@ -1632,8 +1632,8 @@ fn api_voip_full_call_flow_via_public_api() {
 fn api_voip_rekey_and_restore_via_public_api() {
     init();
 
-    let alice = EcliptixProtocol::new(1).unwrap();
-    let bob = EcliptixProtocol::new(1).unwrap();
+    let alice = AuraProtocol::new(1).unwrap();
+    let bob = AuraProtocol::new(1).unwrap();
 
     let alice_bundle = alice.pre_key_bundle().unwrap();
     let bob_bundle = bob.pre_key_bundle().unwrap();
@@ -1671,8 +1671,8 @@ fn api_voip_rekey_and_restore_via_public_api() {
 fn api_voip_import_call_state_equal_counter_rejected() {
     init();
 
-    let alice = EcliptixProtocol::new(1).unwrap();
-    let bob = EcliptixProtocol::new(1).unwrap();
+    let alice = AuraProtocol::new(1).unwrap();
+    let bob = AuraProtocol::new(1).unwrap();
 
     let alice_bundle = alice.pre_key_bundle().unwrap();
     let bob_bundle = bob.pre_key_bundle().unwrap();
@@ -1828,11 +1828,11 @@ fn voip_recording_consent_tampered_or_wrong_signer_rejected() {
 // § 7  Relay-side VoIP validation
 // ════════════════════════════════════════════════════════════════════
 
-use ecliptix_protocol::api::relay::{
+use aura_protected_protocol::api::relay::{
     route_voip_envelope, validate_call_signal_for_relay, validate_voip_envelope, ActiveCall,
     VoipCallStore,
 };
-use ecliptix_protocol::proto::{VoipEnvelope, VoipSignalType};
+use aura_protected_protocol::proto::{VoipEnvelope, VoipSignalType};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 struct InMemoryCallStore {
@@ -2440,7 +2440,7 @@ fn voip_sealed_state_missing_replay_bitmap_rejected_when_high_water_nonzero() {
         &key,
         HMAC_BYTES,
         &external_counter.to_le_bytes(),
-        b"Ecliptix-VoIP-StateHMAC",
+        b"Aura-VoIP-StateHMAC",
     )
     .unwrap();
     let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(&hmac_key).unwrap();
@@ -2484,7 +2484,7 @@ fn voip_sealed_state_header_body_counter_mismatch_rejected() {
         &key,
         HMAC_BYTES,
         &stored_counter.to_le_bytes(),
-        b"Ecliptix-VoIP-StateHMAC",
+        b"Aura-VoIP-StateHMAC",
     )
     .unwrap();
     let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(&hmac_key).unwrap();
@@ -2618,7 +2618,7 @@ fn voip_sealed_state_persists_extended_metadata_and_created_at() {
         &key,
         HMAC_BYTES,
         &external_counter.to_le_bytes(),
-        b"Ecliptix-VoIP-StateHMAC",
+        b"Aura-VoIP-StateHMAC",
     )
     .unwrap();
     let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(&hmac_key).unwrap();
@@ -2696,7 +2696,7 @@ fn voip_sealed_state_rejects_future_recording_consent_timestamps() {
         &key,
         HMAC_BYTES,
         &external_counter.to_le_bytes(),
-        b"Ecliptix-VoIP-StateHMAC",
+        b"Aura-VoIP-StateHMAC",
     )
     .unwrap();
     let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(&hmac_key).unwrap();
@@ -2717,7 +2717,7 @@ fn voip_sealed_state_rejects_future_recording_consent_timestamps() {
 // § 10  Relay lifecycle
 // ════════════════════════════════════════════════════════════════════
 
-use ecliptix_protocol::api::relay::process_voip_signal;
+use aura_protected_protocol::api::relay::process_voip_signal;
 
 #[test]
 fn relay_lifecycle_init_registers_and_forwards() {
@@ -2807,7 +2807,7 @@ fn relay_lifecycle_accept_retries_on_compare_exchange_conflict() {
     let stored = store.find_call(&call_id).unwrap().unwrap();
     assert_eq!(
         stored.state,
-        ecliptix_protocol::api::relay::CallLifecycleState::Active
+        aura_protected_protocol::api::relay::CallLifecycleState::Active
     );
 }
 
@@ -2898,7 +2898,7 @@ fn relay_lifecycle_rekey_forwards_to_peer() {
     let call_id = CryptoInterop::get_random_bytes(CALL_ID_BYTES);
     let mut active_call =
         ActiveCall::new(call_id.clone(), vec![1, 2, 3, 4], vec![5, 6, 7, 8], 1000);
-    active_call.state = ecliptix_protocol::api::relay::CallLifecycleState::Active;
+    active_call.state = aura_protected_protocol::api::relay::CallLifecycleState::Active;
     store.register_call(&active_call).unwrap();
 
     let envelope = VoipEnvelope {
@@ -2915,7 +2915,7 @@ fn relay_lifecycle_rekey_forwards_to_peer() {
     let stored = store.find_call(&call_id).unwrap().unwrap();
     assert_eq!(
         stored.state,
-        ecliptix_protocol::api::relay::CallLifecycleState::Rekeying
+        aura_protected_protocol::api::relay::CallLifecycleState::Rekeying
     );
     assert_eq!(stored.pending_rekey_from, Some(vec![1, 2, 3, 4]));
 }
@@ -2927,7 +2927,7 @@ fn relay_lifecycle_rekey_ack_forwards_back() {
     let call_id = CryptoInterop::get_random_bytes(CALL_ID_BYTES);
     let mut active_call =
         ActiveCall::new(call_id.clone(), vec![1, 2, 3, 4], vec![5, 6, 7, 8], 1000);
-    active_call.state = ecliptix_protocol::api::relay::CallLifecycleState::Rekeying;
+    active_call.state = aura_protected_protocol::api::relay::CallLifecycleState::Rekeying;
     active_call.pending_rekey_from = Some(vec![1, 2, 3, 4]);
     store.register_call(&active_call).unwrap();
 
@@ -2944,7 +2944,7 @@ fn relay_lifecycle_rekey_ack_forwards_back() {
     let stored = store.find_call(&envelope.call_id).unwrap().unwrap();
     assert_eq!(
         stored.state,
-        ecliptix_protocol::api::relay::CallLifecycleState::Active
+        aura_protected_protocol::api::relay::CallLifecycleState::Active
     );
     assert_eq!(stored.rekey_generation, 1);
     assert!(stored.pending_rekey_from.is_none());
@@ -2957,7 +2957,7 @@ fn relay_lifecycle_rekey_ack_without_pending_rekey_rejected() {
     let call_id = CryptoInterop::get_random_bytes(CALL_ID_BYTES);
     let mut active_call =
         ActiveCall::new(call_id.clone(), vec![1, 2, 3, 4], vec![5, 6, 7, 8], 1000);
-    active_call.state = ecliptix_protocol::api::relay::CallLifecycleState::Active;
+    active_call.state = aura_protected_protocol::api::relay::CallLifecycleState::Active;
     store.register_call(&active_call).unwrap();
 
     let envelope = VoipEnvelope {
@@ -3005,7 +3005,7 @@ fn relay_lifecycle_active_call_idle_timeout_rejected_and_removed() {
     let call_id = CryptoInterop::get_random_bytes(CALL_ID_BYTES);
     let mut active_call =
         ActiveCall::new(call_id.clone(), vec![1, 2, 3, 4], vec![5, 6, 7, 8], 1000);
-    active_call.state = ecliptix_protocol::api::relay::CallLifecycleState::Active;
+    active_call.state = aura_protected_protocol::api::relay::CallLifecycleState::Active;
     active_call.last_activity_at = 1001;
     store.register_call(&active_call).unwrap();
 

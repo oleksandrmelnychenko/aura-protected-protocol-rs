@@ -1,6 +1,6 @@
 import Foundation
 
-public enum EppCallControlType {
+public enum AuraCallControlType {
     case mute
     case unmute
     case hold
@@ -8,7 +8,7 @@ public enum EppCallControlType {
     case dtmf(UInt8)
 }
 
-public struct EppEncryptedVoipFrame {
+public struct AuraEncryptedVoipFrame {
     public let callId: Data
     public let ssrc: UInt32
     public let frameCounter: UInt64
@@ -18,7 +18,7 @@ public struct EppEncryptedVoipFrame {
     public let encryptedHeader: Data
 }
 
-public struct EppDecryptedVoipFrame {
+public struct AuraDecryptedVoipFrame {
     public let payload: Data
     public let payloadType: UInt8
     public let ssrc: UInt32
@@ -28,14 +28,14 @@ public struct EppDecryptedVoipFrame {
     public let ratchetGeneration: UInt32
 }
 
-public struct EppVoipScreenShareMeta {
+public struct AuraVoipScreenShareMeta {
     public let width: UInt32
     public let height: UInt32
     public let frameRate: UInt32
     public let codecHint: String?
 }
 
-public struct EppVoipCallStatistics {
+public struct AuraVoipCallStatistics {
     public let framesSent: UInt64
     public let framesReceived: UInt64
     public let framesDropped: UInt64
@@ -44,7 +44,7 @@ public struct EppVoipCallStatistics {
     public let callDurationSeconds: UInt64
 }
 
-public final class EppVoipCallInitiator {
+public final class AuraVoipCallInitiator {
     private var handle: UnsafeMutableRawPointer?
 
     private init(handle: UnsafeMutableRawPointer) {
@@ -58,17 +58,17 @@ public final class EppVoipCallInitiator {
     }
 
     public static func start(
-        identity: EppIdentity,
+        identity: AuraIdentity,
         peerKyberPublic: Data,
         shieldMode: Bool = false,
         ratchetIntervalFrames: UInt32 = 512,
         pqRekeyIntervalSeconds: UInt32 = 60
-    ) throws -> (initiator: EppVoipCallInitiator, callInit: Data) {
-        guard identity.handle != nil else { throw EppError.objectDisposed }
+    ) throws -> (initiator: AuraVoipCallInitiator, callInit: Data) {
+        guard identity.handle != nil else { throw AuraError.objectDisposed }
 
         var outHandle: UnsafeMutableRawPointer?
-        var outInit = NativeEppBuffer(data: nil, length: 0)
-        var outError = NativeEppError(code: 0, message: nil)
+        var outInit = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = peerKyberPublic.withUnsafeBytes { keyBytes in
             native_epp_voip_call_init_start(
                 identity.handle,
@@ -86,21 +86,21 @@ public final class EppVoipCallInitiator {
             if outInit.data != nil { native_epp_buffer_release(&outInit) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS, let handle = outHandle else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let handle = outHandle else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let callInit = dataFromBuffer(outInit) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
-        return (EppVoipCallInitiator(handle: handle), callInit)
+        return (AuraVoipCallInitiator(handle: handle), callInit)
     }
 
-    public func finish(identity: EppIdentity, callAccept: Data) throws -> EppVoipSession {
-        guard handle != nil else { throw EppError.objectDisposed }
-        guard identity.handle != nil else { throw EppError.objectDisposed }
+    public func finish(identity: AuraIdentity, callAccept: Data) throws -> AuraVoipSession {
+        guard handle != nil else { throw AuraError.objectDisposed }
+        guard identity.handle != nil else { throw AuraError.objectDisposed }
 
         var outSession: UnsafeMutableRawPointer?
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = callAccept.withUnsafeBytes { acceptBytes in
             native_epp_voip_call_init_complete(
                 handle,
@@ -112,14 +112,14 @@ public final class EppVoipCallInitiator {
             )
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS, let sessionHandle = outSession else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let sessionHandle = outSession else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
-        return EppVoipSession(handle: sessionHandle)
+        return AuraVoipSession(handle: sessionHandle)
     }
 }
 
-public final class EppVoipSession: @unchecked Sendable {
+public final class AuraVoipSession: @unchecked Sendable {
     private var handle: UnsafeMutableRawPointer?
 
     internal init(handle: UnsafeMutableRawPointer) {
@@ -138,17 +138,17 @@ public final class EppVoipSession: @unchecked Sendable {
         timestamp: UInt32,
         sequenceNumber: UInt16,
         payload: Data
-    ) throws -> EppEncryptedVoipFrame {
-        var nativeFrame = NativeEppEncryptedFrame(
-            call_id: NativeEppBuffer(data: nil, length: 0),
+    ) throws -> AuraEncryptedVoipFrame {
+        var nativeFrame = NativeAuraEncryptedFrame(
+            call_id: NativeAuraBuffer(data: nil, length: 0),
             ssrc: 0,
             frame_counter: 0,
             ratchet_generation: 0,
-            encrypted_payload: NativeEppBuffer(data: nil, length: 0),
-            nonce: NativeEppBuffer(data: nil, length: 0),
-            encrypted_header: NativeEppBuffer(data: nil, length: 0)
+            encrypted_payload: NativeAuraBuffer(data: nil, length: 0),
+            nonce: NativeAuraBuffer(data: nil, length: 0),
+            encrypted_header: NativeAuraBuffer(data: nil, length: 0)
         )
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
 
         let code = payload.withUnsafeBytes { ptr in
             native_epp_voip_encrypt_frame(
@@ -167,7 +167,7 @@ public final class EppVoipSession: @unchecked Sendable {
         }
         try checkResult(code, &err)
 
-        let result = EppEncryptedVoipFrame(
+        let result = AuraEncryptedVoipFrame(
             callId: Data(bytes: nativeFrame.call_id.data!, count: nativeFrame.call_id.length),
             ssrc: nativeFrame.ssrc,
             frameCounter: nativeFrame.frame_counter,
@@ -179,13 +179,13 @@ public final class EppVoipSession: @unchecked Sendable {
         return result
     }
 
-    public func decryptFrame(_ frame: EppEncryptedVoipFrame) throws -> EppDecryptedVoipFrame {
-        var nativeFrame = NativeEppDecryptedFrame(
-            payload: NativeEppBuffer(data: nil, length: 0),
+    public func decryptFrame(_ frame: AuraEncryptedVoipFrame) throws -> AuraDecryptedVoipFrame {
+        var nativeFrame = NativeAuraDecryptedFrame(
+            payload: NativeAuraBuffer(data: nil, length: 0),
             payload_type: 0, ssrc: 0, timestamp: 0,
             sequence_number: 0, frame_counter: 0, ratchet_generation: 0
         )
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
 
         let code = frame.callId.withUnsafeBytes { cidPtr in
             frame.encryptedPayload.withUnsafeBytes { payPtr in
@@ -209,7 +209,7 @@ public final class EppVoipSession: @unchecked Sendable {
         }
         try checkResult(code, &err)
 
-        return EppDecryptedVoipFrame(
+        return AuraDecryptedVoipFrame(
             payload: Data(bytes: nativeFrame.payload.data!, count: nativeFrame.payload.length),
             payloadType: nativeFrame.payload_type,
             ssrc: nativeFrame.ssrc,
@@ -222,8 +222,8 @@ public final class EppVoipSession: @unchecked Sendable {
 
     public var callId: Data {
         get throws {
-            var buf = NativeEppBuffer(data: nil, length: 0)
-            var err = NativeEppError(code: 0, message: nil)
+            var buf = NativeAuraBuffer(data: nil, length: 0)
+            var err = NativeAuraError(code: 0, message: nil)
             let code = native_epp_voip_call_id(handle, &buf, &err)
             defer {
                 if buf.data != nil { native_epp_buffer_release(&buf) }
@@ -235,24 +235,24 @@ public final class EppVoipSession: @unchecked Sendable {
     }
 
     public var ssrc: UInt32 {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         return native_epp_voip_ssrc(handle, &err)
     }
 
     public var isShieldMode: Bool {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         return native_epp_voip_is_shield_mode(handle, &err) != 0
     }
 
     public func endCall() throws {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = native_epp_voip_end_call(handle, &err)
         try checkResult(code, &err)
     }
 
     public func generateCallEndHmac(deviceId: Data, timestamp: UInt64) throws -> Data {
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = deviceId.withUnsafeBytes { ptr in
             native_epp_voip_generate_call_end_hmac(
                 handle,
@@ -272,7 +272,7 @@ public final class EppVoipSession: @unchecked Sendable {
 
     public func verifyCallEndHmac(deviceId: Data, timestamp: UInt64, hmacValue: Data) throws -> Bool {
         var outValid: UInt8 = 0
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = deviceId.withUnsafeBytes { devicePtr in
             hmacValue.withUnsafeBytes { hmacPtr in
                 native_epp_voip_verify_call_end_hmac(
@@ -292,8 +292,8 @@ public final class EppVoipSession: @unchecked Sendable {
     }
 
     public func buildCallEnd(deviceId: Data, timestamp: UInt64) throws -> Data {
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = deviceId.withUnsafeBytes { ptr in
             native_epp_voip_build_call_end(
                 handle,
@@ -313,7 +313,7 @@ public final class EppVoipSession: @unchecked Sendable {
     }
 
     public func processCallEnd(_ callEnd: Data) throws {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = callEnd.withUnsafeBytes { ptr in
             native_epp_voip_process_call_end(
                 handle,
@@ -325,15 +325,15 @@ public final class EppVoipSession: @unchecked Sendable {
         try checkResult(code, &err)
     }
 
-    public func encryptCallControl(_ control: EppCallControlType) throws -> EppEncryptedVoipFrame {
-        var nativeFrame = NativeEppEncryptedFrame(
-            call_id: NativeEppBuffer(data: nil, length: 0),
+    public func encryptCallControl(_ control: AuraCallControlType) throws -> AuraEncryptedVoipFrame {
+        var nativeFrame = NativeAuraEncryptedFrame(
+            call_id: NativeAuraBuffer(data: nil, length: 0),
             ssrc: 0, frame_counter: 0, ratchet_generation: 0,
-            encrypted_payload: NativeEppBuffer(data: nil, length: 0),
-            nonce: NativeEppBuffer(data: nil, length: 0),
-            encrypted_header: NativeEppBuffer(data: nil, length: 0)
+            encrypted_payload: NativeAuraBuffer(data: nil, length: 0),
+            nonce: NativeAuraBuffer(data: nil, length: 0),
+            encrypted_header: NativeAuraBuffer(data: nil, length: 0)
         )
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
 
         let (controlType, dtmfDigit): (UInt8, UInt8) = {
             switch control {
@@ -356,7 +356,7 @@ public final class EppVoipSession: @unchecked Sendable {
         }
         try checkResult(code, &err)
 
-        return EppEncryptedVoipFrame(
+        return AuraEncryptedVoipFrame(
             callId: Data(bytes: nativeFrame.call_id.data!, count: nativeFrame.call_id.length),
             ssrc: nativeFrame.ssrc,
             frameCounter: nativeFrame.frame_counter,
@@ -373,7 +373,7 @@ public final class EppVoipSession: @unchecked Sendable {
         frameRate: UInt32,
         codecHint: String? = nil
     ) throws {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = codecHint?.data(using: .utf8)?.withUnsafeBytes { ptr in
             native_epp_voip_set_screen_share_meta(
                 handle,
@@ -396,12 +396,12 @@ public final class EppVoipSession: @unchecked Sendable {
         try checkResult(code, &err)
     }
 
-    public func getScreenShareMeta() throws -> EppVoipScreenShareMeta? {
+    public func getScreenShareMeta() throws -> AuraVoipScreenShareMeta? {
         var width: UInt32 = 0
         var height: UInt32 = 0
         var frameRate: UInt32 = 0
-        var codecHint = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var codecHint = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = native_epp_voip_get_screen_share_meta(
             handle,
             &width,
@@ -418,7 +418,7 @@ public final class EppVoipSession: @unchecked Sendable {
             return nil
         }
         let hint = codecHint.data.map { String(decoding: UnsafeBufferPointer(start: $0, count: codecHint.length), as: UTF8.self) }
-        return EppVoipScreenShareMeta(
+        return AuraVoipScreenShareMeta(
             width: width,
             height: height,
             frameRate: frameRate,
@@ -427,13 +427,13 @@ public final class EppVoipSession: @unchecked Sendable {
     }
 
     public func clearScreenShareMeta() throws {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = native_epp_voip_clear_screen_share_meta(handle, &err)
         try checkResult(code, &err)
     }
 
-    public func getCallStatistics() throws -> EppVoipCallStatistics {
-        var nativeStats = NativeEppCallStatistics(
+    public func getCallStatistics() throws -> AuraVoipCallStatistics {
+        var nativeStats = NativeAuraCallStatistics(
             frames_sent: 0,
             frames_received: 0,
             frames_dropped: 0,
@@ -441,10 +441,10 @@ public final class EppVoipSession: @unchecked Sendable {
             ratchet_generation: 0,
             call_duration_secs: 0
         )
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = native_epp_voip_get_call_statistics(handle, &nativeStats, &err)
         try checkResult(code, &err)
-        return EppVoipCallStatistics(
+        return AuraVoipCallStatistics(
             framesSent: nativeStats.frames_sent,
             framesReceived: nativeStats.frames_received,
             framesDropped: nativeStats.frames_dropped,
@@ -455,7 +455,7 @@ public final class EppVoipSession: @unchecked Sendable {
     }
 
     public func setRecordingConsent(_ consent: Int32) throws {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = native_epp_voip_set_recording_consent(handle, consent, &err)
         try checkResult(code, &err)
     }
@@ -473,14 +473,14 @@ public final class EppVoipSession: @unchecked Sendable {
     }
 
     public func buildRecordingConsentMessage(
-        identity: EppIdentity,
+        identity: AuraIdentity,
         consent: Int32,
         timestampUnix: UInt64
     ) throws -> Data {
-        guard identity.handle != nil else { throw EppError.objectDisposed }
+        guard identity.handle != nil else { throw AuraError.objectDisposed }
 
-        var outMessage = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var outMessage = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = native_epp_voip_build_recording_consent_message(
             handle,
             identity.handle,
@@ -494,7 +494,7 @@ public final class EppVoipSession: @unchecked Sendable {
         }
         try checkResult(code, &err)
         guard let message = dataFromBuffer(outMessage) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
         return message
     }
@@ -503,7 +503,7 @@ public final class EppVoipSession: @unchecked Sendable {
         _ message: Data,
         peerEd25519Public: Data
     ) throws {
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = peerEd25519Public.withUnsafeBytes { peerBytes in
             message.withUnsafeBytes { messageBytes in
                 native_epp_voip_process_recording_consent_message(
@@ -520,8 +520,8 @@ public final class EppVoipSession: @unchecked Sendable {
     }
 
     public func exportSealedState(stateKey: Data, externalCounter: UInt64) throws -> Data {
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = stateKey.withUnsafeBytes { ptr in
             native_epp_voip_export_sealed_state(
                 handle,
@@ -541,11 +541,11 @@ public final class EppVoipSession: @unchecked Sendable {
 
     public func exportSealedState(
         stateKey: Data,
-        tracker: EppSealedStateCounterTracker
+        tracker: AuraSealedStateCounterTracker
     ) throws -> Data {
-        guard tracker.handle != nil else { throw EppError.objectDisposed }
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        guard tracker.handle != nil else { throw AuraError.objectDisposed }
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = stateKey.withUnsafeBytes { ptr in
             native_epp_voip_export_sealed_state_with_tracker(
                 handle,
@@ -566,10 +566,10 @@ public final class EppVoipSession: @unchecked Sendable {
 
     public func exportPersistedState(
         stateKey: Data,
-        slot: EppSealedStateSlot
+        slot: AuraSealedStateSlot
     ) throws {
-        guard slot.handle != nil else { throw EppError.objectDisposed }
-        var err = NativeEppError(code: 0, message: nil)
+        guard slot.handle != nil else { throw AuraError.objectDisposed }
+        var err = NativeAuraError(code: 0, message: nil)
         let code = stateKey.withUnsafeBytes { ptr in
             native_epp_voip_export_persisted_state(
                 handle,
@@ -582,11 +582,11 @@ public final class EppVoipSession: @unchecked Sendable {
         try checkResult(code, &err)
     }
 
-    public func initiateRekey(identity: EppIdentity, peerKyberPublic: Data) throws -> Data {
-        guard identity.handle != nil else { throw EppError.objectDisposed }
+    public func initiateRekey(identity: AuraIdentity, peerKyberPublic: Data) throws -> Data {
+        guard identity.handle != nil else { throw AuraError.objectDisposed }
 
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = peerKyberPublic.withUnsafeBytes { ptr in
             native_epp_voip_initiate_rekey(
                 handle,
@@ -606,15 +606,15 @@ public final class EppVoipSession: @unchecked Sendable {
     }
 
     public func processRekey(
-        identity: EppIdentity,
+        identity: AuraIdentity,
         peerEd25519Public: Data,
         rekeyBytes: Data,
         peerKyberPublic: Data
     ) throws -> Data {
-        guard identity.handle != nil else { throw EppError.objectDisposed }
+        guard identity.handle != nil else { throw AuraError.objectDisposed }
 
-        var buf = NativeEppBuffer(data: nil, length: 0)
-        var err = NativeEppError(code: 0, message: nil)
+        var buf = NativeAuraBuffer(data: nil, length: 0)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = peerEd25519Public.withUnsafeBytes { peerEdPtr in
             rekeyBytes.withUnsafeBytes { rekeyPtr in
                 peerKyberPublic.withUnsafeBytes { peerKyberPtr in
@@ -642,13 +642,13 @@ public final class EppVoipSession: @unchecked Sendable {
     }
 
     public func processRekeyAck(
-        identity: EppIdentity,
+        identity: AuraIdentity,
         peerEd25519Public: Data,
         ackBytes: Data
     ) throws {
-        guard identity.handle != nil else { throw EppError.objectDisposed }
+        guard identity.handle != nil else { throw AuraError.objectDisposed }
 
-        var err = NativeEppError(code: 0, message: nil)
+        var err = NativeAuraError(code: 0, message: nil)
         let code = peerEd25519Public.withUnsafeBytes { peerEdPtr in
             ackBytes.withUnsafeBytes { ackPtr in
                 native_epp_voip_process_rekey_ack(
@@ -666,15 +666,15 @@ public final class EppVoipSession: @unchecked Sendable {
     }
 
     public static func acceptCall(
-        identity: EppIdentity,
+        identity: AuraIdentity,
         callInit: Data,
         peerKyberPublic: Data
-    ) throws -> (session: EppVoipSession, callAccept: Data) {
-        guard identity.handle != nil else { throw EppError.objectDisposed }
+    ) throws -> (session: AuraVoipSession, callAccept: Data) {
+        guard identity.handle != nil else { throw AuraError.objectDisposed }
 
-        var outAccept = NativeEppBuffer(data: nil, length: 0)
+        var outAccept = NativeAuraBuffer(data: nil, length: 0)
         var outSession: UnsafeMutableRawPointer?
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = callInit.withUnsafeBytes { callInitPtr in
             peerKyberPublic.withUnsafeBytes { peerKyberPtr in
                 native_epp_voip_accept_call(
@@ -693,23 +693,23 @@ public final class EppVoipSession: @unchecked Sendable {
             if outAccept.data != nil { native_epp_buffer_release(&outAccept) }
             native_epp_error_free(&outError)
         }
-        guard result == EPP_SUCCESS, let sessionHandle = outSession else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let sessionHandle = outSession else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         guard let acceptData = dataFromBuffer(outAccept) else {
-            throw EppError.bufferTooSmall
+            throw AuraError.bufferTooSmall
         }
-        return (EppVoipSession(handle: sessionHandle), acceptData)
+        return (AuraVoipSession(handle: sessionHandle), acceptData)
     }
 
     public static func importSealedState(
         _ sealedState: Data,
         stateKey: Data,
         minExternalCounter: UInt64
-    ) throws -> (session: EppVoipSession, externalCounter: UInt64) {
+    ) throws -> (session: AuraVoipSession, externalCounter: UInt64) {
         var outSession: UnsafeMutableRawPointer?
         var outCounter: UInt64 = 0
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
 
         let counterResult = sealedState.withUnsafeBytes { stateBytes in
             native_epp_voip_sealed_state_external_counter(
@@ -719,12 +719,12 @@ public final class EppVoipSession: @unchecked Sendable {
                 &outError
             )
         }
-        guard counterResult == EPP_SUCCESS else {
+        guard counterResult == AURA_SUCCESS else {
             defer { native_epp_error_free(&outError) }
-            throw EppError.from(code: counterResult, nativeError: outError)
+            throw AuraError.from(code: counterResult, nativeError: outError)
         }
         native_epp_error_free(&outError)
-        outError = NativeEppError(code: 0, message: nil)
+        outError = NativeAuraError(code: 0, message: nil)
 
         let result = sealedState.withUnsafeBytes { stateBytes in
             stateKey.withUnsafeBytes { keyBytes in
@@ -740,22 +740,22 @@ public final class EppVoipSession: @unchecked Sendable {
             }
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS, let sessionHandle = outSession else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let sessionHandle = outSession else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
-        return (EppVoipSession(handle: sessionHandle), outCounter)
+        return (AuraVoipSession(handle: sessionHandle), outCounter)
     }
 
     public static func importSealedState(
         _ sealedState: Data,
         stateKey: Data,
         minExternalCounter: UInt64,
-        timeProvider: EppTimeProvider
-    ) throws -> (session: EppVoipSession, externalCounter: UInt64) {
-        guard timeProvider.handle != nil else { throw EppError.objectDisposed }
+        timeProvider: AuraTimeProvider
+    ) throws -> (session: AuraVoipSession, externalCounter: UInt64) {
+        guard timeProvider.handle != nil else { throw AuraError.objectDisposed }
         var outSession: UnsafeMutableRawPointer?
         var outCounter: UInt64 = 0
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
 
         let counterResult = sealedState.withUnsafeBytes { stateBytes in
             native_epp_voip_sealed_state_external_counter(
@@ -765,12 +765,12 @@ public final class EppVoipSession: @unchecked Sendable {
                 &outError
             )
         }
-        guard counterResult == EPP_SUCCESS else {
+        guard counterResult == AURA_SUCCESS else {
             defer { native_epp_error_free(&outError) }
-            throw EppError.from(code: counterResult, nativeError: outError)
+            throw AuraError.from(code: counterResult, nativeError: outError)
         }
         native_epp_error_free(&outError)
-        outError = NativeEppError(code: 0, message: nil)
+        outError = NativeAuraError(code: 0, message: nil)
 
         let result = sealedState.withUnsafeBytes { stateBytes in
             stateKey.withUnsafeBytes { keyBytes in
@@ -787,20 +787,20 @@ public final class EppVoipSession: @unchecked Sendable {
             }
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS, let sessionHandle = outSession else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let sessionHandle = outSession else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
-        return (EppVoipSession(handle: sessionHandle), outCounter)
+        return (AuraVoipSession(handle: sessionHandle), outCounter)
     }
 
     public static func importSealedState(
         _ sealedState: Data,
         stateKey: Data,
-        tracker: EppSealedStateCounterTracker
-    ) throws -> EppVoipSession {
-        guard tracker.handle != nil else { throw EppError.objectDisposed }
+        tracker: AuraSealedStateCounterTracker
+    ) throws -> AuraVoipSession {
+        guard tracker.handle != nil else { throw AuraError.objectDisposed }
         var outSession: UnsafeMutableRawPointer?
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = sealedState.withUnsafeBytes { stateBytes in
             stateKey.withUnsafeBytes { keyBytes in
                 native_epp_voip_import_sealed_state_with_tracker(
@@ -815,22 +815,22 @@ public final class EppVoipSession: @unchecked Sendable {
             }
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS, let sessionHandle = outSession else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let sessionHandle = outSession else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
-        return EppVoipSession(handle: sessionHandle)
+        return AuraVoipSession(handle: sessionHandle)
     }
 
     public static func importSealedState(
         _ sealedState: Data,
         stateKey: Data,
-        tracker: EppSealedStateCounterTracker,
-        timeProvider: EppTimeProvider
-    ) throws -> EppVoipSession {
-        guard tracker.handle != nil else { throw EppError.objectDisposed }
-        guard timeProvider.handle != nil else { throw EppError.objectDisposed }
+        tracker: AuraSealedStateCounterTracker,
+        timeProvider: AuraTimeProvider
+    ) throws -> AuraVoipSession {
+        guard tracker.handle != nil else { throw AuraError.objectDisposed }
+        guard timeProvider.handle != nil else { throw AuraError.objectDisposed }
         var outSession: UnsafeMutableRawPointer?
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = sealedState.withUnsafeBytes { stateBytes in
             stateKey.withUnsafeBytes { keyBytes in
                 native_epp_voip_import_sealed_state_with_tracker_and_time_provider(
@@ -846,19 +846,19 @@ public final class EppVoipSession: @unchecked Sendable {
             }
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS, let sessionHandle = outSession else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let sessionHandle = outSession else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
-        return EppVoipSession(handle: sessionHandle)
+        return AuraVoipSession(handle: sessionHandle)
     }
 
     public static func restorePersistedState(
-        slot: EppSealedStateSlot,
+        slot: AuraSealedStateSlot,
         stateKey: Data
-    ) throws -> EppVoipSession {
-        guard slot.handle != nil else { throw EppError.objectDisposed }
+    ) throws -> AuraVoipSession {
+        guard slot.handle != nil else { throw AuraError.objectDisposed }
         var outSession: UnsafeMutableRawPointer?
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = stateKey.withUnsafeBytes { keyBytes in
             native_epp_voip_restore_persisted_state(
                 slot.handle,
@@ -869,21 +869,21 @@ public final class EppVoipSession: @unchecked Sendable {
             )
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS, let sessionHandle = outSession else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let sessionHandle = outSession else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
-        return EppVoipSession(handle: sessionHandle)
+        return AuraVoipSession(handle: sessionHandle)
     }
 
     public static func restorePersistedState(
-        slot: EppSealedStateSlot,
+        slot: AuraSealedStateSlot,
         stateKey: Data,
-        timeProvider: EppTimeProvider
-    ) throws -> EppVoipSession {
-        guard slot.handle != nil else { throw EppError.objectDisposed }
-        guard timeProvider.handle != nil else { throw EppError.objectDisposed }
+        timeProvider: AuraTimeProvider
+    ) throws -> AuraVoipSession {
+        guard slot.handle != nil else { throw AuraError.objectDisposed }
+        guard timeProvider.handle != nil else { throw AuraError.objectDisposed }
         var outSession: UnsafeMutableRawPointer?
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = stateKey.withUnsafeBytes { keyBytes in
             native_epp_voip_restore_persisted_state_with_time_provider(
                 slot.handle,
@@ -895,15 +895,15 @@ public final class EppVoipSession: @unchecked Sendable {
             )
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS, let sessionHandle = outSession else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS, let sessionHandle = outSession else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
-        return EppVoipSession(handle: sessionHandle)
+        return AuraVoipSession(handle: sessionHandle)
     }
 
     public static func sealedStateExternalCounter(_ sealedState: Data) throws -> UInt64 {
         var outCounter: UInt64 = 0
-        var outError = NativeEppError(code: 0, message: nil)
+        var outError = NativeAuraError(code: 0, message: nil)
         let result = sealedState.withUnsafeBytes { stateBytes in
             native_epp_voip_sealed_state_external_counter(
                 stateBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
@@ -913,8 +913,8 @@ public final class EppVoipSession: @unchecked Sendable {
             )
         }
         defer { native_epp_error_free(&outError) }
-        guard result == EPP_SUCCESS else {
-            throw EppError.from(code: result, nativeError: outError)
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
         }
         return outCounter
     }

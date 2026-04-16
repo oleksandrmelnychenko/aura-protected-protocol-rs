@@ -1,5 +1,5 @@
-framework module EcliptixProtocolC {
-  header "epp_api.h"
-  header "epp_export.h"
+framework module AuraProtectedProtocolC {
+  header "aura_api.h"
+  header "aura_export.h"
   export *
 }

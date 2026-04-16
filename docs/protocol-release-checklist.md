@@ -44,7 +44,7 @@
 - які саме protocol size/count limits додані або змінені;
 - чи є зміни FFI surface (нові функції / змінені сигнатури) або лише behavioral hardening;
 - чи змінились low-level lifecycle контракти (`**handle` destroy, nulling, idempotence);
-- чи з'явились нові public error codes (`EPP_ERROR_BUSY`) або нові rejection rules (наприклад forward-only manual clock);
+- чи з'явились нові public error codes (`AURA_ERROR_BUSY`) або нові rejection rules (наприклад forward-only manual clock);
 - які нові rejection paths з'явились (`invalid_input`, `invalid_state`) і як інтеграторам їх обробляти.
 
 Окремо варто дати migration notes для:
@@ -80,7 +80,7 @@
 - sealed/franking decrypt artifacts
 - session identity/binding getters
 - external join authorization flow
-- `EPP_ERROR_BUSY` surface у headers + Swift mapping
+- `AURA_ERROR_BUSY` surface у headers + Swift mapping
 - forward-only manual time provider semantics
 - nulling/idempotent destroy для VoIP/session-style handle-ів
 
