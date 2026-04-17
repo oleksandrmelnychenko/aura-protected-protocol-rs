@@ -469,13 +469,23 @@ impl HandshakeInitiator {
             CryptoInterop::secure_wipe(&mut kyber_shared_secret);
         })?;
 
-        let session_id = derive_key_bytes(&root_key, SESSION_ID_BYTES, &[], SESSION_ID_INFO)
-            .inspect_err(|_e| {
-                CryptoInterop::secure_wipe(&mut identity_private);
-                CryptoInterop::secure_wipe(&mut eph_private);
-                CryptoInterop::secure_wipe(&mut root_key);
-                CryptoInterop::secure_wipe(&mut kyber_shared_secret);
-            })?;
+        // Bind session_id to the Kyber ciphertext (salt) so that two
+        // handshakes whose root_key happens to match for any reason cannot
+        // share a session_id.  ML-KEM ciphertexts are fresh on every
+        // encapsulation, providing a transcript-level uniqueness guarantee
+        // on top of root_key's DH/KEM-derived content.
+        let session_id = derive_key_bytes(
+            &root_key,
+            SESSION_ID_BYTES,
+            &kyber_ciphertext,
+            SESSION_ID_INFO,
+        )
+        .inspect_err(|_e| {
+            CryptoInterop::secure_wipe(&mut identity_private);
+            CryptoInterop::secure_wipe(&mut eph_private);
+            CryptoInterop::secure_wipe(&mut root_key);
+            CryptoInterop::secure_wipe(&mut kyber_shared_secret);
+        })?;
 
         let metadata_context =
             build_metadata_context(&eph_public, &peer_bundle.signed_pre_key_public, &session_id);
@@ -1015,16 +1025,25 @@ impl HandshakeResponder {
             CryptoInterop::secure_wipe(&mut kyber_shared_secret);
         })?;
 
-        let session_id = derive_key_bytes(&root_key, SESSION_ID_BYTES, &[], SESSION_ID_INFO)
-            .inspect_err(|_e| {
-                CryptoInterop::secure_wipe(&mut spk_private);
-                CryptoInterop::secure_wipe(&mut identity_private);
-                if !opk_private.is_empty() {
-                    CryptoInterop::secure_wipe(&mut opk_private);
-                }
-                CryptoInterop::secure_wipe(&mut root_key);
-                CryptoInterop::secure_wipe(&mut kyber_shared_secret);
-            })?;
+        // Bind session_id to the Kyber ciphertext (salt) — see initiator
+        // path for rationale.  Both sides derive the same value because
+        // init_message.kyber_ciphertext is a verbatim copy of what the
+        // initiator produced.
+        let session_id = derive_key_bytes(
+            &root_key,
+            SESSION_ID_BYTES,
+            &init_message.kyber_ciphertext,
+            SESSION_ID_INFO,
+        )
+        .inspect_err(|_e| {
+            CryptoInterop::secure_wipe(&mut spk_private);
+            CryptoInterop::secure_wipe(&mut identity_private);
+            if !opk_private.is_empty() {
+                CryptoInterop::secure_wipe(&mut opk_private);
+            }
+            CryptoInterop::secure_wipe(&mut root_key);
+            CryptoInterop::secure_wipe(&mut kyber_shared_secret);
+        })?;
 
         let metadata_context = build_metadata_context(
             &local_bundle.signed_pre_key_public,
@@ -1196,13 +1215,20 @@ impl HandshakeResponder {
         CryptoInterop::secure_wipe(&mut { metadata_key });
         CryptoInterop::secure_wipe(&mut { session_id });
 
-        // Commit replay reservation before burning OPK state. If distributed replay
-        // commit fails, caller must be able to retry the same HandshakeInit without
-        // losing one-time key inventory.
-        replay_reservation.commit()?;
+        // Consume the one-time pre-key BEFORE committing the replay
+        // reservation.  If the order is reversed, a transient failure of the
+        // OPK store after a successful replay commit would mark the init
+        // fingerprint as consumed while leaving the OPK private key
+        // available — a second handshake referencing the same OPK would
+        // succeed, breaking the X3DH one-time-use invariant and degrading
+        // forward secrecy.  The current order sacrifices at most one OPK on
+        // a rare store error (callers must tolerate OPK inventory loss
+        // regardless, since X3DH already allows pre-key-less fallback) to
+        // preserve the uniqueness guarantee.
         if let Some(opk_id) = used_opk_id {
             identity_keys.consume_one_time_pre_key_by_id(opk_id)?;
         }
+        replay_reservation.commit()?;
 
         Ok(Self {
             ack_message,

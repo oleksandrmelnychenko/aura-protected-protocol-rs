@@ -121,6 +121,16 @@ mod inner {
     unsafe impl Sync for SecureMemoryHandle {}
 
     impl SecureMemoryHandle {
+        /// Fails-closed if `mlock` cannot pin the page in physical memory.
+        /// A silent fallback would let long-term private keys be paged to
+        /// swap, silently weakening forward secrecy — callers in sandboxed
+        /// environments (containers without CAP_IPC_LOCK, RLIMIT_MEMLOCK
+        /// exhaustion, etc.) must see an explicit `AllocationFailed` error
+        /// instead of discovering the degradation at exploit time.
+        ///
+        /// To opt into non-mlocked allocation explicitly (e.g., for tests or
+        /// constrained environments where swap is known-safe), build with
+        /// `--features no-secure-memory`.
         #[allow(unsafe_code)]
         pub fn allocate(size: usize) -> Result<Self, CryptoError> {
             if size == 0 || size > MAX_BUFFER_SIZE {
@@ -128,19 +138,24 @@ mod inner {
             }
             #[allow(unused_mut)]
             let mut data = vec![0u8; size].into_boxed_slice();
-            let mlocked =
-                unsafe { libc::mlock(data.as_ptr().cast::<libc::c_void>(), data.len()) == 0 };
-            #[cfg(target_os = "linux")]
-            if mlocked {
-                unsafe {
-                    libc::madvise(
-                        data.as_mut_ptr().cast::<libc::c_void>(),
-                        data.len(),
-                        libc::MADV_DONTDUMP,
-                    );
-                }
+            let rc = unsafe { libc::mlock(data.as_ptr().cast::<libc::c_void>(), data.len()) };
+            if rc != 0 {
+                // `data` is dropped here; its contents are all-zero so no
+                // secret material touched memory yet.
+                return Err(CryptoError::AllocationFailed { size });
             }
-            Ok(Self { data, mlocked })
+            #[cfg(target_os = "linux")]
+            unsafe {
+                libc::madvise(
+                    data.as_mut_ptr().cast::<libc::c_void>(),
+                    data.len(),
+                    libc::MADV_DONTDUMP,
+                );
+            }
+            Ok(Self {
+                data,
+                mlocked: true,
+            })
         }
 
         pub fn size(&self) -> usize {

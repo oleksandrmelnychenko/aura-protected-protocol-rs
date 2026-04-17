@@ -969,7 +969,15 @@ fn handshake_responder_replay_guard_commit_failure_allows_retry() {
 }
 
 #[test]
-fn handshake_responder_replay_guard_commit_failure_does_not_burn_opk_before_commit() {
+fn handshake_responder_opk_is_consumed_before_replay_commit() {
+    // L-1 security fix: the OPK is consumed BEFORE the replay reservation
+    // commits.  If the reverse order were used, a transient commit failure
+    // could leave the replay marker set while the OPK remained available,
+    // allowing a second attacker-chosen init to reference the same OPK —
+    // breaking the X3DH one-time-use invariant.  This test locks in the
+    // secure ordering: on commit failure, the OPK is permanently gone
+    // (sacrificed for security) and the retry with the same init fails
+    // because the OPK is no longer available.
     init();
     let mut alice = IdentityKeys::create(5).unwrap();
     let mut bob = IdentityKeys::create(3).unwrap();
@@ -1001,10 +1009,16 @@ fn handshake_responder_replay_guard_commit_failure_does_not_burn_opk_before_comm
     assert!(err.contains("Injected replay guard commit failure"));
     assert_eq!(
         count_local_opks(&bob),
-        initial_opk_count,
-        "OPK inventory must not change when replay commit fails"
+        initial_opk_count - 1,
+        "OPK must be consumed before commit attempt so a commit failure \
+         cannot leave an unconsumed OPK paired with a committed replay marker"
     );
 
+    // Retry with the same init: OPK was already consumed, so this attempt
+    // fails — a legitimate-looking functional regression that is actually
+    // the desired security property (OPK uniqueness preserved).  Callers
+    // must tolerate this outcome, which is consistent with X3DH's existing
+    // requirement that pre-key inventory be treated as ephemeral.
     let second = HandshakeResponder::process_with_replay_guard(
         &mut bob,
         &bob_bundle,
@@ -1013,13 +1027,13 @@ fn handshake_responder_replay_guard_commit_failure_does_not_burn_opk_before_comm
         Some(&replay_guard),
     );
     assert!(
-        second.is_ok(),
-        "retry after distributed replay guard commit failure must remain possible"
+        second.is_err(),
+        "retry with an init whose OPK was already consumed must fail"
     );
     assert_eq!(
         count_local_opks(&bob),
         initial_opk_count - 1,
-        "exactly one OPK must be consumed only after successful commit"
+        "OPK inventory stays at the post-failure level (one-time-use invariant)"
     );
 }
 

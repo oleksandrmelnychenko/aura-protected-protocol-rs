@@ -130,19 +130,39 @@ impl GroupKeySchedule {
         Ok(std::mem::take(&mut *z))
     }
 
+    /// Computes `SHA-256( len32(group_id) || group_id || epoch_le64 ||
+    /// len32(tree_hash) || tree_hash || len32(policy_bytes) || policy_bytes )`.
+    ///
+    /// Variable-length fields are length-prefixed with little-endian u32 so
+    /// that no concatenation ambiguity is possible: two distinct logical
+    /// contexts can never produce the same byte stream regardless of how
+    /// `group_id`, `tree_hash`, or `policy_bytes` are sized.  Without the
+    /// length prefixes, a caller with a non-canonical `group_id` length
+    /// could collide with another context whose fields shift by the missing
+    /// bytes.
     pub fn compute_group_context_hash(
         group_id: &[u8],
         epoch: u64,
         tree_hash: &[u8],
         policy_bytes: &[u8],
     ) -> Vec<u8> {
+        #[allow(clippy::cast_possible_truncation)]
+        fn append_len_prefixed(buf: &mut Vec<u8>, bytes: &[u8]) {
+            buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            buf.extend_from_slice(bytes);
+        }
+
         let mut ctx = Vec::with_capacity(
-            group_id.len() + std::mem::size_of::<u64>() + tree_hash.len() + policy_bytes.len(),
+            3 * std::mem::size_of::<u32>()
+                + group_id.len()
+                + std::mem::size_of::<u64>()
+                + tree_hash.len()
+                + policy_bytes.len(),
         );
-        ctx.extend_from_slice(group_id);
+        append_len_prefixed(&mut ctx, group_id);
         ctx.extend_from_slice(&epoch.to_le_bytes());
-        ctx.extend_from_slice(tree_hash);
-        ctx.extend_from_slice(policy_bytes);
+        append_len_prefixed(&mut ctx, tree_hash);
+        append_len_prefixed(&mut ctx, policy_bytes);
 
         sha2::Sha256::digest(&ctx).to_vec()
     }

@@ -21,6 +21,28 @@ extern "C" {
  *     buffer owned by the caller. Release it with aura_buffer_release().
  *     Reusing the same AuraBuffer across successful calls is allowed; the FFI
  *     layer replaces any previous FFI-owned contents before writing new data.
+ *
+ *     CRITICAL #1 — ZERO-INITIALIZATION: Every `AuraBuffer`,
+ *     `AuraEncryptedFrame`, `AuraDecryptedFrame`, `AuraEnvelopeMetadata`,
+ *     `AuraGroupDecryptResult`, etc. MUST be zero-initialized before the
+ *     first call that writes into it.  In C: `AuraEncryptedFrame f = {0};`
+ *     NOT `AuraEncryptedFrame f;` (the latter leaves garbage on the stack).
+ *     In Rust: `unsafe { std::mem::zeroed() }`.  In Swift: default
+ *     initializers already produce zero values.  The library inspects any
+ *     existing FFI-owned contents before overwriting (to release them and
+ *     avoid leaks when a struct is reused across calls); that inspection
+ *     is only safe when the prior contents are either zero-initialized or
+ *     a valid library allocation.  Uninitialized stack bytes = undefined
+ *     behavior on the first call.
+ *
+ *     CRITICAL #2 — ALLOCATOR OWNERSHIP: `AuraBuffer.data` MUST always be
+ *     either NULL or a pointer returned by an aura_* FFI function
+ *     (aura_buffer_alloc, or written by an out_* parameter).  NEVER assign
+ *     a malloc()/new/Swift-allocated pointer into `.data` — the Rust
+ *     allocator uses a different heap and free()ing non-Rust memory is
+ *     undefined behavior.  If you need to hand C-allocated data to the
+ *     library, copy into a buffer obtained from aura_buffer_alloc() or
+ *     pass it as a borrowed `(ptr, len)` slice.
  *   - Parameters named `out_error` receive an optional error detail struct.
  *     If non-NULL and an error occurs the struct is populated; free it with
  *     aura_error_free() after use.  Pass NULL to ignore error details.
@@ -471,6 +493,12 @@ typedef struct {
  * into aura_envelope_metadata_parse().  Free its heap contents with
  * aura_envelope_metadata_free() when done.  Do NOT free the struct itself —
  * it is caller-allocated (typically on the stack).
+ *
+ * MUST be zero-initialized on first use (`AuraEnvelopeMetadata m = {0};`).
+ * On subsequent `aura_envelope_metadata_parse()` calls the previous
+ * `correlation_id` heap allocation is freed before the new value is
+ * written, so reusing the same struct across calls is allowed; passing
+ * uninitialized stack memory is undefined behavior.
  *
  *   envelope_type          — semantic type of the message.
  *   envelope_id            — request/response correlation number chosen by
@@ -1063,6 +1091,8 @@ AURA_API AuraErrorCode aura_session_get_local_identity(
  *                      (out_metadata.data, out_metadata.length). Borrowed.
  *   metadata_length  — byte length of metadata_bytes.
  *   out_meta         — caller-allocated AuraEnvelopeMetadata to fill.
+ *                      Must be zero-initialized before first use; reusing the
+ *                      same struct across calls is supported after that.
  *                      correlation_id inside will be heap-allocated if present;
  *                      free it with aura_envelope_metadata_free().
  *   out_error        — optional error detail.
@@ -1099,6 +1129,10 @@ AURA_API void aura_envelope_metadata_free(AuraEnvelopeMetadata* meta);
  *
  * Release every AuraBuffer field with aura_buffer_release() when done.
  * The struct itself is caller-allocated and must not be freed.
+ * MUST be zero-initialized on first use (`AuraEncryptedFrame frame = {0};`).
+ * The library may release prior FFI-owned buffers when reusing the same
+ * struct across calls, so passing uninitialized stack memory is undefined
+ * behavior.
  */
 typedef struct {
     AuraBuffer call_id;
@@ -1115,6 +1149,10 @@ typedef struct {
  *
  * Release payload with aura_buffer_release() when done.  All scalar fields are
  * plain metadata copied from the authenticated RTP-like header.
+ * MUST be zero-initialized on first use (`AuraDecryptedFrame frame = {0};`).
+ * The library may release prior FFI-owned buffers when reusing the same
+ * struct across calls, so passing uninitialized stack memory is undefined
+ * behavior.
  */
 typedef struct {
     AuraBuffer payload;
@@ -1226,7 +1264,13 @@ AURA_API AuraErrorCode aura_voip_accept_call(
 /*
  * aura_voip_encrypt_frame — encrypt one media frame.
  *
- * `out_frame` is required.
+ * `out_frame` is required and MUST be zero-initialized before the first
+ * call (`AuraEncryptedFrame f = {0};` in C).  On every subsequent call the
+ * library inspects any FFI-owned contents to release/zeroize them before
+ * writing the new ciphertext, so reusing the same struct across calls is
+ * allowed and allocation-efficient.  Passing uninitialized stack memory is
+ * undefined behavior — the library cannot distinguish garbage from a
+ * previously-written valid allocation.
  */
 AURA_API AuraErrorCode aura_voip_encrypt_frame(
     const AuraVoipSessionHandle*  handle,
@@ -1242,7 +1286,9 @@ AURA_API AuraErrorCode aura_voip_encrypt_frame(
 /*
  * aura_voip_decrypt_frame — decrypt one received media/control frame.
  *
- * `out_frame` is required.
+ * `out_frame` is required and MUST be zero-initialized on first use
+ * (`AuraDecryptedFrame f = {0};`).  Same reuse semantics as
+ * aura_voip_encrypt_frame — see that comment.
  */
 AURA_API AuraErrorCode aura_voip_decrypt_frame(
     const AuraVoipSessionHandle*  handle,
@@ -1948,8 +1994,14 @@ AURA_API AuraErrorCode aura_attachment_streaming_encryptor_finish(
     uint8_t*                     out_has_chunk,
     AuraError*                    out_error);
 
+/**
+ * Destroys a streaming encryptor and nulls the caller's handle pointer so a
+ * redundant destroy from a different code path becomes a no-op (prevents
+ * double-free).  Pass the address of your `AuraStreamingEncryptorHandle*`
+ * variable.
+ */
 AURA_API void aura_attachment_streaming_encryptor_destroy(
-    AuraStreamingEncryptorHandle* handle);
+    AuraStreamingEncryptorHandle** handle_ptr);
 
 AURA_API AuraErrorCode aura_attachment_streaming_decryptor_create(
     const uint8_t*              file_key,
@@ -1977,8 +2029,14 @@ AURA_API AuraErrorCode aura_attachment_streaming_decryptor_write(
 AURA_API bool aura_attachment_streaming_decryptor_is_complete(
     AuraStreamingDecryptorHandle* handle);
 
+/**
+ * Destroys a streaming decryptor and nulls the caller's handle pointer so a
+ * redundant destroy from a different code path becomes a no-op (prevents
+ * double-free).  Pass the address of your `AuraStreamingDecryptorHandle*`
+ * variable.
+ */
 AURA_API void aura_attachment_streaming_decryptor_destroy(
-    AuraStreamingDecryptorHandle* handle);
+    AuraStreamingDecryptorHandle** handle_ptr);
 
 AURA_API AuraErrorCode aura_attachment_manifest_create_v2(
     const uint8_t* attachment_id,
@@ -3150,13 +3208,22 @@ AURA_API void aura_group_destroy(AuraGroupSessionHandle** handle);
  * session.  All callbacks are optional (set to NULL to ignore).
  * The library never calls a NULL slot.
  *
- * THREADING: Callbacks may be invoked from any thread that calls an
- * aura_session_* function.  If your user_data is shared state, protect it
- * with your own lock.
+ * THREADING: Callbacks may be invoked from any thread that drives ratchet /
+ * session state — NOT necessarily the thread that called
+ * aura_session_set_event_handler.  user_data MUST be thread-safe (protected
+ * by your own lock, or marshalled to the UI thread inside the callback for
+ * Swift `@MainActor` types).  Treating the callback as main-thread-only is
+ * a bug that will crash under concurrent session use.
  *
  * LIFETIME: user_data must remain valid until the session is destroyed or a
  * new handler is registered.  The library holds no reference to user_data
  * beyond passing it verbatim to each callback.
+ *
+ * PANICS / EXCEPTIONS: Your callback must NOT throw a C++ exception or
+ * raise a Rust panic across the call boundary.  The library installs
+ * `catch_unwind` around the invocation so a Rust-side panic in your
+ * callback is contained and the event is silently dropped, but this is a
+ * last-ditch safety net — write callbacks that never panic.
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /*

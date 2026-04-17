@@ -1421,6 +1421,27 @@ impl Session {
     }
 
     fn enforce_metadata_cache_limit(inner: &mut SessionInner) {
+        // Age-based eviction: drop any entry whose epoch is further than
+        // MAX_METADATA_KEY_EPOCH_AGE behind the current recv epoch.  This
+        // bounds the forward-secrecy exposure window for envelope metadata
+        // (message index, envelope type, correlation_id) even when the
+        // count-based limit isn't reached.
+        let current_epoch = inner.state.recv_ratchet_epoch;
+        let min_allowed_epoch = current_epoch.saturating_sub(MAX_METADATA_KEY_EPOCH_AGE);
+        loop {
+            let Some((&oldest_epoch, _)) = inner.cached_metadata_keys.iter().next() else {
+                break;
+            };
+            if oldest_epoch < min_allowed_epoch {
+                if let Some((_, mut key)) = inner.cached_metadata_keys.pop_first() {
+                    CryptoInterop::secure_wipe(&mut key);
+                }
+            } else {
+                break;
+            }
+        }
+        // Count-based eviction (defense-in-depth for replay windows where
+        // the epoch counter advances slowly but the cache still grows).
         while inner.cached_metadata_keys.len() > MAX_CACHED_METADATA_KEYS {
             if let Some((_, mut key)) = inner.cached_metadata_keys.pop_first() {
                 CryptoInterop::secure_wipe(&mut key);

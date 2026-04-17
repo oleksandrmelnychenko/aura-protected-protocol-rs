@@ -2084,13 +2084,21 @@ impl GroupSession {
     const SENDER_AAD_BYTES: usize = GROUP_ID_BYTES + size_of::<u64>();
     const PAYLOAD_AAD_BYTES: usize = GROUP_ID_BYTES + size_of::<u64>() + size_of::<u32>() * 3;
 
-    fn build_sender_aad(group_id: &[u8], epoch: u64) -> [u8; Self::SENDER_AAD_BYTES] {
+    fn build_sender_aad(
+        group_id: &[u8],
+        epoch: u64,
+    ) -> Result<[u8; Self::SENDER_AAD_BYTES], ProtocolError> {
+        if group_id.len() != GROUP_ID_BYTES {
+            return Err(ProtocolError::invalid_input(format!(
+                "group_id length must be exactly {GROUP_ID_BYTES} bytes, got {}",
+                group_id.len()
+            )));
+        }
         let mut aad = [0u8; Self::SENDER_AAD_BYTES];
-        let gid_len = group_id.len().min(GROUP_ID_BYTES);
-        aad[..gid_len].copy_from_slice(&group_id[..gid_len]);
+        aad[..GROUP_ID_BYTES].copy_from_slice(group_id);
         let epoch_off = GROUP_ID_BYTES;
         aad[epoch_off..epoch_off + size_of::<u64>()].copy_from_slice(&epoch.to_le_bytes());
-        aad
+        Ok(aad)
     }
 
     fn build_payload_aad(
@@ -2098,10 +2106,15 @@ impl GroupSession {
         epoch: u64,
         leaf_idx: u32,
         generation: u32,
-    ) -> [u8; Self::PAYLOAD_AAD_BYTES] {
+    ) -> Result<[u8; Self::PAYLOAD_AAD_BYTES], ProtocolError> {
+        if group_id.len() != GROUP_ID_BYTES {
+            return Err(ProtocolError::invalid_input(format!(
+                "group_id length must be exactly {GROUP_ID_BYTES} bytes, got {}",
+                group_id.len()
+            )));
+        }
         let mut aad = [0u8; Self::PAYLOAD_AAD_BYTES];
-        let gid_len = group_id.len().min(GROUP_ID_BYTES);
-        aad[..gid_len].copy_from_slice(&group_id[..gid_len]);
+        aad[..GROUP_ID_BYTES].copy_from_slice(group_id);
         let mut off = GROUP_ID_BYTES;
         aad[off..off + size_of::<u64>()].copy_from_slice(&epoch.to_le_bytes());
         off += size_of::<u64>();
@@ -2110,7 +2123,7 @@ impl GroupSession {
         aad[off..off + size_of::<u32>()].copy_from_slice(&generation.to_le_bytes());
         off += size_of::<u32>();
         aad[off..off + size_of::<u32>()].copy_from_slice(&GROUP_PROTOCOL_VERSION.to_le_bytes());
-        aad
+        Ok(aad)
     }
 
     fn append_len_prefixed(buf: &mut Vec<u8>, bytes: &[u8]) {
@@ -2315,7 +2328,7 @@ impl GroupSession {
         let payload_nonce = CryptoInterop::get_random_bytes(AES_GCM_NONCE_BYTES);
 
         let aad =
-            Self::build_payload_aad(&inner.group_id, inner.epoch, inner.my_leaf_idx, generation);
+            Self::build_payload_aad(&inner.group_id, inner.epoch, inner.my_leaf_idx, generation)?;
 
         let encrypted_payload = AesGcm::encrypt(&message_key, &payload_nonce, &padded, &aad)?;
         CryptoInterop::secure_wipe(&mut message_key);
@@ -2345,7 +2358,7 @@ impl GroupSession {
             sender_data_nonce[i] ^= reuse_guard[i];
         }
 
-        let sender_aad = Self::build_sender_aad(&inner.group_id, inner.epoch);
+        let sender_aad = Self::build_sender_aad(&inner.group_id, inner.epoch)?;
 
         let encrypted_sender_data = AesGcm::encrypt(
             &inner.epoch_keys.metadata_key,
@@ -2540,7 +2553,7 @@ impl GroupSession {
             ));
         };
 
-        let sender_aad = Self::build_sender_aad(&inner.group_id, inner.epoch);
+        let sender_aad = Self::build_sender_aad(&inner.group_id, inner.epoch)?;
 
         let sender_data_bytes = AesGcm::decrypt(
             &inner.epoch_keys.metadata_key,
@@ -2597,7 +2610,7 @@ impl GroupSession {
             inner.epoch,
             sender_data.sender_leaf_index,
             sender_data.generation,
-        );
+        )?;
 
         let padded_plaintext = AesGcm::decrypt(
             &message_key,

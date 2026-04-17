@@ -331,6 +331,29 @@ pub fn compute_rekey_mac(
     Ok(mac.finalize().into_bytes().to_vec())
 }
 
+/// Like [`compute_rekey_mac`] but mixes the **current session's root_secret**
+/// into the MAC-key derivation before the fresh Kyber shared secret.  This
+/// binds the rekey MAC to the established session — only a peer that
+/// already knows `current_root_secret` AND successfully encapsulates to the
+/// other peer's Kyber public key can produce a valid MAC.  Without this
+/// binding, an attacker who happened to obtain a signature oracle for
+/// arbitrary `sign_rekey_material` inputs could forge a rekey whose MAC
+/// verifies against Kyber-SS alone.
+pub fn compute_rekey_mac_bound(
+    current_root_secret: &[u8],
+    fresh_kyber_ss: &[u8],
+    info: &[u8],
+    call_id: &[u8],
+    rekey_generation: u32,
+) -> Result<Vec<u8>, ProtocolError> {
+    let mut ikm = Vec::with_capacity(current_root_secret.len() + fresh_kyber_ss.len());
+    ikm.extend_from_slice(current_root_secret);
+    ikm.extend_from_slice(fresh_kyber_ss);
+    let result = compute_rekey_mac(&ikm, info, call_id, rekey_generation);
+    CryptoInterop::secure_wipe(&mut ikm);
+    result
+}
+
 fn derive_call_keys(
     root_secret: &[u8],
     call_id: &[u8],
@@ -611,7 +634,7 @@ pub fn rekey_initiate(
     identity_ed25519_secret: &[u8],
     peer_kyber_public: &[u8],
     call_id: &[u8],
-    _current_root_secret: &SecureMemoryHandle,
+    current_root_secret: &SecureMemoryHandle,
     rekey_generation: u32,
 ) -> Result<(CallInitOutput, u32), ProtocolError> {
     if rekey_generation >= MAX_RATCHET_GENERATION {
@@ -640,10 +663,19 @@ pub fn rekey_initiate(
         &kyber_ct,
     )?;
 
+    // Use `read_zeroizing` so the Vec copies of kyber_ss and root_secret
+    // are auto-wiped when they go out of scope.  The underlying bytes still
+    // live on the pageable heap (the source mlock'd allocation is in
+    // SecureMemoryHandle), so we keep the exposure window minimal: these
+    // locals are dropped immediately after the MAC derivation below.
     let kyber_ss_bytes = kyber_ss
-        .read_bytes(KYBER_SHARED_SECRET_BYTES)
+        .read_zeroizing(KYBER_SHARED_SECRET_BYTES)
         .map_err(ProtocolError::from_crypto)?;
-    let mac = compute_rekey_mac(
+    let current_root_bytes = current_root_secret
+        .read_zeroizing(ROOT_KEY_BYTES)
+        .map_err(ProtocolError::from_crypto)?;
+    let mac = compute_rekey_mac_bound(
+        &current_root_bytes,
         &kyber_ss_bytes,
         VOIP_KEY_CONFIRM_CALLER_INFO,
         call_id,

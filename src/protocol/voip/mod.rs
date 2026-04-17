@@ -1156,10 +1156,19 @@ impl VoipSession {
         )
         .map_err(ProtocolError::from_crypto)?;
 
+        // M-3: bind the rekey MAC to the current session's root_secret so
+        // only a peer that already participates in this call can produce a
+        // valid MAC (not just anyone who can encapsulate to our Kyber PK).
+        // Use `read_zeroizing` so the Vec copies are auto-wiped on drop.
         let callee_kyber_bytes = callee_kyber_ss
-            .read_bytes(KYBER_SHARED_SECRET_BYTES)
+            .read_zeroizing(KYBER_SHARED_SECRET_BYTES)
             .map_err(ProtocolError::from_crypto)?;
-        let expected_mac = call_key_exchange::compute_rekey_mac(
+        let current_root_bytes = inner
+            .root_secret
+            .read_zeroizing(ROOT_KEY_BYTES)
+            .map_err(ProtocolError::from_crypto)?;
+        let expected_mac = call_key_exchange::compute_rekey_mac_bound(
+            &current_root_bytes,
             &callee_kyber_bytes,
             VOIP_KEY_CONFIRM_CALLER_INFO,
             &rekey.call_id,
@@ -1195,9 +1204,10 @@ impl VoipSession {
                 .map_err(ProtocolError::from_crypto)?;
 
         let resp_kyber_bytes = resp_kyber_ss
-            .read_bytes(KYBER_SHARED_SECRET_BYTES)
+            .read_zeroizing(KYBER_SHARED_SECRET_BYTES)
             .map_err(ProtocolError::from_crypto)?;
-        let mut combined_pq = Vec::with_capacity(KYBER_SHARED_SECRET_BYTES * 2);
+        let mut combined_pq =
+            zeroize::Zeroizing::new(Vec::with_capacity(KYBER_SHARED_SECRET_BYTES * 2));
         combined_pq.extend_from_slice(&callee_kyber_bytes);
         combined_pq.extend_from_slice(&resp_kyber_bytes);
 

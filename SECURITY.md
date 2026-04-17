@@ -101,3 +101,32 @@ Integrator obligations:
 - enforce per-file and per-chunk size limits at transport edge;
 - validate manifest/chunk structure before storage/forwarding;
 - avoid logging plaintext media, file keys, or decrypted thumbnails.
+
+### Secure-memory (mlock) policy
+
+All long-term keys (identity X25519 / Ed25519, Kyber secret keys, root keys,
+sealed-state AEAD keys) are stored in `SecureMemoryHandle` allocations that
+pin their pages in physical RAM via `mlock(2)` on Linux/macOS. This prevents
+secrets from being written to swap and surviving a reboot on disk.
+
+**Fail-closed policy:** If `mlock` fails (commonly: `EPERM` without
+`CAP_IPC_LOCK`, `ENOMEM` exceeding `RLIMIT_MEMLOCK`, or unsupported on the
+target) `SecureMemoryHandle::allocate` returns `CryptoError::AllocationFailed`
+and the allocation never contains secret material. This is intentional —
+silently falling back to pageable memory is a security regression.
+
+**Deployment notes for Linux containers:**
+
+- Grant the capability: `docker run --cap-add IPC_LOCK ...` (or the k8s
+  `securityContext` equivalent), or raise `RLIMIT_MEMLOCK` to cover your
+  expected working set of keys.
+- To explicitly opt out of the mlock requirement (for test harnesses or
+  environments where swap is disabled / known-safe), build with
+  `--features no-secure-memory`. This is a **compile-time** opt-in and is
+  blocked in release builds by a `compile_error!`.
+
+**Platforms:** iOS and Windows use a non-mlock inner module (iOS does not
+expose `mlock`; Windows would require `VirtualLock` which is not wired up
+yet). On those targets `SecureMemoryHandle` still zeroizes on drop and
+benefits from platform-level memory-protection defaults, but there is no
+explicit swap-prevention guarantee at the library level.

@@ -1236,8 +1236,8 @@ public final class AuraStreamingEncryptor {
     }
 
     deinit {
-        if let h = handle {
-            native_epp_attachment_streaming_encryptor_destroy(h)
+        if handle != nil {
+            native_epp_attachment_streaming_encryptor_destroy(&handle)
         }
     }
 
@@ -1339,8 +1339,8 @@ public final class AuraStreamingDecryptor {
     }
 
     deinit {
-        if let h = handle {
-            native_epp_attachment_streaming_decryptor_destroy(h)
+        if handle != nil {
+            native_epp_attachment_streaming_decryptor_destroy(&handle)
         }
     }
 

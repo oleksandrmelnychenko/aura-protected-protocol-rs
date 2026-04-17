@@ -197,8 +197,15 @@ pub struct AuraVoipSessionHandle {
     pub in_use: AtomicBool,
 }
 
-pub struct AuraStreamingEncryptorHandle(pub Option<StreamingEncryptor>);
-pub struct AuraStreamingDecryptorHandle(pub Option<StreamingDecryptor>);
+pub struct AuraStreamingEncryptorHandle {
+    pub inner: Option<StreamingEncryptor>,
+    pub in_use: AtomicBool,
+}
+
+pub struct AuraStreamingDecryptorHandle {
+    pub inner: Option<StreamingDecryptor>,
+    pub in_use: AtomicBool,
+}
 
 #[repr(C)]
 pub struct AuraEncryptedFrame {
@@ -222,29 +229,31 @@ pub struct AuraDecryptedFrame {
     pub ratchet_generation: u32,
 }
 
+/// Releases all FFI-owned sub-buffers of an [`AuraEncryptedFrame`] (zeroizing
+/// their contents) before zeroing scalar fields.  Must be used when a caller
+/// reuses the same frame across multiple FFI calls, otherwise prior
+/// allocations would leak unzeroed on the heap.
 unsafe fn clear_encrypted_frame(frame: *mut AuraEncryptedFrame) {
     if frame.is_null() {
         return;
     }
-    (*frame).call_id.data = std::ptr::null_mut();
-    (*frame).call_id.length = 0;
+    aura_buffer_release(std::ptr::addr_of_mut!((*frame).call_id));
+    aura_buffer_release(std::ptr::addr_of_mut!((*frame).encrypted_payload));
+    aura_buffer_release(std::ptr::addr_of_mut!((*frame).nonce));
+    aura_buffer_release(std::ptr::addr_of_mut!((*frame).encrypted_header));
     (*frame).ssrc = 0;
     (*frame).frame_counter = 0;
     (*frame).ratchet_generation = 0;
-    (*frame).encrypted_payload.data = std::ptr::null_mut();
-    (*frame).encrypted_payload.length = 0;
-    (*frame).nonce.data = std::ptr::null_mut();
-    (*frame).nonce.length = 0;
-    (*frame).encrypted_header.data = std::ptr::null_mut();
-    (*frame).encrypted_header.length = 0;
 }
 
+/// Releases the FFI-owned plaintext payload of an [`AuraDecryptedFrame`]
+/// (zeroizing it) before zeroing scalar fields.  Required before reuse so the
+/// decrypted media payload is wiped rather than leaked.
 unsafe fn clear_decrypted_frame(frame: *mut AuraDecryptedFrame) {
     if frame.is_null() {
         return;
     }
-    (*frame).payload.data = std::ptr::null_mut();
-    (*frame).payload.length = 0;
+    aura_buffer_release(std::ptr::addr_of_mut!((*frame).payload));
     (*frame).payload_type = 0;
     (*frame).ssrc = 0;
     (*frame).timestamp = 0;
@@ -301,6 +310,20 @@ macro_rules! ffi_catch_panic_value {
             Err(_) => $default,
         }
     };
+}
+
+/// Invokes a C callback function pointer inside `catch_unwind` so that any
+/// panic triggered by the caller's code (e.g. Swift/ObjC shim re-entering
+/// Rust with an invalid argument) is contained instead of unwinding across
+/// the `extern "C"` boundary — which is undefined behavior with the default
+/// `panic = unwind` profile.
+///
+/// The callback's return value (if any) is ignored because these handlers
+/// are fire-and-forget event notifications.
+macro_rules! invoke_c_callback {
+    ($body:expr) => {{
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe { $body }));
+    }};
 }
 
 const fn error_code_from_protocol(e: &ProtocolError) -> AuraErrorCode {
@@ -399,10 +422,15 @@ unsafe fn replace_out_handle<T>(out: *mut *mut T, new_handle: *mut T) {
 
 /// # Safety
 /// `handle` must be null or point to a live `AuraIdentityHandle` created by `aura_identity_create*`.
+///
+/// Acquires the handle's busy-flag; the returned [`BusyGuard`] releases it on
+/// drop, preventing concurrent access from multiple FFI calls (which would
+/// otherwise race on `IdentityKeys` internals including `SecureMemoryHandle`
+/// entries and event-handler `Arc`s).
 unsafe fn require_identity_ref<'a>(
     handle: *const AuraIdentityHandle,
     out_error: *mut AuraError,
-) -> Result<&'a IdentityKeys, AuraErrorCode> {
+) -> Result<(BusyGuard<'a>, &'a IdentityKeys), AuraErrorCode> {
     if handle.is_null() {
         write_error(
             out_error,
@@ -411,7 +439,15 @@ unsafe fn require_identity_ref<'a>(
         );
         return Err(AuraErrorCode::AuraErrorNullPointer);
     }
-    (*handle)
+    let guard = try_acquire_busy(&(*handle).in_use).map_err(|()| {
+        write_error(
+            out_error,
+            AuraErrorCode::AuraErrorBusy,
+            "identity handle is already in use by another call",
+        );
+        AuraErrorCode::AuraErrorBusy
+    })?;
+    let keys = (*handle)
         .inner
         .as_ref()
         .map(|state| &state.keys)
@@ -422,7 +458,8 @@ unsafe fn require_identity_ref<'a>(
                 "handle already destroyed",
             );
             AuraErrorCode::AuraErrorObjectDisposed
-        })
+        })?;
+    Ok((guard, keys))
 }
 
 unsafe fn require_counter_tracker_mut<'a>(
@@ -471,10 +508,13 @@ unsafe fn require_sealed_state_slot_mut<'a>(
 
 /// # Safety
 /// `handle` must be null or point to a live, exclusively-owned `AuraIdentityHandle`.
+///
+/// Acquires the handle's busy-flag; the returned [`BusyGuard`] releases it on
+/// drop, preventing concurrent access from multiple FFI calls.
 unsafe fn require_identity_mut<'a>(
     handle: *mut AuraIdentityHandle,
     out_error: *mut AuraError,
-) -> Result<&'a mut IdentityKeys, AuraErrorCode> {
+) -> Result<(BusyGuard<'a>, &'a mut IdentityKeys), AuraErrorCode> {
     if handle.is_null() {
         write_error(
             out_error,
@@ -483,7 +523,15 @@ unsafe fn require_identity_mut<'a>(
         );
         return Err(AuraErrorCode::AuraErrorNullPointer);
     }
-    (*handle)
+    let guard = try_acquire_busy(&(*handle).in_use).map_err(|()| {
+        write_error(
+            out_error,
+            AuraErrorCode::AuraErrorBusy,
+            "identity handle is already in use by another call",
+        );
+        AuraErrorCode::AuraErrorBusy
+    })?;
+    let keys = (*handle)
         .inner
         .as_mut()
         .map(|state| &mut state.keys)
@@ -494,11 +542,16 @@ unsafe fn require_identity_mut<'a>(
                 "handle already destroyed",
             );
             AuraErrorCode::AuraErrorObjectDisposed
-        })
+        })?;
+    Ok((guard, keys))
 }
 
 /// # Safety
 /// `handle` must be null or point to a live `AuraIdentityHandle`.
+///
+/// Acquires the handle's busy-flag for the duration of the brief read; the
+/// guard is released before returning because the cloned `Arc` does not
+/// borrow from the handle.
 unsafe fn clone_identity_time_provider(
     handle: *const AuraIdentityHandle,
     out_error: *mut AuraError,
@@ -511,6 +564,14 @@ unsafe fn clone_identity_time_provider(
         );
         return Err(AuraErrorCode::AuraErrorNullPointer);
     }
+    let _guard = try_acquire_busy(&(*handle).in_use).map_err(|()| {
+        write_error(
+            out_error,
+            AuraErrorCode::AuraErrorBusy,
+            "identity handle is already in use by another call",
+        );
+        AuraErrorCode::AuraErrorBusy
+    })?;
     (*handle)
         .inner
         .as_ref()
@@ -527,6 +588,8 @@ unsafe fn clone_identity_time_provider(
 
 /// # Safety
 /// `handle` must be null or point to a live, exclusively-owned `AuraIdentityHandle`.
+///
+/// Acquires and releases the handle's busy-flag internally.
 unsafe fn replace_identity_time_provider(
     handle: *mut AuraIdentityHandle,
     time_provider: Arc<dyn ITimeProvider>,
@@ -540,6 +603,14 @@ unsafe fn replace_identity_time_provider(
         );
         return Err(AuraErrorCode::AuraErrorNullPointer);
     }
+    let _guard = try_acquire_busy(&(*handle).in_use).map_err(|()| {
+        write_error(
+            out_error,
+            AuraErrorCode::AuraErrorBusy,
+            "identity handle is already in use by another call",
+        );
+        AuraErrorCode::AuraErrorBusy
+    })?;
     match (*handle).inner.as_mut() {
         Some(state) => {
             state.time_provider = time_provider;
@@ -1002,7 +1073,7 @@ pub unsafe extern "C" fn aura_identity_get_x25519_public(
             );
             return AuraErrorCode::AuraErrorBufferTooSmall;
         }
-        let identity = match require_identity_ref(handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -1038,7 +1109,7 @@ pub unsafe extern "C" fn aura_identity_get_ed25519_public(
             );
             return AuraErrorCode::AuraErrorBufferTooSmall;
         }
-        let identity = match require_identity_ref(handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -1074,7 +1145,7 @@ pub unsafe extern "C" fn aura_identity_get_kyber_public(
             );
             return AuraErrorCode::AuraErrorBufferTooSmall;
         }
-        let identity = match require_identity_ref(handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -1133,7 +1204,7 @@ pub unsafe extern "C" fn aura_prekey_bundle_create(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
-        let identity = match require_identity_ref(identity_keys, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(identity_keys, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -1237,7 +1308,7 @@ pub unsafe extern "C" fn aura_handshake_initiator_start(
             Ok(v) => v,
             Err(code) => return code,
         };
-        let ik = match require_identity_mut(identity_keys, out_error) {
+        let (_identity_guard, ik) = match require_identity_mut(identity_keys, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -1410,7 +1481,7 @@ pub unsafe extern "C" fn aura_handshake_responder_start(
             Ok(v) => v,
             Err(code) => return code,
         };
-        let ik = match require_identity_mut(identity_keys, out_error) {
+        let (_identity_guard, ik) = match require_identity_mut(identity_keys, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -2427,8 +2498,15 @@ pub unsafe extern "C" fn aura_attachment_chunk_validate(
     })
 }
 
+/// Zeroizes and frees the `data` payload of an [`AuraBuffer`].
+///
 /// # Safety
-/// `buffer` must be null or point to a value previously written by this FFI layer.
+/// `buffer` must be null or point to a writable `AuraBuffer`.  The `data`
+/// field must be null or point to a heap block previously produced by this
+/// FFI layer (either by `write_buffer` inside the library, or by
+/// [`aura_buffer_alloc`]).  **Never** assign a `malloc`/`new`/Swift-allocated
+/// pointer into `.data` — the Rust global allocator would attempt to free
+/// memory it did not allocate, which is undefined behavior.
 #[no_mangle]
 pub unsafe extern "C" fn aura_buffer_release(buffer: *mut AuraBuffer) {
     if buffer.is_null() {
@@ -2458,8 +2536,16 @@ pub extern "C" fn aura_buffer_alloc(capacity: usize) -> *mut AuraBuffer {
     Box::into_raw(buf)
 }
 
+/// Zeroizes the `data` payload, frees it, then frees the [`AuraBuffer`] box
+/// itself (for buffers obtained from [`aura_buffer_alloc`]).
+///
 /// # Safety
-/// `buffer` must be null or point to a value previously written by this FFI layer.
+/// `buffer` must be null or a pointer previously returned by
+/// [`aura_buffer_alloc`].  Do not pass buffers embedded in other FFI
+/// structs (e.g. fields of `AuraEncryptedFrame`) — use
+/// [`aura_buffer_release`] on those instead, since the outer struct is not
+/// a separate heap allocation.  The same allocator-ownership rules as
+/// [`aura_buffer_release`] apply to the `.data` field.
 #[no_mangle]
 pub unsafe extern "C" fn aura_buffer_free(buffer: *mut AuraBuffer) {
     if buffer.is_null() {
@@ -2900,7 +2986,7 @@ pub unsafe extern "C" fn aura_group_generate_key_package(
             std::slice::from_raw_parts(credential, credential_length).to_vec()
         };
 
-        let identity = match require_identity_ref(identity_handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -2979,7 +3065,7 @@ pub unsafe extern "C" fn aura_group_create(
             Ok(v) => v,
             Err(code) => return code,
         };
-        let identity = match require_identity_ref(identity_handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -3033,7 +3119,7 @@ pub unsafe extern "C" fn aura_group_create_shielded(
             Ok(v) => v,
             Err(code) => return code,
         };
-        let identity = match require_identity_ref(identity_handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -3127,7 +3213,7 @@ pub unsafe extern "C" fn aura_group_create_with_policy(
             Ok(v) => v,
             Err(code) => return code,
         };
-        let identity = match require_identity_ref(identity_handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -3224,7 +3310,7 @@ pub unsafe extern "C" fn aura_group_join(
             Ok(v) => v,
             Err(code) => return code,
         };
-        let identity = match require_identity_ref(identity_handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -3711,7 +3797,7 @@ pub unsafe extern "C" fn aura_group_deserialize(
             Ok(v) => v,
             Err(code) => return code,
         };
-        let identity = match require_identity_ref(identity_handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -3856,7 +3942,7 @@ pub unsafe extern "C" fn aura_group_deserialize_with_tracker(
             Ok(v) => v,
             Err(code) => return code,
         };
-        let identity = match require_identity_ref(identity_handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -4002,7 +4088,7 @@ pub unsafe extern "C" fn aura_group_restore_persisted_state(
             Ok(v) => v,
             Err(code) => return code,
         };
-        let identity = match require_identity_ref(identity_handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -4095,6 +4181,17 @@ pub unsafe extern "C" fn aura_group_authorize_external_join(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
+        if joiner_identity_ed25519_public_length > MAX_BUFFER_SIZE
+            || joiner_identity_x25519_public_length > MAX_BUFFER_SIZE
+            || joiner_credential_length > MAX_BUFFER_SIZE
+        {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "joiner input exceeds MAX_BUFFER_SIZE",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
         let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
@@ -4186,7 +4283,7 @@ pub unsafe extern "C" fn aura_group_join_external(
             Ok(v) => v,
             Err(code) => return code,
         };
-        let identity = match require_identity_ref(identity_handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -5543,6 +5640,14 @@ pub unsafe extern "C" fn aura_group_compute_message_id(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
+        if group_id_length > MAX_BUFFER_SIZE {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "group_id_length exceeds MAX_BUFFER_SIZE",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
 
         let gid = std::slice::from_raw_parts(group_id, group_id_length);
         let id =
@@ -6022,7 +6127,7 @@ pub unsafe extern "C" fn aura_voip_accept_call(
             Ok(v) => v,
             Err(code) => return code,
         };
-        let identity = match require_identity_ref(identity_handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -6732,7 +6837,7 @@ pub unsafe extern "C" fn aura_voip_call_init(
             Ok(v) => v,
             Err(code) => return code,
         };
-        let identity = match require_identity_ref(identity_handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -6863,7 +6968,7 @@ pub unsafe extern "C" fn aura_voip_call_init_complete(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
-        let identity = match require_identity_ref(identity_handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -6997,7 +7102,7 @@ pub unsafe extern "C" fn aura_voip_initiate_rekey(
             Ok(v) => v,
             Err(code) => return code,
         };
-        let identity = match require_identity_ref(identity_handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -7044,7 +7149,7 @@ pub unsafe extern "C" fn aura_voip_process_rekey(
             Ok(v) => v,
             Err(code) => return code,
         };
-        let identity = match require_identity_ref(identity_handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -7124,7 +7229,7 @@ pub unsafe extern "C" fn aura_voip_process_rekey_ack(
             Ok(v) => v,
             Err(code) => return code,
         };
-        let identity = match require_identity_ref(identity_handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -7837,6 +7942,9 @@ pub unsafe extern "C" fn aura_voip_get_local_recording_consent(
         if handle.is_null() {
             return -1;
         }
+        let Ok(_guard) = try_acquire_busy(&(*handle).in_use) else {
+            return -1;
+        };
         let Some(ref session) = (*handle).inner else {
             return -1;
         };
@@ -7870,6 +7978,9 @@ pub unsafe extern "C" fn aura_voip_get_remote_recording_consent(
         if handle.is_null() {
             return -1;
         }
+        let Ok(_guard) = try_acquire_busy(&(*handle).in_use) else {
+            return -1;
+        };
         let Some(ref session) = (*handle).inner else {
             return -1;
         };
@@ -7885,6 +7996,9 @@ pub unsafe extern "C" fn aura_voip_both_consented_to_recording(
         if handle.is_null() {
             return false;
         }
+        let Ok(_guard) = try_acquire_busy(&(*handle).in_use) else {
+            return false;
+        };
         let Some(ref session) = (*handle).inner else {
             return false;
         };
@@ -7906,7 +8020,7 @@ pub unsafe extern "C" fn aura_voip_build_recording_consent_message(
             Ok(v) => v,
             Err(code) => return code,
         };
-        let identity = match require_identity_ref(identity_handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -8135,7 +8249,7 @@ pub unsafe extern "C" fn aura_prekey_bundle_replenish(
             );
             return AuraErrorCode::AuraErrorInvalidInput;
         }
-        let identity = match require_identity_mut(identity_handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_mut(identity_handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -8196,6 +8310,21 @@ pub unsafe extern "C" fn aura_envelope_metadata_parse(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
+        if metadata_length > MAX_BUFFER_SIZE {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "metadata_length exceeds MAX_BUFFER_SIZE",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+        // Free any FFI-owned correlation_id from a prior call to prevent leaks
+        // when callers reuse the same AuraEnvelopeMetadata.
+        if !(*out_meta).correlation_id.is_null() {
+            drop(CString::from_raw((*out_meta).correlation_id));
+            (*out_meta).correlation_id = std::ptr::null_mut();
+            (*out_meta).correlation_id_length = 0;
+        }
         let slice = std::slice::from_raw_parts(metadata_bytes, metadata_length);
         let proto = match crate::proto::EnvelopeMetadata::decode(slice) {
             Ok(m) => m,
@@ -8215,15 +8344,23 @@ pub unsafe extern "C" fn aura_envelope_metadata_parse(
             4 => AuraEnvelopeType::AuraEnvelopeErrorResponse,
             _ => AuraEnvelopeType::AuraEnvelopeRequest,
         };
-        let (correlation_id_ptr, correlation_id_length) =
-            proto
-                .correlation_id
-                .as_ref()
-                .map_or((std::ptr::null_mut(), 0), |cid| {
-                    let cstr = CString::new(cid.as_str()).unwrap_or_default();
+        let (correlation_id_ptr, correlation_id_length) = match proto.correlation_id.as_ref() {
+            None => (std::ptr::null_mut(), 0),
+            Some(cid) => match CString::new(cid.as_str()) {
+                Ok(cstr) => {
                     let len = cstr.as_bytes().len();
                     (cstr.into_raw(), len)
-                });
+                }
+                Err(_) => {
+                    write_error(
+                        out_error,
+                        AuraErrorCode::AuraErrorInvalidInput,
+                        "correlation_id contains interior NUL byte",
+                    );
+                    return AuraErrorCode::AuraErrorInvalidInput;
+                }
+            },
+        };
         *out_meta = AuraEnvelopeMetadata {
             envelope_type,
             envelope_id: proto.envelope_id,
@@ -8281,6 +8418,16 @@ struct CFfiSessionEventHandler {
     callbacks: AuraSessionEventCallbacks,
 }
 
+// SAFETY: `AuraSessionEventCallbacks` contains a `*mut c_void` (`user_data`)
+// and C function pointers.  The FFI contract — documented in
+// `include/aura_client_api.h` alongside
+// `aura_session_set_event_handler` — requires callers to supply callbacks
+// and `user_data` that are themselves thread-safe.  The protocol may invoke
+// these callbacks from any thread that drives ratchet/session state (not
+// necessarily the thread that called `aura_session_set_event_handler`), so
+// Swift/Objective-C/C# callers MUST ensure their `user_data` object is
+// `Sendable`/thread-safe (e.g. wrap non-thread-safe state in a lock, or
+// marshal to the UI thread inside the callback).
 #[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl Send for CFfiSessionEventHandler {}
 unsafe impl Sync for CFfiSessionEventHandler {}
@@ -8288,19 +8435,17 @@ unsafe impl Sync for CFfiSessionEventHandler {}
 impl IProtocolEventHandler for CFfiSessionEventHandler {
     fn on_handshake_completed(&self, session_id: &[u8]) {
         if let Some(cb) = self.callbacks.on_handshake_completed {
-            unsafe {
-                cb(
-                    session_id.as_ptr(),
-                    session_id.len(),
-                    self.callbacks.user_data,
-                );
-            };
+            invoke_c_callback!(cb(
+                session_id.as_ptr(),
+                session_id.len(),
+                self.callbacks.user_data,
+            ));
         }
     }
 
     fn on_ratchet_rotated(&self, epoch: u64) {
         if let Some(cb) = self.callbacks.on_ratchet_rotated {
-            unsafe { cb(epoch, self.callbacks.user_data) };
+            invoke_c_callback!(cb(epoch, self.callbacks.user_data));
         }
     }
 
@@ -8308,19 +8453,19 @@ impl IProtocolEventHandler for CFfiSessionEventHandler {
         if let Some(cb) = self.callbacks.on_error {
             let code = error_code_from_protocol(error);
             let msg = CString::new(error.to_string()).unwrap_or_default();
-            unsafe { cb(code, msg.as_ptr(), self.callbacks.user_data) };
+            invoke_c_callback!(cb(code, msg.as_ptr(), self.callbacks.user_data));
         }
     }
 
     fn on_nonce_exhaustion_warning(&self, remaining: u64, max_capacity: u64) {
         if let Some(cb) = self.callbacks.on_nonce_exhaustion_warning {
-            unsafe { cb(remaining, max_capacity, self.callbacks.user_data) };
+            invoke_c_callback!(cb(remaining, max_capacity, self.callbacks.user_data));
         }
     }
 
     fn on_ratchet_stalling_warning(&self, messages_since_ratchet: u64) {
         if let Some(cb) = self.callbacks.on_ratchet_stalling_warning {
-            unsafe { cb(messages_since_ratchet, self.callbacks.user_data) };
+            invoke_c_callback!(cb(messages_since_ratchet, self.callbacks.user_data));
         }
     }
 }
@@ -8394,6 +8539,8 @@ struct CFfiGroupEventHandler {
     callbacks: AuraGroupEventCallbacks,
 }
 
+// SAFETY: See comment on `CFfiSessionEventHandler` — the caller is
+// responsible for supplying thread-safe callbacks and `user_data`.
 #[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl Send for CFfiGroupEventHandler {}
 unsafe impl Sync for CFfiGroupEventHandler {}
@@ -8401,45 +8548,41 @@ unsafe impl Sync for CFfiGroupEventHandler {}
 impl IGroupEventHandler for CFfiGroupEventHandler {
     fn on_member_added(&self, leaf_index: u32, identity_ed25519: &[u8]) {
         if let Some(cb) = self.callbacks.on_member_added {
-            unsafe {
-                cb(
-                    leaf_index,
-                    identity_ed25519.as_ptr(),
-                    identity_ed25519.len(),
-                    self.callbacks.user_data,
-                );
-            };
+            invoke_c_callback!(cb(
+                leaf_index,
+                identity_ed25519.as_ptr(),
+                identity_ed25519.len(),
+                self.callbacks.user_data,
+            ));
         }
     }
 
     fn on_member_removed(&self, leaf_index: u32) {
         if let Some(cb) = self.callbacks.on_member_removed {
-            unsafe { cb(leaf_index, self.callbacks.user_data) };
+            invoke_c_callback!(cb(leaf_index, self.callbacks.user_data));
         }
     }
 
     fn on_epoch_advanced(&self, new_epoch: u64, member_count: u32) {
         if let Some(cb) = self.callbacks.on_epoch_advanced {
-            unsafe { cb(new_epoch, member_count, self.callbacks.user_data) };
+            invoke_c_callback!(cb(new_epoch, member_count, self.callbacks.user_data));
         }
     }
 
     fn on_sender_key_exhaustion_warning(&self, remaining: u32, max_capacity: u32) {
         if let Some(cb) = self.callbacks.on_sender_key_exhaustion_warning {
-            unsafe { cb(remaining, max_capacity, self.callbacks.user_data) };
+            invoke_c_callback!(cb(remaining, max_capacity, self.callbacks.user_data));
         }
     }
 
     fn on_reinit_proposed(&self, new_group_id: &[u8], new_version: u32) {
         if let Some(cb) = self.callbacks.on_reinit_proposed {
-            unsafe {
-                cb(
-                    new_group_id.as_ptr(),
-                    new_group_id.len(),
-                    new_version,
-                    self.callbacks.user_data,
-                );
-            };
+            invoke_c_callback!(cb(
+                new_group_id.as_ptr(),
+                new_group_id.len(),
+                new_version,
+                self.callbacks.user_data,
+            ));
         }
     }
 }
@@ -8485,6 +8628,8 @@ struct CFfiIdentityEventHandler {
     callbacks: AuraIdentityEventCallbacks,
 }
 
+// SAFETY: See comment on `CFfiSessionEventHandler` — the caller is
+// responsible for supplying thread-safe callbacks and `user_data`.
 #[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl Send for CFfiIdentityEventHandler {}
 unsafe impl Sync for CFfiIdentityEventHandler {}
@@ -8492,7 +8637,7 @@ unsafe impl Sync for CFfiIdentityEventHandler {}
 impl IIdentityEventHandler for CFfiIdentityEventHandler {
     fn on_otk_exhaustion_warning(&self, remaining: u32, max_capacity: u32) {
         if let Some(cb) = self.callbacks.on_otk_exhaustion_warning {
-            unsafe { cb(remaining, max_capacity, self.callbacks.user_data) };
+            invoke_c_callback!(cb(remaining, max_capacity, self.callbacks.user_data));
         }
     }
 }
@@ -8512,7 +8657,7 @@ pub unsafe extern "C" fn aura_identity_set_event_handler(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
-        let identity = match require_identity_mut(handle, out_error) {
+        let (_identity_guard, identity) = match require_identity_mut(handle, out_error) {
             Ok(v) => v,
             Err(code) => return code,
         };
@@ -9041,7 +9186,10 @@ pub unsafe extern "C" fn aura_attachment_streaming_encryptor_create(
 
         match StreamingEncryptor::new(fk, aid, mime, total_size, chunk_size, chunk_count) {
             Ok(enc) => {
-                let handle = Box::new(AuraStreamingEncryptorHandle(Some(enc)));
+                let handle = Box::new(AuraStreamingEncryptorHandle {
+                    inner: Some(enc),
+                    in_use: AtomicBool::new(false),
+                });
                 replace_out_handle(out_handle, Box::into_raw(handle));
                 AuraErrorCode::AuraSuccess
             }
@@ -9068,8 +9216,19 @@ pub unsafe extern "C" fn aura_attachment_streaming_encryptor_write(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
+        let _guard = match try_acquire_busy(&(*handle).in_use) {
+            Ok(g) => g,
+            Err(()) => {
+                write_error(
+                    out_error,
+                    AuraErrorCode::AuraErrorBusy,
+                    "streaming encryptor handle is already in use by another call",
+                );
+                return AuraErrorCode::AuraErrorBusy;
+            }
+        };
 
-        let Some(enc) = (*handle).0.as_mut() else {
+        let Some(enc) = (*handle).inner.as_mut() else {
             write_error(
                 out_error,
                 AuraErrorCode::AuraErrorObjectDisposed,
@@ -9107,8 +9266,19 @@ pub unsafe extern "C" fn aura_attachment_streaming_encryptor_finish(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
+        let _guard = match try_acquire_busy(&(*handle).in_use) {
+            Ok(g) => g,
+            Err(()) => {
+                write_error(
+                    out_error,
+                    AuraErrorCode::AuraErrorBusy,
+                    "streaming encryptor handle is already in use by another call",
+                );
+                return AuraErrorCode::AuraErrorBusy;
+            }
+        };
 
-        let Some(enc) = (*handle).0.take() else {
+        let Some(enc) = (*handle).inner.take() else {
             write_error(
                 out_error,
                 AuraErrorCode::AuraErrorObjectDisposed,
@@ -9133,13 +9303,24 @@ pub unsafe extern "C" fn aura_attachment_streaming_encryptor_finish(
     })
 }
 
+/// # Safety
+/// See module-level FFI safety contract.  `handle_ptr` must point to a handle
+/// from `aura_attachment_streaming_encryptor_create`, or be null.  After this
+/// call the stored handle pointer is set to null so subsequent calls from the
+/// same site are no-ops (prevents double-free).
 #[no_mangle]
 pub unsafe extern "C" fn aura_attachment_streaming_encryptor_destroy(
-    handle: *mut AuraStreamingEncryptorHandle,
+    handle_ptr: *mut *mut AuraStreamingEncryptorHandle,
 ) {
-    if !handle.is_null() {
-        drop(Box::from_raw(handle));
-    }
+    ffi_catch_panic_value!((), unsafe {
+        if handle_ptr.is_null() {
+            return;
+        }
+        let handle = std::ptr::replace(handle_ptr, std::ptr::null_mut());
+        if !handle.is_null() {
+            drop(Box::from_raw(handle));
+        }
+    });
 }
 
 fn serialize_encrypted_chunks(chunks: &[crate::protocol::attachment::EncryptedChunk]) -> Vec<u8> {
@@ -9197,7 +9378,10 @@ pub unsafe extern "C" fn aura_attachment_streaming_decryptor_create(
 
         match StreamingDecryptor::new(fk, aid, mime, total_size, chunk_size, chunk_count) {
             Ok(dec) => {
-                let handle = Box::new(AuraStreamingDecryptorHandle(Some(dec)));
+                let handle = Box::new(AuraStreamingDecryptorHandle {
+                    inner: Some(dec),
+                    in_use: AtomicBool::new(false),
+                });
                 replace_out_handle(out_handle, Box::into_raw(handle));
                 AuraErrorCode::AuraSuccess
             }
@@ -9226,8 +9410,19 @@ pub unsafe extern "C" fn aura_attachment_streaming_decryptor_write(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
+        let _guard = match try_acquire_busy(&(*handle).in_use) {
+            Ok(g) => g,
+            Err(()) => {
+                write_error(
+                    out_error,
+                    AuraErrorCode::AuraErrorBusy,
+                    "streaming decryptor handle is already in use by another call",
+                );
+                return AuraErrorCode::AuraErrorBusy;
+            }
+        };
 
-        let Some(dec) = (*handle).0.as_mut() else {
+        let Some(dec) = (*handle).inner.as_mut() else {
             write_error(
                 out_error,
                 AuraErrorCode::AuraErrorObjectDisposed,
@@ -9257,18 +9452,34 @@ pub unsafe extern "C" fn aura_attachment_streaming_decryptor_is_complete(
         if handle.is_null() {
             return false;
         }
+        let Ok(_guard) = try_acquire_busy(unsafe { &(*handle).in_use }) else {
+            return false;
+        };
         let dec = unsafe { &*handle };
-        dec.0.as_ref().is_some_and(StreamingDecryptor::is_complete)
+        dec.inner
+            .as_ref()
+            .is_some_and(StreamingDecryptor::is_complete)
     })
 }
 
+/// # Safety
+/// See module-level FFI safety contract.  `handle_ptr` must point to a handle
+/// from `aura_attachment_streaming_decryptor_create`, or be null.  After this
+/// call the stored handle pointer is set to null so subsequent calls from the
+/// same site are no-ops (prevents double-free).
 #[no_mangle]
 pub unsafe extern "C" fn aura_attachment_streaming_decryptor_destroy(
-    handle: *mut AuraStreamingDecryptorHandle,
+    handle_ptr: *mut *mut AuraStreamingDecryptorHandle,
 ) {
-    if !handle.is_null() {
-        drop(Box::from_raw(handle));
-    }
+    ffi_catch_panic_value!((), unsafe {
+        if handle_ptr.is_null() {
+            return;
+        }
+        let handle = std::ptr::replace(handle_ptr, std::ptr::null_mut());
+        if !handle.is_null() {
+            drop(Box::from_raw(handle));
+        }
+    });
 }
 
 // ── Attachment v2: Manifest v2 ──

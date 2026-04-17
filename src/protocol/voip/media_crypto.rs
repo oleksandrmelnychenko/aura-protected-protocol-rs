@@ -1,5 +1,6 @@
 use crate::core::constants::*;
 use crate::core::errors::ProtocolError;
+use crate::crypto::padding::ct_gt_mask;
 use crate::crypto::AesGcm;
 
 pub struct MediaCrypto;
@@ -144,9 +145,15 @@ fn unpad_frame(padded: &[u8]) -> Result<Vec<u8>, ProtocolError> {
             "invalid padding: no sentinel found",
         ));
     }
+    // Iterate the *entire* buffer so the loop trip-count is independent of
+    // `found_pos`, preventing a plaintext-length-dependent timing side-channel
+    // on VoIP frames (the attacker could otherwise distinguish active speech
+    // from silence by measuring decrypt latency). Mirrors `MessagePadding::unpad`.
     let mut non_zero_after = 0u8;
-    for &b in &padded[found_pos + 1..] {
-        non_zero_after |= b;
+    for i in 0..padded.len() {
+        // `after_sentinel` is 0xFF when `i > found_pos`, 0x00 otherwise.
+        let after_sentinel = ct_gt_mask(i, found_pos);
+        non_zero_after |= padded[i] & after_sentinel;
     }
     if non_zero_after != 0 {
         return Err(ProtocolError::voip_media(

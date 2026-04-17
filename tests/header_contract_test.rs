@@ -74,6 +74,8 @@ fn client_header_exports_voip_handles_types_and_critical_functions() {
         "aura_voip_accept_call(",
         "aura_voip_encrypt_frame(",
         "aura_voip_decrypt_frame(",
+        "aura_attachment_streaming_encryptor_destroy(\n    AuraStreamingEncryptorHandle** handle_ptr);",
+        "aura_attachment_streaming_decryptor_destroy(\n    AuraStreamingDecryptorHandle** handle_ptr);",
         "aura_voip_call_initiator_destroy(AuraVoipCallInitiatorHandle** handle);",
         "aura_voip_session_destroy(AuraVoipSessionHandle** handle);",
         "aura_session_serialize_sealed_with_tracker(",
@@ -107,6 +109,16 @@ fn client_header_exports_voip_handles_types_and_critical_functions() {
         assert!(
             CLIENT_HEADER.contains(required),
             "client header is missing required VoIP declaration fragment: {required}"
+        );
+    }
+
+    for forbidden in [
+        "aura_attachment_streaming_encryptor_destroy(\n    AuraStreamingEncryptorHandle* handle);",
+        "aura_attachment_streaming_decryptor_destroy(\n    AuraStreamingDecryptorHandle* handle);",
+    ] {
+        assert!(
+            !CLIENT_HEADER.contains(forbidden),
+            "client header must keep the pointer-nulling attachment destroy ABI: {forbidden}"
         );
     }
 }

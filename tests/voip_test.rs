@@ -13,7 +13,7 @@ use aura_protected_protocol::proto::{
 };
 use aura_protected_protocol::protocol::voip::call_key_exchange::{
     callee_accept_with_context, caller_finish_with_context, caller_init_with_context,
-    CallInitAuthContext,
+    compute_rekey_mac_bound, CallInitAuthContext,
 };
 use aura_protected_protocol::protocol::voip::frame::{build_frame_aad, FrameHeader};
 use aura_protected_protocol::protocol::voip::key_ratchet::MediaKeyRatchet;
@@ -713,6 +713,38 @@ fn call_key_exchange_wrong_mac_rejected() {
         false,
     );
     assert!(result.is_err());
+}
+
+#[test]
+fn call_key_exchange_rekey_mac_is_bound_to_current_root_secret() {
+    init();
+
+    let call_id = [0xA5u8; CALL_ID_BYTES];
+    let kyber_ss = [0x3Cu8; KYBER_SHARED_SECRET_BYTES];
+    let root_a = [0x11u8; ROOT_KEY_BYTES];
+    let root_b = [0x22u8; ROOT_KEY_BYTES];
+
+    let mac_a = compute_rekey_mac_bound(
+        &root_a,
+        &kyber_ss,
+        VOIP_KEY_CONFIRM_CALLER_INFO,
+        &call_id,
+        7,
+    )
+    .unwrap();
+    let mac_b = compute_rekey_mac_bound(
+        &root_b,
+        &kyber_ss,
+        VOIP_KEY_CONFIRM_CALLER_INFO,
+        &call_id,
+        7,
+    )
+    .unwrap();
+
+    assert_ne!(
+        mac_a, mac_b,
+        "rekey MAC must change when the established session root_secret changes"
+    );
 }
 
 #[test]

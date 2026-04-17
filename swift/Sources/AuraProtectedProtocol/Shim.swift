@@ -1637,7 +1637,7 @@ internal func native_epp_attachment_streaming_encryptor_finish(
 
 @_silgen_name("aura_attachment_streaming_encryptor_destroy")
 internal func native_epp_attachment_streaming_encryptor_destroy(
-    _ handle: UnsafeMutableRawPointer
+    _ handle_ptr: UnsafeMutablePointer<UnsafeMutableRawPointer?>
 )
 
 @_silgen_name("aura_attachment_streaming_decryptor_create")
@@ -1674,7 +1674,7 @@ internal func native_epp_attachment_streaming_decryptor_is_complete(
 
 @_silgen_name("aura_attachment_streaming_decryptor_destroy")
 internal func native_epp_attachment_streaming_decryptor_destroy(
-    _ handle: UnsafeMutableRawPointer
+    _ handle_ptr: UnsafeMutablePointer<UnsafeMutableRawPointer?>
 )
 
 @_silgen_name("aura_attachment_manifest_create_v2")

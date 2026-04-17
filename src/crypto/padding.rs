@@ -7,7 +7,7 @@ use crate::core::errors::ProtocolError;
 /// Constant-time "greater than" mask: returns `0xFF` when `a > b`, `0x00` otherwise.
 /// Uses wrapping arithmetic to avoid branches entirely.
 #[inline]
-fn ct_gt_mask(a: usize, b: usize) -> u8 {
+pub(crate) fn ct_gt_mask(a: usize, b: usize) -> u8 {
     // If a > b then b.wrapping_sub(a) has its MSB set (underflow).
     // Arithmetic shift right fills with the sign bit.
     let diff = b.wrapping_sub(a) as isize;

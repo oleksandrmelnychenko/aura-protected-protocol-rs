@@ -3974,6 +3974,51 @@ fn ffi_envelope_metadata_parse_and_free() {
             .unwrap();
         assert_eq!(cid, "req-001");
 
+        let correlation2 = b"req-002\0";
+        let mut enc2 = AuraBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        let code = aura_session_encrypt(
+            alice_s,
+            b"hello-again".as_ptr(),
+            11,
+            AuraEnvelopeType::AuraEnvelopeRequest,
+            78,
+            correlation2.as_ptr().cast::<std::ffi::c_char>(),
+            7,
+            &mut enc2,
+            &mut err,
+        );
+        assert_eq!(code, AuraErrorCode::AuraSuccess);
+
+        let mut plaintext2 = AuraBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        let mut meta_raw2 = AuraBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        let code = aura_session_decrypt(
+            bob_s,
+            enc2.data,
+            enc2.length,
+            &mut plaintext2,
+            &mut meta_raw2,
+            &mut err,
+        );
+        assert_eq!(code, AuraErrorCode::AuraSuccess);
+
+        let code =
+            aura_envelope_metadata_parse(meta_raw2.data, meta_raw2.length, &mut meta, &mut err);
+        assert_eq!(code, AuraErrorCode::AuraSuccess);
+        assert_eq!(meta.envelope_id, 78);
+        let cid2 = std::ffi::CStr::from_ptr(meta.correlation_id)
+            .to_str()
+            .unwrap();
+        assert_eq!(cid2, "req-002");
+
         aura_envelope_metadata_free(&mut meta);
         assert!(meta.correlation_id.is_null());
 
@@ -3981,8 +4026,11 @@ fn ffi_envelope_metadata_parse_and_free() {
         aura_buffer_release(&mut init_msg);
         aura_buffer_release(&mut ack_msg);
         aura_buffer_release(&mut enc);
+        aura_buffer_release(&mut enc2);
         aura_buffer_release(&mut plaintext);
+        aura_buffer_release(&mut plaintext2);
         aura_buffer_release(&mut meta_raw);
+        aura_buffer_release(&mut meta_raw2);
         aura_session_destroy(&mut alice_s);
         aura_session_destroy(&mut bob_s);
         aura_identity_destroy(&mut alice_h);
@@ -4967,7 +5015,7 @@ mod attachment_v2 {
         };
         assert_eq!(code, AuraErrorCode::AuraSuccess);
         assert_eq!(has_last, 1);
-        unsafe { aura_attachment_streaming_encryptor_destroy(enc_handle) };
+        unsafe { aura_attachment_streaming_encryptor_destroy(&mut enc_handle) };
 
         let mut dec_handle: *mut AuraStreamingDecryptorHandle = ptr::null_mut();
         let code = unsafe {
@@ -5043,7 +5091,7 @@ mod attachment_v2 {
         assert_eq!(reassembled, data);
 
         unsafe {
-            aura_attachment_streaming_decryptor_destroy(dec_handle);
+            aura_attachment_streaming_decryptor_destroy(&mut dec_handle);
             aura_buffer_release(&mut all_chunks_buf);
             aura_buffer_release(&mut last_chunk);
             aura_buffer_release(&mut attachment_id);
