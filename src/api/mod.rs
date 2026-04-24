@@ -165,8 +165,7 @@ impl SealedStateCounterTracker {
         );
         if latest_issued_counter < max_restored_counter {
             return Err(ProtocolError::invalid_state(format!(
-                "sealed-state tracker invariant violated: latest issued {} < restored watermark {}",
-                latest_issued_counter, max_restored_counter
+                "sealed-state tracker invariant violated: latest issued {latest_issued_counter} < restored watermark {max_restored_counter}"
             )));
         }
         Ok(Self {
@@ -192,7 +191,7 @@ impl SealedStateSlot {
     pub const HEADER_LEN: usize = size_of::<u32>() + SealedStateCounterTracker::SERIALIZED_LEN;
 
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             tracker: SealedStateCounterTracker::new(),
             sealed_state: Vec::new(),

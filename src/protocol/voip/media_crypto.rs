@@ -150,10 +150,10 @@ fn unpad_frame(padded: &[u8]) -> Result<Vec<u8>, ProtocolError> {
     // on VoIP frames (the attacker could otherwise distinguish active speech
     // from silence by measuring decrypt latency). Mirrors `MessagePadding::unpad`.
     let mut non_zero_after = 0u8;
-    for i in 0..padded.len() {
+    for (i, &byte) in padded.iter().enumerate() {
         // `after_sentinel` is 0xFF when `i > found_pos`, 0x00 otherwise.
         let after_sentinel = ct_gt_mask(i, found_pos);
-        non_zero_after |= padded[i] & after_sentinel;
+        non_zero_after |= byte & after_sentinel;
     }
     if non_zero_after != 0 {
         return Err(ProtocolError::voip_media(

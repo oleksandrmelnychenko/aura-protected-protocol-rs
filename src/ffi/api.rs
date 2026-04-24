@@ -1,7 +1,14 @@
 // Copyright (c) 2026 Oleksandr Melnychenko. All rights reserved.
 // SPDX-License-Identifier: MIT
 
-#![allow(clippy::missing_safety_doc, clippy::too_many_arguments, unsafe_code)]
+#![allow(
+    clippy::borrow_as_ptr,
+    clippy::manual_let_else,
+    clippy::missing_safety_doc,
+    clippy::single_match_else,
+    clippy::too_many_arguments,
+    unsafe_code
+)]
 // # FFI Safety Contract
 //
 // All `pub unsafe extern "C"` functions in this module share these preconditions:
@@ -763,7 +770,7 @@ const unsafe fn group_ref_or_none<'a>(
 
 #[no_mangle]
 pub extern "C" fn aura_version() -> *const c_char {
-    static VERSION: &[u8] = b"1.1.1\0";
+    static VERSION: &[u8] = b"2.0.0\0";
     VERSION.as_ptr().cast::<c_char>()
 }
 
@@ -3033,6 +3040,53 @@ pub unsafe extern "C" fn aura_group_key_package_secrets_destroy(
             drop(Box::from_raw(handle));
         }
     });
+}
+
+/// # Safety
+/// See module-level FFI safety contract. `(key_package_bytes, key_package_length)` must form a
+/// valid readable slice.
+#[no_mangle]
+pub unsafe extern "C" fn aura_group_validate_key_package(
+    key_package_bytes: *const u8,
+    key_package_length: usize,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if key_package_bytes.is_null() {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "KeyPackage pointer is null",
+            );
+            return AuraErrorCode::AuraErrorNullPointer;
+        }
+        if key_package_length > MAX_GROUP_MESSAGE_SIZE {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "KeyPackage too large",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+
+        let kp_slice = std::slice::from_raw_parts(key_package_bytes, key_package_length);
+        let kp = match crate::proto::GroupKeyPackage::decode(kp_slice) {
+            Ok(kp) => kp,
+            Err(e) => {
+                write_error(
+                    out_error,
+                    AuraErrorCode::AuraErrorDecode,
+                    &format!("KeyPackage decode: {e}"),
+                );
+                return AuraErrorCode::AuraErrorDecode;
+            }
+        };
+
+        match crate::protocol::group::key_package::validate_key_package(&kp) {
+            Ok(()) => AuraErrorCode::AuraSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
 }
 
 /// # Safety
@@ -10771,6 +10825,312 @@ pub unsafe extern "C" fn aura_session_set_ttl(
         let ttl = if has_ttl { Some(ttl_seconds) } else { None };
         match session.set_session_ttl(ttl) {
             Ok(()) => AuraErrorCode::AuraSuccess,
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+// ============================================================================
+// Channel encryption FFI (Phase 3)
+//
+// Stateless FFI wrappers around `crate::protocol::channel`. No session handle
+// is exposed — channel keys are managed externally by the calling layer (iOS
+// ChannelKeyStore). Wire envelope assembly is done outside this module.
+// ============================================================================
+
+const CHANNEL_KEY_BYTES: usize = crate::core::constants::AES_KEY_BYTES;
+const CHANNEL_KEY_ID_BYTES_FFI: usize = crate::protocol::channel::CHANNEL_KEY_ID_BYTES;
+const CHANNEL_ID_BYTES_FFI: usize = crate::protocol::channel::CHANNEL_ID_BYTES;
+const CHANNEL_X25519_BYTES: usize = crate::core::constants::X25519_PUBLIC_KEY_BYTES;
+const CHANNEL_X25519_PRIV_BYTES: usize = crate::core::constants::X25519_PRIVATE_KEY_BYTES;
+const CHANNEL_NONCE_BYTES: usize = crate::core::constants::AES_GCM_NONCE_BYTES;
+const CHANNEL_ED25519_PUB_BYTES: usize = crate::core::constants::ED25519_PUBLIC_KEY_BYTES;
+const CHANNEL_ED25519_SECRET_BYTES_FFI: usize =
+    crate::protocol::channel::CHANNEL_ED25519_SECRET_BYTES;
+const CHANNEL_ED25519_SIG_BYTES: usize = crate::core::constants::ED25519_SIGNATURE_BYTES;
+
+/// Generate a fresh channel key + UUID v4 identifier.
+///
+/// # Safety
+/// `out_key_id` must point to a writable 16-byte buffer.
+/// `out_key` must point to a writable 32-byte buffer.
+/// See module-level FFI safety contract.
+#[no_mangle]
+pub unsafe extern "C" fn aura_channel_generate_key(
+    out_key_id: *mut u8,
+    out_key: *mut u8,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_key_id.is_null() || out_key.is_null() {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "A required output pointer is null",
+            );
+            return AuraErrorCode::AuraErrorNullPointer;
+        }
+        match crate::protocol::channel::generate_channel_key() {
+            Ok(material) => {
+                std::ptr::copy_nonoverlapping(
+                    material.key_id.as_ptr(),
+                    out_key_id,
+                    CHANNEL_KEY_ID_BYTES_FFI,
+                );
+                std::ptr::copy_nonoverlapping(material.key.as_ptr(), out_key, CHANNEL_KEY_BYTES);
+                AuraErrorCode::AuraSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+/// Wrap a 32-byte channel key for one subscriber device using their X25519 public key.
+///
+/// # Safety
+/// `channel_key` must point to a 32-byte readable slice.
+/// `device_x25519_public` must point to a 32-byte readable slice.
+/// `out_blob` must point to a writable [`AuraBuffer`].
+#[no_mangle]
+pub unsafe extern "C" fn aura_channel_wrap_key_for_device(
+    channel_key: *const u8,
+    device_x25519_public: *const u8,
+    out_blob: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if channel_key.is_null() || device_x25519_public.is_null() || out_blob.is_null() {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "A required pointer is null",
+            );
+            return AuraErrorCode::AuraErrorNullPointer;
+        }
+        let mut key_buf = [0u8; CHANNEL_KEY_BYTES];
+        std::ptr::copy_nonoverlapping(channel_key, key_buf.as_mut_ptr(), CHANNEL_KEY_BYTES);
+        let mut device_pub = [0u8; CHANNEL_X25519_BYTES];
+        std::ptr::copy_nonoverlapping(
+            device_x25519_public,
+            device_pub.as_mut_ptr(),
+            CHANNEL_X25519_BYTES,
+        );
+
+        match crate::protocol::channel::wrap_key_for_device(&key_buf, &device_pub) {
+            Ok(blob) => {
+                write_buffer(out_blob, blob);
+                AuraErrorCode::AuraSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+/// Unwrap a channel key blob using the device's X25519 secret key.
+///
+/// # Safety
+/// `(blob, blob_length)` must form a valid readable slice.
+/// `device_x25519_secret` must point to a 32-byte readable slice.
+/// `out_channel_key` must point to a writable 32-byte buffer.
+#[no_mangle]
+pub unsafe extern "C" fn aura_channel_unwrap_key_blob(
+    blob: *const u8,
+    blob_length: usize,
+    device_x25519_secret: *const u8,
+    out_channel_key: *mut u8,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if blob.is_null() || device_x25519_secret.is_null() || out_channel_key.is_null() {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "A required pointer is null",
+            );
+            return AuraErrorCode::AuraErrorNullPointer;
+        }
+        let blob_slice = std::slice::from_raw_parts(blob, blob_length);
+        let mut device_secret = [0u8; CHANNEL_X25519_PRIV_BYTES];
+        std::ptr::copy_nonoverlapping(
+            device_x25519_secret,
+            device_secret.as_mut_ptr(),
+            CHANNEL_X25519_PRIV_BYTES,
+        );
+
+        match crate::protocol::channel::unwrap_key_blob(blob_slice, &device_secret) {
+            Ok(unwrapped) => {
+                std::ptr::copy_nonoverlapping(
+                    unwrapped.as_ptr(),
+                    out_channel_key,
+                    CHANNEL_KEY_BYTES,
+                );
+                AuraErrorCode::AuraSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+/// Encrypt a channel message. Outputs the nonce, signature, and ciphertext as
+/// separate buffers; the caller assembles the wire envelope.
+///
+/// # Safety
+/// All `*const u8` parameters must point to readable slices of the documented
+/// length. `out_nonce` (12 bytes) and `out_signature` (64 bytes) must be
+/// writable. `out_ciphertext` must point to a writable [`AuraBuffer`].
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn aura_channel_encrypt_message(
+    plaintext: *const u8,
+    plaintext_length: usize,
+    channel_key: *const u8,
+    channel_id: *const u8,
+    channel_key_id: *const u8,
+    generation: u64,
+    sender_ed25519_secret: *const u8,
+    out_nonce: *mut u8,
+    out_signature: *mut u8,
+    out_ciphertext: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if (plaintext.is_null() && plaintext_length != 0)
+            || channel_key.is_null()
+            || channel_id.is_null()
+            || channel_key_id.is_null()
+            || sender_ed25519_secret.is_null()
+            || out_nonce.is_null()
+            || out_signature.is_null()
+            || out_ciphertext.is_null()
+        {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "A required pointer is null",
+            );
+            return AuraErrorCode::AuraErrorNullPointer;
+        }
+        let pt = if plaintext_length == 0 {
+            &[][..]
+        } else {
+            std::slice::from_raw_parts(plaintext, plaintext_length)
+        };
+        let mut key_buf = [0u8; CHANNEL_KEY_BYTES];
+        std::ptr::copy_nonoverlapping(channel_key, key_buf.as_mut_ptr(), CHANNEL_KEY_BYTES);
+        let mut chan_id = [0u8; CHANNEL_ID_BYTES_FFI];
+        std::ptr::copy_nonoverlapping(channel_id, chan_id.as_mut_ptr(), CHANNEL_ID_BYTES_FFI);
+        let mut chan_key_id = [0u8; CHANNEL_KEY_ID_BYTES_FFI];
+        std::ptr::copy_nonoverlapping(
+            channel_key_id,
+            chan_key_id.as_mut_ptr(),
+            CHANNEL_KEY_ID_BYTES_FFI,
+        );
+        let mut signing_secret = [0u8; CHANNEL_ED25519_SECRET_BYTES_FFI];
+        std::ptr::copy_nonoverlapping(
+            sender_ed25519_secret,
+            signing_secret.as_mut_ptr(),
+            CHANNEL_ED25519_SECRET_BYTES_FFI,
+        );
+
+        match crate::protocol::channel::encrypt_message(
+            pt,
+            &key_buf,
+            &chan_id,
+            &chan_key_id,
+            generation,
+            &signing_secret,
+        ) {
+            Ok(fields) => {
+                std::ptr::copy_nonoverlapping(
+                    fields.nonce.as_ptr(),
+                    out_nonce,
+                    CHANNEL_NONCE_BYTES,
+                );
+                std::ptr::copy_nonoverlapping(
+                    fields.sender_signature.as_ptr(),
+                    out_signature,
+                    CHANNEL_ED25519_SIG_BYTES,
+                );
+                write_buffer(out_ciphertext, fields.ciphertext);
+                AuraErrorCode::AuraSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+/// Decrypt a channel message. Verifies Ed25519 signature, then AES-GCM-SIV.
+///
+/// # Safety
+/// All `*const u8` parameters must point to readable slices of the documented
+/// length. `out_plaintext` must point to a writable [`AuraBuffer`].
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn aura_channel_decrypt_message(
+    ciphertext: *const u8,
+    ciphertext_length: usize,
+    nonce: *const u8,
+    signature: *const u8,
+    channel_key_id: *const u8,
+    generation: u64,
+    channel_key: *const u8,
+    channel_id: *const u8,
+    sender_ed25519_public: *const u8,
+    out_plaintext: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if ciphertext.is_null()
+            || nonce.is_null()
+            || signature.is_null()
+            || channel_key_id.is_null()
+            || channel_key.is_null()
+            || channel_id.is_null()
+            || sender_ed25519_public.is_null()
+            || out_plaintext.is_null()
+        {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "A required pointer is null",
+            );
+            return AuraErrorCode::AuraErrorNullPointer;
+        }
+        let ct = std::slice::from_raw_parts(ciphertext, ciphertext_length).to_vec();
+        let mut nonce_buf = [0u8; CHANNEL_NONCE_BYTES];
+        std::ptr::copy_nonoverlapping(nonce, nonce_buf.as_mut_ptr(), CHANNEL_NONCE_BYTES);
+        let mut sig_buf = [0u8; CHANNEL_ED25519_SIG_BYTES];
+        std::ptr::copy_nonoverlapping(signature, sig_buf.as_mut_ptr(), CHANNEL_ED25519_SIG_BYTES);
+        let mut chan_key_id = [0u8; CHANNEL_KEY_ID_BYTES_FFI];
+        std::ptr::copy_nonoverlapping(
+            channel_key_id,
+            chan_key_id.as_mut_ptr(),
+            CHANNEL_KEY_ID_BYTES_FFI,
+        );
+        let mut key_buf = [0u8; CHANNEL_KEY_BYTES];
+        std::ptr::copy_nonoverlapping(channel_key, key_buf.as_mut_ptr(), CHANNEL_KEY_BYTES);
+        let mut chan_id = [0u8; CHANNEL_ID_BYTES_FFI];
+        std::ptr::copy_nonoverlapping(channel_id, chan_id.as_mut_ptr(), CHANNEL_ID_BYTES_FFI);
+        let mut sender_pub = [0u8; CHANNEL_ED25519_PUB_BYTES];
+        std::ptr::copy_nonoverlapping(
+            sender_ed25519_public,
+            sender_pub.as_mut_ptr(),
+            CHANNEL_ED25519_PUB_BYTES,
+        );
+
+        let fields = crate::protocol::channel::ChannelEncryptedFields {
+            channel_key_id: chan_key_id,
+            generation,
+            nonce: nonce_buf,
+            ciphertext: ct,
+            sender_signature: sig_buf,
+        };
+
+        match crate::protocol::channel::decrypt_message(&fields, &key_buf, &chan_id, &sender_pub) {
+            Ok(decoded) => {
+                write_buffer(out_plaintext, decoded.plaintext);
+                AuraErrorCode::AuraSuccess
+            }
             Err(e) => write_protocol_error(out_error, &e),
         }
     })

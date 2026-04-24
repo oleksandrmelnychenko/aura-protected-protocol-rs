@@ -2273,6 +2273,26 @@ AURA_API void aura_group_key_package_secrets_destroy(
     AuraKeyPackageSecretsHandle** handle);
 
 /*
+ * aura_group_validate_key_package — validate a serialized KeyPackage before
+ * trusting identity public keys from it.
+ *
+ * Checks the protobuf shape, key sizes, X25519/Kyber public-key validity, and
+ * the KeyPackage Ed25519 signature using strict verification.
+ *
+ * Parameters:
+ *   key_package_bytes  — serialized GroupKeyPackage protobuf (borrowed).
+ *   key_package_length — byte length of key_package_bytes.
+ *   out_error          — optional error detail.
+ *
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT, AURA_ERROR_DECODE, or a
+ *          protocol validation error.
+ */
+AURA_API AuraErrorCode aura_group_validate_key_package(
+    const uint8_t* key_package_bytes,
+    size_t         key_package_length,
+    AuraError*     out_error);
+
+/*
  * aura_group_create — create a new group as the sole initial member.
  *
  * The caller becomes leaf index 0.  Use aura_group_add_member() to invite
@@ -3549,6 +3569,163 @@ AURA_API AuraErrorCode aura_identity_set_event_handler(
     AuraIdentityHandle*                handle,
     const AuraIdentityEventCallbacks*  callbacks,
     AuraError*                         out_error);
+
+/* ============================================================================
+ * Channel encryption (broadcast E2E for channel posts)
+ *
+ * Stateless API. Channel keys are managed externally by the calling layer.
+ *
+ * Buffer sizes:
+ *   - channel_key:           32 bytes (AES-256-GCM-SIV symmetric key)
+ *   - channel_id:            16 bytes (UUID)
+ *   - channel_key_id:        16 bytes (UUID)
+ *   - device X25519 public:  32 bytes
+ *   - device X25519 secret:  32 bytes
+ *   - sender Ed25519 secret: 32 bytes (seed)
+ *   - sender Ed25519 public: 32 bytes
+ *   - nonce:                 12 bytes (AES-GCM-SIV)
+ *   - signature:             64 bytes (Ed25519)
+ *   - wrapped key blob:      92 bytes (32 ephemeral + 12 nonce + 48 ciphertext)
+ *
+ * The wire envelope (channel_key_id + generation + nonce + ciphertext + signature)
+ * is assembled by the calling layer and sent through the gateway.
+ * ========================================================================== */
+
+/*
+ * aura_channel_generate_key — generate a fresh symmetric channel key + UUID v4 id.
+ *
+ * Parameters:
+ *   out_key_id  — caller-provided 16-byte buffer; receives the UUID v4 key id.
+ *   out_key     — caller-provided 32-byte buffer; receives the AES-256 key.
+ *   out_error   — optional error detail.
+ *
+ * Returns: AURA_SUCCESS or AURA_ERROR_GENERIC.
+ */
+AURA_API AuraErrorCode aura_channel_generate_key(
+    uint8_t*    out_key_id,
+    uint8_t*    out_key,
+    AuraError*  out_error);
+
+/*
+ * aura_channel_wrap_key_for_device — wrap a channel key for one subscriber
+ * device using their X25519 identity public key (X25519 ECDH + HKDF + AES-GCM-SIV).
+ *
+ * Output blob is exactly 92 bytes regardless of input. Caller releases out_blob
+ * with aura_buffer_release().
+ *
+ * Parameters:
+ *   channel_key          — 32-byte symmetric channel key.
+ *   device_x25519_public — 32-byte device X25519 public key.
+ *   out_blob             — receives the 92-byte wrapped blob.
+ *   out_error            — optional error detail.
+ *
+ * Returns: AURA_SUCCESS, AURA_ERROR_NULL_POINTER, AURA_ERROR_GENERIC,
+ *          or AURA_ERROR_CRYPTO_FAILURE.
+ */
+AURA_API AuraErrorCode aura_channel_wrap_key_for_device(
+    const uint8_t*  channel_key,
+    const uint8_t*  device_x25519_public,
+    AuraBuffer*     out_blob,
+    AuraError*      out_error);
+
+/*
+ * aura_channel_unwrap_key_blob — unwrap a previously wrapped channel key blob
+ * using the device's X25519 secret key.
+ *
+ * Parameters:
+ *   blob                 — wrapped key blob (must be exactly 92 bytes).
+ *   blob_length          — byte length of blob.
+ *   device_x25519_secret — 32-byte device X25519 secret key.
+ *   out_channel_key      — caller-provided 32-byte buffer for the unwrapped key.
+ *   out_error            — optional error detail.
+ *
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT (wrong length),
+ *          AURA_ERROR_NULL_POINTER, or AURA_ERROR_DECRYPTION (tampered blob /
+ *          wrong device secret).
+ */
+AURA_API AuraErrorCode aura_channel_unwrap_key_blob(
+    const uint8_t*  blob,
+    size_t          blob_length,
+    const uint8_t*  device_x25519_secret,
+    uint8_t*        out_channel_key,
+    AuraError*      out_error);
+
+/*
+ * aura_channel_encrypt_message — encrypt a channel message and produce the
+ * envelope fields (nonce + ciphertext + signature).
+ *
+ * Computes:
+ *   nonce      = random 12 bytes (CSPRNG)
+ *   ciphertext = AES-256-GCM-SIV(channel_key, nonce, plaintext, AAD)
+ *   signature  = Ed25519(sender_secret, channel_id || generation_be8 || ciphertext)
+ *
+ * The caller assembles {channel_key_id, generation, nonce, ciphertext, signature}
+ * into the wire envelope (e.g. ProtoEncryptedChannelMessage).
+ *
+ * Parameters:
+ *   plaintext             — message bytes (may be empty if length is 0).
+ *   plaintext_length      — byte length of plaintext.
+ *   channel_key           — 32-byte symmetric channel key.
+ *   channel_id            — 16-byte channel UUID.
+ *   channel_key_id        — 16-byte UUID identifying the key epoch.
+ *   generation            — monotonically increasing per-sender counter.
+ *   sender_ed25519_secret — 32-byte Ed25519 seed of the sender's identity key.
+ *   out_nonce             — caller-provided 12-byte buffer; receives the nonce.
+ *   out_signature         — caller-provided 64-byte buffer; receives the signature.
+ *   out_ciphertext        — receives the AES-GCM-SIV ciphertext+tag
+ *                           (release with aura_buffer_release()).
+ *   out_error             — optional error detail.
+ *
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT (plaintext too large),
+ *          AURA_ERROR_NULL_POINTER, AURA_ERROR_GENERIC, or AURA_ERROR_CRYPTO_FAILURE.
+ */
+AURA_API AuraErrorCode aura_channel_encrypt_message(
+    const uint8_t*  plaintext,
+    size_t          plaintext_length,
+    const uint8_t*  channel_key,
+    const uint8_t*  channel_id,
+    const uint8_t*  channel_key_id,
+    uint64_t        generation,
+    const uint8_t*  sender_ed25519_secret,
+    uint8_t*        out_nonce,
+    uint8_t*        out_signature,
+    AuraBuffer*     out_ciphertext,
+    AuraError*      out_error);
+
+/*
+ * aura_channel_decrypt_message — verify Ed25519 signature and AES-256-GCM-SIV
+ * decrypt a channel message envelope.
+ *
+ * Parameters:
+ *   ciphertext            — AES-GCM-SIV ciphertext+tag (must include 16-byte tag).
+ *   ciphertext_length     — byte length of ciphertext.
+ *   nonce                 — 12-byte nonce from the envelope.
+ *   signature             — 64-byte Ed25519 signature from the envelope.
+ *   channel_key_id        — 16-byte key id from the envelope (binds AAD).
+ *   generation            — generation counter from the envelope.
+ *   channel_key           — 32-byte symmetric channel key (looked up by id).
+ *   channel_id            — 16-byte channel UUID.
+ *   sender_ed25519_public — 32-byte Ed25519 public key of the claimed sender.
+ *   out_plaintext         — receives the decrypted plaintext
+ *                           (release with aura_buffer_release()).
+ *   out_error             — optional error detail.
+ *
+ * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT (length / key format),
+ *          AURA_ERROR_NULL_POINTER, AURA_ERROR_DECRYPTION (signature or AEAD
+ *          verification failed).
+ */
+AURA_API AuraErrorCode aura_channel_decrypt_message(
+    const uint8_t*  ciphertext,
+    size_t          ciphertext_length,
+    const uint8_t*  nonce,
+    const uint8_t*  signature,
+    const uint8_t*  channel_key_id,
+    uint64_t        generation,
+    const uint8_t*  channel_key,
+    const uint8_t*  channel_id,
+    const uint8_t*  sender_ed25519_public,
+    AuraBuffer*     out_plaintext,
+    AuraError*      out_error);
 
 #ifdef __cplusplus
 }

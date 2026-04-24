@@ -331,9 +331,9 @@ pub fn compute_rekey_mac(
     Ok(mac.finalize().into_bytes().to_vec())
 }
 
-/// Like [`compute_rekey_mac`] but mixes the **current session's root_secret**
-/// into the MAC-key derivation before the fresh Kyber shared secret.  This
-/// binds the rekey MAC to the established session — only a peer that
+/// Computes a rekey MAC bound to the current session root secret.
+///
+/// This binds the rekey MAC to the established session — only a peer that
 /// already knows `current_root_secret` AND successfully encapsulates to the
 /// other peer's Kyber public key can produce a valid MAC.  Without this
 /// binding, an attacker who happened to obtain a signature oracle for

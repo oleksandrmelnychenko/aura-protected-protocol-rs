@@ -572,8 +572,7 @@ pub(super) fn validate_external_join_auth_format_version(
 ) -> Result<(), ProtocolError> {
     if auth_format_version != GROUP_EXTERNAL_JOIN_AUTH_FORMAT_VERSION {
         return Err(ProtocolError::group_protocol(format!(
-            "Unsupported external join authorization format version: expected {}, got {}",
-            GROUP_EXTERNAL_JOIN_AUTH_FORMAT_VERSION, auth_format_version
+            "Unsupported external join authorization format version: expected {GROUP_EXTERNAL_JOIN_AUTH_FORMAT_VERSION}, got {auth_format_version}"
         )));
     }
     Ok(())
@@ -1071,6 +1070,7 @@ impl GroupSession {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn from_welcome_with_min_epoch_and_time_provider(
         welcome_bytes: &[u8],
         x25519_private: SecureMemoryHandle,

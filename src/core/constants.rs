@@ -38,9 +38,9 @@ pub const NONCE_EXHAUSTION_WARNING_PERCENT: u64 = 10;
 pub const DEFAULT_MESSAGES_PER_CHAIN: u64 = 1000;
 pub const MAX_SKIPPED_MESSAGE_KEYS: usize = 1000;
 pub const MAX_CACHED_METADATA_KEYS: usize = 100;
-/// Maximum number of ratchet epochs a cached metadata key may lag behind the
-/// current `recv_ratchet_epoch` before it is evicted and zeroized.  This
-/// bounds the forward-secrecy exposure window for message metadata
+/// Maximum ratchet-epoch lag for cached metadata keys.
+///
+/// This bounds the forward-secrecy exposure window for message metadata
 /// (envelope type, message index, correlation_id, etc.) in addition to the
 /// size-based [`MAX_CACHED_METADATA_KEYS`] limit.
 pub const MAX_METADATA_KEY_EPOCH_AGE: u64 = 32;

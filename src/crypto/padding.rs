@@ -7,7 +7,12 @@ use crate::core::errors::ProtocolError;
 /// Constant-time "greater than" mask: returns `0xFF` when `a > b`, `0x00` otherwise.
 /// Uses wrapping arithmetic to avoid branches entirely.
 #[inline]
-pub(crate) fn ct_gt_mask(a: usize, b: usize) -> u8 {
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
+pub(crate) const fn ct_gt_mask(a: usize, b: usize) -> u8 {
     // If a > b then b.wrapping_sub(a) has its MSB set (underflow).
     // Arithmetic shift right fills with the sign bit.
     let diff = b.wrapping_sub(a) as isize;
@@ -58,11 +63,11 @@ impl MessagePadding {
         // Iterate the *entire* buffer so the loop trip-count is independent of
         // `found_pos`, preventing timing side-channels.
         let mut non_zero_after_sentinel: u8 = 0;
-        for i in 0..padded.len() {
+        for (i, &byte) in padded.iter().enumerate() {
             // `after_sentinel` is 0xFF when `i > found_pos`, 0x00 otherwise.
             // Computed with branchless arithmetic to avoid data-dependent branches.
             let after_sentinel = ct_gt_mask(i, found_pos);
-            non_zero_after_sentinel |= padded[i] & after_sentinel;
+            non_zero_after_sentinel |= byte & after_sentinel;
         }
         if non_zero_after_sentinel != 0 {
             return Err(ProtocolError::decode(

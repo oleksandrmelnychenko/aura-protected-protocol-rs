@@ -147,9 +147,9 @@ fn validate_commit_for_relay_core(
                 }
                 removed_leaves.push(remove.removed_leaf_index);
             }
-            Some(crate::proto::group_proposal::Proposal::ExternalInit(_)) => {}
             Some(
-                crate::proto::group_proposal::Proposal::Update(_)
+                crate::proto::group_proposal::Proposal::ExternalInit(_)
+                | crate::proto::group_proposal::Proposal::Update(_)
                 | crate::proto::group_proposal::Proposal::Psk(_)
                 | crate::proto::group_proposal::Proposal::ReInit(_),
             ) => {}

@@ -59,7 +59,7 @@ fn validate_mime_type(mime_type: &str) -> Result<(), ProtocolError> {
     Ok(())
 }
 
-fn is_mime_token_byte(byte: u8) -> bool {
+const fn is_mime_token_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric()
         || matches!(
             byte,
