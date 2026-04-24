@@ -4671,6 +4671,7 @@ fn ffi_session_ratchet_stalling_warning_fires() {
 // ── Attachment v2 tests ──
 
 mod attachment_v2 {
+    use aura_protected_protocol::core::constants::MAX_COLLAGE_NAME_CHARS;
     use aura_protected_protocol::ffi::api::*;
     use aura_protected_protocol::proto::{
         AttachmentManifest, CollageManifest, ContactCard, ContentPolicy, LinkPreview,
@@ -4695,6 +4696,75 @@ mod attachment_v2 {
             data: ptr::null_mut(),
             length: 0,
         }
+    }
+
+    #[test]
+    fn manifest_v2_rejects_oversized_ffi_mime() {
+        init_v2();
+        let mut err = null_error();
+        let mut out = null_buffer();
+        let aid = [1u8; 32];
+        let file_hash = [2u8; 32];
+        let wrapped_file_key = [3u8; 48];
+        let oversized_mime = vec![b'a'; 256];
+
+        let code = unsafe {
+            aura_attachment_manifest_create_v2(
+                aid.as_ptr(),
+                aid.len(),
+                oversized_mime.as_ptr(),
+                oversized_mime.len(),
+                128,
+                128,
+                1,
+                file_hash.as_ptr(),
+                file_hash.len(),
+                wrapped_file_key.as_ptr(),
+                wrapped_file_key.len(),
+                -1,
+                ptr::null(),
+                0,
+                ptr::null(),
+                0,
+                ptr::null(),
+                0,
+                0,
+                0,
+                0,
+                &mut out,
+                &mut err,
+            )
+        };
+        assert_eq!(code, AuraErrorCode::AuraErrorInvalidInput);
+        assert!(out.data.is_null());
+    }
+
+    #[test]
+    fn collage_metadata_rejects_oversized_ffi_name() {
+        init_v2();
+        let mut err = null_error();
+        let mut out = null_buffer();
+        let manifest = [0u8; 1];
+        let manifests = [manifest.as_ptr()];
+        let lengths = [manifest.len()];
+        let oversized_name = vec![b'n'; MAX_COLLAGE_NAME_CHARS * 4 + 1];
+
+        let code = unsafe {
+            aura_attachment_collage_create_with_metadata(
+                manifests.as_ptr(),
+                lengths.as_ptr(),
+                manifests.len(),
+                oversized_name.as_ptr(),
+                oversized_name.len(),
+                ptr::null(),
+                0,
+                -1,
+                &mut out,
+                &mut err,
+            )
+        };
+        assert_eq!(code, AuraErrorCode::AuraErrorInvalidInput);
+        assert!(out.data.is_null());
     }
 
     #[test]

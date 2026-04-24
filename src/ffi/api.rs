@@ -37,11 +37,17 @@ use crate::core::constants::{
     ATTACHMENT_ID_BYTES, ATTACHMENT_PROTOCOL_VERSION, CALL_ID_BYTES, DEFAULT_ONE_TIME_KEY_COUNT,
     DEVICE_ID_BYTES, ED25519_PUBLIC_KEY_BYTES, HMAC_BYTES, KYBER_PUBLIC_KEY_BYTES,
     MAX_ATTACHMENT_CHUNK_SIZE, MAX_ATTACHMENT_ENCRYPTED_FILE_KEY_SIZE,
-    MAX_ATTACHMENT_MANIFEST_SIZE, MAX_ATTACHMENT_THUMBNAIL_SIZE, MAX_BUFFER_SIZE,
-    MAX_COLLAGE_MANIFEST_SIZE, MAX_ENVELOPE_MESSAGE_SIZE, MAX_GROUP_MESSAGE_SIZE,
-    MAX_HANDSHAKE_MESSAGE_SIZE, MAX_VOIP_ENCRYPTED_HEADER_SIZE, MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE,
-    MAX_VOIP_SIGNAL_MESSAGE_SIZE, MESSAGE_ID_BYTES, PROTOCOL_VERSION, PSK_BYTES, ROOT_KEY_BYTES,
-    X25519_PUBLIC_KEY_BYTES,
+    MAX_ATTACHMENT_FILENAME_BYTES, MAX_ATTACHMENT_MANIFEST_SIZE, MAX_ATTACHMENT_THUMBNAIL_SIZE,
+    MAX_BUFFER_SIZE, MAX_COLLAGE_ATTACHMENTS, MAX_COLLAGE_DESCRIPTION_CHARS,
+    MAX_COLLAGE_MANIFEST_SIZE, MAX_COLLAGE_NAME_CHARS, MAX_CONTACT_AVATAR_DATA_SIZE,
+    MAX_CONTACT_DISPLAY_NAME_CHARS, MAX_CONTACT_EMAIL_CHARS, MAX_CONTACT_ORGANIZATION_CHARS,
+    MAX_CONTACT_PHONE_CHARS, MAX_ENVELOPE_MESSAGE_SIZE, MAX_GROUP_MESSAGE_SIZE,
+    MAX_HANDSHAKE_MESSAGE_SIZE, MAX_INLINE_ATTACHMENT_DATA_SIZE,
+    MAX_LINK_PREVIEW_DESCRIPTION_CHARS, MAX_LINK_PREVIEW_DOMAIN_CHARS, MAX_LINK_PREVIEW_IMAGE_SIZE,
+    MAX_LINK_PREVIEW_TITLE_CHARS, MAX_LINK_PREVIEW_URL_CHARS, MAX_LOCATION_LABEL_CHARS,
+    MAX_VOICE_TRANSCRIPT_CHARS, MAX_VOICE_WAVEFORM_SAMPLES, MAX_VOIP_ENCRYPTED_HEADER_SIZE,
+    MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE, MAX_VOIP_SIGNAL_MESSAGE_SIZE, MESSAGE_ID_BYTES,
+    PROTOCOL_VERSION, PSK_BYTES, ROOT_KEY_BYTES, X25519_PUBLIC_KEY_BYTES,
 };
 use crate::core::errors::ProtocolError;
 use crate::crypto::SecureMemoryHandle;
@@ -385,6 +391,48 @@ unsafe fn write_protocol_error(out_error: *mut AuraError, e: &ProtocolError) -> 
     let code = error_code_from_protocol(e);
     write_error(out_error, code, &e.to_string());
     code
+}
+
+const fn max_utf8_bytes(max_chars: usize) -> usize {
+    max_chars.saturating_mul(4)
+}
+
+/// # Safety
+/// Same preconditions as [`write_error`].
+unsafe fn ensure_ffi_len_at_most(
+    out_error: *mut AuraError,
+    length: usize,
+    max: usize,
+    label: &str,
+) -> Result<(), AuraErrorCode> {
+    if length > max {
+        write_error(
+            out_error,
+            AuraErrorCode::AuraErrorInvalidInput,
+            &format!("{label} length exceeds maximum"),
+        );
+        return Err(AuraErrorCode::AuraErrorInvalidInput);
+    }
+    Ok(())
+}
+
+/// # Safety
+/// Same preconditions as [`write_error`].
+unsafe fn ensure_ffi_len_exact(
+    out_error: *mut AuraError,
+    length: usize,
+    expected: usize,
+    label: &str,
+) -> Result<(), AuraErrorCode> {
+    if length != expected {
+        write_error(
+            out_error,
+            AuraErrorCode::AuraErrorInvalidInput,
+            &format!("{label} length is invalid"),
+        );
+        return Err(AuraErrorCode::AuraErrorInvalidInput);
+    }
+    Ok(())
 }
 
 /// # Safety
@@ -9110,6 +9158,14 @@ pub unsafe extern "C" fn aura_attachment_collage_create(
             );
             return AuraErrorCode::AuraErrorInvalidInput;
         }
+        if manifest_count > MAX_COLLAGE_ATTACHMENTS {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "manifest_count exceeds maximum",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
 
         let ptrs = std::slice::from_raw_parts(manifest_array, manifest_count);
         let lens = std::slice::from_raw_parts(manifest_lengths, manifest_count);
@@ -9123,6 +9179,11 @@ pub unsafe extern "C" fn aura_attachment_collage_create(
                     "manifest pointer is null",
                 );
                 return AuraErrorCode::AuraErrorNullPointer;
+            }
+            if let Err(code) =
+                ensure_ffi_len_at_most(out_error, lens[i], MAX_ATTACHMENT_MANIFEST_SIZE, "manifest")
+            {
+                return code;
             }
             let bytes = std::slice::from_raw_parts(ptrs[i], lens[i]);
             let m = match AttachmentManifest::decode(bytes) {
@@ -9224,6 +9285,25 @@ pub unsafe extern "C" fn aura_attachment_streaming_encryptor_create(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
+        if let Err(code) = ensure_ffi_len_exact(
+            out_error,
+            file_key_length,
+            ATTACHMENT_FILE_KEY_BYTES,
+            "file_key",
+        ) {
+            return code;
+        }
+        if let Err(code) = ensure_ffi_len_exact(
+            out_error,
+            attachment_id_length,
+            ATTACHMENT_ID_BYTES,
+            "attachment_id",
+        ) {
+            return code;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(out_error, mime_type_length, 255, "mime_type") {
+            return code;
+        }
 
         let fk = std::slice::from_raw_parts(file_key, file_key_length).to_vec();
         let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length).to_vec();
@@ -9290,6 +9370,9 @@ pub unsafe extern "C" fn aura_attachment_streaming_encryptor_write(
             );
             return AuraErrorCode::AuraErrorObjectDisposed;
         };
+        if let Err(code) = ensure_ffi_len_at_most(out_error, data_length, MAX_BUFFER_SIZE, "data") {
+            return code;
+        }
 
         let input = std::slice::from_raw_parts(data, data_length);
         match enc.write(input) {
@@ -9416,6 +9499,25 @@ pub unsafe extern "C" fn aura_attachment_streaming_decryptor_create(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
+        if let Err(code) = ensure_ffi_len_exact(
+            out_error,
+            file_key_length,
+            ATTACHMENT_FILE_KEY_BYTES,
+            "file_key",
+        ) {
+            return code;
+        }
+        if let Err(code) = ensure_ffi_len_exact(
+            out_error,
+            attachment_id_length,
+            ATTACHMENT_ID_BYTES,
+            "attachment_id",
+        ) {
+            return code;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(out_error, mime_type_length, 255, "mime_type") {
+            return code;
+        }
 
         let fk = std::slice::from_raw_parts(file_key, file_key_length).to_vec();
         let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length).to_vec();
@@ -9484,6 +9586,19 @@ pub unsafe extern "C" fn aura_attachment_streaming_decryptor_write(
             );
             return AuraErrorCode::AuraErrorObjectDisposed;
         };
+        if let Err(code) =
+            ensure_ffi_len_exact(out_error, nonce_length, AES_GCM_NONCE_BYTES, "nonce")
+        {
+            return code;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(
+            out_error,
+            ciphertext_length,
+            MAX_ATTACHMENT_CHUNK_SIZE + 16,
+            "ciphertext",
+        ) {
+            return code;
+        }
 
         let nonce_slice = std::slice::from_raw_parts(nonce, nonce_length);
         let ct = std::slice::from_raw_parts(ciphertext, ciphertext_length);
@@ -9598,6 +9713,9 @@ pub unsafe extern "C" fn aura_attachment_manifest_create_v2(
             );
             return AuraErrorCode::AuraErrorInvalidInput;
         }
+        if let Err(code) = ensure_ffi_len_at_most(out_error, mime_type_length, 255, "mime_type") {
+            return code;
+        }
 
         let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
         let mime_bytes = std::slice::from_raw_parts(mime_type, mime_type_length);
@@ -9613,7 +9731,49 @@ pub unsafe extern "C" fn aura_attachment_manifest_create_v2(
         let sha = std::slice::from_raw_parts(file_sha256, file_sha256_length);
         let efk = std::slice::from_raw_parts(encrypted_file_key, encrypted_file_key_length);
 
-        let has_thumbnail = !thumbnail_ciphertext.is_null() && thumbnail_ciphertext_length > 0;
+        let has_thumbnail = thumbnail_ciphertext_length > 0
+            || thumbnail_nonce_length > 0
+            || thumbnail_mime_type_length > 0
+            || thumbnail_original_size > 0;
+        if has_thumbnail
+            && (thumbnail_ciphertext.is_null()
+                || thumbnail_nonce.is_null()
+                || thumbnail_mime_type.is_null())
+        {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "Thumbnail pointers must be non-null when thumbnail fields are present",
+            );
+            return AuraErrorCode::AuraErrorNullPointer;
+        }
+        if has_thumbnail {
+            if let Err(code) = ensure_ffi_len_at_most(
+                out_error,
+                thumbnail_ciphertext_length,
+                MAX_ATTACHMENT_THUMBNAIL_SIZE,
+                "thumbnail_ciphertext",
+            ) {
+                return code;
+            }
+            if let Err(code) = ensure_ffi_len_exact(
+                out_error,
+                thumbnail_nonce_length,
+                AES_GCM_NONCE_BYTES,
+                "thumbnail_nonce",
+            ) {
+                return code;
+            }
+            if let Err(code) = ensure_ffi_len_at_most(
+                out_error,
+                thumbnail_mime_type_length,
+                255,
+                "thumbnail_mime_type",
+            ) {
+                return code;
+            }
+        }
+
         let has_ttl = ttl_seconds > 0;
 
         let manifest = AttachmentManifest {
@@ -9647,7 +9807,15 @@ pub unsafe extern "C" fn aura_attachment_manifest_create_v2(
             thumbnail_mime_type: if has_thumbnail && !thumbnail_mime_type.is_null() {
                 let tb =
                     std::slice::from_raw_parts(thumbnail_mime_type, thumbnail_mime_type_length);
-                Some(std::str::from_utf8(tb).unwrap_or("image/jpeg").to_string())
+                let Ok(ts) = std::str::from_utf8(tb) else {
+                    write_error(
+                        out_error,
+                        AuraErrorCode::AuraErrorInvalidInput,
+                        "thumbnail_mime_type is not valid UTF-8",
+                    );
+                    return AuraErrorCode::AuraErrorInvalidInput;
+                };
+                Some(ts.to_string())
             } else {
                 None
             },
@@ -9778,6 +9946,14 @@ pub unsafe extern "C" fn aura_attachment_decrypt_file_key(
             );
             return AuraErrorCode::AuraErrorInvalidInput;
         }
+        if encrypted_file_key_length > MAX_ATTACHMENT_ENCRYPTED_FILE_KEY_SIZE {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "encrypted_file_key size is out of range",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
 
         let Some(session) = (*handle).inner.as_ref() else {
             write_error(
@@ -9818,6 +9994,9 @@ pub unsafe extern "C" fn aura_attachment_validate_magic_bytes(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
+        if let Err(code) = ensure_ffi_len_at_most(out_error, mime_type_length, 255, "mime_type") {
+            return code;
+        }
         let header_slice = std::slice::from_raw_parts(header, header_length);
         let mime_bytes = std::slice::from_raw_parts(mime_type, mime_type_length);
         let Ok(mime_str) = std::str::from_utf8(mime_bytes) else {
@@ -9851,6 +10030,11 @@ pub unsafe extern "C" fn aura_attachment_detect_mime(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
+        if let Err(code) =
+            ensure_ffi_len_at_most(out_error, header_length, MAX_BUFFER_SIZE, "header")
+        {
+            return code;
+        }
         let header_slice = std::slice::from_raw_parts(header, header_length);
         let buf = crate::protocol::attachment::detect_mime_from_magic(header_slice)
             .map_or_else(Vec::new, |mime| mime.as_bytes().to_vec());
@@ -9873,6 +10057,14 @@ pub unsafe extern "C" fn aura_attachment_validate_filename(
                 "name is null",
             );
             return AuraErrorCode::AuraErrorNullPointer;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(
+            out_error,
+            name_length,
+            MAX_ATTACHMENT_FILENAME_BYTES,
+            "name",
+        ) {
+            return code;
         }
         let name_bytes = std::slice::from_raw_parts(name, name_length);
         let Ok(name_str) = std::str::from_utf8(name_bytes) else {
@@ -9905,6 +10097,9 @@ pub unsafe extern "C" fn aura_attachment_sanitize_filename(
                 "A required pointer is null",
             );
             return AuraErrorCode::AuraErrorNullPointer;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(out_error, name_length, MAX_BUFFER_SIZE, "name") {
+            return code;
         }
         let name_bytes = std::slice::from_raw_parts(name, name_length);
         let Ok(name_str) = std::str::from_utf8(name_bytes) else {
@@ -9951,6 +10146,30 @@ pub unsafe extern "C" fn aura_attachment_collage_create_with_metadata(
             );
             return AuraErrorCode::AuraErrorInvalidInput;
         }
+        if manifest_count > MAX_COLLAGE_ATTACHMENTS {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "manifest_count exceeds maximum",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(
+            out_error,
+            name_length,
+            max_utf8_bytes(MAX_COLLAGE_NAME_CHARS),
+            "name",
+        ) {
+            return code;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(
+            out_error,
+            description_length,
+            max_utf8_bytes(MAX_COLLAGE_DESCRIPTION_CHARS),
+            "description",
+        ) {
+            return code;
+        }
 
         let ptrs = std::slice::from_raw_parts(manifest_array, manifest_count);
         let lens = std::slice::from_raw_parts(manifest_lengths, manifest_count);
@@ -9964,6 +10183,11 @@ pub unsafe extern "C" fn aura_attachment_collage_create_with_metadata(
                     "manifest pointer is null",
                 );
                 return AuraErrorCode::AuraErrorNullPointer;
+            }
+            if let Err(code) =
+                ensure_ffi_len_at_most(out_error, lens[i], MAX_ATTACHMENT_MANIFEST_SIZE, "manifest")
+            {
+                return code;
             }
             let bytes = std::slice::from_raw_parts(ptrs[i], lens[i]);
             let Ok(m) = AttachmentManifest::decode(bytes) else {
@@ -10039,6 +10263,11 @@ pub unsafe extern "C" fn aura_attachment_inline_validate(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
+        if let Err(code) =
+            ensure_ffi_len_at_most(out_error, length, MAX_BUFFER_SIZE, "InlineAttachment")
+        {
+            return code;
+        }
         let slice = std::slice::from_raw_parts(bytes, length);
         let Ok(obj) = InlineAttachment::decode(slice) else {
             return write_protocol_error(
@@ -10079,6 +10308,33 @@ pub unsafe extern "C" fn aura_attachment_inline_create(
                 "A required pointer is null",
             );
             return AuraErrorCode::AuraErrorNullPointer;
+        }
+        if let Err(code) = ensure_ffi_len_exact(
+            out_error,
+            attachment_id_length,
+            ATTACHMENT_ID_BYTES,
+            "attachment_id",
+        ) {
+            return code;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(out_error, mime_type_length, 255, "mime_type") {
+            return code;
+        }
+        if data_length == 0 || data_length > MAX_INLINE_ATTACHMENT_DATA_SIZE {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "data length is out of range",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(
+            out_error,
+            original_filename_length,
+            MAX_ATTACHMENT_FILENAME_BYTES,
+            "filename",
+        ) {
+            return code;
         }
         let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
         let mime_bytes = std::slice::from_raw_parts(mime_type, mime_type_length);
@@ -10152,6 +10408,11 @@ pub unsafe extern "C" fn aura_attachment_reference_validate(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
+        if let Err(code) =
+            ensure_ffi_len_at_most(out_error, length, MAX_BUFFER_SIZE, "AttachmentReference")
+        {
+            return code;
+        }
         let slice = std::slice::from_raw_parts(bytes, length);
         let Ok(obj) = AttachmentReference::decode(slice) else {
             return write_protocol_error(
@@ -10184,6 +10445,32 @@ pub unsafe extern "C" fn aura_attachment_reference_create(
                 "A required pointer is null",
             );
             return AuraErrorCode::AuraErrorNullPointer;
+        }
+        if let Err(code) = ensure_ffi_len_exact(
+            out_error,
+            attachment_id_length,
+            ATTACHMENT_ID_BYTES,
+            "attachment_id",
+        ) {
+            return code;
+        }
+        if !source_message_id.is_null() || source_message_id_length > 0 {
+            if source_message_id.is_null() {
+                write_error(
+                    out_error,
+                    AuraErrorCode::AuraErrorNullPointer,
+                    "source_message_id is null",
+                );
+                return AuraErrorCode::AuraErrorNullPointer;
+            }
+            if let Err(code) = ensure_ffi_len_exact(
+                out_error,
+                source_message_id_length,
+                MESSAGE_ID_BYTES,
+                "source_message_id",
+            ) {
+                return code;
+            }
         }
         let aid = std::slice::from_raw_parts(attachment_id, attachment_id_length);
         let smid = if !source_message_id.is_null() && source_message_id_length > 0 {
@@ -10227,6 +10514,11 @@ pub unsafe extern "C" fn aura_attachment_voice_meta_validate(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
+        if let Err(code) =
+            ensure_ffi_len_at_most(out_error, length, MAX_BUFFER_SIZE, "VoiceMessageMeta")
+        {
+            return code;
+        }
         let slice = std::slice::from_raw_parts(bytes, length);
         let Ok(obj) = VoiceMessageMeta::decode(slice) else {
             return write_protocol_error(
@@ -10261,6 +10553,22 @@ pub unsafe extern "C" fn aura_attachment_voice_meta_create(
                 "out_buffer is null",
             );
             return AuraErrorCode::AuraErrorNullPointer;
+        }
+        if waveform_count > MAX_VOICE_WAVEFORM_SAMPLES {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "waveform_count exceeds maximum",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(
+            out_error,
+            transcript_length,
+            max_utf8_bytes(MAX_VOICE_TRANSCRIPT_CHARS),
+            "transcript",
+        ) {
+            return code;
         }
         let waveform = if !waveform_samples.is_null() && waveform_count > 0 {
             std::slice::from_raw_parts(waveform_samples, waveform_count).to_vec()
@@ -10323,6 +10631,11 @@ pub unsafe extern "C" fn aura_attachment_location_validate(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
+        if let Err(code) =
+            ensure_ffi_len_at_most(out_error, length, MAX_BUFFER_SIZE, "LocationAttachment")
+        {
+            return code;
+        }
         let slice = std::slice::from_raw_parts(bytes, length);
         let Ok(obj) = LocationAttachment::decode(slice) else {
             return write_protocol_error(
@@ -10358,6 +10671,14 @@ pub unsafe extern "C" fn aura_attachment_location_create(
                 "out_buffer is null",
             );
             return AuraErrorCode::AuraErrorNullPointer;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(
+            out_error,
+            label_length,
+            max_utf8_bytes(MAX_LOCATION_LABEL_CHARS),
+            "label",
+        ) {
+            return code;
         }
         let accuracy = if has_accuracy != 0 {
             Some(accuracy_meters)
@@ -10417,6 +10738,10 @@ pub unsafe extern "C" fn aura_attachment_contact_card_validate(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
+        if let Err(code) = ensure_ffi_len_at_most(out_error, length, MAX_BUFFER_SIZE, "ContactCard")
+        {
+            return code;
+        }
         let slice = std::slice::from_raw_parts(bytes, length);
         let Ok(obj) = ContactCard::decode(slice) else {
             return write_protocol_error(
@@ -10454,6 +10779,46 @@ pub unsafe extern "C" fn aura_attachment_contact_card_create(
                 "A required pointer is null",
             );
             return AuraErrorCode::AuraErrorNullPointer;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(
+            out_error,
+            display_name_length,
+            max_utf8_bytes(MAX_CONTACT_DISPLAY_NAME_CHARS),
+            "display_name",
+        ) {
+            return code;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(
+            out_error,
+            phone_length,
+            max_utf8_bytes(MAX_CONTACT_PHONE_CHARS),
+            "phone",
+        ) {
+            return code;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(
+            out_error,
+            email_length,
+            max_utf8_bytes(MAX_CONTACT_EMAIL_CHARS),
+            "email",
+        ) {
+            return code;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(
+            out_error,
+            avatar_data_length,
+            MAX_CONTACT_AVATAR_DATA_SIZE,
+            "avatar_data",
+        ) {
+            return code;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(
+            out_error,
+            organization_length,
+            max_utf8_bytes(MAX_CONTACT_ORGANIZATION_CHARS),
+            "organization",
+        ) {
+            return code;
         }
         let dn_bytes = std::slice::from_raw_parts(display_name, display_name_length);
         let Ok(dn_str) = std::str::from_utf8(dn_bytes) else {
@@ -10549,6 +10914,10 @@ pub unsafe extern "C" fn aura_attachment_link_preview_validate(
             );
             return AuraErrorCode::AuraErrorNullPointer;
         }
+        if let Err(code) = ensure_ffi_len_at_most(out_error, length, MAX_BUFFER_SIZE, "LinkPreview")
+        {
+            return code;
+        }
         let slice = std::slice::from_raw_parts(bytes, length);
         let Ok(obj) = LinkPreview::decode(slice) else {
             return write_protocol_error(
@@ -10588,6 +10957,54 @@ pub unsafe extern "C" fn aura_attachment_link_preview_create(
                 "A required pointer is null",
             );
             return AuraErrorCode::AuraErrorNullPointer;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(
+            out_error,
+            url_length,
+            max_utf8_bytes(MAX_LINK_PREVIEW_URL_CHARS),
+            "url",
+        ) {
+            return code;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(
+            out_error,
+            title_length,
+            max_utf8_bytes(MAX_LINK_PREVIEW_TITLE_CHARS),
+            "title",
+        ) {
+            return code;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(
+            out_error,
+            description_length,
+            max_utf8_bytes(MAX_LINK_PREVIEW_DESCRIPTION_CHARS),
+            "description",
+        ) {
+            return code;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(
+            out_error,
+            preview_image_length,
+            MAX_LINK_PREVIEW_IMAGE_SIZE,
+            "preview_image",
+        ) {
+            return code;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(
+            out_error,
+            preview_image_mime_length,
+            255,
+            "preview_image_mime",
+        ) {
+            return code;
+        }
+        if let Err(code) = ensure_ffi_len_at_most(
+            out_error,
+            domain_length,
+            max_utf8_bytes(MAX_LINK_PREVIEW_DOMAIN_CHARS),
+            "domain",
+        ) {
+            return code;
         }
         let url_bytes = std::slice::from_raw_parts(url, url_length);
         let Ok(url_str) = std::str::from_utf8(url_bytes) else {
