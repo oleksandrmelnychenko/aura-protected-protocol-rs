@@ -437,14 +437,11 @@ unsafe fn ensure_ffi_len_exact(
 
 /// # Safety
 /// `out` must be null or point to a valid, writable `AuraBuffer`.
-/// If it already contains an FFI-owned allocation from a previous call, that
-/// allocation is released before the new buffer is written.
+/// The previous contents of `out` are not read or released because callers may
+/// pass uninitialized storage.
 unsafe fn write_buffer(out: *mut AuraBuffer, bytes: Vec<u8>) {
     if out.is_null() {
         return;
-    }
-    if !(*out).data.is_null() || (*out).length != 0 {
-        aura_buffer_release(out);
     }
     if bytes.is_empty() {
         (*out).data = std::ptr::null_mut();
@@ -460,8 +457,8 @@ unsafe fn write_buffer(out: *mut AuraBuffer, bytes: Vec<u8>) {
 /// # Safety
 /// `out` must be null or point to a valid writable `*mut T`. `new_handle` must
 /// be a heap allocation previously created by `Box::into_raw` for `T`, or null.
-/// If `out` already stores an FFI-owned handle, it is destroyed before the new
-/// handle is written.
+/// The previous value in `out` is not read or destroyed because callers may
+/// pass uninitialized storage.
 unsafe fn replace_out_handle<T>(out: *mut *mut T, new_handle: *mut T) {
     if out.is_null() {
         if !new_handle.is_null() {
@@ -469,10 +466,7 @@ unsafe fn replace_out_handle<T>(out: *mut *mut T, new_handle: *mut T) {
         }
         return;
     }
-    let old = std::ptr::replace(out, new_handle);
-    if !old.is_null() {
-        drop(Box::from_raw(old));
-    }
+    *out = new_handle;
 }
 
 /// # Safety

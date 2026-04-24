@@ -224,7 +224,9 @@ typedef struct AuraSealedStateCounterTrackerHandle AuraSealedStateCounterTracker
 typedef struct AuraSealedStateSlotHandle AuraSealedStateSlotHandle;
 typedef struct AuraTimeProviderHandle AuraTimeProviderHandle;
 
-// Буфер для передачі бінарних даних. Звільняти через aura_buffer_release або aura_buffer_free.
+// Буфер для передачі бінарних даних. Caller owns data і звільняє через
+// aura_buffer_release або aura_buffer_free. Перед повторним використанням
+// того самого out-слота старий data треба звільнити явно.
 typedef struct AuraBuffer {
     uint8_t* data;
     size_t   length;
@@ -1889,6 +1891,14 @@ aura_session_encrypt(handle, ..., &buf, &err);
 aura_buffer_release(&buf);  // звільнити data, struct на стеку
 ```
 
+FFI output writers не читають і не звільняють попередній вміст простих
+`AuraBuffer*` / `out_handle` слотів. Якщо слот використовується повторно,
+спочатку викличте `aura_buffer_release(&buf)` або відповідний `_destroy(&handle)`,
+потім передавайте його в наступну FFI-функцію. Compound structs на кшталт
+`AuraEncryptedFrame`, `AuraDecryptedFrame`, `AuraEnvelopeMetadata` і
+`AuraGroupDecryptResult` все ще мають бути zero-initialized перед першим
+використанням, бо їхні cleanup paths можуть дивитися на вкладені поля.
+
 ### `aura_buffer_alloc`
 
 ```c
@@ -1966,8 +1976,8 @@ aura_buffer_release(&buf);
 
 ### Правила ownership
 
-1. **Handle** — caller owns. Завжди знищувати через відповідний `_destroy(Aura*Handle** handle)`; destroy зануляє `*handle`
-2. **AuraBuffer.data** — caller owns. Звільняти через `aura_buffer_release` (stack) або `aura_buffer_free` (heap)
+1. **Handle** — caller owns. Завжди знищувати через відповідний `_destroy(Aura*Handle** handle)`; destroy зануляє `*handle`. Перед reuse того самого `out_handle` слота старий handle треба знищити явно.
+2. **AuraBuffer.data** — caller owns. Звільняти через `aura_buffer_release` (stack) або `aura_buffer_free` (heap). Перед reuse того самого `AuraBuffer` out-слота старий `data` треба звільнити явно.
 3. **AuraError.message** — caller owns. Звільняти через `aura_error_free`
 4. **Consumed handles** — `_finish` забирає ownership, handle стає порожнім
 

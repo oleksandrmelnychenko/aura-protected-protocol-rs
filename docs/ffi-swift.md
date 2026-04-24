@@ -230,6 +230,13 @@ Swift wrapper надає `AuraGroupSession` та `AuraGroupKeyPackageSecrets`. �
 | `aura_error_free` | `AuraError*` | Звільнити повідомлення про помилку |
 | `aura_error_string` | `AuraErrorCode` | Отримати рядок помилки для коду |
 
+Прості `AuraBuffer*` і `out_handle` слоти FFI перезаписує без читання старого
+значення. Swift wrapper має тримати їх як короткоживучі локальні змінні або
+явно викликати `aura_buffer_release` / відповідний `_destroy` перед повторним
+використанням того самого слота. Compound structs (`AuraEncryptedFrame`,
+`AuraDecryptedFrame`, group decrypt result, metadata) zero-initialize перед
+першим викликом і звільняйте їхні вкладені буфери після використання.
+
 ## Помилки
 
 Усі функції, що повертають `AuraErrorCode`, заповнюють `AuraError` (code + message). У Swift це перетворено на `AuraError` (enum/тип з кодами).

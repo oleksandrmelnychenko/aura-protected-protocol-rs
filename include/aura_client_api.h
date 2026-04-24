@@ -14,26 +14,23 @@ extern "C" {
  * OWNERSHIP RULES (apply to every function in this file):
  *   - Parameters named `out_handle` write a newly allocated opaque handle.
  *     The caller owns the handle and MUST destroy it with the matching
- *     _destroy() function when done. Reusing the same output slot across
- *     successful calls is allowed; the FFI layer replaces any previous
- *     FFI-owned handle before writing the new one.
+ *     _destroy() function when done. The FFI layer does not inspect or free
+ *     the previous value stored in the output slot; destroy any previous
+ *     handle before passing the same slot to another call.
  *   - Parameters named `out_*` of type AuraBuffer* write a heap-allocated
  *     buffer owned by the caller. Release it with aura_buffer_release().
- *     Reusing the same AuraBuffer across successful calls is allowed; the FFI
- *     layer replaces any previous FFI-owned contents before writing new data.
+ *     The FFI layer does not inspect or release previous AuraBuffer contents;
+ *     call aura_buffer_release() before reusing the same buffer slot.
  *
- *     CRITICAL #1 — ZERO-INITIALIZATION: Every `AuraBuffer`,
- *     `AuraEncryptedFrame`, `AuraDecryptedFrame`, `AuraEnvelopeMetadata`,
- *     `AuraGroupDecryptResult`, etc. MUST be zero-initialized before the
- *     first call that writes into it.  In C: `AuraEncryptedFrame f = {0};`
- *     NOT `AuraEncryptedFrame f;` (the latter leaves garbage on the stack).
- *     In Rust: `unsafe { std::mem::zeroed() }`.  In Swift: default
- *     initializers already produce zero values.  The library inspects any
- *     existing FFI-owned contents before overwriting (to release them and
- *     avoid leaks when a struct is reused across calls); that inspection
- *     is only safe when the prior contents are either zero-initialized or
- *     a valid library allocation.  Uninitialized stack bytes = undefined
- *     behavior on the first call.
+ *     CRITICAL #1 — OUTPUT INITIALIZATION: Simple `AuraBuffer*` and
+ *     `out_handle` slots are overwritten without reading their prior bytes,
+ *     so stack storage does not have to be pre-zeroed before a successful
+ *     call.  Compound output structs such as `AuraEncryptedFrame`,
+ *     `AuraDecryptedFrame`, `AuraEnvelopeMetadata`, and
+ *     `AuraGroupDecryptResult` MUST still be zero-initialized before first
+ *     use because their function-specific cleanup paths may inspect nested
+ *     fields. In C: `AuraEncryptedFrame f = {0};` NOT
+ *     `AuraEncryptedFrame f;`.
  *
  *     CRITICAL #2 — ALLOCATOR OWNERSHIP: `AuraBuffer.data` MUST always be
  *     either NULL or a pointer returned by an aura_* FFI function
@@ -1131,8 +1128,8 @@ AURA_API void aura_envelope_metadata_free(AuraEnvelopeMetadata* meta);
  * The struct itself is caller-allocated and must not be freed.
  * MUST be zero-initialized on first use (`AuraEncryptedFrame frame = {0};`).
  * The library may release prior FFI-owned buffers when reusing the same
- * struct across calls, so passing uninitialized stack memory is undefined
- * behavior.
+ * frame struct across calls, so passing uninitialized frame memory is
+ * undefined behavior.
  */
 typedef struct {
     AuraBuffer call_id;
@@ -1151,8 +1148,8 @@ typedef struct {
  * plain metadata copied from the authenticated RTP-like header.
  * MUST be zero-initialized on first use (`AuraDecryptedFrame frame = {0};`).
  * The library may release prior FFI-owned buffers when reusing the same
- * struct across calls, so passing uninitialized stack memory is undefined
- * behavior.
+ * frame struct across calls, so passing uninitialized frame memory is
+ * undefined behavior.
  */
 typedef struct {
     AuraBuffer payload;
@@ -1388,7 +1385,8 @@ AURA_API AuraErrorCode aura_voip_process_call_end(
 /*
  * aura_voip_encrypt_call_control — encode and encrypt one call-control frame.
  *
- * `out_frame` is required.
+ * `out_frame` is required and has the same zero-initialization/reuse
+ * semantics as aura_voip_encrypt_frame.
  */
 AURA_API AuraErrorCode aura_voip_encrypt_call_control(
     const AuraVoipSessionHandle*  handle,

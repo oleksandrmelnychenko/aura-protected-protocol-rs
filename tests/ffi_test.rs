@@ -215,7 +215,7 @@ mod ffi {
     }
 
     #[test]
-    fn ffi_identity_out_handle_can_be_reused_across_successful_calls() {
+    fn ffi_identity_out_handle_reuse_requires_destroying_previous_handle() {
         init_lib();
         let mut handle: *mut AuraIdentityHandle = ptr::null_mut();
         let mut err = null_error();
@@ -236,6 +236,9 @@ mod ffi {
                 ),
                 AuraErrorCode::AuraSuccess
             );
+
+            aura_identity_destroy(&mut handle);
+            assert!(handle.is_null());
 
             assert_eq!(
                 aura_identity_create(&mut handle, &mut err),
@@ -440,7 +443,24 @@ mod ffi {
     }
 
     #[test]
-    fn ffi_output_buffer_can_be_reused_across_successful_calls() {
+    fn ffi_identity_out_handle_overwrites_uninitialized_slot_without_freeing_it() {
+        init_lib();
+        let mut handle = usize::MAX as *mut AuraIdentityHandle;
+        let mut err = null_error();
+
+        unsafe {
+            assert_eq!(
+                aura_identity_create(&mut handle, &mut err),
+                AuraErrorCode::AuraSuccess
+            );
+            assert!(!handle.is_null());
+            assert_ne!(handle as usize, usize::MAX);
+            aura_identity_destroy(&mut handle);
+        }
+    }
+
+    #[test]
+    fn ffi_output_buffer_reuse_requires_releasing_previous_buffer() {
         init_lib();
         let mut err = null_error();
         let group_id = [0xABu8; 32];
@@ -462,6 +482,10 @@ mod ffi {
             assert_eq!(out.length, 32);
             let first = std::slice::from_raw_parts(out.data, out.length).to_vec();
 
+            aura_buffer_release(&mut out);
+            assert!(out.data.is_null());
+            assert_eq!(out.length, 0);
+
             assert_eq!(
                 aura_group_compute_message_id(
                     group_id.as_ptr(),
@@ -479,6 +503,34 @@ mod ffi {
             assert_ne!(first, second);
 
             aura_buffer_release(&mut out);
+        }
+    }
+
+    #[test]
+    fn ffi_output_buffer_overwrites_uninitialized_slot_without_freeing_it() {
+        init_lib();
+        let mut err = null_error();
+        let mut handle: *mut AuraIdentityHandle = ptr::null_mut();
+        let mut out = AuraBuffer {
+            data: usize::MAX as *mut u8,
+            length: usize::MAX,
+        };
+
+        unsafe {
+            assert_eq!(
+                aura_identity_create(&mut handle, &mut err),
+                AuraErrorCode::AuraSuccess
+            );
+            assert_eq!(
+                aura_prekey_bundle_create(handle, &mut out, &mut err),
+                AuraErrorCode::AuraSuccess
+            );
+            assert!(!out.data.is_null());
+            assert_ne!(out.data as usize, usize::MAX);
+            assert!(out.length > 0);
+
+            aura_buffer_release(&mut out);
+            aura_identity_destroy(&mut handle);
         }
     }
 
@@ -4326,6 +4378,70 @@ fn identity_otk_exhaustion_callback_tracks_replenished_capacity() {
     assert_eq!(counter.count.load(Ordering::SeqCst), 1);
     assert_eq!(counter.last_remaining.load(Ordering::SeqCst), 2);
     assert_eq!(counter.last_capacity.load(Ordering::SeqCst), 19);
+}
+
+#[test]
+fn identity_otk_exhaustion_callback_allows_reentrant_replenish() {
+    use aura_protected_protocol::identity::IdentityKeys;
+    use aura_protected_protocol::interfaces::IIdentityEventHandler;
+    use std::sync::{
+        atomic::{AtomicU32, Ordering},
+        mpsc, Arc, Mutex,
+    };
+    use std::time::Duration;
+
+    struct ReplenishingHandler {
+        identity: Arc<IdentityKeys>,
+        calls: AtomicU32,
+        callback_done: Mutex<Option<mpsc::Sender<()>>>,
+    }
+
+    impl IIdentityEventHandler for ReplenishingHandler {
+        fn on_otk_exhaustion_warning(&self, _remaining: u32, _max_capacity: u32) {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.identity
+                .replenish_one_time_pre_keys(1)
+                .expect("replenish from OTK callback");
+            if let Some(tx) = self.callback_done.lock().unwrap().take() {
+                let _ = tx.send(());
+            }
+        }
+    }
+
+    let identity = Arc::new(IdentityKeys::create(2).expect("create identity"));
+    let (callback_tx, callback_rx) = mpsc::channel();
+    let (consume_tx, consume_rx) = mpsc::channel();
+    let handler = Arc::new(ReplenishingHandler {
+        identity: identity.clone(),
+        calls: AtomicU32::new(0),
+        callback_done: Mutex::new(Some(callback_tx)),
+    });
+    identity.set_event_handler(handler.clone());
+
+    let bundle = identity.create_public_bundle().expect("create bundle");
+    let first_otk = bundle.one_time_pre_keys()[0].id();
+    let identity_for_consume = identity.clone();
+    std::thread::spawn(move || {
+        let result = identity_for_consume.consume_one_time_pre_key_by_id(first_otk);
+        let _ = consume_tx.send(result);
+    });
+
+    callback_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("OTK exhaustion callback should not deadlock while replenishing");
+    consume_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("consume should return after callback")
+        .expect("consume OTK");
+
+    assert_eq!(handler.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        identity
+            .create_public_bundle()
+            .unwrap()
+            .one_time_pre_key_count(),
+        2
+    );
 }
 
 // ─── ReInit proposed callback fires ─────────────────────────────────────────

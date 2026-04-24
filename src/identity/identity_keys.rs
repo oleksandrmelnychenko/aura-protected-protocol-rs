@@ -527,26 +527,33 @@ impl IdentityKeys {
     }
 
     pub fn consume_one_time_pre_key_by_id(&self, id: u32) -> Result<(), ProtocolError> {
-        let mut inner = self
-            .inner
-            .write()
-            .map_err(|_| ProtocolError::invalid_state("IdentityKeys write lock poisoned"))?;
-        let pos = inner
-            .one_time_pre_keys
-            .iter()
-            .position(|opk| opk.id() == id)
-            .ok_or_else(|| ProtocolError::invalid_input("OPK with requested ID not found"))?;
-        inner.one_time_pre_keys.remove(pos);
+        let (warning_handler, remaining, max_capacity) = {
+            let mut inner = self
+                .inner
+                .write()
+                .map_err(|_| ProtocolError::invalid_state("IdentityKeys write lock poisoned"))?;
+            let pos = inner
+                .one_time_pre_keys
+                .iter()
+                .position(|opk| opk.id() == id)
+                .ok_or_else(|| ProtocolError::invalid_input("OPK with requested ID not found"))?;
+            inner.one_time_pre_keys.remove(pos);
 
-        let remaining = u32::try_from(inner.one_time_pre_keys.len()).unwrap_or(u32::MAX);
-        let max_capacity = inner.one_time_pre_key_capacity;
-        let threshold = max_capacity
-            .saturating_mul(OTK_EXHAUSTION_WARNING_PERCENT)
-            .div_ceil(100);
-        if remaining <= threshold {
-            if let Some(ref handler) = inner.event_handler {
-                handler.on_otk_exhaustion_warning(remaining, max_capacity);
-            }
+            let remaining = u32::try_from(inner.one_time_pre_keys.len()).unwrap_or(u32::MAX);
+            let max_capacity = inner.one_time_pre_key_capacity;
+            let threshold = max_capacity
+                .saturating_mul(OTK_EXHAUSTION_WARNING_PERCENT)
+                .div_ceil(100);
+            let warning_handler = if remaining <= threshold {
+                inner.event_handler.clone()
+            } else {
+                None
+            };
+            (warning_handler, remaining, max_capacity)
+        };
+
+        if let Some(handler) = warning_handler {
+            handler.on_otk_exhaustion_warning(remaining, max_capacity);
         }
         Ok(())
     }

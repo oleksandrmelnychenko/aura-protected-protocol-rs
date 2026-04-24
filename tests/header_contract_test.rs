@@ -138,3 +138,33 @@ fn client_header_documents_external_join_freshness_and_rollout_constraints() {
         );
     }
 }
+
+#[test]
+fn client_header_documents_current_ffi_output_ownership_contract() {
+    for required in [
+        "The FFI layer does not inspect or free",
+        "destroy any previous",
+        "handle before passing the same slot",
+        "call aura_buffer_release() before reusing the same buffer slot",
+        "Simple `AuraBuffer*` and",
+        "Compound output structs",
+        "MUST still be zero-initialized",
+        "same zero-initialization/reuse",
+        "semantics as aura_voip_encrypt_frame",
+    ] {
+        assert!(
+            CLIENT_HEADER.contains(required),
+            "client header is missing required FFI output ownership fragment: {required}"
+        );
+    }
+
+    for forbidden in [
+        "the FFI layer replaces any previous\n *     FFI-owned handle",
+        "layer replaces any previous FFI-owned contents",
+    ] {
+        assert!(
+            !CLIENT_HEADER.contains(forbidden),
+            "client header must not promise automatic output-slot replacement: {forbidden}"
+        );
+    }
+}
