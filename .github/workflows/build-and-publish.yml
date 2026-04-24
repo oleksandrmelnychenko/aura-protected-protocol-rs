@@ -52,6 +52,30 @@ jobs:
             cp "$lib" "$fw/AuraProtectedProtocolC"
             cp include/*.h "$fw/Headers/"
             cp include/module.modulemap "$fw/Modules/"
+            cat > "$fw/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>en</string>
+            <key>CFBundleExecutable</key>
+            <string>AuraProtectedProtocolC</string>
+            <key>CFBundleIdentifier</key>
+            <string>ai.auramessenger.AuraProtectedProtocolC</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundleName</key>
+            <string>AuraProtectedProtocolC</string>
+            <key>CFBundlePackageType</key>
+            <string>FMWK</string>
+            <key>CFBundleShortVersionString</key>
+            <string>2.0.0</string>
+            <key>CFBundleVersion</key>
+            <string>2.0.0</string>
+          </dict>
+          </plist>
+          PLIST
           }
           create_framework target/aarch64-apple-darwin/release/libaura_protected_protocol.a dist/frameworks/macos-arm64
           create_framework target/aarch64-apple-ios/release/libaura_protected_protocol.a     dist/frameworks/ios-arm64
