@@ -642,7 +642,31 @@ impl AuraProtocol {
         replay_guard: Option<&dyn HandshakeInitReplayGuard>,
     ) -> Result<(AuraResponder, Vec<u8>), ProtocolError> {
         let local_bundle_bytes = self.pre_key_bundle()?;
-        let local_bundle = PreKeyBundle::decode(local_bundle_bytes.as_slice()).map_err(|e| {
+        self.accept_session_for_bundle_with_replay_guard(
+            init_bytes,
+            local_bundle_bytes.as_slice(),
+            replay_guard,
+        )
+    }
+
+    pub fn accept_session_for_bundle(
+        &mut self,
+        init_bytes: &[u8],
+        local_bundle_bytes: &[u8],
+    ) -> Result<(AuraResponder, Vec<u8>), ProtocolError> {
+        self.accept_session_for_bundle_with_replay_guard(init_bytes, local_bundle_bytes, None)
+    }
+
+    pub fn accept_session_for_bundle_with_replay_guard(
+        &mut self,
+        init_bytes: &[u8],
+        local_bundle_bytes: &[u8],
+        replay_guard: Option<&dyn HandshakeInitReplayGuard>,
+    ) -> Result<(AuraResponder, Vec<u8>), ProtocolError> {
+        if local_bundle_bytes.len() > MAX_HANDSHAKE_MESSAGE_SIZE {
+            return Err(ProtocolError::invalid_input("PreKeyBundle too large"));
+        }
+        let local_bundle = PreKeyBundle::decode(local_bundle_bytes).map_err(|e| {
             ProtocolError::decode(format!("Failed to decode local PreKeyBundle: {e}"))
         })?;
 
