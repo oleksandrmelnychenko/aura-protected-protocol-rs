@@ -11254,6 +11254,7 @@ const CHANNEL_KEY_ID_BYTES_FFI: usize = crate::protocol::channel::CHANNEL_KEY_ID
 const CHANNEL_ID_BYTES_FFI: usize = crate::protocol::channel::CHANNEL_ID_BYTES;
 const CHANNEL_X25519_BYTES: usize = crate::core::constants::X25519_PUBLIC_KEY_BYTES;
 const CHANNEL_X25519_PRIV_BYTES: usize = crate::core::constants::X25519_PRIVATE_KEY_BYTES;
+const CHANNEL_KYBER_PUBLIC_BYTES: usize = crate::core::constants::KYBER_PUBLIC_KEY_BYTES;
 const CHANNEL_NONCE_BYTES: usize = crate::core::constants::AES_GCM_NONCE_BYTES;
 const CHANNEL_ED25519_PUB_BYTES: usize = crate::core::constants::ED25519_PUBLIC_KEY_BYTES;
 const CHANNEL_ED25519_SECRET_BYTES_FFI: usize =
@@ -11296,21 +11297,28 @@ pub unsafe extern "C" fn aura_channel_generate_key(
     })
 }
 
-/// Wrap a 32-byte channel key for one subscriber device using their X25519 public key.
+/// Wrap a 32-byte channel key for one subscriber device using their X25519 and
+/// ML-KEM-768 public keys.
 ///
 /// # Safety
 /// `channel_key` must point to a 32-byte readable slice.
 /// `device_x25519_public` must point to a 32-byte readable slice.
+/// `device_kyber_public` must point to a 1184-byte readable slice.
 /// `out_blob` must point to a writable [`AuraBuffer`].
 #[no_mangle]
 pub unsafe extern "C" fn aura_channel_wrap_key_for_device(
     channel_key: *const u8,
     device_x25519_public: *const u8,
+    device_kyber_public: *const u8,
     out_blob: *mut AuraBuffer,
     out_error: *mut AuraError,
 ) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
-        if channel_key.is_null() || device_x25519_public.is_null() || out_blob.is_null() {
+        if channel_key.is_null()
+            || device_x25519_public.is_null()
+            || device_kyber_public.is_null()
+            || out_blob.is_null()
+        {
             write_error(
                 out_error,
                 AuraErrorCode::AuraErrorNullPointer,
@@ -11326,8 +11334,18 @@ pub unsafe extern "C" fn aura_channel_wrap_key_for_device(
             device_pub.as_mut_ptr(),
             CHANNEL_X25519_BYTES,
         );
+        let mut device_kyber_pub = [0u8; CHANNEL_KYBER_PUBLIC_BYTES];
+        std::ptr::copy_nonoverlapping(
+            device_kyber_public,
+            device_kyber_pub.as_mut_ptr(),
+            CHANNEL_KYBER_PUBLIC_BYTES,
+        );
 
-        match crate::protocol::channel::wrap_key_for_device(&key_buf, &device_pub) {
+        match crate::protocol::channel::wrap_key_for_device(
+            &key_buf,
+            &device_pub,
+            &device_kyber_pub,
+        ) {
             Ok(blob) => {
                 write_buffer(out_blob, blob);
                 AuraErrorCode::AuraSuccess
@@ -11337,22 +11355,23 @@ pub unsafe extern "C" fn aura_channel_wrap_key_for_device(
     })
 }
 
-/// Unwrap a channel key blob using the device's X25519 secret key.
+/// Unwrap a channel key blob using the device identity's X25519 and ML-KEM-768
+/// secret keys.
 ///
 /// # Safety
 /// `(blob, blob_length)` must form a valid readable slice.
-/// `device_x25519_secret` must point to a 32-byte readable slice.
+/// `identity_handle` must point to a live identity handle.
 /// `out_channel_key` must point to a writable 32-byte buffer.
 #[no_mangle]
 pub unsafe extern "C" fn aura_channel_unwrap_key_blob(
     blob: *const u8,
     blob_length: usize,
-    device_x25519_secret: *const u8,
+    identity_handle: *const AuraIdentityHandle,
     out_channel_key: *mut u8,
     out_error: *mut AuraError,
 ) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
-        if blob.is_null() || device_x25519_secret.is_null() || out_channel_key.is_null() {
+        if blob.is_null() || identity_handle.is_null() || out_channel_key.is_null() {
             write_error(
                 out_error,
                 AuraErrorCode::AuraErrorNullPointer,
@@ -11361,14 +11380,32 @@ pub unsafe extern "C" fn aura_channel_unwrap_key_blob(
             return AuraErrorCode::AuraErrorNullPointer;
         }
         let blob_slice = std::slice::from_raw_parts(blob, blob_length);
-        let mut device_secret = [0u8; CHANNEL_X25519_PRIV_BYTES];
-        std::ptr::copy_nonoverlapping(
-            device_x25519_secret,
-            device_secret.as_mut_ptr(),
-            CHANNEL_X25519_PRIV_BYTES,
-        );
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let device_secret_vec = match identity.get_identity_x25519_private_key_copy() {
+            Ok(secret) => secret,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        let device_secret: [u8; CHANNEL_X25519_PRIV_BYTES] =
+            match device_secret_vec.as_slice().try_into() {
+                Ok(secret) => secret,
+                Err(_) => {
+                    write_error(
+                        out_error,
+                        AuraErrorCode::AuraErrorInvalidInput,
+                        "Identity X25519 secret has invalid length",
+                    );
+                    return AuraErrorCode::AuraErrorInvalidInput;
+                }
+            };
+        let kyber_secret = match identity.clone_kyber_secret_key() {
+            Ok(secret) => secret,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
 
-        match crate::protocol::channel::unwrap_key_blob(blob_slice, &device_secret) {
+        match crate::protocol::channel::unwrap_key_blob(blob_slice, &device_secret, &kyber_secret) {
             Ok(unwrapped) => {
                 std::ptr::copy_nonoverlapping(
                     unwrapped.as_ptr(),

@@ -891,6 +891,7 @@ impl GroupSession {
             kyber_sec,
             kp.identity_ed25519_public.clone(),
             kp.identity_x25519_public.clone(),
+            kp.identity_kyber_public.clone(),
             credential,
             kp.signature.clone(),
         )?;

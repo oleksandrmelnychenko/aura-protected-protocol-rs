@@ -4287,7 +4287,8 @@ fn group_tree_new_single_and_add_leaf() {
         x25519_priv,
         kyber_sec,
         kp.identity_ed25519_public.clone(),
-        kp.identity_x25519_public,
+        kp.identity_x25519_public.clone(),
+        kp.identity_kyber_public.clone(),
         b"alice".to_vec(),
         kp.signature,
     )
@@ -4307,7 +4308,8 @@ fn group_tree_new_single_and_add_leaf() {
             LeafData {
                 credential: b"bob".to_vec(),
                 identity_ed25519_public: kp2.identity_ed25519_public.clone(),
-                identity_x25519_public: kp2.identity_x25519_public,
+                identity_x25519_public: kp2.identity_x25519_public.clone(),
+                identity_kyber_public: kp2.identity_kyber_public.clone(),
                 signature: kp2.signature,
             },
         )
@@ -4332,7 +4334,8 @@ fn group_tree_blank_and_refill() {
         x25519_priv,
         kyber_sec,
         kp.identity_ed25519_public.clone(),
-        kp.identity_x25519_public,
+        kp.identity_x25519_public.clone(),
+        kp.identity_kyber_public.clone(),
         b"alice".to_vec(),
         kp.signature,
     )
@@ -4346,7 +4349,8 @@ fn group_tree_blank_and_refill() {
         LeafData {
             credential: b"bob".to_vec(),
             identity_ed25519_public: kp2.identity_ed25519_public.clone(),
-            identity_x25519_public: kp2.identity_x25519_public,
+            identity_x25519_public: kp2.identity_x25519_public.clone(),
+            identity_kyber_public: kp2.identity_kyber_public.clone(),
             signature: kp2.signature,
         },
     )
@@ -4361,7 +4365,8 @@ fn group_tree_blank_and_refill() {
         LeafData {
             credential: b"carol".to_vec(),
             identity_ed25519_public: kp3.identity_ed25519_public.clone(),
-            identity_x25519_public: kp3.identity_x25519_public,
+            identity_x25519_public: kp3.identity_x25519_public.clone(),
+            identity_kyber_public: kp3.identity_kyber_public.clone(),
             signature: kp3.signature,
         },
     )
@@ -4381,7 +4386,8 @@ fn group_tree_blank_and_refill() {
             LeafData {
                 credential: b"dave".to_vec(),
                 identity_ed25519_public: kp4.identity_ed25519_public.clone(),
-                identity_x25519_public: kp4.identity_x25519_public,
+                identity_x25519_public: kp4.identity_x25519_public.clone(),
+                identity_kyber_public: kp4.identity_kyber_public.clone(),
                 signature: kp4.signature,
             },
         )
@@ -4405,7 +4411,8 @@ fn group_tree_hash_deterministic() {
         x25519_priv,
         kyber_sec,
         kp.identity_ed25519_public.clone(),
-        kp.identity_x25519_public,
+        kp.identity_x25519_public.clone(),
+        kp.identity_kyber_public.clone(),
         b"alice".to_vec(),
         kp.signature,
     )
@@ -4431,7 +4438,8 @@ fn group_tree_serialization_roundtrip() {
         x25519_priv,
         kyber_sec,
         kp.identity_ed25519_public.clone(),
-        kp.identity_x25519_public,
+        kp.identity_x25519_public.clone(),
+        kp.identity_kyber_public.clone(),
         b"alice".to_vec(),
         kp.signature,
     )
@@ -7012,7 +7020,8 @@ fn group_tree_max_members() {
         x25519_priv,
         kyber_sec,
         kp.identity_ed25519_public.clone(),
-        kp.identity_x25519_public,
+        kp.identity_x25519_public.clone(),
+        kp.identity_kyber_public.clone(),
         b"first".to_vec(),
         kp.signature,
     )
@@ -7027,6 +7036,7 @@ fn group_tree_max_members() {
             credential: mkp.credential.clone(),
             identity_ed25519_public: mkp.identity_ed25519_public.clone(),
             identity_x25519_public: mkp.identity_x25519_public.clone(),
+            identity_kyber_public: mkp.identity_kyber_public.clone(),
             signature: mkp.signature.clone(),
         };
         tree.add_leaf(
@@ -7046,6 +7056,7 @@ fn group_tree_max_members() {
         credential: extra_kp.credential.clone(),
         identity_ed25519_public: extra_kp.identity_ed25519_public.clone(),
         identity_x25519_public: extra_kp.identity_x25519_public.clone(),
+        identity_kyber_public: extra_kp.identity_kyber_public.clone(),
         signature: extra_kp.signature.clone(),
     };
     let result = tree.add_leaf(
@@ -7904,6 +7915,7 @@ fn group_psk_commit_derives_epoch_keys_from_psk_and_requires_resolver() {
         alice_kyber_sec,
         alice_kp.identity_ed25519_public.clone(),
         alice_kp.identity_x25519_public.clone(),
+        alice_kp.identity_kyber_public.clone(),
         alice_kp.credential,
         alice_kp.signature,
     )
@@ -7916,7 +7928,8 @@ fn group_psk_commit_derives_epoch_keys_from_psk_and_requires_resolver() {
             LeafData {
                 credential: bob_kp.credential.clone(),
                 identity_ed25519_public: bob_kp.identity_ed25519_public.clone(),
-                identity_x25519_public: bob_kp.identity_x25519_public,
+                identity_x25519_public: bob_kp.identity_x25519_public.clone(),
+                identity_kyber_public: bob_kp.identity_kyber_public.clone(),
                 signature: bob_kp.signature,
             },
         )
@@ -8418,7 +8431,8 @@ fn group_psk_proposal_validation() {
         x,
         k,
         kp.identity_ed25519_public.clone(),
-        kp.identity_x25519_public,
+        kp.identity_x25519_public.clone(),
+        kp.identity_kyber_public.clone(),
         b"alice".to_vec(),
         kp.signature,
     )
@@ -8475,7 +8489,8 @@ fn group_reinit_proposal_validation() {
         x,
         k,
         kp.identity_ed25519_public.clone(),
-        kp.identity_x25519_public,
+        kp.identity_x25519_public.clone(),
+        kp.identity_kyber_public.clone(),
         b"alice".to_vec(),
         kp.signature,
     )

@@ -16,7 +16,6 @@ use aura_protected_protocol::crypto::CryptoInterop;
 use aura_protected_protocol::ffi::api::*;
 use ed25519_dalek::SigningKey as EdSigningKey;
 use std::ptr;
-use x25519_dalek::{PublicKey as X25519Public, StaticSecret as X25519Secret};
 
 const fn null_error() -> AuraError {
     AuraError {
@@ -36,10 +35,44 @@ fn init() {
     let _ = CryptoInterop::initialize();
 }
 
-fn fixture_device() -> ([u8; 32], [u8; 32]) {
-    let secret = X25519Secret::random_from_rng(rand_core::OsRng);
-    let public = X25519Public::from(&secret);
-    (secret.to_bytes(), public.to_bytes())
+fn fixture_identity(seed_byte: u8) -> (*mut AuraIdentityHandle, [u8; 32], [u8; 1184]) {
+    let seed = [seed_byte; 32];
+    let mut identity: *mut AuraIdentityHandle = ptr::null_mut();
+    let mut err = null_error();
+    let create_code = unsafe {
+        aura_identity_create_from_seed(
+            seed.as_ptr(),
+            seed.len(),
+            &mut identity as *mut _,
+            &mut err as *mut _,
+        )
+    };
+    assert_eq!(create_code, AuraErrorCode::AuraSuccess);
+    assert!(!identity.is_null());
+
+    let mut x25519_public = [0u8; 32];
+    let x_code = unsafe {
+        aura_identity_get_x25519_public(
+            identity,
+            x25519_public.as_mut_ptr(),
+            x25519_public.len(),
+            &mut err as *mut _,
+        )
+    };
+    assert_eq!(x_code, AuraErrorCode::AuraSuccess);
+
+    let mut kyber_public = [0u8; 1184];
+    let k_code = unsafe {
+        aura_identity_get_kyber_public(
+            identity,
+            kyber_public.as_mut_ptr(),
+            kyber_public.len(),
+            &mut err as *mut _,
+        )
+    };
+    assert_eq!(k_code, AuraErrorCode::AuraSuccess);
+
+    (identity, x25519_public, kyber_public)
 }
 
 fn fixture_signing() -> EdSigningKey {
@@ -73,7 +106,7 @@ fn generate_key_rejects_null_outputs() {
 #[test]
 fn wrap_unwrap_roundtrip_via_ffi() {
     init();
-    let (device_secret, device_public) = fixture_device();
+    let (mut identity, device_public, device_kyber_public) = fixture_identity(0x44);
     let channel_key = [0xAB_u8; 32];
 
     let mut blob = null_buffer();
@@ -82,19 +115,20 @@ fn wrap_unwrap_roundtrip_via_ffi() {
         aura_channel_wrap_key_for_device(
             channel_key.as_ptr(),
             device_public.as_ptr(),
+            device_kyber_public.as_ptr(),
             &mut blob as *mut _,
             &mut err as *mut _,
         )
     };
     assert_eq!(code, AuraErrorCode::AuraSuccess);
-    assert_eq!(blob.length, 92, "wrapped blob is 92 bytes");
+    assert_eq!(blob.length, 1180, "wrapped blob is 1180 bytes");
 
     let mut recovered = [0u8; 32];
     let unwrap_code = unsafe {
         aura_channel_unwrap_key_blob(
             blob.data,
             blob.length,
-            device_secret.as_ptr(),
+            identity,
             recovered.as_mut_ptr(),
             &mut err as *mut _,
         )
@@ -102,13 +136,16 @@ fn wrap_unwrap_roundtrip_via_ffi() {
     assert_eq!(unwrap_code, AuraErrorCode::AuraSuccess);
     assert_eq!(recovered, channel_key);
 
-    unsafe { aura_buffer_release(&mut blob as *mut _) };
+    unsafe {
+        aura_buffer_release(&mut blob as *mut _);
+        aura_identity_destroy(&mut identity as *mut _);
+    }
 }
 
 #[test]
 fn unwrap_rejects_tampered_blob() {
     init();
-    let (device_secret, device_public) = fixture_device();
+    let (mut identity, device_public, device_kyber_public) = fixture_identity(0x45);
     let channel_key = [0xAB_u8; 32];
 
     let mut blob = null_buffer();
@@ -117,6 +154,7 @@ fn unwrap_rejects_tampered_blob() {
         aura_channel_wrap_key_for_device(
             channel_key.as_ptr(),
             device_public.as_ptr(),
+            device_kyber_public.as_ptr(),
             &mut blob as *mut _,
             &mut err as *mut _,
         );
@@ -130,20 +168,23 @@ fn unwrap_rejects_tampered_blob() {
         aura_channel_unwrap_key_blob(
             blob.data,
             blob.length,
-            device_secret.as_ptr(),
+            identity,
             recovered.as_mut_ptr(),
             &mut err as *mut _,
         )
     };
     assert_ne!(code, AuraErrorCode::AuraSuccess);
 
-    unsafe { aura_buffer_release(&mut blob as *mut _) };
+    unsafe {
+        aura_buffer_release(&mut blob as *mut _);
+        aura_identity_destroy(&mut identity as *mut _);
+    }
 }
 
 #[test]
 fn unwrap_rejects_wrong_blob_length() {
     init();
-    let (device_secret, _) = fixture_device();
+    let (mut identity, _, _) = fixture_identity(0x46);
     let bogus = [0u8; 50];
     let mut recovered = [0u8; 32];
     let mut err = null_error();
@@ -151,12 +192,13 @@ fn unwrap_rejects_wrong_blob_length() {
         aura_channel_unwrap_key_blob(
             bogus.as_ptr(),
             bogus.len(),
-            device_secret.as_ptr(),
+            identity,
             recovered.as_mut_ptr(),
             &mut err as *mut _,
         )
     };
     assert_eq!(code, AuraErrorCode::AuraErrorInvalidInput);
+    unsafe { aura_identity_destroy(&mut identity as *mut _) };
 }
 
 #[test]

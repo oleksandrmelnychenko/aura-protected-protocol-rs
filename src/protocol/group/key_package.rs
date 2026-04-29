@@ -26,11 +26,13 @@ pub fn create_key_package(
 
     let identity_ed25519 = identity.get_identity_ed25519_public();
     let identity_x25519 = identity.get_identity_x25519_public();
+    let identity_kyber = identity.get_kyber_public();
 
     let sign_content = build_signed_content(
         GROUP_PROTOCOL_VERSION,
         &identity_ed25519,
         &identity_x25519,
+        &identity_kyber,
         &x25519_public,
         &kyber_public,
         &credential,
@@ -44,6 +46,7 @@ pub fn create_key_package(
         version: GROUP_PROTOCOL_VERSION,
         identity_ed25519_public: identity_ed25519,
         identity_x25519_public: identity_x25519,
+        identity_kyber_public: identity_kyber,
         leaf_x25519_public: x25519_public,
         leaf_kyber_public: kyber_public,
         signature,
@@ -58,6 +61,7 @@ pub fn build_signed_content(
     version: u32,
     identity_ed25519_public: &[u8],
     identity_x25519_public: &[u8],
+    identity_kyber_public: &[u8],
     leaf_x25519_public: &[u8],
     leaf_kyber_public: &[u8],
     credential: &[u8],
@@ -66,6 +70,7 @@ pub fn build_signed_content(
         size_of::<u32>()
             + ED25519_PUBLIC_KEY_BYTES
             + X25519_PUBLIC_KEY_BYTES
+            + KYBER_PUBLIC_KEY_BYTES
             + X25519_PUBLIC_KEY_BYTES
             + KYBER_PUBLIC_KEY_BYTES
             + credential.len(),
@@ -73,6 +78,7 @@ pub fn build_signed_content(
     sign_content.extend_from_slice(&version.to_le_bytes());
     sign_content.extend_from_slice(identity_ed25519_public);
     sign_content.extend_from_slice(identity_x25519_public);
+    sign_content.extend_from_slice(identity_kyber_public);
     sign_content.extend_from_slice(leaf_x25519_public);
     sign_content.extend_from_slice(leaf_kyber_public);
     sign_content.extend_from_slice(credential);
@@ -104,6 +110,11 @@ pub fn validate_key_package(pkg: &GroupKeyPackage) -> Result<(), ProtocolError> 
             "Invalid identity X25519 public key size",
         ));
     }
+    if pkg.identity_kyber_public.len() != KYBER_PUBLIC_KEY_BYTES {
+        return Err(ProtocolError::invalid_input(
+            "Invalid identity Kyber public key size",
+        ));
+    }
     if pkg.leaf_x25519_public.len() != X25519_PUBLIC_KEY_BYTES {
         return Err(ProtocolError::invalid_input(
             "Invalid leaf X25519 public key size",
@@ -119,6 +130,7 @@ pub fn validate_key_package(pkg: &GroupKeyPackage) -> Result<(), ProtocolError> 
     }
 
     DhValidator::validate_x25519_public_key(&pkg.identity_x25519_public)?;
+    KyberInterop::validate_public_key(&pkg.identity_kyber_public)?;
     DhValidator::validate_x25519_public_key(&pkg.leaf_x25519_public)?;
 
     KyberInterop::validate_public_key(&pkg.leaf_kyber_public)?;
@@ -127,6 +139,7 @@ pub fn validate_key_package(pkg: &GroupKeyPackage) -> Result<(), ProtocolError> 
         pkg.version,
         &pkg.identity_ed25519_public,
         &pkg.identity_x25519_public,
+        &pkg.identity_kyber_public,
         &pkg.leaf_x25519_public,
         &pkg.leaf_kyber_public,
         &pkg.credential,
@@ -141,6 +154,7 @@ pub fn sign_existing_key_package(
     ed25519_secret: &[u8],
     identity_ed25519_public: &[u8],
     identity_x25519_public: &[u8],
+    identity_kyber_public: &[u8],
     leaf_x25519_public: &[u8],
     leaf_kyber_public: &[u8],
     credential: &[u8],
@@ -149,6 +163,7 @@ pub fn sign_existing_key_package(
         GROUP_PROTOCOL_VERSION,
         identity_ed25519_public,
         identity_x25519_public,
+        identity_kyber_public,
         leaf_x25519_public,
         leaf_kyber_public,
         credential,

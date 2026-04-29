@@ -20,6 +20,7 @@ fn build_tree() -> Option<RatchetTree> {
         k_sec,
         vec![1u8; 32],
         vec![2u8; 32],
+        vec![3u8; 1184],
         b"fuzz".to_vec(),
         vec![],
     )

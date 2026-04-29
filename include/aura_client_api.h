@@ -3578,12 +3578,13 @@ AURA_API AuraErrorCode aura_identity_set_event_handler(
  *   - channel_id:            16 bytes (UUID)
  *   - channel_key_id:        16 bytes (UUID)
  *   - device X25519 public:  32 bytes
- *   - device X25519 secret:  32 bytes
+ *   - device Kyber public:   1184 bytes
  *   - sender Ed25519 secret: 32 bytes (seed)
  *   - sender Ed25519 public: 32 bytes
  *   - nonce:                 12 bytes (AES-GCM-SIV)
  *   - signature:             64 bytes (Ed25519)
- *   - wrapped key blob:      92 bytes (32 ephemeral + 12 nonce + 48 ciphertext)
+ *   - wrapped key blob:      1180 bytes
+ *       (32 ephemeral X25519 + 1088 Kyber CT + 12 nonce + 48 ciphertext)
  *
  * The wire envelope (channel_key_id + generation + nonce + ciphertext + signature)
  * is assembled by the calling layer and sent through the gateway.
@@ -3606,15 +3607,16 @@ AURA_API AuraErrorCode aura_channel_generate_key(
 
 /*
  * aura_channel_wrap_key_for_device — wrap a channel key for one subscriber
- * device using their X25519 identity public key (X25519 ECDH + HKDF + AES-GCM-SIV).
+ * device using hybrid X25519 ECDH + ML-KEM-768 + HKDF + AES-GCM-SIV.
  *
- * Output blob is exactly 92 bytes regardless of input. Caller releases out_blob
- * with aura_buffer_release().
+ * Output blob is exactly 1180 bytes regardless of input. Caller releases
+ * out_blob with aura_buffer_release().
  *
  * Parameters:
  *   channel_key          — 32-byte symmetric channel key.
  *   device_x25519_public — 32-byte device X25519 public key.
- *   out_blob             — receives the 92-byte wrapped blob.
+ *   device_kyber_public  — 1184-byte device Kyber/ML-KEM public key.
+ *   out_blob             — receives the 1180-byte wrapped blob.
  *   out_error            — optional error detail.
  *
  * Returns: AURA_SUCCESS, AURA_ERROR_NULL_POINTER, AURA_ERROR_GENERIC,
@@ -3623,28 +3625,29 @@ AURA_API AuraErrorCode aura_channel_generate_key(
 AURA_API AuraErrorCode aura_channel_wrap_key_for_device(
     const uint8_t*  channel_key,
     const uint8_t*  device_x25519_public,
+    const uint8_t*  device_kyber_public,
     AuraBuffer*     out_blob,
     AuraError*      out_error);
 
 /*
  * aura_channel_unwrap_key_blob — unwrap a previously wrapped channel key blob
- * using the device's X25519 secret key.
+ * using the device identity handle's X25519 and Kyber/ML-KEM secret keys.
  *
  * Parameters:
- *   blob                 — wrapped key blob (must be exactly 92 bytes).
+ *   blob                 — wrapped key blob (must be exactly 1180 bytes).
  *   blob_length          — byte length of blob.
- *   device_x25519_secret — 32-byte device X25519 secret key.
+ *   identity_handle      — identity handle for the recipient device.
  *   out_channel_key      — caller-provided 32-byte buffer for the unwrapped key.
  *   out_error            — optional error detail.
  *
  * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT (wrong length),
  *          AURA_ERROR_NULL_POINTER, or AURA_ERROR_DECRYPTION (tampered blob /
- *          wrong device secret).
+ *          wrong recipient identity).
  */
 AURA_API AuraErrorCode aura_channel_unwrap_key_blob(
     const uint8_t*  blob,
     size_t          blob_length,
-    const uint8_t*  device_x25519_secret,
+    const AuraIdentityHandle* identity_handle,
     uint8_t*        out_channel_key,
     AuraError*      out_error);
 

@@ -18,6 +18,7 @@ message GroupKeyPackage {
   bytes signature = 6;                 // Ed25519 over (version || leaf keys || credential)
   bytes credential = 7;               // Application-layer credential (e.g., user ID)
   google.protobuf.Timestamp created_at = 8;
+  bytes identity_kyber_public = 9;     // 1184 bytes — long-term device Kyber/ML-KEM identity
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

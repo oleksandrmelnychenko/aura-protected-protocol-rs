@@ -4402,7 +4402,8 @@ fn identity_otk_exhaustion_callback_allows_reentrant_replenish() {
             self.identity
                 .replenish_one_time_pre_keys(1)
                 .expect("replenish from OTK callback");
-            if let Some(tx) = self.callback_done.lock().unwrap().take() {
+            let callback_done = self.callback_done.lock().unwrap().take();
+            if let Some(tx) = callback_done {
                 let _ = tx.send(());
             }
         }

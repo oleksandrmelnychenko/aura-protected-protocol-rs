@@ -65,6 +65,7 @@ pub struct LeafData {
     pub credential: Vec<u8>,
     pub identity_ed25519_public: Vec<u8>,
     pub identity_x25519_public: Vec<u8>,
+    pub identity_kyber_public: Vec<u8>,
     pub signature: Vec<u8>,
 }
 
@@ -282,6 +283,7 @@ impl RatchetTree {
         kyber_secret: SecureMemoryHandle,
         identity_ed25519: Vec<u8>,
         identity_x25519: Vec<u8>,
+        identity_kyber: Vec<u8>,
         credential: Vec<u8>,
         signature: Vec<u8>,
     ) -> Result<Self, ProtocolError> {
@@ -310,6 +312,7 @@ impl RatchetTree {
             credential,
             identity_ed25519_public: identity_ed25519,
             identity_x25519_public: identity_x25519,
+            identity_kyber_public: identity_kyber,
             signature,
         };
 
@@ -979,6 +982,7 @@ impl RatchetTree {
                         credential: kp.credential.clone(),
                         identity_ed25519_public: kp.identity_ed25519_public.clone(),
                         identity_x25519_public: kp.identity_x25519_public.clone(),
+                        identity_kyber_public: kp.identity_kyber_public.clone(),
                         signature: kp.signature.clone(),
                     }));
                 } else {
@@ -1011,6 +1015,7 @@ impl RatchetTree {
             version: GROUP_PROTOCOL_VERSION,
             identity_ed25519_public: ld.identity_ed25519_public.clone(),
             identity_x25519_public: ld.identity_x25519_public.clone(),
+            identity_kyber_public: ld.identity_kyber_public.clone(),
             leaf_x25519_public: x25519_pub.to_vec(),
             leaf_kyber_public: kyber_pub.to_vec(),
             signature: ld.signature.clone(),
