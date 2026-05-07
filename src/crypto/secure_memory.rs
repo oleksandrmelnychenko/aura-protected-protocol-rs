@@ -138,7 +138,28 @@ mod inner {
             }
             #[allow(unused_mut)]
             let mut data = vec![0u8; size].into_boxed_slice();
-            let rc = unsafe { libc::mlock(data.as_ptr().cast::<libc::c_void>(), data.len()) };
+
+            // mlock can return EAGAIN under burst load even when there is
+            // ample RAM and RLIMIT_MEMLOCK is unlimited — kernel-internal
+            // contention on highly-concurrent allocation paths. Treat
+            // EAGAIN as transient and retry; bail on EPERM/ENOMEM, which
+            // mean we genuinely cannot lock the page.
+            let mut attempts = 0u8;
+            let rc = loop {
+                let rc =
+                    unsafe { libc::mlock(data.as_ptr().cast::<libc::c_void>(), data.len()) };
+                if rc == 0 {
+                    break 0;
+                }
+                let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                if errno == libc::EAGAIN && attempts < 5 {
+                    attempts += 1;
+                    let backoff_us = 100u64 << attempts;
+                    std::thread::sleep(std::time::Duration::from_micros(backoff_us));
+                    continue;
+                }
+                break errno;
+            };
             if rc != 0 {
                 // `data` is dropped here; its contents are all-zero so no
                 // secret material touched memory yet.
