@@ -1046,6 +1046,60 @@ fn api_group_counter_tracker_restores_latest_and_rejects_rollback() {
     assert_eq!(session.group_id().unwrap(), latest.group_id().unwrap());
 }
 
+/// Regression test for the iOS cold-start reload bug: a sealed group blob must
+/// be loadable any number of times when no state changes have occurred since
+/// the last persist. The original code rejected counter == watermark as
+/// "rollback", which made the iOS app unable to deserialize its own freshly
+/// persisted MLS state on the very next launch and surfaced as
+/// `groupDeserialize FFI code 16` (AuraErrorInvalidState).
+#[test]
+fn api_group_counter_tracker_idempotent_reload_after_cold_start() {
+    init();
+
+    let proto = AuraProtocol::new(5).unwrap();
+    let session = proto.create_group(b"cred".to_vec()).unwrap();
+    let key = vec![0xAAu8; 32];
+    let mut tracker = SealedStateCounterTracker::new();
+
+    let sealed = session
+        .serialize_with_counter_tracker(&key, &mut tracker)
+        .unwrap();
+    let tracker_bytes = tracker.serialize();
+
+    // Cold-start cycle 1: load tracker from disk, deserialize sealed blob.
+    // Tracker advances max_restored from 0 to 1.
+    let mut tracker_cold1 = SealedStateCounterTracker::deserialize(&tracker_bytes).unwrap();
+    let _restored1 = AuraGroupSession::deserialize_with_counter_tracker(
+        &sealed,
+        &key,
+        proto.get_identity_ed25519_private_key_copy().unwrap(),
+        &mut tracker_cold1,
+    )
+    .unwrap();
+    assert_eq!(tracker_cold1.max_restored_counter(), 1);
+
+    // Persist the advanced tracker back to disk.
+    let tracker_after_cold1 = tracker_cold1.serialize();
+
+    // Cold-start cycle 2: same sealed blob (no changes were exported), tracker
+    // already shows max_restored=1. Pre-fix this rejected with InvalidState
+    // because the load check was `<=`. Post-fix, it must succeed — the blob
+    // is at the watermark, not below it, so there is no rollback.
+    let mut tracker_cold2 = SealedStateCounterTracker::deserialize(&tracker_after_cold1).unwrap();
+    let _restored2 = AuraGroupSession::deserialize_with_counter_tracker(
+        &sealed,
+        &key,
+        proto.get_identity_ed25519_private_key_copy().unwrap(),
+        &mut tracker_cold2,
+    )
+    .expect("idempotent reload of unchanged sealed state must succeed");
+    assert_eq!(
+        tracker_cold2.max_restored_counter(),
+        1,
+        "watermark stays put when reloading the same counter — only advances on strict-greater"
+    );
+}
+
 #[test]
 fn api_group_slot_roundtrip() {
     init();

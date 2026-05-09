@@ -1549,16 +1549,19 @@ fn sealed_state_rollback_rejected_by_external_counter() {
     let p1 = StaticStateKeyProvider::new(enc_key.clone()).unwrap();
     let sealed1 = bob_session.export_sealed_state(&p1, 2).unwrap();
 
+    // Anti-rollback floor is strict-less-than (counter < min rejects). After
+    // exporting sealed1 with counter=2, the application's persisted "min" is
+    // 2; loading sealed0 (counter=1) is then a real downgrade.
     let p_restore_old = StaticStateKeyProvider::new(enc_key.clone()).unwrap();
     assert!(
-        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed0, &p_restore_old, 1)
+        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed0, &p_restore_old, 2)
             .is_err(),
-        "Older sealed snapshot must be rejected after newer export",
+        "Older sealed snapshot must be rejected when min advances past it",
     );
 
     let p_restore_new = StaticStateKeyProvider::new(enc_key).unwrap();
     assert!(
-        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed1, &p_restore_new, 1)
+        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed1, &p_restore_new, 2)
             .is_ok(),
         "Latest sealed snapshot must still be accepted",
     );
@@ -2614,7 +2617,7 @@ fn metadata_key_differs_across_epochs() {
 
     let pa = StaticStateKeyProvider::new(enc_key.clone()).unwrap();
     assert!(
-        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed0, &pa, 1).is_err(),
+        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed0, &pa, 2).is_err(),
         "Older sealed snapshot must be rejected after newer export (anti-rollback)",
     );
     let pb = StaticStateKeyProvider::new(enc_key).unwrap();

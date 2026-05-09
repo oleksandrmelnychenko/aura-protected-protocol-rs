@@ -1709,7 +1709,7 @@ fn api_voip_rekey_and_restore_via_public_api() {
 }
 
 #[test]
-fn api_voip_import_call_state_equal_counter_rejected() {
+fn api_voip_import_call_state_equal_counter_accepted_older_rejected() {
     init();
 
     let alice = AuraProtocol::new(1).unwrap();
@@ -1726,7 +1726,15 @@ fn api_voip_import_call_state_equal_counter_rejected() {
 
     let state_key = CryptoInterop::get_random_bytes(AES_KEY_BYTES);
     let sealed = alice_session.export_sealed_state(&state_key, 9).unwrap();
-    assert!(alice.import_call_state(&sealed, &state_key, 9).is_err());
+    // counter == min is the legitimate idempotent reload (e.g. cold-start
+    // with no state changes). counter < min is real rollback.
+    alice
+        .import_call_state(&sealed, &state_key, 9)
+        .expect("equal counter must be accepted as idempotent reload");
+    assert!(
+        alice.import_call_state(&sealed, &state_key, 10).is_err(),
+        "older counter (9 < min=10) must still be blocked as rollback"
+    );
 }
 
 #[test]
@@ -2393,14 +2401,15 @@ fn voip_sealed_state_rollback_rejected() {
 }
 
 #[test]
-fn voip_sealed_state_equal_counter_rejected() {
+fn voip_sealed_state_equal_counter_accepted() {
     init();
     let (alice, _bob) = setup_voip_session_pair(false);
 
     let state_key = CryptoInterop::get_random_bytes(AES_KEY_BYTES);
     let sealed = alice.export_sealed_state(&state_key, 5).unwrap();
-
-    assert!(VoipSession::from_sealed_state(&sealed, &state_key, 5).is_err());
+    // counter == min is the legitimate idempotent reload, not a rollback.
+    VoipSession::from_sealed_state(&sealed, &state_key, 5)
+        .expect("equal counter must be accepted as idempotent reload");
 }
 
 #[test]

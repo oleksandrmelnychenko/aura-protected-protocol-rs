@@ -3046,7 +3046,7 @@ impl GroupSession {
                 "Sealed group state external counter must be > 0",
             ));
         }
-        if sealed.external_counter <= min_external_counter {
+        if sealed.external_counter < min_external_counter {
             return Err(ProtocolError::invalid_state(
                 "Group sealed state rollback detected by external counter",
             ));

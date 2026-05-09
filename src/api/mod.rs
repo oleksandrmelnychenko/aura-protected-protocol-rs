@@ -74,7 +74,17 @@ impl SealedStateCounterTracker {
 
     #[must_use]
     pub const fn min_import_counter(&self) -> u64 {
-        self.max_restored_counter
+        // Anti-rollback floor: a sealed blob is only accepted if its counter is
+        // >= the highest watermark we have observed in EITHER direction —
+        // restored or issued. Tracking only `max_restored` would let an
+        // attacker (or a buggy persistence layer) replay a blob from the gap
+        // between "we issued counter K but never restored it" and "we
+        // successfully restored counter K-1 a long time ago".
+        if self.latest_issued_counter > self.max_restored_counter {
+            self.latest_issued_counter
+        } else {
+            self.max_restored_counter
+        }
     }
 
     pub fn next_export_counter(&self) -> Result<u64, ProtocolError> {
@@ -111,13 +121,18 @@ impl SealedStateCounterTracker {
                 "sealed-state counter must be > 0",
             ));
         }
-        if counter <= self.max_restored_counter {
+        if counter < self.max_restored_counter {
             return Err(ProtocolError::replay_attack(format!(
-                "sealed-state counter {counter} is not newer than restored watermark {}",
+                "sealed-state counter {counter} is below restored watermark {}",
                 self.max_restored_counter
             )));
         }
-        self.max_restored_counter = counter;
+        // counter == max_restored is a legitimate idempotent re-restore (e.g.
+        // app cold-start with no state changes since last persist). The
+        // watermark does not move, but it is not an error.
+        if counter > self.max_restored_counter {
+            self.max_restored_counter = counter;
+        }
         if self.latest_issued_counter < counter {
             self.latest_issued_counter = counter;
         }

@@ -766,7 +766,7 @@ impl VoipSession {
                 .try_into()
                 .map_err(|_| ProtocolError::voip_call("counter parse failed"))?,
         );
-        if stored_counter <= min_external_counter {
+        if stored_counter < min_external_counter {
             return Err(ProtocolError::voip_call("sealed state rollback detected"));
         }
 
