@@ -33,6 +33,25 @@ type SeenPayloadNonceCache = (
     VecDeque<[u8; AES_GCM_NONCE_BYTES]>,
 );
 
+#[cfg(feature = "test-vectors")]
+struct TestVectorRatchetEntropy {
+    x25519_seed: [u8; X25519_PRIVATE_KEY_BYTES],
+    kyber_keygen_seed: [u8; KYBER_SEED_KEY_BYTES],
+    kyber_encapsulation_seed: [u8; KYBER_SEED_KEY_BYTES],
+    nonce_prefix: [u8; NONCE_PREFIX_BYTES],
+    nonce_counter: u64,
+}
+
+#[cfg(feature = "test-vectors")]
+impl Drop for TestVectorRatchetEntropy {
+    fn drop(&mut self) {
+        CryptoInterop::secure_wipe(&mut self.x25519_seed);
+        CryptoInterop::secure_wipe(&mut self.kyber_keygen_seed);
+        CryptoInterop::secure_wipe(&mut self.kyber_encapsulation_seed);
+        CryptoInterop::secure_wipe(&mut self.nonce_prefix);
+    }
+}
+
 #[derive(Debug)]
 pub struct DecryptResult {
     pub plaintext: Vec<u8>,
@@ -188,6 +207,26 @@ fn compute_dh(private_key: &[u8], public_key: &[u8]) -> Result<Vec<u8>, Protocol
         ));
     }
     Ok(shared_bytes.to_vec())
+}
+
+#[cfg(feature = "test-vectors")]
+fn x25519_keypair_from_seed(seed: &[u8]) -> Result<(Vec<u8>, Vec<u8>), ProtocolError> {
+    if seed.len() != X25519_PRIVATE_KEY_BYTES {
+        return Err(ProtocolError::invalid_input(
+            "Invalid deterministic X25519 seed size",
+        ));
+    }
+    let mut private_key = seed.to_vec();
+    private_key[0] &= X25519_CLAMP_BYTE0;
+    private_key[31] &= X25519_CLAMP_BYTE31_LOW;
+    private_key[31] |= X25519_CLAMP_BYTE31_HIGH;
+    let private_array: [u8; X25519_PRIVATE_KEY_BYTES] = private_key[..X25519_PRIVATE_KEY_BYTES]
+        .try_into()
+        .map_err(|_| ProtocolError::key_generation("Deterministic X25519 seed has wrong length"))?;
+    let public_key = X25519PublicKey::from(&StaticSecret::from(private_array))
+        .as_bytes()
+        .to_vec();
+    Ok((private_key, public_key))
 }
 
 fn validate_dh_public_key(public_key: &[u8]) -> Result<(), ProtocolError> {
@@ -533,6 +572,8 @@ struct SessionInner {
     send_ratchet_pending: bool,
     event_handler: Option<Arc<dyn IProtocolEventHandler>>,
     messages_since_last_dh_ratchet: u64,
+    #[cfg(feature = "test-vectors")]
+    test_vector_ratchet_entropy: Option<TestVectorRatchetEntropy>,
 }
 
 impl Drop for SessionInner {
@@ -763,6 +804,8 @@ impl Session {
                 send_ratchet_pending: false,
                 event_handler: None,
                 messages_since_last_dh_ratchet: 0,
+                #[cfg(feature = "test-vectors")]
+                test_vector_ratchet_entropy: None,
             }),
             time_provider,
         })
@@ -1157,6 +1200,8 @@ impl Session {
                 send_ratchet_pending,
                 event_handler: None,
                 messages_since_last_dh_ratchet: 0,
+                #[cfg(feature = "test-vectors")]
+                test_vector_ratchet_entropy: None,
             }),
             time_provider,
         })
@@ -1537,21 +1582,60 @@ impl Session {
             ));
         }
 
-        let (new_private_handle, new_public) = CryptoInterop::generate_x25519_keypair("ratchet")?;
-        let mut new_private = new_private_handle
-            .read_bytes(X25519_PRIVATE_KEY_BYTES)
-            .map_err(ProtocolError::from_crypto)?;
+        #[cfg(feature = "test-vectors")]
+        let test_entropy = inner.test_vector_ratchet_entropy.take();
+
+        let (mut new_private, new_public) = {
+            #[cfg(feature = "test-vectors")]
+            {
+                if let Some(entropy) = test_entropy.as_ref() {
+                    x25519_keypair_from_seed(&entropy.x25519_seed)?
+                } else {
+                    let (new_private_handle, new_public) =
+                        CryptoInterop::generate_x25519_keypair("ratchet")?;
+                    let new_private = new_private_handle
+                        .read_bytes(X25519_PRIVATE_KEY_BYTES)
+                        .map_err(ProtocolError::from_crypto)?;
+                    (new_private, new_public)
+                }
+            }
+            #[cfg(not(feature = "test-vectors"))]
+            {
+                let (new_private_handle, new_public) =
+                    CryptoInterop::generate_x25519_keypair("ratchet")?;
+                let new_private = new_private_handle
+                    .read_bytes(X25519_PRIVATE_KEY_BYTES)
+                    .map_err(ProtocolError::from_crypto)?;
+                (new_private, new_public)
+            }
+        };
 
         validate_dh_public_key(&inner.state.dh_remote_public)?;
 
         let mut dh_secret = compute_dh(&new_private, &inner.state.dh_remote_public)?;
 
-        let (kyber_ct, kyber_ss_handle) =
-            KyberInterop::encapsulate(&inner.state.kyber_remote_public).map_err(|e| {
-                CryptoInterop::secure_wipe(&mut new_private);
-                CryptoInterop::secure_wipe(&mut dh_secret);
-                ProtocolError::from_crypto(e)
-            })?;
+        let (kyber_ct, kyber_ss_handle) = {
+            #[cfg(feature = "test-vectors")]
+            {
+                if let Some(entropy) = test_entropy.as_ref() {
+                    KyberInterop::encapsulate_from_seed(
+                        &inner.state.kyber_remote_public,
+                        &entropy.kyber_encapsulation_seed,
+                    )
+                } else {
+                    KyberInterop::encapsulate(&inner.state.kyber_remote_public)
+                }
+            }
+            #[cfg(not(feature = "test-vectors"))]
+            {
+                KyberInterop::encapsulate(&inner.state.kyber_remote_public)
+            }
+        }
+        .map_err(|e| {
+            CryptoInterop::secure_wipe(&mut new_private);
+            CryptoInterop::secure_wipe(&mut dh_secret);
+            ProtocolError::from_crypto(e)
+        })?;
         let mut kyber_ss = kyber_ss_handle
             .read_bytes(KYBER_SHARED_SECRET_BYTES)
             .map_err(|e| {
@@ -1560,13 +1644,26 @@ impl Session {
                 ProtocolError::from_crypto(e)
             })?;
 
-        let (new_kyber_sk_handle, new_kyber_pk) =
-            KyberInterop::generate_keypair().map_err(|e| {
-                CryptoInterop::secure_wipe(&mut new_private);
-                CryptoInterop::secure_wipe(&mut dh_secret);
-                CryptoInterop::secure_wipe(&mut kyber_ss);
-                ProtocolError::from_crypto(e)
-            })?;
+        let (new_kyber_sk_handle, new_kyber_pk) = {
+            #[cfg(feature = "test-vectors")]
+            {
+                if let Some(entropy) = test_entropy.as_ref() {
+                    KyberInterop::generate_keypair_from_seed(&entropy.kyber_keygen_seed)
+                } else {
+                    KyberInterop::generate_keypair()
+                }
+            }
+            #[cfg(not(feature = "test-vectors"))]
+            {
+                KyberInterop::generate_keypair()
+            }
+        }
+        .map_err(|e| {
+            CryptoInterop::secure_wipe(&mut new_private);
+            CryptoInterop::secure_wipe(&mut dh_secret);
+            CryptoInterop::secure_wipe(&mut kyber_ss);
+            ProtocolError::from_crypto(e)
+        })?;
 
         let mut hybrid_ikm = Vec::with_capacity(dh_secret.len() + kyber_ss.len());
         hybrid_ikm.extend_from_slice(&dh_secret);
@@ -1655,6 +1752,14 @@ impl Session {
         inner.send_ratchet_pending = false;
         inner.state.send_ratchet_pending = false;
         inner.messages_since_last_dh_ratchet = 0;
+        #[cfg(feature = "test-vectors")]
+        if let Some(entropy) = test_entropy.as_ref() {
+            let state = NonceStateLocal::new(entropy.nonce_prefix, entropy.nonce_counter)?;
+            store_nonce_state(&mut inner.state, state);
+        } else {
+            reset_nonce_generator(&mut inner.state)?;
+        }
+        #[cfg(not(feature = "test-vectors"))]
         reset_nonce_generator(&mut inner.state)?;
 
         CryptoInterop::secure_wipe(&mut { new_root });
@@ -1855,6 +1960,45 @@ impl Session {
             Some(header_nonce),
             |_inner| Ok(()),
         )
+    }
+
+    #[cfg(feature = "test-vectors")]
+    #[doc(hidden)]
+    pub fn set_test_vector_ratchet_entropy(
+        &self,
+        x25519_seed: &[u8],
+        kyber_keygen_seed: &[u8],
+        kyber_encapsulation_seed: &[u8],
+        nonce_prefix: [u8; NONCE_PREFIX_BYTES],
+        nonce_counter: u64,
+    ) -> Result<(), ProtocolError> {
+        if x25519_seed.len() != X25519_PRIVATE_KEY_BYTES
+            || kyber_keygen_seed.len() != KYBER_SEED_KEY_BYTES
+            || kyber_encapsulation_seed.len() != KYBER_SEED_KEY_BYTES
+        {
+            return Err(ProtocolError::invalid_input(
+                "Invalid deterministic ratchet entropy size",
+            ));
+        }
+
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| ProtocolError::invalid_state("Session lock poisoned"))?;
+        inner.test_vector_ratchet_entropy = Some(TestVectorRatchetEntropy {
+            x25519_seed: x25519_seed.try_into().map_err(|_| {
+                ProtocolError::invalid_input("Invalid deterministic X25519 seed size")
+            })?,
+            kyber_keygen_seed: kyber_keygen_seed.try_into().map_err(|_| {
+                ProtocolError::invalid_input("Invalid deterministic Kyber keygen seed size")
+            })?,
+            kyber_encapsulation_seed: kyber_encapsulation_seed.try_into().map_err(|_| {
+                ProtocolError::invalid_input("Invalid deterministic Kyber encapsulation seed size")
+            })?,
+            nonce_prefix,
+            nonce_counter,
+        });
+        Ok(())
     }
 
     fn encrypt_internal<F>(

@@ -1249,11 +1249,12 @@ The repository now includes an artifact script, documented in the README, with
 quick, test, formal, paper, bench, and full modes. A dedicated paper-vector test
 and a matching dump utility fix deterministic vectors for HKDF, AES-GCM-SIV,
 seeded ML-KEM public-key generation, master-key identity derivation, the full
-handshake transcript, and the first post-handshake envelope under a test-only
-deterministic entropy feature. The remaining reproducibility work is mechanical
-rather than conceptual: add cross-ratchet envelope KATs without weakening
-production entropy, publish one benchmark script with pinned tool versions, and
-archive Tamarin/ProVerif outputs for a tagged release.
+handshake transcript, the first post-handshake envelope, and the first
+DH+KEM-ratchet envelope under a test-only deterministic entropy feature. The
+remaining reproducibility work is mechanical rather than conceptual: add
+multi-epoch delayed-delivery KATs without weakening production entropy, publish
+one benchmark script with pinned tool versions, and archive Tamarin/ProVerif
+outputs for a tagged release.
 
 \subsection{Limitations}
 

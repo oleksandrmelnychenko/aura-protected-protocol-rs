@@ -139,6 +139,64 @@ fn print_handshake_vector() {
         "envelope_payload_sha256={}",
         sha256_hex(&envelope.encrypted_payload)
     );
+
+    bob_session
+        .set_test_vector_ratchet_entropy(
+            &[0x77; 32],
+            &[0x88; 32],
+            &[0x99; 32],
+            [0xaa; NONCE_PREFIX_BYTES],
+            0,
+        )
+        .expect("ratchet entropy vector");
+    let ratchet_envelope = bob_session
+        .encrypt_with_test_vector_header_nonce(
+            b"Aura cross-ratchet envelope vector",
+            8,
+            43,
+            Some("paper-ratchet"),
+            &[0xbb; AES_GCM_NONCE_BYTES],
+        )
+        .expect("cross-ratchet envelope vector");
+    let ratchet_decrypted = alice_session
+        .decrypt(&ratchet_envelope)
+        .expect("cross-ratchet decrypt");
+    assert_eq!(
+        ratchet_decrypted.plaintext,
+        b"Aura cross-ratchet envelope vector"
+    );
+    let mut ratchet_envelope_bytes = Vec::new();
+    ratchet_envelope
+        .encode(&mut ratchet_envelope_bytes)
+        .expect("encode cross-ratchet envelope");
+    println!(
+        "cross_ratchet_envelope_len={}",
+        ratchet_envelope_bytes.len()
+    );
+    println!(
+        "cross_ratchet_envelope_sha256={}",
+        sha256_hex(&ratchet_envelope_bytes)
+    );
+    println!(
+        "cross_ratchet_header_dh_sha256={}",
+        sha256_hex(ratchet_envelope.dh_public_key.as_ref().unwrap())
+    );
+    println!(
+        "cross_ratchet_header_kyber_ct_sha256={}",
+        sha256_hex(ratchet_envelope.kyber_ciphertext.as_ref().unwrap())
+    );
+    println!(
+        "cross_ratchet_header_new_kyber_sha256={}",
+        sha256_hex(ratchet_envelope.new_kyber_public.as_ref().unwrap())
+    );
+    println!(
+        "cross_ratchet_metadata_sha256={}",
+        sha256_hex(&ratchet_envelope.encrypted_metadata)
+    );
+    println!(
+        "cross_ratchet_payload_sha256={}",
+        sha256_hex(&ratchet_envelope.encrypted_payload)
+    );
 }
 
 fn main() {

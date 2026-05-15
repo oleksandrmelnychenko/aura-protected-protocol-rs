@@ -233,4 +233,65 @@ fn paper_full_handshake_transcript_vector_is_stable() {
         sha256_hex(&envelope.encrypted_payload),
         "e142dbef61b3b62e92428585a61c7e79dc38bddec10004e073fff20be4ec801e"
     );
+
+    bob_session
+        .set_test_vector_ratchet_entropy(
+            &[0x77; 32],
+            &[0x88; 32],
+            &[0x99; 32],
+            [0xaa; NONCE_PREFIX_BYTES],
+            0,
+        )
+        .unwrap();
+    let ratchet_envelope = bob_session
+        .encrypt_with_test_vector_header_nonce(
+            b"Aura cross-ratchet envelope vector",
+            8,
+            43,
+            Some("paper-ratchet"),
+            &[0xbb; AES_GCM_NONCE_BYTES],
+        )
+        .unwrap();
+    let mut ratchet_envelope_bytes = Vec::new();
+    ratchet_envelope
+        .encode(&mut ratchet_envelope_bytes)
+        .unwrap();
+    let ratchet_decrypted = alice_session.decrypt(&ratchet_envelope).unwrap();
+
+    assert_eq!(
+        ratchet_decrypted.plaintext,
+        b"Aura cross-ratchet envelope vector"
+    );
+    assert_eq!(ratchet_decrypted.metadata.message_index, 0);
+    assert_eq!(ratchet_decrypted.metadata.envelope_type, 8);
+    assert_eq!(ratchet_decrypted.metadata.envelope_id, 43);
+    assert_eq!(
+        ratchet_decrypted.metadata.correlation_id.as_deref(),
+        Some("paper-ratchet")
+    );
+    assert_eq!(ratchet_envelope_bytes.len(), 2473);
+    assert_eq!(
+        sha256_hex(&ratchet_envelope_bytes),
+        "ee819dc868edce917aa464d82528b5262c3c8a78428ec9552e0dced6442b77e0"
+    );
+    assert_eq!(
+        sha256_hex(ratchet_envelope.dh_public_key.as_ref().unwrap()),
+        "a1ec4ad5c6a287e156ae4260c1602ffed192df3fd89c7b6376a268289bb7e703"
+    );
+    assert_eq!(
+        sha256_hex(ratchet_envelope.kyber_ciphertext.as_ref().unwrap()),
+        "d258ff9e7d83d08aac73ffdf4e8401c16f794e9dec0f8446182f4a38afa2adc6"
+    );
+    assert_eq!(
+        sha256_hex(ratchet_envelope.new_kyber_public.as_ref().unwrap()),
+        "a1b885dbb1a27a0901d6265212a2a18ecae6e80a830cf61224aa4947276b0b3a"
+    );
+    assert_eq!(
+        sha256_hex(&ratchet_envelope.encrypted_metadata),
+        "04386aa6b4d2fd60b3524948fc9179151085708da29a6f0e502bd843e38a4e3b"
+    );
+    assert_eq!(
+        sha256_hex(&ratchet_envelope.encrypted_payload),
+        "d2a1cdd41eea0c36dad0d49a515385d7f95f196bc94308782f4d0b25b0c43baf"
+    );
 }
