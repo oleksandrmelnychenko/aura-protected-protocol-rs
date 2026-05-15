@@ -343,6 +343,40 @@ impl HandshakeInitiator {
         max_messages_per_chain: u32,
         time_provider: Arc<dyn ITimeProvider>,
     ) -> Result<Self, ProtocolError> {
+        Self::start_with_time_provider_inner(
+            identity_keys,
+            peer_bundle,
+            max_messages_per_chain,
+            time_provider,
+            None,
+        )
+    }
+
+    #[cfg(feature = "test-vectors")]
+    #[doc(hidden)]
+    pub fn start_with_test_vector_entropy(
+        identity_keys: &mut IdentityKeys,
+        peer_bundle: &PreKeyBundle,
+        max_messages_per_chain: u32,
+        time_provider: Arc<dyn ITimeProvider>,
+        kyber_encapsulation_seed: &[u8],
+    ) -> Result<Self, ProtocolError> {
+        Self::start_with_time_provider_inner(
+            identity_keys,
+            peer_bundle,
+            max_messages_per_chain,
+            time_provider,
+            Some(kyber_encapsulation_seed),
+        )
+    }
+
+    fn start_with_time_provider_inner(
+        identity_keys: &mut IdentityKeys,
+        peer_bundle: &PreKeyBundle,
+        max_messages_per_chain: u32,
+        time_provider: Arc<dyn ITimeProvider>,
+        kyber_encapsulation_seed: Option<&[u8]>,
+    ) -> Result<Self, ProtocolError> {
         validate_bundle(peer_bundle)?;
         validate_max_messages_per_chain(max_messages_per_chain)?;
 
@@ -439,13 +473,19 @@ impl HandshakeInitiator {
             CryptoInterop::secure_wipe(&mut eph_private);
         })?;
 
-        let (kyber_ciphertext, kyber_ss_handle) =
-            KyberInterop::encapsulate(&peer_bundle.kyber_public).map_err(|e| {
-                CryptoInterop::secure_wipe(&mut identity_private);
-                CryptoInterop::secure_wipe(&mut eph_private);
-                CryptoInterop::secure_wipe(&mut classical_shared);
-                ProtocolError::from_crypto(e)
-            })?;
+        let (kyber_ciphertext, kyber_ss_handle) = match kyber_encapsulation_seed {
+            #[cfg(feature = "test-vectors")]
+            Some(seed) => KyberInterop::encapsulate_from_seed(&peer_bundle.kyber_public, seed),
+            #[cfg(not(feature = "test-vectors"))]
+            Some(_) => unreachable!("test-vector KEM seed is unavailable without test-vectors"),
+            None => KyberInterop::encapsulate(&peer_bundle.kyber_public),
+        }
+        .map_err(|e| {
+            CryptoInterop::secure_wipe(&mut identity_private);
+            CryptoInterop::secure_wipe(&mut eph_private);
+            CryptoInterop::secure_wipe(&mut classical_shared);
+            ProtocolError::from_crypto(e)
+        })?;
         let mut kyber_shared_secret = kyber_ss_handle
             .read_bytes(KYBER_SHARED_SECRET_BYTES)
             .map_err(|e| {

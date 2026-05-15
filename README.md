@@ -191,7 +191,7 @@ Useful modes:
 
 | Mode | Scope |
 |------|-------|
-| `quick` | Fixed paper vectors + attack-PoC regression tests |
+| `quick` | Fixed paper vectors, deterministic handshake KAT, attack-PoC regression tests |
 | `test` | Full Rust tests, with and without `ffi` |
 | `formal` | Tamarin handshake/ratchet models + ProVerif |
 | `paper` | Rebuild English and Ukrainian PDFs |

@@ -410,6 +410,49 @@ impl IdentityKeys {
         Ok(())
     }
 
+    #[cfg(feature = "test-vectors")]
+    #[doc(hidden)]
+    pub fn set_ephemeral_key_pair_from_seed(&self, seed: &[u8]) -> Result<(), ProtocolError> {
+        if seed.len() != X25519_PRIVATE_KEY_BYTES {
+            return Err(ProtocolError::invalid_input(
+                "Invalid seed size for deterministic ephemeral key",
+            ));
+        }
+
+        let mut private_key = seed.to_vec();
+        private_key[0] &= X25519_CLAMP_BYTE0;
+        private_key[31] &= X25519_CLAMP_BYTE31_LOW;
+        private_key[31] |= X25519_CLAMP_BYTE31_HIGH;
+        let private_array: [u8; X25519_PRIVATE_KEY_BYTES] = private_key[..X25519_PRIVATE_KEY_BYTES]
+            .try_into()
+            .map_err(|_| {
+                ProtocolError::key_generation("Deterministic ephemeral seed has wrong length")
+            })?;
+        let public_key = X25519PublicKey::from(&StaticSecret::from(private_array))
+            .as_bytes()
+            .to_vec();
+        let mut handle = SecureMemoryHandle::allocate(X25519_PRIVATE_KEY_BYTES).map_err(|e| {
+            CryptoInterop::secure_wipe(&mut private_key);
+            ProtocolError::from_crypto(e)
+        })?;
+        handle.write(&private_key).map_err(|e| {
+            CryptoInterop::secure_wipe(&mut private_key);
+            ProtocolError::from_crypto(e)
+        })?;
+        CryptoInterop::secure_wipe(&mut private_key);
+
+        let mut inner = self
+            .inner
+            .write()
+            .map_err(|_| ProtocolError::invalid_state("IdentityKeys write lock poisoned"))?;
+        inner.ephemeral_secret_key = Some(handle);
+        if let Some(ref mut pk) = inner.ephemeral_x25519_public {
+            CryptoInterop::secure_wipe(pk);
+        }
+        inner.ephemeral_x25519_public = Some(public_key);
+        Ok(())
+    }
+
     pub fn clear_ephemeral_key_pair(&self) -> Result<(), ProtocolError> {
         let mut inner = self
             .inner

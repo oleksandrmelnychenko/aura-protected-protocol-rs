@@ -3,7 +3,26 @@
 
 use aura_protected_protocol::crypto::{AesGcm, CryptoInterop, HkdfSha256, KyberInterop};
 use aura_protected_protocol::identity::IdentityKeys;
+#[cfg(feature = "test-vectors")]
+use aura_protected_protocol::{
+    core::{constants::PROTOCOL_VERSION, errors::ProtocolError},
+    interfaces::ITimeProvider,
+    proto::{OneTimePreKey, PreKeyBundle},
+    protocol::{HandshakeInitiator, HandshakeResponder},
+};
 use sha2::{Digest, Sha256};
+#[cfg(feature = "test-vectors")]
+use std::sync::Arc;
+
+#[cfg(feature = "test-vectors")]
+struct FixedTimeProvider;
+
+#[cfg(feature = "test-vectors")]
+impl ITimeProvider for FixedTimeProvider {
+    fn now_unix_secs(&self) -> Result<u64, ProtocolError> {
+        Ok(1_800_000_000)
+    }
+}
 
 fn hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -16,6 +35,31 @@ fn hex(bytes: &[u8]) -> String {
 
 fn sha256_hex(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
+}
+
+#[cfg(feature = "test-vectors")]
+fn encode_pre_key_bundle(identity: &IdentityKeys) -> PreKeyBundle {
+    let bundle = identity.create_public_bundle().unwrap();
+    let one_time_pre_keys = bundle
+        .one_time_pre_keys()
+        .iter()
+        .map(|opk| OneTimePreKey {
+            one_time_pre_key_id: opk.id(),
+            public_key: opk.public_key_vec(),
+        })
+        .collect();
+
+    PreKeyBundle {
+        version: PROTOCOL_VERSION,
+        identity_ed25519_public: bundle.identity_ed25519_public().to_vec(),
+        identity_x25519_public: bundle.identity_x25519_public().to_vec(),
+        identity_x25519_signature: bundle.identity_x25519_signature().to_vec(),
+        signed_pre_key_id: bundle.signed_pre_key_id(),
+        signed_pre_key_public: bundle.signed_pre_key_public().to_vec(),
+        signed_pre_key_signature: bundle.signed_pre_key_signature().to_vec(),
+        one_time_pre_keys,
+        kyber_public: bundle.kyber_public().unwrap_or(&[]).to_vec(),
+    }
 }
 
 #[test]
@@ -95,5 +139,55 @@ fn paper_master_key_identity_vectors_are_stable() {
     assert_eq!(
         sha256_hex(&bob.get_kyber_public()),
         "c5a17545a177bf666198263203923758f9602b2abd1dedde7a9c517b40897e9a"
+    );
+}
+
+#[cfg(feature = "test-vectors")]
+#[test]
+fn paper_full_handshake_transcript_vector_is_stable() {
+    CryptoInterop::initialize().unwrap();
+    let mut alice = IdentityKeys::create_from_master_key(&[0x11; 32], "paper-alice", 0).unwrap();
+    let mut bob = IdentityKeys::create_from_master_key(&[0x22; 32], "paper-bob", 0).unwrap();
+    let bob_bundle = encode_pre_key_bundle(&bob);
+    let time_provider = Arc::new(FixedTimeProvider);
+
+    alice.set_ephemeral_key_pair_from_seed(&[0x33; 32]).unwrap();
+    let initiator = HandshakeInitiator::start_with_test_vector_entropy(
+        &mut alice,
+        &bob_bundle,
+        1000,
+        time_provider.clone(),
+        &[0x44; 32],
+    )
+    .unwrap();
+    let init_bytes = initiator.encoded_message().to_vec();
+
+    let responder = HandshakeResponder::process_with_replay_guard_and_time_provider(
+        &mut bob,
+        &bob_bundle,
+        &init_bytes,
+        1000,
+        None,
+        time_provider,
+    )
+    .unwrap();
+    let ack_bytes = responder.encoded_ack().to_vec();
+    let bob_session = responder.finish().unwrap();
+    let alice_session = initiator.finish(&ack_bytes).unwrap();
+
+    assert_eq!(alice_session.get_session_id(), bob_session.get_session_id());
+    assert_eq!(init_bytes.len(), 2485);
+    assert_eq!(ack_bytes.len(), 36);
+    assert_eq!(
+        sha256_hex(&init_bytes),
+        "dceaef8ef7f38a0c7a4f54e8139aa236eda6339d123a65b79699ad62f56d4151"
+    );
+    assert_eq!(
+        sha256_hex(&ack_bytes),
+        "5192f0e16fc61f1ea4c38e1737c93feb613075c2447ea711c76b53965bacf265"
+    );
+    assert_eq!(
+        hex(&alice_session.get_session_id()),
+        "7775055d40940c50c28a6bac2edf50e6"
     );
 }

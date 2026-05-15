@@ -49,8 +49,8 @@ paper_build() {
 case "$MODE" in
   quick)
     versions
-    run paper_vectors_test cargo test --release --test paper_vectors
-    run paper_vectors_dump cargo run --release --example paper_vectors
+    run paper_vectors_test cargo test --release --features test-vectors --test paper_vectors
+    run paper_vectors_dump cargo run --release --features test-vectors --example paper_vectors
     run attack_poc_tests cargo test --release --test attack_poc
     ;;
   test)
@@ -74,8 +74,8 @@ case "$MODE" in
     ;;
   full)
     versions
-    run paper_vectors_test cargo test --release --test paper_vectors
-    run paper_vectors_dump cargo run --release --example paper_vectors
+    run paper_vectors_test cargo test --release --features test-vectors --test paper_vectors
+    run paper_vectors_dump cargo run --release --features test-vectors --example paper_vectors
     run all_tests cargo test --release
     run all_tests_ffi cargo test --release --features ffi
     run formal_handshake make -C "$ROOT/formal" handshake

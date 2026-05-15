@@ -1797,16 +1797,17 @@ equal-counter acceptance \\
 \midrule
 Єдиний artifact-entrypoint &
 \texttt{artifact quick mode} &
-Фіксує версії інструментів, запускає paper vectors і attack-PoC
-регресії; повні режими \texttt{test}, \texttt{formal}, \texttt{paper},
-\texttt{bench}, \texttt{full} описано в artifact-документі. \\
+Фіксує версії інструментів, запускає paper vectors, deterministic
+handshake transcript KAT і attack-PoC регресії; повні режими
+\texttt{test}, \texttt{formal}, \texttt{paper}, \texttt{bench},
+\texttt{full} описано в artifact-документі. \\
 \addlinespace
 Фіксовані vectors &
-\texttt{cargo test --release --test paper\_vectors} &
+\texttt{test-vectors paper\_vectors} &
 Стабільні вектори для HKDF, AES-256-GCM-SIV, seeded ML-KEM public key
-і master-key identity derivation; байтовий handshake-KAT лишається
-окремим наступним кроком через продукційну випадковість ephemeral DH та
-ML-KEM encapsulation. \\
+і master-key identity derivation; deterministic handshake transcript KAT
+перевіряє байти \texttt{HandshakeInit}, \texttt{HandshakeAck} та session id
+під test-only entropy feature. \\
 \addlinespace
 Зріз тестів за замовчуванням &
 \texttt{cargo test -- --list} &
@@ -2169,7 +2170,7 @@ transcript без додаткового підпису, метадані маю
 \midrule
 Порівняння з SOTA & Є порівняння з \PQXDH{}, \SPQR{}, \PQThree{} та \MLS{} & Додати експеримент із однаковою моделлю трафіка для handshake-only, sparse-PQ, periodic-PQ та per-ratchet-PQ режимів. \\
 Аналіз абляцій & Є окремі твердження про HKDF, metadata-key та replay-захист & Виміряти й описати варіанти без KEM-pk у \HKDF{}-info, без metadata-key, без sealed state та з KEM раз на $k$ ратчетів. \\
-Відтворюваність & Є artifact-entrypoint, fixed vectors, код, тести і proof-to-code таблиця & Додати deterministic full-handshake KATs і CI-артефакти для Tamarin/ProVerif. \\
+Відтворюваність & Є artifact-entrypoint, fixed vectors, deterministic handshake transcript KAT, код, тести і proof-to-code таблиця & Додати post-handshake envelope KATs і CI-артефакти для Tamarin/ProVerif. \\
 Незалежна довіра & Є власні докази та машинні моделі & Отримати зовнішній review моделі й коду; зафіксувати версії інструментів та хеші артефактів. \\
 Межі застосування & Описано двосторонній сценарій і групове обмеження & Чітко відділити двосторонній протокол від майбутнього групового TreeKEM-профілю, щоб не було завищених тверджень. \\
 \bottomrule

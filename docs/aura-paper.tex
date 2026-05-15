@@ -1248,10 +1248,12 @@ are all visible in one repository.
 The repository now includes an artifact script, documented in the README, with
 quick, test, formal, paper, bench, and full modes. A dedicated paper-vector test
 and a matching dump utility fix deterministic vectors for HKDF, AES-GCM-SIV,
-seeded ML-KEM public-key generation, and master-key identity derivation. The
+seeded ML-KEM public-key generation, master-key identity derivation, and the
+full handshake transcript under a test-only deterministic entropy feature. The
 remaining reproducibility work is mechanical rather than conceptual: add
-deterministic full-handshake KATs, publish one benchmark script with pinned tool
-versions, and archive Tamarin/ProVerif outputs for a tagged release.
+post-handshake envelope KATs without weakening production nonce generation,
+publish one benchmark script with pinned tool versions, and archive
+Tamarin/ProVerif outputs for a tagged release.
 
 \subsection{Limitations}
 

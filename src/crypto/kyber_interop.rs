@@ -4,7 +4,7 @@
 use ml_kem::kem::{Decapsulate, Encapsulate};
 use ml_kem::{EncodedSizeUser, KemCore, MlKem768};
 use rand_chacha::ChaCha20Rng;
-use rand_core::{OsRng, SeedableRng};
+use rand_core::{CryptoRng, OsRng, RngCore, SeedableRng};
 
 use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
@@ -79,12 +79,14 @@ impl KyberInterop {
         Ok((sk_handle, pk_bytes))
     }
 
-    pub fn encapsulate(
+    fn encapsulate_with_rng<R: CryptoRng + RngCore>(
         peer_public_key: &[u8],
+        rng: &mut R,
+        operation: &'static str,
     ) -> Result<(Vec<u8>, SecureMemoryHandle), CryptoError> {
         if peer_public_key.len() != KYBER_PUBLIC_KEY_BYTES {
             return Err(CryptoError::KyberFailed {
-                operation: "encapsulate",
+                operation,
                 detail: format!(
                     "invalid public key size: expected {} bytes, got {}",
                     KYBER_PUBLIC_KEY_BYTES,
@@ -97,22 +99,52 @@ impl KyberInterop {
             peer_public_key
                 .try_into()
                 .map_err(|_| CryptoError::KyberFailed {
-                    operation: "encapsulate",
+                    operation,
                     detail: "failed to parse ML-KEM public key bytes".to_string(),
                 })?;
         let ek = Ek::from_bytes(ek_encoded);
 
-        let (ct, ss) = ek
-            .encapsulate(&mut OsRng)
-            .map_err(|()| CryptoError::KyberFailed {
-                operation: "encapsulate",
-                detail: "ML-KEM-768 encapsulation failed".to_string(),
-            })?;
+        let (ct, ss) = ek.encapsulate(rng).map_err(|()| CryptoError::KyberFailed {
+            operation,
+            detail: "ML-KEM-768 encapsulation failed".to_string(),
+        })?;
 
         let ct_bytes = ct.as_slice().to_vec();
         let mut ss_handle = SecureMemoryHandle::allocate(KYBER_SHARED_SECRET_BYTES)?;
         ss_handle.write(ss.as_slice())?;
         Ok((ct_bytes, ss_handle))
+    }
+
+    pub fn encapsulate(
+        peer_public_key: &[u8],
+    ) -> Result<(Vec<u8>, SecureMemoryHandle), CryptoError> {
+        Self::encapsulate_with_rng(peer_public_key, &mut OsRng, "encapsulate")
+    }
+
+    #[cfg(feature = "test-vectors")]
+    #[doc(hidden)]
+    pub fn encapsulate_from_seed(
+        peer_public_key: &[u8],
+        seed: &[u8],
+    ) -> Result<(Vec<u8>, SecureMemoryHandle), CryptoError> {
+        if seed.len() < KYBER_SEED_KEY_BYTES {
+            return Err(CryptoError::KyberFailed {
+                operation: "encapsulate_from_seed",
+                detail: format!(
+                    "seed too short: expected at least {} bytes, got {}",
+                    KYBER_SEED_KEY_BYTES,
+                    seed.len()
+                ),
+            });
+        }
+        let seed_array: [u8; KYBER_SEED_KEY_BYTES] = seed[..KYBER_SEED_KEY_BYTES]
+            .try_into()
+            .map_err(|_| CryptoError::KyberFailed {
+                operation: "encapsulate_from_seed",
+                detail: "seed slice to array conversion failed".to_string(),
+            })?;
+        let mut rng = ChaCha20Rng::from_seed(seed_array);
+        Self::encapsulate_with_rng(peer_public_key, &mut rng, "encapsulate_from_seed")
     }
 
     pub fn decapsulate(

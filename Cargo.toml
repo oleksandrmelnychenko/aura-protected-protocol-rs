@@ -18,6 +18,9 @@ ffi = []
 # Skip mlock for SecureMemoryHandle (uses plain heap + zeroize only).
 # ** Do NOT enable in production — disables mlock memory pinning. **
 no-secure-memory = []
+# Expose deterministic hooks for byte-stable paper test vectors only.
+# ** Do NOT enable in production — deterministic entropy is for artifacts/tests. **
+test-vectors = []
 
 [dependencies]
 # AES-256-GCM-SIV (nonce-misuse resistant)
