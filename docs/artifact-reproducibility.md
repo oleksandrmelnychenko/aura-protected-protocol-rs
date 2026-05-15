@@ -16,7 +16,7 @@ Modes:
 
 | Mode | Command | Scope |
 |---|---|---|
-| Quick smoke | `./scripts/reproduce-paper-artifact.sh quick` | Fixed vectors, deterministic handshake transcript KAT, vector dump, attack-PoC regression tests |
+| Quick smoke | `./scripts/reproduce-paper-artifact.sh quick` | Fixed vectors, deterministic handshake/envelope KATs, vector dump, attack-PoC regression tests |
 | Rust tests | `./scripts/reproduce-paper-artifact.sh test` | Full `cargo test --release` with and without `ffi` |
 | Formal models | `./scripts/reproduce-paper-artifact.sh formal` | Tamarin handshake, Tamarin ratchet, ProVerif |
 | Paper build | `./scripts/reproduce-paper-artifact.sh paper` | Rebuild English and Ukrainian PDFs with `pdflatex` |
@@ -34,9 +34,10 @@ The fixed vectors live in:
 - `tests/paper_vectors.rs` — regression tests for deterministic vectors.
 - `examples/paper_vectors.rs` — prints the same vectors for artifact logs.
 
-Current vectors cover deterministic components and a byte-stable handshake
-transcript. The handshake vector is compiled only with the `test-vectors`
-feature; production builds continue to use fresh OS randomness.
+Current vectors cover deterministic components, a byte-stable handshake
+transcript, and the first post-handshake envelope. The handshake/envelope
+vectors are compiled only with the `test-vectors` feature; production builds
+continue to use fresh OS randomness.
 
 | Vector | What it checks |
 |---|---|
@@ -45,6 +46,7 @@ feature; production builds continue to use fresh OS randomness.
 | ML-KEM-768 seeded keygen | Stable public-key length and SHA-256 digest from a fixed seed |
 | Master-key identity derivation | Stable Ed25519/X25519 public keys and ML-KEM public-key digests for Alice/Bob |
 | Full handshake transcript | Fixed Alice/Bob identities, fixed initiator ephemeral X25519, fixed ML-KEM encapsulation seed, fixed clock, stable `HandshakeInit`, `HandshakeAck`, and session id |
+| Post-handshake envelope | Fixed nonce prefix, fixed header nonce, fixed payload, and stable encrypted metadata/payload bytes after the deterministic handshake |
 
 Handshake transcript vector:
 
@@ -56,6 +58,15 @@ Handshake transcript vector:
 | `handshake_ack_sha256` | `5192f0e16fc61f1ea4c38e1737c93feb613075c2447ea711c76b53965bacf265` |
 | `handshake_session_id` | `7775055d40940c50c28a6bac2edf50e6` |
 
+Post-handshake envelope vector:
+
+| Field | Value |
+|---|---|
+| `envelope_len` | `158` |
+| `envelope_sha256` | `a32fa29e3cb71093b294e7225aeb6a1a2aaeb54e04b9313166ae5b311e3ea799` |
+| `envelope_metadata_sha256` | `ac8130223d5d655159914f9ce920be8c28f8b85d239d1eab2ab0315b38c6b867` |
+| `envelope_payload_sha256` | `e142dbef61b3b62e92428585a61c7e79dc38bddec10004e073fff20be4ec801e` |
+
 ## Claim-to-artifact map
 
 | Paper claim | Files | Reproduction command |
@@ -64,6 +75,7 @@ Handshake transcript vector:
 | Deterministic identity derivation from a master key | `src/identity/identity_keys.rs`, `tests/paper_vectors.rs` | `cargo test --release --features test-vectors --test paper_vectors` |
 | ML-KEM seeded key generation remains stable | `src/crypto/kyber_interop.rs`, `tests/paper_vectors.rs` | `cargo test --release --features test-vectors --test paper_vectors` |
 | Deterministic full-handshake transcript KAT | `src/protocol/handshake.rs`, `src/identity/identity_keys.rs`, `src/crypto/kyber_interop.rs`, `tests/paper_vectors.rs` | `cargo test --release --features test-vectors --test paper_vectors` |
+| Post-handshake envelope KAT | `src/protocol/session.rs`, `tests/paper_vectors.rs`, `examples/paper_vectors.rs` | `cargo test --release --features test-vectors --test paper_vectors` |
 | Replay rejection, rollback guards, malformed envelope recovery | `tests/attack_poc.rs`, `tests/integration_test.rs` | `cargo test --release --test attack_poc`; full: `cargo test --release` |
 | FFI behavior | `src/ffi/api.rs`, `tests/ffi_test.rs`, `tests/ffi_channel_test.rs` | `cargo test --release --features ffi` |
 | Tamarin handshake lemmas | `formal/tamarin/aura_handshake.spthy` | `make -C formal handshake` |
@@ -107,7 +119,7 @@ The artifact is now runnable, but the following work would make it stronger:
 
 | Gap | Required work |
 |---|---|
-| Post-handshake envelope KATs | Add byte-stable encrypt/decrypt vectors after the deterministic handshake without weakening production nonce generation. |
+| Cross-ratchet envelope KATs | Add byte-stable encrypt/decrypt vectors across the first DH+KEM ratchet boundary without weakening production entropy. |
 | Benchmark comparability | Add explicit benchmark groups for handshake-only PQ, sparse/periodic PQ, and per-ratchet-boundary PQ under the same traffic model. |
 | Formal output archive | Store Tamarin/ProVerif stdout logs from a known toolchain in release artifacts. |
 | CI artifact bundle | Upload `artifact-output` logs from GitHub Actions for tagged releases. |

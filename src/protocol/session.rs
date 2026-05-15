@@ -1816,6 +1816,43 @@ impl Session {
             envelope_type,
             envelope_id,
             correlation_id,
+            None,
+            |_inner| Ok(()),
+        )
+    }
+
+    #[cfg(feature = "test-vectors")]
+    #[doc(hidden)]
+    pub fn set_test_vector_nonce_state(
+        &self,
+        prefix: [u8; NONCE_PREFIX_BYTES],
+        counter: u64,
+    ) -> Result<(), ProtocolError> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| ProtocolError::invalid_state("Session lock poisoned"))?;
+        let state = NonceStateLocal::new(prefix, counter)?;
+        store_nonce_state(&mut inner.state, state);
+        Ok(())
+    }
+
+    #[cfg(feature = "test-vectors")]
+    #[doc(hidden)]
+    pub fn encrypt_with_test_vector_header_nonce(
+        &self,
+        payload: &[u8],
+        envelope_type: i32,
+        envelope_id: u32,
+        correlation_id: Option<&str>,
+        header_nonce: &[u8],
+    ) -> Result<SecureEnvelope, ProtocolError> {
+        self.encrypt_internal(
+            payload,
+            envelope_type,
+            envelope_id,
+            correlation_id,
+            Some(header_nonce),
             |_inner| Ok(()),
         )
     }
@@ -1826,6 +1863,7 @@ impl Session {
         envelope_type: i32,
         envelope_id: u32,
         correlation_id: Option<&str>,
+        header_nonce_override: Option<&[u8]>,
         post_ratchet_hook: F,
     ) -> Result<SecureEnvelope, ProtocolError>
     where
@@ -1959,7 +1997,20 @@ impl Session {
             buf
         };
 
-        let header_nonce = CryptoInterop::get_random_bytes(AES_GCM_NONCE_BYTES);
+        let header_nonce = if let Some(nonce) = header_nonce_override {
+            if nonce.len() != AES_GCM_NONCE_BYTES {
+                CryptoInterop::secure_wipe(&mut message_key);
+                rollback_send_encrypt_state(
+                    &mut inner,
+                    &mut send_ratchet_snapshot,
+                    &send_progress_snapshot,
+                );
+                return Err(ProtocolError::invalid_input("Invalid header nonce size"));
+            }
+            nonce.to_vec()
+        } else {
+            CryptoInterop::get_random_bytes(AES_GCM_NONCE_BYTES)
+        };
         if header_nonce.len() != AES_GCM_NONCE_BYTES {
             CryptoInterop::secure_wipe(&mut message_key);
             rollback_send_encrypt_state(
@@ -2068,6 +2119,7 @@ impl Session {
             envelope_type,
             envelope_id,
             correlation_id,
+            None,
             post_ratchet_hook,
         )
     }

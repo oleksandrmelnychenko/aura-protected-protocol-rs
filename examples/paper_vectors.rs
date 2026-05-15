@@ -5,11 +5,16 @@ use aura_protected_protocol::crypto::{AesGcm, CryptoInterop, HkdfSha256, KyberIn
 use aura_protected_protocol::identity::IdentityKeys;
 #[cfg(feature = "test-vectors")]
 use aura_protected_protocol::{
-    core::{constants::PROTOCOL_VERSION, errors::ProtocolError},
+    core::{
+        constants::{AES_GCM_NONCE_BYTES, NONCE_PREFIX_BYTES, PROTOCOL_VERSION},
+        errors::ProtocolError,
+    },
     interfaces::ITimeProvider,
     proto::{OneTimePreKey, PreKeyBundle},
     protocol::{HandshakeInitiator, HandshakeResponder},
 };
+#[cfg(feature = "test-vectors")]
+use prost::Message;
 use sha2::{Digest, Sha256};
 #[cfg(feature = "test-vectors")]
 use std::sync::Arc;
@@ -104,6 +109,35 @@ fn print_handshake_vector() {
     println!(
         "handshake_session_id={}",
         hex(&alice_session.get_session_id())
+    );
+
+    alice_session
+        .set_test_vector_nonce_state([0x55; NONCE_PREFIX_BYTES], 0)
+        .expect("envelope nonce vector");
+    let envelope = alice_session
+        .encrypt_with_test_vector_header_nonce(
+            b"Aura post-handshake envelope vector",
+            7,
+            42,
+            Some("paper-envelope"),
+            &[0x66; AES_GCM_NONCE_BYTES],
+        )
+        .expect("envelope vector");
+    let decrypted = bob_session.decrypt(&envelope).expect("envelope decrypt");
+    assert_eq!(decrypted.plaintext, b"Aura post-handshake envelope vector");
+    let mut envelope_bytes = Vec::new();
+    envelope
+        .encode(&mut envelope_bytes)
+        .expect("encode envelope");
+    println!("envelope_len={}", envelope_bytes.len());
+    println!("envelope_sha256={}", sha256_hex(&envelope_bytes));
+    println!(
+        "envelope_metadata_sha256={}",
+        sha256_hex(&envelope.encrypted_metadata)
+    );
+    println!(
+        "envelope_payload_sha256={}",
+        sha256_hex(&envelope.encrypted_payload)
     );
 }
 

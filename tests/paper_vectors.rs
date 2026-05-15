@@ -5,11 +5,16 @@ use aura_protected_protocol::crypto::{AesGcm, CryptoInterop, HkdfSha256, KyberIn
 use aura_protected_protocol::identity::IdentityKeys;
 #[cfg(feature = "test-vectors")]
 use aura_protected_protocol::{
-    core::{constants::PROTOCOL_VERSION, errors::ProtocolError},
+    core::{
+        constants::{AES_GCM_NONCE_BYTES, NONCE_PREFIX_BYTES, PROTOCOL_VERSION},
+        errors::ProtocolError,
+    },
     interfaces::ITimeProvider,
     proto::{OneTimePreKey, PreKeyBundle},
     protocol::{HandshakeInitiator, HandshakeResponder},
 };
+#[cfg(feature = "test-vectors")]
+use prost::Message;
 use sha2::{Digest, Sha256};
 #[cfg(feature = "test-vectors")]
 use std::sync::Arc;
@@ -189,5 +194,43 @@ fn paper_full_handshake_transcript_vector_is_stable() {
     assert_eq!(
         hex(&alice_session.get_session_id()),
         "7775055d40940c50c28a6bac2edf50e6"
+    );
+
+    alice_session
+        .set_test_vector_nonce_state([0x55; NONCE_PREFIX_BYTES], 0)
+        .unwrap();
+    let envelope = alice_session
+        .encrypt_with_test_vector_header_nonce(
+            b"Aura post-handshake envelope vector",
+            7,
+            42,
+            Some("paper-envelope"),
+            &[0x66; AES_GCM_NONCE_BYTES],
+        )
+        .unwrap();
+    let mut envelope_bytes = Vec::new();
+    envelope.encode(&mut envelope_bytes).unwrap();
+    let decrypted = bob_session.decrypt(&envelope).unwrap();
+
+    assert_eq!(decrypted.plaintext, b"Aura post-handshake envelope vector");
+    assert_eq!(decrypted.metadata.message_index, 0);
+    assert_eq!(decrypted.metadata.envelope_type, 7);
+    assert_eq!(decrypted.metadata.envelope_id, 42);
+    assert_eq!(
+        decrypted.metadata.correlation_id.as_deref(),
+        Some("paper-envelope")
+    );
+    assert_eq!(envelope_bytes.len(), 158);
+    assert_eq!(
+        sha256_hex(&envelope_bytes),
+        "a32fa29e3cb71093b294e7225aeb6a1a2aaeb54e04b9313166ae5b311e3ea799"
+    );
+    assert_eq!(
+        sha256_hex(&envelope.encrypted_metadata),
+        "ac8130223d5d655159914f9ce920be8c28f8b85d239d1eab2ab0315b38c6b867"
+    );
+    assert_eq!(
+        sha256_hex(&envelope.encrypted_payload),
+        "e142dbef61b3b62e92428585a61c7e79dc38bddec10004e073fff20be4ec801e"
     );
 }
