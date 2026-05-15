@@ -133,12 +133,12 @@ For deployment guidance, see `SECURITY.md`, `docs/client-production-checklist.md
 | Component | Choice | Standard |
 |-----------|--------|----------|
 | Key agreement (classical) | X25519 via x25519-dalek | RFC 7748 |
-| Key agreement (PQ) | Kyber-768 via liboqs | FIPS 203 (ML-KEM) |
+| Key agreement (PQ) | ML-KEM-768 via `ml-kem` | FIPS 203 |
 | Digital signatures | Ed25519 via ed25519-dalek | RFC 8032 |
 | AEAD | AES-256-GCM-SIV | RFC 8452 |
 | Key derivation | HKDF-SHA256 | RFC 5869 |
 | Authentication | HMAC-SHA256 | RFC 2104 |
-| Secure memory | mlock + zeroize (guard pages on Linux) | libc / zeroize |
+| Secure memory | pooled mlock + zeroize (MADV_DONTDUMP on Linux) | libc / zeroize |
 | Secret sharing | Shamir GF(2^8) with HMAC auth | -- |
 
 ## Building
@@ -146,13 +146,12 @@ For deployment guidance, see `SECURITY.md`, `docs/client-production-checklist.md
 ### Prerequisites
 
 - Rust 1.86+ (stable)
-- CMake + Ninja (for liboqs build)
 - protobuf-compiler
 
 #### macOS
 
 ```bash
-brew install cmake ninja protobuf
+brew install protobuf
 ```
 
 #### Ubuntu/Debian
@@ -175,7 +174,29 @@ cargo test --release --features ffi
 cargo test --all-features
 ```
 
-Coverage spans Rust API, integration, FFI, VoIP, attack-PoC, and property-based tests. The current verification snapshot is tracked in [`docs/release-snapshot.md`](docs/release-snapshot.md).
+Coverage spans Rust API, integration, FFI, VoIP, attack-PoC, and property-based tests. The current local snapshot enumerates 746 default test scenarios and 885 scenarios with `--features ffi`.
+
+### Paper Artifact Reproduction
+
+```bash
+./scripts/reproduce-paper-artifact.sh quick
+```
+
+The artifact entrypoint records tool versions and writes logs under
+`artifact-output/<timestamp>-<mode>/`. See
+[`docs/artifact-reproducibility.md`](docs/artifact-reproducibility.md) for the
+claim-to-command map.
+
+Useful modes:
+
+| Mode | Scope |
+|------|-------|
+| `quick` | Fixed paper vectors + attack-PoC regression tests |
+| `test` | Full Rust tests, with and without `ffi` |
+| `formal` | Tamarin handshake/ratchet models + ProVerif |
+| `paper` | Rebuild English and Ukrainian PDFs |
+| `bench` | Criterion benchmark suite |
+| `full` | Tests, formal models, PDFs, and benchmarks |
 
 ### Benchmarks
 
@@ -441,7 +462,7 @@ GitHub Actions pipeline with 8 jobs:
 | Job | What it does |
 |-----|-------------|
 | **Check & Clippy** | `cargo check` + `cargo clippy -- -D warnings` (with and without `ffi` feature) |
-| **Test** | Release and feature-matrix test runs on Linux, macOS, Windows; see [`docs/release-snapshot.md`](docs/release-snapshot.md) for the latest verified snapshot |
+| **Test** | Release and feature-matrix test runs on Linux, macOS, Windows; local snapshot: 746 default scenarios, 885 with `--features ffi` |
 | **Formal Verification** | Tamarin Prover (10 lemmas) + ProVerif (6 queries) |
 | **MSRV** | Minimum supported Rust version (1.86) |
 | **Fuzz Smoke Test** | All 32 libfuzzer targets (10s each) |

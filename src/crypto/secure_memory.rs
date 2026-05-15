@@ -168,12 +168,13 @@ mod inner {
         }
 
         fn pop(&self) -> Option<NonNull<u8>> {
-            let mut fl = self.free_list.lock().expect("secure pool free-list poisoned");
+            let mut fl = self
+                .free_list
+                .lock()
+                .expect("secure pool free-list poisoned");
             let idx = fl.pop()?;
             let off = (idx as usize) * self.slot_size;
-            unsafe {
-                NonNull::new((self.slots.as_ptr() as *mut u8).add(off))
-            }
+            unsafe { NonNull::new((self.slots.as_ptr() as *mut u8).add(off)) }
         }
 
         fn push(&self, ptr: NonNull<u8>) {
@@ -183,7 +184,10 @@ mod inner {
             unsafe {
                 std::ptr::write_bytes(ptr.as_ptr(), 0, self.slot_size);
             }
-            let mut fl = self.free_list.lock().expect("secure pool free-list poisoned");
+            let mut fl = self
+                .free_list
+                .lock()
+                .expect("secure pool free-list poisoned");
             fl.push(idx);
         }
     }
@@ -388,7 +392,8 @@ mod tests {
     #[test]
     fn write_and_read_roundtrips() {
         let mut h = SecureMemoryHandle::allocate(40).unwrap();
-        h.write(b"hello world some payload                ").unwrap();
+        h.write(b"hello world some payload                ")
+            .unwrap();
         let mut out = [0u8; 40];
         h.read(&mut out).unwrap();
         assert_eq!(&out[..11], b"hello world");

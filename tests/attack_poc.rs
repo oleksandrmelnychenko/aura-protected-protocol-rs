@@ -1607,9 +1607,7 @@ fn attack_sealed_state_counter_non_monotonic() {
         "State with external_counter == min_external_counter must be ACCEPTED \
          (idempotent reload — same blob, same content, no state regression)"
     );
-    println!(
-        "[ATTACK 22] Replay with same counter: ALLOWED (idempotent reload, no rollback)"
-    );
+    println!("[ATTACK 22] Replay with same counter: ALLOWED (idempotent reload, no rollback)");
 }
 
 #[test]

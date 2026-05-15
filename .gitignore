@@ -28,6 +28,9 @@ formal/proverif/*.tmp
 # Criterion benchmark output
 target/criterion/
 
+# Local artifact reproduction logs
+artifact-output/
+
 # Secrets / credentials — never commit
 .env*
 *.pem
