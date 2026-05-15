@@ -16,7 +16,7 @@ Modes:
 
 | Mode | Command | Scope |
 |---|---|---|
-| Quick smoke | `./scripts/reproduce-paper-artifact.sh quick` | Fixed vectors, deterministic handshake/envelope/cross-ratchet KATs, vector dump, attack-PoC regression tests |
+| Quick smoke | `./scripts/reproduce-paper-artifact.sh quick` | Fixed vectors, deterministic handshake/envelope/cross-ratchet/multi-epoch KATs, vector dump, attack-PoC regression tests |
 | Rust tests | `./scripts/reproduce-paper-artifact.sh test` | Full `cargo test --release` with and without `ffi` |
 | Formal models | `./scripts/reproduce-paper-artifact.sh formal` | Tamarin handshake, Tamarin ratchet, ProVerif |
 | Paper build | `./scripts/reproduce-paper-artifact.sh paper` | Rebuild English and Ukrainian PDFs with `pdflatex` |
@@ -35,9 +35,10 @@ The fixed vectors live in:
 - `examples/paper_vectors.rs` — prints the same vectors for artifact logs.
 
 Current vectors cover deterministic components, a byte-stable handshake
-transcript, the first post-handshake envelope, and the first DH+KEM ratchet
-boundary. These vectors are compiled only with the `test-vectors` feature;
-production builds continue to use fresh OS randomness.
+transcript, the first post-handshake envelope, the first DH+KEM ratchet
+boundary, and delayed delivery across multiple ratchet epochs. These vectors are
+compiled only with the `test-vectors` feature; production builds continue to use
+fresh OS randomness.
 
 | Vector | What it checks |
 |---|---|
@@ -48,6 +49,7 @@ production builds continue to use fresh OS randomness.
 | Full handshake transcript | Fixed Alice/Bob identities, fixed initiator ephemeral X25519, fixed ML-KEM encapsulation seed, fixed clock, stable `HandshakeInit`, `HandshakeAck`, and session id |
 | Post-handshake envelope | Fixed nonce prefix, fixed header nonce, fixed payload, and stable encrypted metadata/payload bytes after the deterministic handshake |
 | Cross-ratchet envelope | Fixed ratchet X25519 seed, fixed ratchet ML-KEM keygen seed, fixed ratchet encapsulation seed, fixed post-ratchet nonce/header nonce, and stable ratchet header plus encrypted metadata/payload bytes |
+| Multi-epoch delayed delivery | Fixed two-way ratchet bridge, fixed delayed epoch-0 and epoch-1 envelopes, stable `previous_chain_length=2`, and successful delayed decrypt after additional ratchets |
 
 Handshake transcript vector:
 
@@ -80,6 +82,22 @@ Cross-ratchet envelope vector:
 | `cross_ratchet_metadata_sha256` | `04386aa6b4d2fd60b3524948fc9179151085708da29a6f0e502bd843e38a4e3b` |
 | `cross_ratchet_payload_sha256` | `d2a1cdd41eea0c36dad0d49a515385d7f95f196bc94308782f4d0b25b0c43baf` |
 
+Multi-epoch delayed-delivery vector:
+
+| Field | Value |
+|---|---|
+| `multi_epoch_e0_delayed_len` | `162` |
+| `multi_epoch_e0_delayed_sha256` | `25887221bcb8a471b16c59d421513bf8840b63fcd2571b1173fe7f6cdbcac5f1` |
+| `multi_epoch_bob_bridge_len` | `2476` |
+| `multi_epoch_bob_bridge_sha256` | `dd3cc13ddf463339d192eaa98bc5407e585bb686e0553866f92c2ab2088740c0` |
+| `multi_epoch_alice_bridge_len` | `2478` |
+| `multi_epoch_alice_bridge_sha256` | `af3744e798eed2c437cee4d2af2275ab4db2a22dff81bb0fcc4a06f3786be95e` |
+| `multi_epoch_alice_bridge_previous_chain_length` | `2` |
+| `multi_epoch_e1_delayed_len` | `164` |
+| `multi_epoch_e1_delayed_sha256` | `5cbb861f4f5a2a78a5682b46fa74eaae70682597c8df178ed4d8652234cf309b` |
+| `multi_epoch_bob_second_len` | `2476` |
+| `multi_epoch_bob_second_sha256` | `e964ddb54e56986332bb12cd4387bb68f55d51ae7de2acb00f304c6327acb7ac` |
+
 ## Claim-to-artifact map
 
 | Paper claim | Files | Reproduction command |
@@ -90,6 +108,7 @@ Cross-ratchet envelope vector:
 | Deterministic full-handshake transcript KAT | `src/protocol/handshake.rs`, `src/identity/identity_keys.rs`, `src/crypto/kyber_interop.rs`, `tests/paper_vectors.rs` | `cargo test --release --features test-vectors --test paper_vectors` |
 | Post-handshake envelope KAT | `src/protocol/session.rs`, `tests/paper_vectors.rs`, `examples/paper_vectors.rs` | `cargo test --release --features test-vectors --test paper_vectors` |
 | Cross-ratchet envelope KAT | `src/protocol/session.rs`, `tests/paper_vectors.rs`, `examples/paper_vectors.rs` | `cargo test --release --features test-vectors --test paper_vectors` |
+| Multi-epoch delayed-delivery KAT | `src/protocol/session.rs`, `tests/paper_vectors.rs`, `examples/paper_vectors.rs` | `cargo test --release --features test-vectors --test paper_vectors` |
 | Replay rejection, rollback guards, malformed envelope recovery | `tests/attack_poc.rs`, `tests/integration_test.rs` | `cargo test --release --test attack_poc`; full: `cargo test --release` |
 | FFI behavior | `src/ffi/api.rs`, `tests/ffi_test.rs`, `tests/ffi_channel_test.rs` | `cargo test --release --features ffi` |
 | Tamarin handshake lemmas | `formal/tamarin/aura_handshake.spthy` | `make -C formal handshake` |
@@ -133,7 +152,6 @@ The artifact is now runnable, but the following work would make it stronger:
 
 | Gap | Required work |
 |---|---|
-| Multi-epoch envelope KATs | Add byte-stable delayed/out-of-order decrypt vectors across multiple ratchet epochs without weakening production entropy. |
 | Benchmark comparability | Add explicit benchmark groups for handshake-only PQ, sparse/periodic PQ, and per-ratchet-boundary PQ under the same traffic model. |
 | Formal output archive | Store Tamarin/ProVerif stdout logs from a known toolchain in release artifacts. |
 | CI artifact bundle | Upload `artifact-output` logs from GitHub Actions for tagged releases. |

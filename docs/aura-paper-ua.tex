@@ -1798,17 +1798,18 @@ equal-counter acceptance \\
 Єдиний artifact-entrypoint &
 \texttt{artifact quick mode} &
 Фіксує версії інструментів, запускає paper vectors, deterministic
-handshake/envelope/cross-ratchet KATs і attack-PoC регресії; повні режими
+handshake/envelope/cross-ratchet/multi-epoch KATs і attack-PoC регресії; повні режими
 \texttt{test}, \texttt{formal}, \texttt{paper}, \texttt{bench},
 \texttt{full} описано в artifact-документі. \\
 \addlinespace
 Фіксовані vectors &
 \texttt{test-vectors paper\_vectors} &
 Стабільні вектори для HKDF, AES-256-GCM-SIV, seeded ML-KEM public key
-і master-key identity derivation; deterministic handshake/envelope/cross-ratchet KATs
-перевіряють байти \texttt{HandshakeInit}, \texttt{HandshakeAck}, session id
-перший post-handshake envelope і перший DH+KEM ratchet envelope під
-test-only entropy feature. \\
+і master-key identity derivation; deterministic
+handshake/envelope/cross-ratchet/multi-epoch KATs перевіряють байти
+\texttt{HandshakeInit}, \texttt{HandshakeAck}, session id, перший
+post-handshake envelope, перший DH+KEM ratchet envelope і delayed delivery
+через кілька ratchet-епох під test-only entropy feature. \\
 \addlinespace
 Зріз тестів за замовчуванням &
 \texttt{cargo test -- --list} &
@@ -2171,7 +2172,7 @@ transcript без додаткового підпису, метадані маю
 \midrule
 Порівняння з SOTA & Є порівняння з \PQXDH{}, \SPQR{}, \PQThree{} та \MLS{} & Додати експеримент із однаковою моделлю трафіка для handshake-only, sparse-PQ, periodic-PQ та per-ratchet-PQ режимів. \\
 Аналіз абляцій & Є окремі твердження про HKDF, metadata-key та replay-захист & Виміряти й описати варіанти без KEM-pk у \HKDF{}-info, без metadata-key, без sealed state та з KEM раз на $k$ ратчетів. \\
-Відтворюваність & Є artifact-entrypoint, fixed vectors, deterministic handshake/envelope/cross-ratchet KATs, код, тести і proof-to-code таблиця & Додати multi-epoch delayed-delivery KATs і CI-артефакти для Tamarin/ProVerif. \\
+Відтворюваність & Є artifact-entrypoint, fixed vectors, deterministic handshake/envelope/cross-ratchet/multi-epoch KATs, код, тести і proof-to-code таблиця & Додати CI-артефакти для Tamarin/ProVerif і release-логи artifact-output. \\
 Незалежна довіра & Є власні докази та машинні моделі & Отримати зовнішній review моделі й коду; зафіксувати версії інструментів та хеші артефактів. \\
 Межі застосування & Описано двосторонній сценарій і групове обмеження & Чітко відділити двосторонній протокол від майбутнього групового TreeKEM-профілю, щоб не було завищених тверджень. \\
 \bottomrule

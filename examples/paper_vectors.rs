@@ -11,7 +11,7 @@ use aura_protected_protocol::{
     },
     interfaces::ITimeProvider,
     proto::{OneTimePreKey, PreKeyBundle},
-    protocol::{HandshakeInitiator, HandshakeResponder},
+    protocol::{HandshakeInitiator, HandshakeResponder, Session},
 };
 #[cfg(feature = "test-vectors")]
 use prost::Message;
@@ -68,7 +68,7 @@ fn encode_pre_key_bundle(identity: &IdentityKeys) -> PreKeyBundle {
 }
 
 #[cfg(feature = "test-vectors")]
-fn print_handshake_vector() {
+fn paper_session_pair() -> (Session, Session, Vec<u8>, Vec<u8>) {
     let mut alice = IdentityKeys::create_from_master_key(&[0x11; 32], "paper-alice", 0)
         .expect("alice handshake identity vector");
     let mut bob = IdentityKeys::create_from_master_key(&[0x22; 32], "paper-bob", 0)
@@ -100,6 +100,13 @@ fn print_handshake_vector() {
     let ack_bytes = responder.encoded_ack().to_vec();
     let bob_session = responder.finish().expect("bob session");
     let alice_session = initiator.finish(&ack_bytes).expect("alice session");
+
+    (alice_session, bob_session, init_bytes, ack_bytes)
+}
+
+#[cfg(feature = "test-vectors")]
+fn print_handshake_vector() {
+    let (alice_session, bob_session, init_bytes, ack_bytes) = paper_session_pair();
     assert_eq!(alice_session.get_session_id(), bob_session.get_session_id());
 
     println!("handshake_init_len={}", init_bytes.len());
@@ -199,6 +206,181 @@ fn print_handshake_vector() {
     );
 }
 
+#[cfg(feature = "test-vectors")]
+fn print_multi_epoch_delayed_delivery_vector() {
+    let (alice_session, bob_session, _init_bytes, _ack_bytes) = paper_session_pair();
+
+    alice_session
+        .set_test_vector_nonce_state([0x31; NONCE_PREFIX_BYTES], 0)
+        .expect("multi-epoch e0 nonce vector");
+    let e0_delivered = alice_session
+        .encrypt_with_test_vector_header_nonce(
+            b"Aura multi-epoch delivered e0 vector",
+            9,
+            50,
+            Some("paper-multi-e0"),
+            &[0x32; AES_GCM_NONCE_BYTES],
+        )
+        .expect("multi-epoch e0 delivered vector");
+    let e0_delayed = alice_session
+        .encrypt_with_test_vector_header_nonce(
+            b"Aura delayed epoch-0 vector",
+            9,
+            51,
+            Some("paper-delayed-e0"),
+            &[0x33; AES_GCM_NONCE_BYTES],
+        )
+        .expect("multi-epoch e0 delayed vector");
+    let mut e0_delayed_bytes = Vec::new();
+    e0_delayed
+        .encode(&mut e0_delayed_bytes)
+        .expect("encode multi-epoch e0 delayed");
+    let e0_delivered_dec = bob_session
+        .decrypt(&e0_delivered)
+        .expect("multi-epoch e0 delivered decrypt");
+    assert_eq!(
+        e0_delivered_dec.plaintext,
+        b"Aura multi-epoch delivered e0 vector"
+    );
+
+    bob_session
+        .set_test_vector_ratchet_entropy(
+            &[0x41; 32],
+            &[0x42; 32],
+            &[0x43; 32],
+            [0x44; NONCE_PREFIX_BYTES],
+            0,
+        )
+        .expect("multi-epoch bob bridge entropy");
+    let bob_bridge = bob_session
+        .encrypt_with_test_vector_header_nonce(
+            b"Aura bob bridge ratchet vector",
+            10,
+            52,
+            Some("paper-bob-bridge"),
+            &[0x45; AES_GCM_NONCE_BYTES],
+        )
+        .expect("multi-epoch bob bridge vector");
+    let mut bob_bridge_bytes = Vec::new();
+    bob_bridge
+        .encode(&mut bob_bridge_bytes)
+        .expect("encode multi-epoch bob bridge");
+    let bob_bridge_dec = alice_session
+        .decrypt(&bob_bridge)
+        .expect("multi-epoch bob bridge decrypt");
+    assert_eq!(bob_bridge_dec.plaintext, b"Aura bob bridge ratchet vector");
+
+    alice_session
+        .set_test_vector_ratchet_entropy(
+            &[0x51; 32],
+            &[0x52; 32],
+            &[0x53; 32],
+            [0x54; NONCE_PREFIX_BYTES],
+            0,
+        )
+        .expect("multi-epoch alice bridge entropy");
+    let alice_bridge = alice_session
+        .encrypt_with_test_vector_header_nonce(
+            b"Aura alice bridge ratchet vector",
+            11,
+            53,
+            Some("paper-alice-bridge"),
+            &[0x55; AES_GCM_NONCE_BYTES],
+        )
+        .expect("multi-epoch alice bridge vector");
+    let e1_delayed = alice_session
+        .encrypt_with_test_vector_header_nonce(
+            b"Aura delayed epoch-1 vector",
+            11,
+            54,
+            Some("paper-delayed-e1"),
+            &[0x56; AES_GCM_NONCE_BYTES],
+        )
+        .expect("multi-epoch e1 delayed vector");
+    let mut alice_bridge_bytes = Vec::new();
+    alice_bridge
+        .encode(&mut alice_bridge_bytes)
+        .expect("encode multi-epoch alice bridge");
+    let mut e1_delayed_bytes = Vec::new();
+    e1_delayed
+        .encode(&mut e1_delayed_bytes)
+        .expect("encode multi-epoch e1 delayed");
+    let alice_bridge_dec = bob_session
+        .decrypt(&alice_bridge)
+        .expect("multi-epoch alice bridge decrypt");
+    assert_eq!(
+        alice_bridge_dec.plaintext,
+        b"Aura alice bridge ratchet vector"
+    );
+    assert_eq!(alice_bridge.previous_chain_length, Some(2));
+
+    bob_session
+        .set_test_vector_ratchet_entropy(
+            &[0x61; 32],
+            &[0x62; 32],
+            &[0x63; 32],
+            [0x64; NONCE_PREFIX_BYTES],
+            0,
+        )
+        .expect("multi-epoch bob second entropy");
+    let bob_second = bob_session
+        .encrypt_with_test_vector_header_nonce(
+            b"Aura bob second ratchet vector",
+            12,
+            55,
+            Some("paper-bob-second"),
+            &[0x65; AES_GCM_NONCE_BYTES],
+        )
+        .expect("multi-epoch bob second vector");
+    let mut bob_second_bytes = Vec::new();
+    bob_second
+        .encode(&mut bob_second_bytes)
+        .expect("encode multi-epoch bob second");
+    let bob_second_dec = alice_session
+        .decrypt(&bob_second)
+        .expect("multi-epoch bob second decrypt");
+    assert_eq!(bob_second_dec.plaintext, b"Aura bob second ratchet vector");
+
+    let delayed_e0_dec = bob_session
+        .decrypt(&e0_delayed)
+        .expect("multi-epoch e0 delayed decrypt");
+    let delayed_e1_dec = bob_session
+        .decrypt(&e1_delayed)
+        .expect("multi-epoch e1 delayed decrypt");
+    assert_eq!(delayed_e0_dec.plaintext, b"Aura delayed epoch-0 vector");
+    assert_eq!(delayed_e1_dec.plaintext, b"Aura delayed epoch-1 vector");
+
+    println!("multi_epoch_e0_delayed_len={}", e0_delayed_bytes.len());
+    println!(
+        "multi_epoch_e0_delayed_sha256={}",
+        sha256_hex(&e0_delayed_bytes)
+    );
+    println!("multi_epoch_bob_bridge_len={}", bob_bridge_bytes.len());
+    println!(
+        "multi_epoch_bob_bridge_sha256={}",
+        sha256_hex(&bob_bridge_bytes)
+    );
+    println!("multi_epoch_alice_bridge_len={}", alice_bridge_bytes.len());
+    println!(
+        "multi_epoch_alice_bridge_sha256={}",
+        sha256_hex(&alice_bridge_bytes)
+    );
+    println!(
+        "multi_epoch_alice_bridge_previous_chain_length={}",
+        alice_bridge.previous_chain_length.unwrap()
+    );
+    println!("multi_epoch_e1_delayed_len={}", e1_delayed_bytes.len());
+    println!(
+        "multi_epoch_e1_delayed_sha256={}",
+        sha256_hex(&e1_delayed_bytes)
+    );
+    println!("multi_epoch_bob_second_len={}", bob_second_bytes.len());
+    println!(
+        "multi_epoch_bob_second_sha256={}",
+        sha256_hex(&bob_second_bytes)
+    );
+}
+
 fn main() {
     CryptoInterop::initialize().expect("crypto init");
 
@@ -258,4 +440,6 @@ fn main() {
 
     #[cfg(feature = "test-vectors")]
     print_handshake_vector();
+    #[cfg(feature = "test-vectors")]
+    print_multi_epoch_delayed_delivery_vector();
 }

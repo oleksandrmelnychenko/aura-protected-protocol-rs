@@ -11,7 +11,7 @@ use aura_protected_protocol::{
     },
     interfaces::ITimeProvider,
     proto::{OneTimePreKey, PreKeyBundle},
-    protocol::{HandshakeInitiator, HandshakeResponder},
+    protocol::{HandshakeInitiator, HandshakeResponder, Session},
 };
 #[cfg(feature = "test-vectors")]
 use prost::Message;
@@ -65,6 +65,40 @@ fn encode_pre_key_bundle(identity: &IdentityKeys) -> PreKeyBundle {
         one_time_pre_keys,
         kyber_public: bundle.kyber_public().unwrap_or(&[]).to_vec(),
     }
+}
+
+#[cfg(feature = "test-vectors")]
+fn paper_session_pair() -> (Session, Session, Vec<u8>, Vec<u8>) {
+    let mut alice = IdentityKeys::create_from_master_key(&[0x11; 32], "paper-alice", 0).unwrap();
+    let mut bob = IdentityKeys::create_from_master_key(&[0x22; 32], "paper-bob", 0).unwrap();
+    let bob_bundle = encode_pre_key_bundle(&bob);
+    let time_provider = Arc::new(FixedTimeProvider);
+
+    alice.set_ephemeral_key_pair_from_seed(&[0x33; 32]).unwrap();
+    let initiator = HandshakeInitiator::start_with_test_vector_entropy(
+        &mut alice,
+        &bob_bundle,
+        1000,
+        time_provider.clone(),
+        &[0x44; 32],
+    )
+    .unwrap();
+    let init_bytes = initiator.encoded_message().to_vec();
+
+    let responder = HandshakeResponder::process_with_replay_guard_and_time_provider(
+        &mut bob,
+        &bob_bundle,
+        &init_bytes,
+        1000,
+        None,
+        time_provider,
+    )
+    .unwrap();
+    let ack_bytes = responder.encoded_ack().to_vec();
+    let bob_session = responder.finish().unwrap();
+    let alice_session = initiator.finish(&ack_bytes).unwrap();
+
+    (alice_session, bob_session, init_bytes, ack_bytes)
 }
 
 #[test]
@@ -151,34 +185,7 @@ fn paper_master_key_identity_vectors_are_stable() {
 #[test]
 fn paper_full_handshake_transcript_vector_is_stable() {
     CryptoInterop::initialize().unwrap();
-    let mut alice = IdentityKeys::create_from_master_key(&[0x11; 32], "paper-alice", 0).unwrap();
-    let mut bob = IdentityKeys::create_from_master_key(&[0x22; 32], "paper-bob", 0).unwrap();
-    let bob_bundle = encode_pre_key_bundle(&bob);
-    let time_provider = Arc::new(FixedTimeProvider);
-
-    alice.set_ephemeral_key_pair_from_seed(&[0x33; 32]).unwrap();
-    let initiator = HandshakeInitiator::start_with_test_vector_entropy(
-        &mut alice,
-        &bob_bundle,
-        1000,
-        time_provider.clone(),
-        &[0x44; 32],
-    )
-    .unwrap();
-    let init_bytes = initiator.encoded_message().to_vec();
-
-    let responder = HandshakeResponder::process_with_replay_guard_and_time_provider(
-        &mut bob,
-        &bob_bundle,
-        &init_bytes,
-        1000,
-        None,
-        time_provider,
-    )
-    .unwrap();
-    let ack_bytes = responder.encoded_ack().to_vec();
-    let bob_session = responder.finish().unwrap();
-    let alice_session = initiator.finish(&ack_bytes).unwrap();
+    let (alice_session, bob_session, init_bytes, ack_bytes) = paper_session_pair();
 
     assert_eq!(alice_session.get_session_id(), bob_session.get_session_id());
     assert_eq!(init_bytes.len(), 2485);
@@ -293,5 +300,167 @@ fn paper_full_handshake_transcript_vector_is_stable() {
     assert_eq!(
         sha256_hex(&ratchet_envelope.encrypted_payload),
         "d2a1cdd41eea0c36dad0d49a515385d7f95f196bc94308782f4d0b25b0c43baf"
+    );
+}
+
+#[cfg(feature = "test-vectors")]
+#[test]
+fn paper_multi_epoch_delayed_delivery_vector_is_stable() {
+    CryptoInterop::initialize().unwrap();
+    let (alice_session, bob_session, _init_bytes, _ack_bytes) = paper_session_pair();
+
+    alice_session
+        .set_test_vector_nonce_state([0x31; NONCE_PREFIX_BYTES], 0)
+        .unwrap();
+    let e0_delivered = alice_session
+        .encrypt_with_test_vector_header_nonce(
+            b"Aura multi-epoch delivered e0 vector",
+            9,
+            50,
+            Some("paper-multi-e0"),
+            &[0x32; AES_GCM_NONCE_BYTES],
+        )
+        .unwrap();
+    let e0_delayed = alice_session
+        .encrypt_with_test_vector_header_nonce(
+            b"Aura delayed epoch-0 vector",
+            9,
+            51,
+            Some("paper-delayed-e0"),
+            &[0x33; AES_GCM_NONCE_BYTES],
+        )
+        .unwrap();
+    let mut e0_delayed_bytes = Vec::new();
+    e0_delayed.encode(&mut e0_delayed_bytes).unwrap();
+    let e0_delivered_dec = bob_session.decrypt(&e0_delivered).unwrap();
+    assert_eq!(
+        e0_delivered_dec.plaintext,
+        b"Aura multi-epoch delivered e0 vector"
+    );
+
+    bob_session
+        .set_test_vector_ratchet_entropy(
+            &[0x41; 32],
+            &[0x42; 32],
+            &[0x43; 32],
+            [0x44; NONCE_PREFIX_BYTES],
+            0,
+        )
+        .unwrap();
+    let bob_bridge = bob_session
+        .encrypt_with_test_vector_header_nonce(
+            b"Aura bob bridge ratchet vector",
+            10,
+            52,
+            Some("paper-bob-bridge"),
+            &[0x45; AES_GCM_NONCE_BYTES],
+        )
+        .unwrap();
+    let mut bob_bridge_bytes = Vec::new();
+    bob_bridge.encode(&mut bob_bridge_bytes).unwrap();
+    let bob_bridge_dec = alice_session.decrypt(&bob_bridge).unwrap();
+    assert_eq!(bob_bridge_dec.plaintext, b"Aura bob bridge ratchet vector");
+
+    alice_session
+        .set_test_vector_ratchet_entropy(
+            &[0x51; 32],
+            &[0x52; 32],
+            &[0x53; 32],
+            [0x54; NONCE_PREFIX_BYTES],
+            0,
+        )
+        .unwrap();
+    let alice_bridge = alice_session
+        .encrypt_with_test_vector_header_nonce(
+            b"Aura alice bridge ratchet vector",
+            11,
+            53,
+            Some("paper-alice-bridge"),
+            &[0x55; AES_GCM_NONCE_BYTES],
+        )
+        .unwrap();
+    let e1_delayed = alice_session
+        .encrypt_with_test_vector_header_nonce(
+            b"Aura delayed epoch-1 vector",
+            11,
+            54,
+            Some("paper-delayed-e1"),
+            &[0x56; AES_GCM_NONCE_BYTES],
+        )
+        .unwrap();
+    let mut alice_bridge_bytes = Vec::new();
+    alice_bridge.encode(&mut alice_bridge_bytes).unwrap();
+    let mut e1_delayed_bytes = Vec::new();
+    e1_delayed.encode(&mut e1_delayed_bytes).unwrap();
+    let alice_bridge_dec = bob_session.decrypt(&alice_bridge).unwrap();
+    assert_eq!(
+        alice_bridge_dec.plaintext,
+        b"Aura alice bridge ratchet vector"
+    );
+    assert_eq!(alice_bridge.previous_chain_length, Some(2));
+
+    bob_session
+        .set_test_vector_ratchet_entropy(
+            &[0x61; 32],
+            &[0x62; 32],
+            &[0x63; 32],
+            [0x64; NONCE_PREFIX_BYTES],
+            0,
+        )
+        .unwrap();
+    let bob_second = bob_session
+        .encrypt_with_test_vector_header_nonce(
+            b"Aura bob second ratchet vector",
+            12,
+            55,
+            Some("paper-bob-second"),
+            &[0x65; AES_GCM_NONCE_BYTES],
+        )
+        .unwrap();
+    let mut bob_second_bytes = Vec::new();
+    bob_second.encode(&mut bob_second_bytes).unwrap();
+    let bob_second_dec = alice_session.decrypt(&bob_second).unwrap();
+    assert_eq!(bob_second_dec.plaintext, b"Aura bob second ratchet vector");
+
+    let delayed_e0_dec = bob_session.decrypt(&e0_delayed).unwrap();
+    let delayed_e1_dec = bob_session.decrypt(&e1_delayed).unwrap();
+    assert_eq!(delayed_e0_dec.plaintext, b"Aura delayed epoch-0 vector");
+    assert_eq!(delayed_e0_dec.metadata.message_index, 1);
+    assert_eq!(
+        delayed_e0_dec.metadata.correlation_id.as_deref(),
+        Some("paper-delayed-e0")
+    );
+    assert_eq!(delayed_e1_dec.plaintext, b"Aura delayed epoch-1 vector");
+    assert_eq!(delayed_e1_dec.metadata.message_index, 1);
+    assert_eq!(
+        delayed_e1_dec.metadata.correlation_id.as_deref(),
+        Some("paper-delayed-e1")
+    );
+
+    assert_eq!(e0_delayed_bytes.len(), 162);
+    assert_eq!(
+        sha256_hex(&e0_delayed_bytes),
+        "25887221bcb8a471b16c59d421513bf8840b63fcd2571b1173fe7f6cdbcac5f1"
+    );
+    assert_eq!(bob_bridge_bytes.len(), 2476);
+    assert_eq!(
+        sha256_hex(&bob_bridge_bytes),
+        "dd3cc13ddf463339d192eaa98bc5407e585bb686e0553866f92c2ab2088740c0"
+    );
+    assert_eq!(alice_bridge_bytes.len(), 2478);
+    assert_eq!(
+        sha256_hex(&alice_bridge_bytes),
+        "af3744e798eed2c437cee4d2af2275ab4db2a22dff81bb0fcc4a06f3786be95e"
+    );
+    assert_eq!(alice_bridge.previous_chain_length, Some(2));
+    assert_eq!(e1_delayed_bytes.len(), 164);
+    assert_eq!(
+        sha256_hex(&e1_delayed_bytes),
+        "5cbb861f4f5a2a78a5682b46fa74eaae70682597c8df178ed4d8652234cf309b"
+    );
+    assert_eq!(bob_second_bytes.len(), 2476);
+    assert_eq!(
+        sha256_hex(&bob_second_bytes),
+        "e964ddb54e56986332bb12cd4387bb68f55d51ae7de2acb00f304c6327acb7ac"
     );
 }
