@@ -242,9 +242,9 @@ We work over the Montgomery curve Curve25519 of prime order $q = 2^{252} + 27742
 
 \begin{definition}[Gap-CDH]\label{def:gap-cdh}
 The $\GapCDH$ assumption states that for all $\ppt$ adversaries $\advA$ with access to a DDH oracle $\oracle_{\mathrm{DDH}}$:
-\[
+\begin{equation}\label{eq:gap-cdh}
   \adv^{\GapCDH}_G(\advA) = \Pr\!\left[\advA^{\oracle_{\mathrm{DDH}}}(G, [a]G, [b]G) = [ab]G \;\middle|\; a, b \getsr \mathbb{Z}_q\right] \leq \negl(\secpar).
-\]
+\end{equation}
 \end{definition}
 
 \begin{definition}[Key Encapsulation Mechanism]\label{def:kem}
@@ -253,9 +253,9 @@ A KEM $\Pi = (\KeyGen, \Encaps, \Decaps)$ consists of key generation outputting 
 
 \begin{definition}[IND-CCA2 for KEM]\label{def:ind-cca2}
 The $\INDCCA$ advantage of $\advA$ against KEM $\Pi$ is:
-\[
+\begin{equation}\label{eq:kem-ind-cca}
   \adv^{\INDCCA}_\Pi(\advA) = \left|\Pr\!\left[\advA^{\oracle_{\Decaps}}(pk, ct^*, ss_b) = b\right] - \frac{1}{2}\right| \leq \negl(\secpar),
-\]
+\end{equation}
 where $b \getsr \{0,1\}$, $(ct^*, ss_0) \gets \Encaps(pk)$, $ss_1 \getsr \{0,1\}^{256}$, and $\advA$ may not query $\oracle_{\Decaps}$ on $ct^*$.
 \end{definition}
 
@@ -303,9 +303,9 @@ Aura consists of two phases: a \emph{hybrid X3DH handshake} (\cref{sec:handshake
 \subsection{Pre-Key Bundle}\label{sec:bundle}
 
 Each party $R$ publishes a pre-key bundle:
-\[
+\begin{equation}\label{eq:prekey-bundle}
   \mathit{Bundle}_R = \bigl(\IK_R^{\mathit{pub}},\; \SPK_R^{\mathit{pub}},\; \sigma_{\SPK} = \textsf{Ed25519.Sign}(ik_R^{\mathit{ed}}, \SPK_R^{\mathit{pub}}),\; \{\OPK_{R,j}^{\mathit{pub}}\},\; kpk_R\bigr),
-\]
+\end{equation}
 where $\IK_R$ is the long-term X25519 identity key, $\SPK_R$ is a medium-term signed pre-key (signed with the corresponding Ed25519 identity key), $\{\OPK_{R,j}\}$ is a set of one-time pre-keys, and $kpk_R$ is the Kyber-768 public key.
 
 \subsection{Hybrid X3DH Key Agreement}\label{sec:handshake}
@@ -418,10 +418,10 @@ Before applying a received ratchet, the implementation snapshots the full sessio
 
 After the X3DH handshake produces $\rk_0$ and the Kyber shared secret, the session is initialized via an initial hybrid ratchet step:
 \begin{align}
-  \mathit{dh}_{\mathit{init}} &= \DH(d_{\mathit{local}}, D_{\mathit{remote}}), \\
-  \mathit{hybrid\_ikm} &= \mathit{dh}_{\mathit{init}} \concat \mathit{ss}_{\mathit{ky}}, \\
-  \rk_1 &= \HKDF(\mathit{hybrid\_ikm},\, 32,\, \rk_0,\, \texttt{"Aura-Hybrid-Ratchet"})[0{:}32], \\
-  (\ck_{\mathit{send}},\, \ck_{\mathit{recv}}) &= \HKDF(\rk_1,\, 64,\, \varepsilon,\, \texttt{"Aura-ChainInit"}).
+  \mathit{dh}_{\mathit{init}} &= \DH(d_{\mathit{local}}, D_{\mathit{remote}}), \label{eq:init-dh} \\
+  \mathit{hybrid\_ikm} &= \mathit{dh}_{\mathit{init}} \concat \mathit{ss}_{\mathit{ky}}, \label{eq:init-hybrid-ikm} \\
+  \rk_1 &= \HKDF(\mathit{hybrid\_ikm},\, 32,\, \rk_0,\, \texttt{"Aura-Hybrid-Ratchet"})[0{:}32], \label{eq:init-root-key} \\
+  (\ck_{\mathit{send}},\, \ck_{\mathit{recv}}) &= \HKDF(\rk_1,\, 64,\, \varepsilon,\, \texttt{"Aura-ChainInit"}). \label{eq:init-chain-keys}
 \end{align}
 The initiator uses the first 32 bytes as $\ck_{\mathit{send}}$ and the last 32 bytes as $\ck_{\mathit{recv}}$; the responder swaps them.
 
@@ -430,15 +430,15 @@ The initiator uses the first 32 bytes as $\ck_{\mathit{send}}$ and the last 32 b
 Each message envelope consists of two independently encrypted layers:
 
 \paragraph{Layer 1: Metadata.}
-\[
+\begin{equation}\label{eq:metadata-aead}
   \mathit{ct}_{\mathit{md}} = \AEAD.\Enc(\mdk_e^{\mathit{send}},\, \mathit{nonce}_{\mathit{md}},\, \mathit{metadata},\, \mathit{aad}_{\mathit{md}}),
-\]
+\end{equation}
 where $\mathit{aad}_{\mathit{md}} = \mathit{sid} \concat \mathit{ibh} \concat \epoch \concat v$ includes the session ID, identity binding hash, epoch counter, and protocol version. The metadata contains the message index, payload nonce, envelope type, and correlation identifiers.
 
 \paragraph{Layer 2: Payload.}
-\[
+\begin{equation}\label{eq:payload-aead}
   \mathit{ct}_{\mathit{pay}} = \AEAD.\Enc(\mk_{e,n},\, \mathit{nonce}_{\mathit{pay}},\, \mathit{plaintext},\, \mathit{aad}_{\mathit{pay}}),
-\]
+\end{equation}
 where $\mathit{aad}_{\mathit{pay}} = \mathit{sid} \concat \mathit{ibh} \concat \epoch \concat n \concat v$ additionally includes the message index $n$.
 
 \begin{lemma}[Two-Layer AEAD Independence]\label{lem:two-layer}
@@ -447,21 +447,21 @@ The metadata layer ($\mdk_e$) and payload layer ($\mk_{e,n}$) use cryptographica
 
 \paragraph{Nonce structure.}
 Each 12-byte nonce consists of three 4-byte components:
-\[
+\begin{equation}\label{eq:nonce-layout}
   \mathit{nonce} =
   \mathit{prefix}[4] \concat
   \mathit{counter}_{\mathrm{LE}}[4] \concat
   \mathit{msg\_index}_{\mathrm{LE}}[4].
-\]
+\end{equation}
 The prefix is random (set once per session), the counter is monotonically
 increasing (global across all messages), and the message index provides
 per-chain addressability.
 
 \paragraph{Identity binding hash.}
 Every AEAD additional-data construction includes an identity binding hash:
-\[
+\begin{equation}\label{eq:identity-binding}
   \mathit{ibh} = \SHA(\texttt{"Aura-Identity-Binding"} \concat \mathrm{sort}(\mathit{ed}_I, \mathit{ed}_R) \concat \mathrm{sort}(\mathit{x}_I, \mathit{x}_R)),
-\]
+\end{equation}
 where both Ed25519 and X25519 public key pairs are lexicographically sorted before concatenation. This prevents cross-session identity confusion and role-confusion attacks.
 
 \subsection{Replay Protection}\label{sec:replay}
@@ -519,9 +519,9 @@ A session $\pi_i^s$ with partner $\pi_j^t$ is \emph{fresh} if the adversary has 
 
 \begin{definition}[$\eCK$-AKE Security]\label{def:ake}
 The Aura protocol is $\eCK$-AKE secure if for all $\ppt$ adversaries $\advA$:
-\[
+\begin{equation}\label{eq:eck-advantage}
   \adv^{\eCK}_{\mathrm{AURA}}(\advA) = \left|\Pr[\advA \text{ wins}] - \frac{1}{2}\right| \leq \negl(\secpar),
-\]
+\end{equation}
 where $\advA$ wins by correctly guessing $b$ for a fresh tested session.
 \end{definition}
 
@@ -545,13 +545,13 @@ This section states six security theorems for the Aura protocol. Full proofs are
 
 \begin{theorem}[Hybrid Combiner $\INDCCA$]\label{thm:hybrid-combiner}
 If $\KEM$ is $\INDCCA$ secure \textbf{or} $\DH$ satisfies $\GapCDH$ in the $\ROM$, then the Aura hybrid combiner
-\[
+\begin{equation}\label{eq:combiner-root}
   \rk_0 = \HKDF(\mathit{ss}_{\mathit{ky}},\, 32,\, \mathit{cs},\, \texttt{"Aura-Hybrid-X3DH"})
-\]
+\end{equation}
 is $\INDCCA$ secure as a KEM. Concretely:
-\[
+\begin{equation}\label{eq:combiner-bound}
   \adv^{\INDCCA}_{\mathrm{Hybrid}}(\advA) \leq \adv^{\INDCCA}_{\KEM}(\advB_1) + 4 \cdot \adv^{\GapCDH}_{\DH}(\advB_2) + \adv^{\dualPRF}_{\HKDF}(\advB_3) + \frac{q_H}{2^{256}},
-\]
+\end{equation}
 where $q_H$ is the number of random oracle queries and the factor 4 arises from the four DH key pairs.
 \end{theorem}
 
@@ -563,7 +563,7 @@ We proceed via a 4-game sequence. In Game~0, we play the real $\INDCCA$ game. In
 
 \begin{theorem}[$\eCK$-AKE Security]\label{thm:ake}
 The Aura hybrid X3DH satisfies $\eCK$-AKE security. For any $\ppt$ adversary $\advA$ making at most $q_s$ session queries:
-\begin{align*}
+\begin{align}
   \adv^{\eCK}_{\mathrm{AURA}}(\advA)
   &\leq q_s \cdot \big(
     4 \cdot \adv^{\GapCDH}_{\DH}(\advB_1)
@@ -571,8 +571,8 @@ The Aura hybrid X3DH satisfies $\eCK$-AKE security. For any $\ppt$ adversary $\a
   &\qquad
     + \adv^{\dualPRF}_{\HKDF}(\advB_3)
     + 2 \cdot \adv^{\PRF}_{\HMAC}(\advB_4)\big)
-    + \frac{q_s^2}{2^{128}} + \frac{q_H}{2^{256}}.
-\end{align*}
+    + \frac{q_s^2}{2^{128}} + \frac{q_H}{2^{256}}. \label{eq:ake-bound}
+\end{align}
 \end{theorem}
 
 \begin{proof}[Proof sketch]
@@ -591,9 +591,9 @@ The 15 distinct HKDF info strings used in Aura ensure that keys derived for diff
 
 \begin{theorem}[Forward Secrecy]\label{thm:fs}
 For any $\ppt$ adversary $\advA$ who obtains all long-term keys at time $t$:
-\[
+\begin{equation}\label{eq:fs-bound}
   \adv^{\mathrm{FS}}_{\mathrm{AURA}}(\advA) \leq \adv^{\GapCDH}_{\DH}(\advB_1) + \adv^{\INDCCA}_{\KEM}(\advB_2) + \adv^{\dualPRF}_{\HKDF}(\advB_3).
-\]
+\end{equation}
 This is a \emph{tight} reduction (no guessing factor beyond the hybrid combiner).
 \end{theorem}
 
@@ -611,14 +611,14 @@ The implementation erases ephemeral keys immediately after use: the X25519 ephem
 If the adversary compromises full session state at epoch $e$ via $\textsf{RevealState}$:
 
 \noindent\textbf{(a) Classical PCS (1-step):} Messages at epoch $\geq e+1$ are secure:
-\[
+\begin{equation}\label{eq:pcs-classical-bound}
   \adv^{\mathrm{PCS}\text{-}1}_{\mathrm{AURA}}(\advA) \leq \adv^{\GapCDH}_{\DH}(\advB_1) + \adv^{\dualPRF}_{\HKDF}(\advB_2).
-\]
+\end{equation}
 
 \noindent\textbf{(b) Hybrid PCS (2-step):} Messages at epoch $\geq e+2$ are secure:
-\[
+\begin{equation}\label{eq:pcs-hybrid-bound}
   \adv^{\mathrm{PCS}\text{-}2}_{\mathrm{AURA}}(\advA) \leq \adv^{\GapCDH}_{\DH}(\advB_1) + \adv^{\INDCCA}_{\KEM}(\advB_3) + 2 \cdot \adv^{\dualPRF}_{\HKDF}(\advB_2).
-\]
+\end{equation}
 Both reductions are \emph{tight}.
 \end{theorem}
 
@@ -642,9 +642,9 @@ only after the first direction change.
 
 \begin{theorem}[Message Security]\label{thm:msg-security}
 Under $\MRAE$ security of $\AEAD$ and $\PRF$ security of the chain KDF, each message key $\mk_{e,n}$ is indistinguishable from random and each ciphertext provides $\INDCPA$ + $\INTCTXT$ security:
-\[
+\begin{equation}\label{eq:msg-security-bound}
   \adv^{\mathrm{Conf}}_{\mathrm{AURA}}(\advA) \leq \adv^{\eCK}_{\mathrm{AURA}}(\advB_0) + q_m \cdot \adv^{\PRF}_{\mathrm{chain}}(\advB_1) + q_m \cdot \adv^{\MRAE}_{\AEAD}(\advB_2) + \frac{q_m^2}{2^{96}}.
-\]
+\end{equation}
 \end{theorem}
 
 \begin{proof}[Proof sketch]
@@ -659,9 +659,9 @@ $\AEAD$ provides full $\INDCPA$ + $\INTCTXT$ under unique nonces, and degrades t
 
 \begin{theorem}[Replay Resistance]\label{thm:replay}
 For any adversary replaying at most $q_r$ messages within a window of $W = 2{,}048$ nonces:
-\[
+\begin{equation}\label{eq:replay-bound}
   \adv^{\mathrm{Replay}}_{\mathrm{AURA}}(\advA) \leq \frac{W \cdot q_r}{2^{96}} + \adv^{\INTCTXT}_{\AEAD}(\advB).
-\]
+\end{equation}
 \end{theorem}
 
 \begin{proof}[Proof sketch]
@@ -710,11 +710,11 @@ The game-based proofs are accompanied by machine-checked symbolic models in two 
 \subsubsection{Handshake Model}
 
 The handshake model (\texttt{aura\_handshake.spthy}) uses Tamarin's built-in Diffie--Hellman equational theory and custom function symbols for Kyber-768:
-\begin{align*}
-  &\texttt{kyber\_pk}(sk) \to kpk, \\
-  &\texttt{kyber\_encaps}(ss, kpk) \to ct, \\
-  &\texttt{kyber\_decaps}(ct, sk) = ss.
-\end{align*}
+\begin{align}
+  &\texttt{kyber\_pk}(sk) \to kpk, \label{eq:tamarin-kyber-pk}\\
+  &\texttt{kyber\_encaps}(ss, kpk) \to ct, \label{eq:tamarin-kyber-encaps}\\
+  &\texttt{kyber\_decaps}(ct, sk) = ss. \label{eq:tamarin-kyber-decaps}
+\end{align}
 
 \paragraph{Key design decisions.}
 \begin{itemize}

@@ -599,10 +599,10 @@ ML-KEM-768 (FIPS~203~\cite{fips203}, NIST security category~3) задоволь�
 \begin{definition}[HKDF як подвійна PRF]
 \label{def:hkdf}
 HKDF~\cite{rfc5869} — це конструкція extract-then-expand на основі HMAC:
-\begin{align*}
-  \mathit{prk} &\gets \mathsf{Extract}(\mathit{salt}, \mathit{ikm}) = \HMAC_{\mathit{salt}}(\mathit{ikm}),\\
-  \mathit{okm} &\gets \mathsf{Expand}(\mathit{prk}, \mathit{info}, L).
-\end{align*}
+\begin{align}
+  \mathit{prk} &\gets \mathsf{Extract}(\mathit{salt}, \mathit{ikm}) = \HMAC_{\mathit{salt}}(\mathit{ikm}), \label{eq:hkdf-extract}\\
+  \mathit{okm} &\gets \mathsf{Expand}(\mathit{prk}, \mathit{info}, L). \label{eq:hkdf-expand}
+\end{align}
 У моделі випадкового оракула HKDF поводиться як подвійна PRF
 (\dualPRF{}): при фіксованому невідомому $\mathit{salt}$ й випадковому
 $\mathit{ikm}$ вихід є псевдовипадковим, та симетрично — при
@@ -732,7 +732,7 @@ $\mathit{pk\_new}_n, \mathit{sk\_new}_n$ & нові Kyber-ключі, згене
 
 Пре-ключовий бандл $B_A$ сторони $A$ — це публікований на сервер-каталог
 набір:
-\begin{equation}
+\begin{equation}\label{eq:prekey-bundle}
   B_A = \big(\IK_A^x, \, \sigma_A, \, \IK_A^k, \, \SPK_A, \,
             \mathsf{Sign}_{\IK_A^x}(\SPK_A), \,
             \{\OPK_A^{(i)}\}_{i \in I}\big),
@@ -760,12 +760,12 @@ $\OPK_A^{(i)}$ — це нова X25519-пара з ідентифікаторо
   \item Інкапсулює до \KEM{}-ключа ідентифікації $\IK_B^k$:
     $(c, K_{\KEM}) \gets \Encaps(\IK_B^k)$.
   \item Обчислює чотири DH-секрети:
-    \begin{align*}
-      \mathit{DH}_1 &= \DH(\IK_A^{x,\mathit{priv}}, \SPK_B), \\
-      \mathit{DH}_2 &= \DH(\EK_A^{\mathit{priv}}, \IK_B^x), \\
-      \mathit{DH}_3 &= \DH(\EK_A^{\mathit{priv}}, \SPK_B), \\
-      \mathit{DH}_4 &= \DH(\EK_A^{\mathit{priv}}, \OPK_B^{(i)}).
-    \end{align*}
+    \begin{align}
+      \mathit{DH}_1 &= \DH(\IK_A^{x,\mathit{priv}}, \SPK_B), \label{eq:x3dh-dh1}\\
+      \mathit{DH}_2 &= \DH(\EK_A^{\mathit{priv}}, \IK_B^x), \label{eq:x3dh-dh2}\\
+      \mathit{DH}_3 &= \DH(\EK_A^{\mathit{priv}}, \SPK_B), \label{eq:x3dh-dh3}\\
+      \mathit{DH}_4 &= \DH(\EK_A^{\mathit{priv}}, \OPK_B^{(i)}). \label{eq:x3dh-dh4}
+    \end{align}
   \item Формує спільний вхідний ключовий матеріал
     (\emph{input keying material}):
     \begin{equation}\label{eq:hybrid-ikm}
@@ -802,6 +802,7 @@ DH-секретів. Це стандартний підхід Signal X3DH; ми 
 
 \begin{theorem}[Конструкція IKM як гібридний комбінатор —
 неформальне формулювання]
+\label{thm:hybrid-ikm-informal}
 Якщо хоча б один із $\{\mathit{DH}_1, \mathit{DH}_2, \mathit{DH}_3,
 \mathit{DH}_4, K_{\KEM}\}$ є непередбачуваним для опонента (\GapCDH{}
 для DH-частин або \INDCCA{} для KEM-частини), то $\rk_0$
@@ -900,7 +901,7 @@ HKDF \emph{штучно} вводить публічний KEM-ключ як в�
 
 \paragraph{Рівень 1 — корисне навантаження.}
 Із ланцюгового ключа $\ck_n$ деривується ключ повідомлення:
-\begin{equation}
+\begin{equation}\label{eq:message-key-derive}
   \mk_{n,j} \gets \HKDF(\mathsf{0x01} \concat \ck_{n,j};
     \mathit{salt} = \mathsf{0x02},\,
     \mathit{info} = \texttt{Aura-Msg}),
@@ -908,7 +909,7 @@ HKDF \emph{штучно} вводить публічний KEM-ключ як в�
 де $\ck_{n,j}$ — стан ланцюга після $j$-ї ітерації:
 $\ck_{n,j+1} = \HMAC_{\ck_{n,j}}(\mathsf{0x02})$. Корисне навантаження
 шифрується схемою \AEAD{}:
-\begin{equation}
+\begin{equation}\label{eq:payload-aead}
   \mathit{ct\_payload} \gets \Enc_{\mk_{n,j}}(N_{\mathit{payload}},\,
   \mathit{plaintext},\, \mathit{AAD}_{\mathit{payload}}),
 \end{equation}
@@ -921,7 +922,7 @@ $\ck_{n,j+1} = \HMAC_{\ck_{n,j}}(\mathsf{0x02})$. Корисне наванта�
 бінарний об'єкт $\mathit{meta}$ та шифрується незалежним ключем
 $\mdk_n$ (який деривується одночасно з $\rk_n$ та $\ck_n$
 з виходу HKDF на кроці ратчета, див. \cref{alg:ratchet-step}):
-\begin{equation}
+\begin{equation}\label{eq:metadata-aead}
   \mathit{ct\_meta} \gets \Enc_{\mdk_n}(N_{\mathit{meta}},\,
   \mathit{meta},\, \mathit{AAD}_{\mathit{meta}}).
 \end{equation}
@@ -965,7 +966,7 @@ INT-CTXT. Це фундаментальна вимога нашої моделі
 
 \paragraph{Структура nonce.}
 12-байтовий nonce AEAD конструктивно складається з:
-\begin{equation}
+\begin{equation}\label{eq:nonce-layout}
   N = \underbrace{\mathit{prefix}_{8B}}_{\text{із }\rk{}\text{-деривації}}
       \concat \underbrace{\mathit{counter}_{2B}}_{\text{лічильник чанку}}
       \concat \underbrace{\mathit{index}_{2B}}_{j \bmod 2^{16}}.
@@ -1182,11 +1183,11 @@ HMAC-SHA256 над довжино-префіксованою конкатена�
 \begin{definition}[\eCK{}-AKE-стійкість]\label{def:ake}
 Протокол $\Pi$ є \eCK{}-AKE-стійким, якщо для всіх \ppt{} опонентів
 $\advA$:
-\[
+\begin{equation}\label{eq:eck-advantage}
   \adv^{\eCK}_{\Pi}(\advA) =
   \Big|\Pr[\advA \text{ виграє}] - \tfrac{1}{2}\Big|
   \le \negl(\secpar),
-\]
+\end{equation}
 де $\advA$ виграє, якщо правильно вгадує біт $b$ для свіжої
 тестованої сесії.
 \end{definition}
@@ -1222,20 +1223,20 @@ $\mathsf{RevealState}$) повідомлення епох $\ge e + k$ є без�
 \begin{theorem}[Гібридний комбінатор \INDCCA{}]\label{thm:combiner}
 Якщо \KEM{} є \INDCCA{}-стійким \textbf{або} \DH{} задовольняє
 \GapCDH{} у моделі \ROM{}, то гібридний комбінатор \Aura{}
-\[
+\begin{equation}\label{eq:combiner-root}
   \rk_0 = \HKDF\big(\mathit{ikm} = \mathit{ss}_{\KEM};\;
     \mathit{salt} = \mathit{cs};\;
     \mathit{info} = \texttt{Aura-Hybrid-X3DH}\big)
-\]
+\end{equation}
 є \INDCCA{}-стійким як KEM. Конкретно, для будь-якого \ppt{}
 опонента $\advA$:
-\[
+\begin{equation}\label{eq:combiner-bound}
   \adv^{\INDCCA}_{\mathsf{Hybrid}}(\advA) \le
   \adv^{\INDCCA}_{\KEM}(\advB_1) +
   \adv^{\GapCDH}_{\DH}(\advB_2) +
   \adv^{\dualPRF}_{\HKDF}(\advB_3) +
   \frac{q_H}{2^{256}},
-\]
+\end{equation}
 де $q_H$ — кількість запитів до випадкового оракула.
 \end{theorem}
 
@@ -1263,13 +1264,13 @@ $\mathsf{RevealState}$) повідомлення епох $\ge e + k$ є без�
 \HKDF{} та SUF-CMA для Ed25519, протокол гібридного X3DH \Aura{}
 є \eCK{}-AKE-стійким. Для будь-якого \ppt{} опонента $\advA$, що
 взаємодіє з не більш ніж $q_s$ сесіями:
-\[
+\begin{equation}\label{eq:ake-bound}
   \adv^{\eCK}_{\Aura}(\advA) \le
   q_s \cdot \Big(
     \adv^{\INDCCA}_{\mathsf{Hybrid}}(\advB) +
     \adv^{\mathsf{SUF\text{-}CMA}}_{\mathsf{Ed25519}}(\advB')
   \Big).
-\]
+\end{equation}
 \end{theorem}
 
 \begin{proof}[Ескіз доведення]
@@ -1371,13 +1372,13 @@ KEM, а не дефект \Aura{}. \Aura{} досягає мінімально �
 \INDCCA{}-конфіденційність та \INTCTXT{}-цілісність як корисного
 навантаження, так і метаданих конверта. Для будь-якого \ppt{}
 опонента $\advA$, що спостерігає до $q_m$ повідомлень:
-\[
+\begin{equation}\label{eq:msg-security-bound}
   \adv^{\mathsf{msg}}_{\Aura}(\advA) \le
   q_m \cdot \Big(
     \adv^{\PRF}_{\HMAC}(\advB_1) +
     \adv^{\MRAE}_{\AEAD}(\advB_2)
   \Big).
-\]
+\end{equation}
 \end{theorem}
 
 \begin{proof}[Ескіз доведення]
@@ -1477,11 +1478,11 @@ trace-орієнтованого міркування та ProVerif~\cite{blanch
 Модель \texttt{aura\_handshake.spthy} використовує вбудовану в
 Tamarin рівняльну теорію Діффі--Геллмана та власні функційні
 символи для Kyber-768:
-\[
+\begin{align}
   \texttt{kyber\_pk}(sk) \to kpk,\quad
   \texttt{kyber\_encaps}(ss, kpk) \to ct,\quad
-  \texttt{kyber\_decaps}(ct, sk) = ss.
-\]
+  \texttt{kyber\_decaps}(ct, sk) = ss. \label{eq:tamarin-kyber-symbols}
+\end{align}
 Моделюються лише 2~з~4 X3DH DH-операцій (це коректна абстракція:
 зменшення кількості DH лише \emph{послаблює} протокол, тобто дає
 опоненту більше сили). Опонент Dolev--Yao має повний контроль над
