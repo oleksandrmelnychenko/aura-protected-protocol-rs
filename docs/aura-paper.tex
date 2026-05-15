@@ -916,7 +916,7 @@ Build targets: \texttt{staticlib} (C linking), \texttt{cdylib} (dynamic library)
 
 \subsection{Performance Benchmarks}\label{sec:benchmarks}
 
-All benchmarks were conducted using Criterion.rs (v0.8, 200 samples, 5-second measurement time) on an Apple M-series processor. Results are summarized in \cref{tab:bench-core,tab:bench-payload,tab:bench-overhead}.
+All benchmarks were conducted using Criterion.rs (v0.8, 200 samples, 5-second measurement time) on an Apple M-series processor. Results are summarized in \cref{tab:bench-core,tab:bench-payload,tab:bench-overhead}. The public benchmark harness also contains a fixed 128-message, 256-byte \texttt{pq\_traffic\_profiles} group for comparing handshake-only PQ, sparse chain-boundary PQ, periodic chain-boundary PQ, and per-reply PQ rekeying under the same measurement harness.
 
 \begin{table}[H]
 \centering
@@ -1255,9 +1255,9 @@ test-only deterministic entropy feature. Each artifact run emits tool versions,
 a manifest, and SHA-256 checksums; release CI uploads the quick and paper-build
 logs as a reviewable artifact bundle, and the formal CI job uploads
 Tamarin/ProVerif stdout/stderr logs with the same manifest and checksum format.
-The remaining reproducibility work is mechanical rather than conceptual:
-publish one benchmark script with pinned traffic-model profiles and record an
-external review of the model/code alignment.
+The remaining reproducibility work is external rather than conceptual: record an
+independent review of the model/code alignment and publish release baselines for
+the fixed benchmark profiles.
 
 \subsection{Limitations}
 

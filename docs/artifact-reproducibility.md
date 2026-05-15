@@ -117,6 +117,7 @@ Multi-epoch delayed-delivery vector:
 | Tamarin ratchet lemmas | `formal/tamarin/aura_ratchet.spthy` | `make -C formal ratchet` |
 | ProVerif queries | `formal/proverif/aura.pv` | `make -C formal proverif` |
 | Performance numbers | `benches/protocol_bench.rs` | `cargo bench` |
+| PQ traffic-profile comparability | `benches/protocol_bench.rs` | `cargo bench --bench protocol_bench pq_traffic_profiles` |
 | Paper compilation | `docs/aura-paper.tex`, `docs/aura-paper-ua.tex` | `./scripts/reproduce-paper-artifact.sh paper` |
 | Reference validity | `docs/reference-audit.md` | See commands inside `docs/reference-audit.md` |
 
@@ -173,5 +174,4 @@ The artifact is now runnable, but the following work would make it stronger:
 
 | Gap | Required work |
 |---|---|
-| Benchmark comparability | Add explicit benchmark groups for handshake-only PQ, sparse/periodic PQ, and per-ratchet-boundary PQ under the same traffic model. |
 | External review | Record third-party review of model assumptions and code/proof alignment. |

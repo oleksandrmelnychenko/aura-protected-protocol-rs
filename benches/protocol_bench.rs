@@ -13,6 +13,9 @@ use aura_protected_protocol::proto::{OneTimePreKey, PreKeyBundle};
 use aura_protected_protocol::protocol::{HandshakeInitiator, HandshakeResponder, Session};
 use prost::Message;
 
+const PAPER_TRAFFIC_MESSAGES: u32 = 128;
+const PAPER_TRAFFIC_PAYLOAD_BYTES: usize = 256;
+
 fn init() {
     CryptoInterop::initialize().expect("crypto init");
 }
@@ -44,13 +47,20 @@ fn build_proto_bundle(ik: &IdentityKeys) -> Vec<u8> {
 }
 
 fn create_session_pair() -> (Session, Session) {
+    create_session_pair_with_chain_limit(1000)
+}
+
+fn create_session_pair_with_chain_limit(max_messages_per_chain: u32) -> (Session, Session) {
     let mut alice = IdentityKeys::create(5).unwrap();
     let mut bob = IdentityKeys::create(5).unwrap();
 
     let bob_bundle = PreKeyBundle::decode(build_proto_bundle(&bob).as_slice()).unwrap();
-    let initiator = HandshakeInitiator::start(&mut alice, &bob_bundle, 1000).unwrap();
+    let initiator =
+        HandshakeInitiator::start(&mut alice, &bob_bundle, max_messages_per_chain).unwrap();
     let init_bytes = initiator.encoded_message().to_vec();
-    let responder = HandshakeResponder::process(&mut bob, &bob_bundle, &init_bytes, 1000).unwrap();
+    let responder =
+        HandshakeResponder::process(&mut bob, &bob_bundle, &init_bytes, max_messages_per_chain)
+            .unwrap();
     let ack_bytes = responder.encoded_ack().to_vec();
     let bob_session = responder.finish().unwrap();
     let alice_session = initiator.finish(&ack_bytes).unwrap();
@@ -508,6 +518,84 @@ fn bench_hybrid_vs_classical_ratchet(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_pq_traffic_profiles(c: &mut Criterion) {
+    init();
+
+    let payload = vec![0xABu8; PAPER_TRAFFIC_PAYLOAD_BYTES];
+    let mut group = c.benchmark_group("pq_traffic_profiles");
+
+    group.bench_function("handshake_only_pq/128x256B_unidirectional", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (alice, bob) = create_session_pair_with_chain_limit(PAPER_TRAFFIC_MESSAGES + 1);
+                let start = std::time::Instant::now();
+                for i in 0..PAPER_TRAFFIC_MESSAGES {
+                    let env = alice.encrypt(&payload, 0, i, None).unwrap();
+                    bob.decrypt(black_box(&env)).unwrap();
+                }
+                total += start.elapsed();
+            }
+            total
+        });
+    });
+
+    group.bench_function("sparse_pq_chain64/128x256B_unidirectional", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (alice, bob) = create_session_pair_with_chain_limit(64);
+                let start = std::time::Instant::now();
+                for i in 0..PAPER_TRAFFIC_MESSAGES {
+                    let env = alice.encrypt(&payload, 0, i, None).unwrap();
+                    bob.decrypt(black_box(&env)).unwrap();
+                }
+                total += start.elapsed();
+            }
+            total
+        });
+    });
+
+    group.bench_function("periodic_pq_chain16/128x256B_unidirectional", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (alice, bob) = create_session_pair_with_chain_limit(16);
+                let start = std::time::Instant::now();
+                for i in 0..PAPER_TRAFFIC_MESSAGES {
+                    let env = alice.encrypt(&payload, 0, i, None).unwrap();
+                    bob.decrypt(black_box(&env)).unwrap();
+                }
+                total += start.elapsed();
+            }
+            total
+        });
+    });
+
+    group.bench_function("per_reply_pq/128x256B_alternating", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (alice, bob) = create_session_pair_with_chain_limit(PAPER_TRAFFIC_MESSAGES + 1);
+                let start = std::time::Instant::now();
+                for i in 0..PAPER_TRAFFIC_MESSAGES {
+                    if i % 2 == 0 {
+                        let env = alice.encrypt(&payload, 0, i, None).unwrap();
+                        bob.decrypt(black_box(&env)).unwrap();
+                    } else {
+                        let env = bob.encrypt(&payload, 1, i, None).unwrap();
+                        alice.decrypt(black_box(&env)).unwrap();
+                    }
+                }
+                total += start.elapsed();
+            }
+            total
+        });
+    });
+
+    group.finish();
+}
+
 fn bench_handshake_only(c: &mut Criterion) {
     init();
 
@@ -833,6 +921,7 @@ criterion_group! {
         bench_out_of_order_decrypt,
         bench_cross_epoch_decrypt,
         bench_hybrid_vs_classical_ratchet,
+        bench_pq_traffic_profiles,
         bench_group_create,
         bench_group_add_member,
         bench_group_encrypt_decrypt,

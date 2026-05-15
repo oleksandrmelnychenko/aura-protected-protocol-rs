@@ -214,6 +214,11 @@ Key performance numbers (Apple M-series):
 | Decrypt 256 bytes | ~21 us |
 | Burst throughput (no ratchet) | ~15 us/msg |
 
+The Criterion suite also includes `pq_traffic_profiles`, a fixed
+128-message/256-byte traffic model for comparing handshake-only PQ,
+sparse chain-boundary PQ, periodic chain-boundary PQ, and per-reply PQ rekeying
+under the same benchmark harness.
+
 ### Clippy
 
 ```bash
