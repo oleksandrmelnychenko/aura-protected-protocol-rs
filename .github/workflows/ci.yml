@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+    tags:
+      - 'v*'
   pull_request:
     branches: [main]
 
@@ -116,14 +118,17 @@ jobs:
           eval $(opam env)
           echo "$(opam var bin)" >> $GITHUB_PATH
 
-      - name: Tamarin — Handshake model (6 lemmas)
-        run: make -C formal handshake
+      - name: Formal artifact logs
+        run: ./scripts/reproduce-paper-artifact.sh formal
 
-      - name: Tamarin — Ratchet model (4 lemmas)
-        run: make -C formal ratchet
-
-      - name: ProVerif (6 queries)
-        run: make -C formal proverif
+      - name: Upload formal artifact logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aura-formal-artifact-${{ github.sha }}
+          path: artifact-output/**
+          if-no-files-found: warn
+          retention-days: 90
 
   msrv:
     name: MSRV (1.86)

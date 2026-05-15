@@ -8,6 +8,45 @@ OUT="${AURA_ARTIFACT_OUT:-"$ROOT/artifact-output/$STAMP-$MODE"}"
 
 mkdir -p "$OUT"
 
+finish() {
+  local status=$?
+  set +e
+
+  {
+    echo "artifact_mode=$MODE"
+    echo "timestamp_utc=$STAMP"
+    echo "repo_root=$ROOT"
+    echo "exit_status=$status"
+    echo
+    echo "Files:"
+    (
+      cd "$OUT" || exit 0
+      find . -type f ! -name MANIFEST.txt ! -name SHA256SUMS -print |
+        LC_ALL=C sort |
+        while IFS= read -r file; do
+          bytes="$(wc -c < "$file" | tr -d ' ')"
+          printf "%s\t%s bytes\n" "${file#./}" "$bytes"
+        done
+    )
+  } > "$OUT/MANIFEST.txt"
+
+  (
+    cd "$OUT" || exit 0
+    find . -type f ! -name SHA256SUMS -print |
+      LC_ALL=C sort |
+      while IFS= read -r file; do
+        sha256sum "$file"
+      done
+  ) > "$OUT/SHA256SUMS"
+
+  echo "artifact_logs=$OUT"
+  echo "artifact_manifest=$OUT/MANIFEST.txt"
+  echo "artifact_checksums=$OUT/SHA256SUMS"
+  exit "$status"
+}
+
+trap finish EXIT
+
 run() {
   local name="$1"
   shift
@@ -100,5 +139,3 @@ EOF
     exit 2
     ;;
 esac
-
-echo "artifact_logs=$OUT"

@@ -10,7 +10,9 @@ scope, and current gaps.
 ./scripts/reproduce-paper-artifact.sh quick
 ```
 
-The script writes logs under `artifact-output/<timestamp>-<mode>/`.
+The script writes logs under `artifact-output/<timestamp>-<mode>/`. Every run
+also writes `MANIFEST.txt` and `SHA256SUMS` in the same directory, including
+failed runs where partial logs are useful for diagnosis.
 
 Modes:
 
@@ -144,7 +146,26 @@ Every script mode writes `versions.txt` with:
 - `proverif`.
 
 For a paper artifact bundle, archive the entire `artifact-output/<timestamp>-full/`
-directory together with the git commit hash.
+directory together with the git commit hash and verify it from inside the bundle
+directory:
+
+```sh
+cd artifact-output/<timestamp>-full
+sha256sum -c SHA256SUMS
+```
+
+## CI artifact bundle
+
+The `Paper Artifact` GitHub Actions workflow runs the quick fixed-vector suite
+and rebuilds both paper PDFs on pull requests that touch the artifact surface,
+on tagged releases, and on manual dispatch. It uploads the full
+`artifact-output/**` tree as a release-reviewable artifact, including
+`versions.txt`, `MANIFEST.txt`, and `SHA256SUMS` for each mode.
+
+The main CI `Formal Verification` job uses the same artifact script in `formal`
+mode after installing Tamarin Prover and ProVerif. It uploads the formal
+stdout/stderr logs, tool-version capture, manifest, and checksums on pull
+requests, main-branch pushes, and tagged releases.
 
 ## Current gaps before top-tier submission
 
@@ -153,6 +174,4 @@ The artifact is now runnable, but the following work would make it stronger:
 | Gap | Required work |
 |---|---|
 | Benchmark comparability | Add explicit benchmark groups for handshake-only PQ, sparse/periodic PQ, and per-ratchet-boundary PQ under the same traffic model. |
-| Formal output archive | Store Tamarin/ProVerif stdout logs from a known toolchain in release artifacts. |
-| CI artifact bundle | Upload `artifact-output` logs from GitHub Actions for tagged releases. |
 | External review | Record third-party review of model assumptions and code/proof alignment. |

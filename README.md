@@ -182,8 +182,8 @@ Coverage spans Rust API, integration, FFI, VoIP, attack-PoC, and property-based 
 ./scripts/reproduce-paper-artifact.sh quick
 ```
 
-The artifact entrypoint records tool versions and writes logs under
-`artifact-output/<timestamp>-<mode>/`. See
+The artifact entrypoint records tool versions and writes logs, `MANIFEST.txt`,
+and `SHA256SUMS` under `artifact-output/<timestamp>-<mode>/`. See
 [`docs/artifact-reproducibility.md`](docs/artifact-reproducibility.md) for the
 claim-to-command map.
 
@@ -463,12 +463,16 @@ GitHub Actions pipeline with 8 jobs:
 |-----|-------------|
 | **Check & Clippy** | `cargo check` + `cargo clippy -- -D warnings` (with and without `ffi` feature) |
 | **Test** | Release and feature-matrix test runs on Linux, macOS, Windows; local snapshot: 746 default scenarios, 885 with `--features ffi` |
-| **Formal Verification** | Tamarin Prover (10 lemmas) + ProVerif (6 queries) |
+| **Formal Verification** | Tamarin Prover (10 lemmas) + ProVerif (6 queries), with uploaded formal artifact logs |
 | **MSRV** | Minimum supported Rust version (1.86) |
 | **Fuzz Smoke Test** | All 32 libfuzzer targets (10s each) |
 | **Security Audit** | `cargo audit` for known vulnerabilities |
 | **Security Scan** | cargo-deny, TruffleHog secret scanning, license compliance |
 | **Benchmarks** | Criterion benchmarks on Linux, macOS, Windows (weekly + on push) |
+
+The separate `Paper Artifact` workflow runs fixed paper vectors, rebuilds the
+English and Ukrainian PDFs, and uploads the complete `artifact-output/**`
+bundle on release tags, manual dispatch, and artifact-related pull requests.
 
 ## License
 

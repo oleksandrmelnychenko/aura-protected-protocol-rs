@@ -916,7 +916,7 @@ Build targets: \texttt{staticlib} (C linking), \texttt{cdylib} (dynamic library)
 
 \subsection{Performance Benchmarks}\label{sec:benchmarks}
 
-All benchmarks were conducted using Criterion.rs (v0.5, 200 samples, 5-second measurement time) on an Apple M-series processor. Results are summarized in \cref{tab:bench-core,tab:bench-payload,tab:bench-overhead}.
+All benchmarks were conducted using Criterion.rs (v0.8, 200 samples, 5-second measurement time) on an Apple M-series processor. Results are summarized in \cref{tab:bench-core,tab:bench-payload,tab:bench-overhead}.
 
 \begin{table}[H]
 \centering
@@ -1251,10 +1251,13 @@ and a matching dump utility fix deterministic vectors for HKDF, AES-GCM-SIV,
 seeded ML-KEM public-key generation, master-key identity derivation, the full
 handshake transcript, the first post-handshake envelope, the first
 DH+KEM-ratchet envelope, and multi-epoch delayed-delivery envelopes under a
-test-only deterministic entropy feature. The remaining reproducibility work is
-mechanical rather than conceptual: publish one benchmark script with pinned tool
-versions, archive Tamarin/ProVerif outputs for a tagged release, and upload the
-artifact logs from release CI.
+test-only deterministic entropy feature. Each artifact run emits tool versions,
+a manifest, and SHA-256 checksums; release CI uploads the quick and paper-build
+logs as a reviewable artifact bundle, and the formal CI job uploads
+Tamarin/ProVerif stdout/stderr logs with the same manifest and checksum format.
+The remaining reproducibility work is mechanical rather than conceptual:
+publish one benchmark script with pinned traffic-model profiles and record an
+external review of the model/code alignment.
 
 \subsection{Limitations}
 
