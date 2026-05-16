@@ -5,7 +5,7 @@
 [![Benchmarks](https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs/actions/workflows/benchmarks.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Hybrid post-quantum secure messaging protocol combining **X25519 + Kyber-768** with a Double Ratchet, **AES-256-GCM-SIV**, per-epoch metadata encryption, and an **MLS-inspired group messaging protocol** with hybrid PQ TreeKEM — featuring **Shield mode**, sealed messages, disappearing messages, and message franking.
+Hybrid post-quantum secure messaging protocol combining **X25519 + Kyber-768** with a Double Ratchet, **AES-256-GCM-SIV**, and per-epoch metadata encryption. The crate also includes MLS-inspired group messaging modules with hybrid PQ TreeKEM, Shield mode, sealed messages, disappearing messages, and message franking; the paper proofs cover the 1:1 handshake and ratchet scope.
 
 ## Key Differentiators
 
@@ -15,10 +15,10 @@ Hybrid post-quantum secure messaging protocol combining **X25519 + Kyber-768** w
 | Metadata encryption | Sealed Sender | Sealed Sender | **Per-epoch rotating key** |
 | AEAD | AES-256-CBC + HMAC | AES-256-CBC + HMAC | **AES-256-GCM-SIV** (nonce-misuse resistant) |
 | Post-compromise recovery | 1-step (DH) | 1-step (DH) | **1-step classical / 2-step hybrid** |
-| Group protocol | N/A | N/A | **Hybrid PQ TreeKEM** (X25519 + Kyber-768) |
+| Group module | N/A | N/A | **MLS-inspired hybrid PQ TreeKEM** (outside 1:1 proof scope) |
 | Shield mode | No | No | **Yes** (enhanced key schedule, mandatory franking) |
 | Message features | Basic | Basic | **Sealed, disappearing, frankable, edit, delete** |
-| Formal proofs | eCK sketch | High-level | **6 theorems + 10 Tamarin lemmas** |
+| Formal proofs | eCK sketch | High-level | **6 theorems + 10 Tamarin lemmas** (1:1 handshake/ratchet) |
 
 ## Architecture
 
@@ -115,6 +115,8 @@ let policy = group.security_policy();
 For deployment guidance, see `SECURITY.md`, `docs/client-production-checklist.md`, and `docs/server-production-checklist.md`.
 
 ### Group Protocol Properties
+
+These are implementation-level properties of the group module. They are not claimed as consequences of the paper's two-party theorems; a publication-grade group claim requires a separate TreeKEM model, proof-to-code map, and concurrency analysis.
 
 | Property | Mechanism |
 |----------|-----------|
@@ -279,6 +281,8 @@ cargo +nightly fuzz run <target> -- -max_total_time=300
 ```
 
 ## Formal Verification
+
+The formal claims below cover the two-party handshake and session ratchet analyzed in the paper. Group, VoIP, relay, and binding layers are tested and fuzzed implementation modules, but they require separate models before their security can be claimed under the same proof scope.
 
 ### Tamarin Prover (10/10 lemmas verified)
 

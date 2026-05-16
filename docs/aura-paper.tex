@@ -1185,7 +1185,7 @@ The code keeps the historical wrapper name \texttt{KyberInterop}, but the crypto
 
 \subsection{Group Messaging}
 
-Aura currently targets the two-party setting. Extension to group messaging (analogous to MLS~\cite{mls-rfc}) would require adapting the hybrid ratchet to a tree-based key schedule. The augmented HKDF info binding (\cref{lem:augmented-hkdf}) and two-layer AEAD construction are compatible with tree-based constructions, but the per-ratchet bandwidth overhead would scale with the tree fanout.
+The construction analyzed in this paper targets a two-party session. The repository also contains MLS-inspired group-messaging modules with a hybrid TreeKEM-style update path, but those modules are implementation context rather than consequences of the two-party theorems. A publication-grade group claim would require a separate tree-state model, membership/authentication proof, and concurrency analysis. The augmented HKDF info binding (\cref{lem:augmented-hkdf}) and two-layer AEAD construction are compatible with tree-based constructions, but the bandwidth and proof obligations scale with the tree fanout.
 
 \subsection{Operational Profiles}
 
