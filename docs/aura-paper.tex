@@ -1255,9 +1255,10 @@ test-only deterministic entropy feature. Each artifact run emits tool versions,
 a manifest, and SHA-256 checksums; release CI uploads the quick and paper-build
 logs as a reviewable artifact bundle, and the formal CI job uploads
 Tamarin/ProVerif stdout/stderr logs with the same manifest and checksum format.
-The remaining reproducibility work is external rather than conceptual: record an
-independent review of the model/code alignment and publish release baselines for
-the fixed benchmark profiles.
+Release-tag benchmark runs publish baselines for the fixed traffic-profile
+comparisons. The remaining reproducibility work is external rather than
+conceptual: record an independent review of the model/code alignment using the
+repository's external-review package.
 
 \subsection{Limitations}
 

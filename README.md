@@ -217,7 +217,13 @@ Key performance numbers (Apple M-series):
 The Criterion suite also includes `pq_traffic_profiles`, a fixed
 128-message/256-byte traffic model for comparing handshake-only PQ,
 sparse chain-boundary PQ, periodic chain-boundary PQ, and per-reply PQ rekeying
-under the same benchmark harness.
+under the same benchmark harness. Benchmark artifacts are produced on weekly
+runs, main-branch pushes that touch benchmark/code paths, and release tags.
+
+### Paper Review Package
+
+Independent review scope, assumptions, commands, and sign-off fields are
+defined in [`docs/external-review-package.md`](docs/external-review-package.md).
 
 ### Clippy
 

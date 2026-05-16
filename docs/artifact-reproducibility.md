@@ -174,4 +174,4 @@ The artifact is now runnable, but the following work would make it stronger:
 
 | Gap | Required work |
 |---|---|
-| External review | Record third-party review of model assumptions and code/proof alignment. |
+| External review | Use `docs/external-review-package.md` to record third-party review of model assumptions and code/proof alignment. |

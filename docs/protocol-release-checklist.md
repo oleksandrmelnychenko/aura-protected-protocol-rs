@@ -93,6 +93,9 @@
 - чи немає checked-in stale PoC/docs, які суперечать поточному коду
 - чи backend/client docs не ведуть інтеграторів у небезпечний flow
 - чи FFI/Swift docs описують нову поведінку і нові сигнатури там, де surface таки змінився
+- для paper/security release: пройти `docs/external-review-package.md` або
+  записати issue за шаблоном `External Review`, з commit hash, artifact hashes,
+  scope, findings і author response
 
 ## 8. CI / Reproducibility
 
@@ -102,6 +105,8 @@
   - FFI
   - Swift/XCFramework, якщо потрібно
 - Артефакти release повинні походити саме з CI або чітко задокументованого reproducible build process.
+- Для paper artifact перевірити, що `Paper Artifact`, `Formal Verification` і
+  `Benchmarks` workflows мають release-tag artifacts.
 
 ## 9. Tag / Release Protocol
 
