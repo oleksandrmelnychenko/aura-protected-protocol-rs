@@ -21,13 +21,14 @@ Modes:
 | Quick smoke | `./scripts/reproduce-paper-artifact.sh quick` | Fixed vectors, deterministic handshake/envelope/cross-ratchet/multi-epoch KATs, vector dump, attack-PoC regression tests |
 | Rust tests | `./scripts/reproduce-paper-artifact.sh test` | Full `cargo test --release` with and without `ffi` |
 | Formal models | `./scripts/reproduce-paper-artifact.sh formal` | Tamarin handshake, Tamarin ratchet, ProVerif |
-| Paper build | `./scripts/reproduce-paper-artifact.sh paper` | Rebuild English and Ukrainian PDFs with `pdflatex` |
+| Paper build | `./scripts/reproduce-paper-artifact.sh paper` | Rebuild English, Ukrainian, and companion proof PDFs with `pdflatex` |
+| Reference audit | `./scripts/reproduce-paper-artifact.sh references` | Check bibliography/citation consistency and external URL reachability |
 | Benchmarks | `./scripts/reproduce-paper-artifact.sh bench` | Criterion benchmark suite |
 | Full artifact | `./scripts/reproduce-paper-artifact.sh full` | Tests, formal models, PDFs, benchmarks |
 
 The `formal` and `full` modes require `tamarin-prover`, `proverif`, and
 `pdflatex` to be installed. The quick mode only needs the Rust toolchain and
-`protoc`.
+`protoc`. The `references` mode also requires `curl` and network access.
 
 ## Fixed paper vectors
 
@@ -119,8 +120,8 @@ Multi-epoch delayed-delivery vector:
 | Performance numbers | `benches/protocol_bench.rs` | `cargo bench` |
 | PQ traffic-profile comparability | `benches/protocol_bench.rs` | `cargo bench --bench protocol_bench pq_traffic_profiles` |
 | Ablation and sensitivity ledger | `docs/ablation-study.md` | See commands inside `docs/ablation-study.md` |
-| Paper compilation | `docs/aura-paper.tex`, `docs/aura-paper-ua.tex` | `./scripts/reproduce-paper-artifact.sh paper` |
-| Reference validity | `docs/reference-audit.md` | See commands inside `docs/reference-audit.md` |
+| Paper compilation | `docs/aura-paper.tex`, `docs/aura-paper-ua.tex`, `docs/security-proof.tex` | `./scripts/reproduce-paper-artifact.sh paper` |
+| Reference validity | `docs/reference-audit.md`, `scripts/audit-paper-references.sh` | `./scripts/reproduce-paper-artifact.sh references` |
 
 ## Expected formal-model status
 
@@ -158,11 +159,12 @@ sha256sum -c SHA256SUMS
 
 ## CI artifact bundle
 
-The `Paper Artifact` GitHub Actions workflow runs the quick fixed-vector suite
-and rebuilds both paper PDFs on pull requests that touch the artifact surface,
-on tagged releases, and on manual dispatch. It uploads the full
-`artifact-output/**` tree as a release-reviewable artifact, including
-`versions.txt`, `MANIFEST.txt`, and `SHA256SUMS` for each mode.
+The `Paper Artifact` GitHub Actions workflow runs the quick fixed-vector suite,
+rebuilds the English, Ukrainian, and companion proof PDFs, and audits paper
+references on pull requests that touch the artifact surface, on tagged
+releases, and on manual dispatch. It uploads the full `artifact-output/**` tree
+as a release-reviewable artifact, including generated PDFs, `versions.txt`,
+`MANIFEST.txt`, and `SHA256SUMS` for each mode.
 
 The main CI `Formal Verification` job uses the same artifact script in `formal`
 mode after installing Tamarin Prover and ProVerif. It uploads the formal

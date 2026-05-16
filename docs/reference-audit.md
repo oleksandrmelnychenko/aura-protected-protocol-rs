@@ -16,9 +16,21 @@ Result:
 Verification commands:
 
 ```sh
+./scripts/reproduce-paper-artifact.sh references
+```
+
+The mode above wraps the standalone checker:
+
+```sh
+./scripts/audit-paper-references.sh
+```
+
+The checker performs the same underlying operations:
+
+```sh
 for f in docs/aura-paper.tex docs/aura-paper-ua.tex; do
-  rg -o '\\bibitem\{[^}]+\}' "$f" | wc -l
-  perl -ne 'while(/\\cite[t|p|alp|author|year|]?\{([^}]*)\}/g){for $k (split /,/, $1){$k=~s/^\s+|\s+$//g; print "$k\n"}}' "$f" | sort -u | wc -l
+  perl -ne 'while(/\\bibitem(?:\[[^\]]*\])?\{([^}]+)\}/g){print "$1\n"}' "$f" | sort -u | wc -l
+  perl -ne 'while(/\\cite[a-zA-Z*]*(?:\[[^\]]*\]){0,2}\{([^}]*)\}/g){for $k (split /,/, $1){$k=~s/^\s+|\s+$//g; print "$k\n" if length $k}}' "$f" | sort -u | wc -l
 done
 
 rg -o '\\url\{[^}]+\}' docs/aura-paper.tex docs/aura-paper-ua.tex |

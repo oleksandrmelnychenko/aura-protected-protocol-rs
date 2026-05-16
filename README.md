@@ -196,7 +196,8 @@ Useful modes:
 | `quick` | Fixed paper vectors, deterministic handshake/envelope/cross-ratchet/multi-epoch KATs, attack-PoC regression tests |
 | `test` | Full Rust tests, with and without `ffi` |
 | `formal` | Tamarin handshake/ratchet models + ProVerif |
-| `paper` | Rebuild English and Ukrainian PDFs |
+| `paper` | Rebuild English, Ukrainian, and companion proof PDFs |
+| `references` | Check bibliography/citation consistency and external URL reachability |
 | `bench` | Criterion benchmark suite |
 | `full` | Tests, formal models, PDFs, and benchmarks |
 
@@ -488,8 +489,9 @@ GitHub Actions pipeline with 8 jobs:
 | **Benchmarks** | Criterion benchmarks on Linux, macOS, Windows (weekly + on push) |
 
 The separate `Paper Artifact` workflow runs fixed paper vectors, rebuilds the
-English and Ukrainian PDFs, and uploads the complete `artifact-output/**`
-bundle on release tags, manual dispatch, and artifact-related pull requests.
+English, Ukrainian, and companion proof PDFs, audits paper references, and
+uploads the complete `artifact-output/**` bundle on release tags, manual
+dispatch, and artifact-related pull requests.
 
 ## License
 

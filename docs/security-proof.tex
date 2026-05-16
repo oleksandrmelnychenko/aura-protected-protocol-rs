@@ -8,6 +8,7 @@
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
+\usepackage{microtype}
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage{mathtools}
 \usepackage[shortlabels]{enumitem}
@@ -20,6 +21,8 @@
 \usepackage{algorithm}
 \usepackage{algpseudocode}
 \usepackage{thmtools}
+
+\setlength{\emergencystretch}{3em}
 
 \hypersetup{
   colorlinks=true,
@@ -963,7 +966,7 @@ part~(b): 2-step hybrid PCS. \qedhere
 
 \begin{lemma}[Per-Direction Ratcheting]
 \label{lem:per-dir}
-AURA's per-direction ratcheting (\texttt{send\_ratchet\_pending} flag set after
+AURA's per-direction ratcheting (\path|send_ratchet_pending| flag set after
 every received message) ensures that \emph{every direction change} triggers a
 fresh hybrid ratchet step.  This differs from Signal's DH-key-change trigger in
 the following operational sense:

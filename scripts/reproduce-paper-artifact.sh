@@ -71,6 +71,7 @@ versions() {
     rustc --version 2>/dev/null | sed 's/^/rustc=/'
     cargo --version 2>/dev/null | sed 's/^/cargo=/'
     protoc --version 2>/dev/null | sed 's/^/protoc=/' || echo "protoc=missing"
+    curl --version 2>/dev/null | head -n 1 | sed 's/^/curl=/' || echo "curl=missing"
     pdflatex --version 2>/dev/null | head -n 1 | sed 's/^/pdflatex=/' || echo "pdflatex=missing"
     tamarin-prover --version 2>/dev/null | head -n 1 | sed 's/^/tamarin=/' || echo "tamarin=missing"
     proverif -version 2>/dev/null | head -n 1 | sed 's/^/proverif=/' || echo "proverif=missing"
@@ -79,10 +80,16 @@ versions() {
 
 paper_build() {
   run_shell paper_english \
-    "cd '$ROOT/docs' && pdflatex -interaction=nonstopmode -halt-on-error aura-paper.tex >/tmp/aura-paper-repro-1.log && pdflatex -interaction=nonstopmode -halt-on-error aura-paper.tex >/tmp/aura-paper-repro-2.log && pdflatex -interaction=nonstopmode -halt-on-error aura-paper.tex"
+    "cd '$ROOT/docs' && pdflatex -interaction=nonstopmode -halt-on-error aura-paper.tex >/tmp/aura-paper-repro-1.log && pdflatex -interaction=nonstopmode -halt-on-error aura-paper.tex >/tmp/aura-paper-repro-2.log && pdflatex -interaction=nonstopmode -halt-on-error aura-paper.tex && cp aura-paper.pdf '$OUT/aura-paper.pdf'"
   run_shell paper_ukrainian \
-    "cd '$ROOT/docs' && pdflatex -interaction=nonstopmode -halt-on-error aura-paper-ua.tex >/tmp/aura-paper-ua-repro-1.log && pdflatex -interaction=nonstopmode -halt-on-error aura-paper-ua.tex >/tmp/aura-paper-ua-repro-2.log && pdflatex -interaction=nonstopmode -halt-on-error aura-paper-ua.tex"
+    "cd '$ROOT/docs' && pdflatex -interaction=nonstopmode -halt-on-error aura-paper-ua.tex >/tmp/aura-paper-ua-repro-1.log && pdflatex -interaction=nonstopmode -halt-on-error aura-paper-ua.tex >/tmp/aura-paper-ua-repro-2.log && pdflatex -interaction=nonstopmode -halt-on-error aura-paper-ua.tex && cp aura-paper-ua.pdf '$OUT/aura-paper-ua.pdf'"
+  run_shell security_proof \
+    "rm -rf '$OUT/security-proof-build' && mkdir -p '$OUT/security-proof-build' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/security-proof-build' '$ROOT/docs/security-proof.tex' >/tmp/aura-security-proof-repro-1.log && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/security-proof-build' '$ROOT/docs/security-proof.tex' >/tmp/aura-security-proof-repro-2.log && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/security-proof-build' '$ROOT/docs/security-proof.tex' && cp '$OUT/security-proof-build/security-proof.pdf' '$OUT/security-proof.pdf'"
   rm -f "$ROOT"/docs/aura-paper.{aux,log,out,toc} "$ROOT"/docs/aura-paper-ua.{aux,log,out,toc}
+}
+
+reference_audit() {
+  run reference_audit "$ROOT/scripts/audit-paper-references.sh"
 }
 
 case "$MODE" in
@@ -107,6 +114,10 @@ case "$MODE" in
     versions
     paper_build
     ;;
+  references)
+    versions
+    reference_audit
+    ;;
   bench)
     versions
     run benchmarks cargo bench
@@ -125,12 +136,13 @@ case "$MODE" in
     ;;
   *)
     cat >&2 <<EOF
-usage: $0 [quick|test|formal|paper|bench|full]
+usage: $0 [quick|test|formal|paper|references|bench|full]
 
 quick  - fixed paper vectors + attack PoC tests
 test   - full Rust tests, with and without ffi
 formal - Tamarin handshake/ratchet + ProVerif
-paper  - rebuild English and Ukrainian PDFs
+paper  - rebuild English, Ukrainian, and companion proof PDFs
+references - verify paper bibliography/citation consistency and URL reachability
 bench  - Criterion benchmark suite
 full   - test + formal + paper + bench
 

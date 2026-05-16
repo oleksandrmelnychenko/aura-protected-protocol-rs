@@ -9,6 +9,7 @@ on:
     paths:
       - 'docs/**'
       - 'examples/paper_vectors.rs'
+      - 'scripts/audit-paper-references.sh'
       - 'scripts/reproduce-paper-artifact.sh'
       - 'tests/paper_vectors.rs'
       - '.github/workflows/paper-artifact.yml'
@@ -53,6 +54,9 @@ jobs:
 
       - name: Build paper PDFs
         run: ./scripts/reproduce-paper-artifact.sh paper
+
+      - name: Audit paper references
+        run: ./scripts/reproduce-paper-artifact.sh references
 
       - name: Upload artifact-output bundle
         if: always()
