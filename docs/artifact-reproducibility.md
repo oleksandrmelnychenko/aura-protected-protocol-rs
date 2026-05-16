@@ -169,7 +169,7 @@ mode after installing Tamarin Prover and ProVerif. It uploads the formal
 stdout/stderr logs, tool-version capture, manifest, and checksums on pull
 requests, main-branch pushes, and tagged releases.
 
-## Current gaps before top-tier submission
+## Current submission-hardening gaps
 
 The artifact is now runnable, but the following work would make it stronger:
 

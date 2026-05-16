@@ -111,7 +111,7 @@ or in release notes with equivalent fields:
 
 ## Completion criterion
 
-The remaining top-tier submission gap is closed only when at least one
+The remaining submission-hardening gap is closed only when at least one
 independent reviewer has examined the scope above and the repository records:
 
 - the reviewed commit;

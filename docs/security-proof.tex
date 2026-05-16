@@ -99,8 +99,8 @@ X25519 Diffie--Hellman key exchange with Kyber-768 KEM and AES-256-GCM-SIV
 authenticated encryption.  AURA extends the Signal X3DH/Double Ratchet paradigm
 with (i)~a hybrid combiner achieving IND-CCA2 security under the
 \emph{either-or} assumption (classical Gap-CDH \emph{or} Kyber IND-CCA2),
-(ii)~per-direction hybrid ratcheting providing stronger forward secrecy and
-post-compromise security guarantees, and (iii)~two-layer AEAD with nonce-misuse
+(ii)~per-direction hybrid ratcheting with explicit forward-secrecy and
+post-compromise recovery bounds, and (iii)~two-layer AEAD with nonce-misuse
 resistance.
 
 We prove six theorems establishing: hybrid combiner security (Theorem~1), AKE
@@ -339,8 +339,8 @@ Given chain key $\ck$, derive message key and advance the chain:
 
 A ratchet step is triggered on every direction change (i.e., after receiving a
 message, the next send performs a ratchet) or when the chain reaches
-$N_{\max}$ messages.  This is more aggressive than Signal, which only ratchets
-on DH public key change.
+$N_{\max}$ messages.  This makes the implementation trigger explicit instead
+of leaving recovery to an implicit message-pattern assumption.
 
 \paragraph{Send Ratchet (epoch $e \to e{+}1$).}
 \begin{enumerate}[nosep]
@@ -603,11 +603,11 @@ under the PRF assumption on HMAC-SHA256. \qedhere
 \begin{remark}[Either-Or Guarantee]
 \cref{thm:combiner} provides an \emph{either-or} security guarantee: the
 hybrid combiner is secure if \emph{at least one} of the two underlying
-primitives (Kyber-768 or X25519) remains unbroken.  This is the strongest
-achievable guarantee for a hybrid KEM without assuming both components are
-simultaneously secure, and matches the design goal of hedging against
-quantum attacks on classical DH while retaining classical security as a
-fallback if lattice-based assumptions are weakened.
+primitives (Kyber-768 or X25519) remains unbroken.  This is the standard
+hedging guarantee for a hybrid KEM without assuming both components are
+simultaneously secure, and matches the design goal of hedging against quantum
+attacks on classical DH while retaining classical security as a fallback if
+lattice-based assumptions are weakened.
 \end{remark}
 
 
@@ -920,7 +920,7 @@ adversary also has the peer's state. In the standard PCS model, we assume full
 state compromise of one party; the Kyber encapsulation targets the
 \emph{peer's} public key, so the adversary needs the peer's secret key to
 decapsulate. If only one party is compromised, the Kyber component at epoch
-$e{+}1$ is secure even at 1 step. For the strongest claim (both parties
+$e{+}1$ is secure even at 1 step. For the conservative claim (both parties
 compromised), we need 2 steps.}%
 , so $\mathit{ss}_{e+1}$ is known to the adversary.
 
@@ -965,14 +965,16 @@ part~(b): 2-step hybrid PCS. \qedhere
 \label{lem:per-dir}
 AURA's per-direction ratcheting (\texttt{send\_ratchet\_pending} flag set after
 every received message) ensures that \emph{every direction change} triggers a
-fresh hybrid ratchet step.  This is strictly stronger than Signal's ratcheting
-(which only triggers on DH public key change) because:
+fresh hybrid ratchet step.  This differs from Signal's DH-key-change trigger in
+the following operational sense:
 \begin{enumerate}[nosep]
   \item In Signal, if Alice sends 100 messages then Bob replies, only Bob's
-        reply triggers a ratchet.  In AURA, Bob's reply triggers a ratchet
-        \emph{and} Alice's next message also triggers a ratchet.
-  \item This means PCS recovery occurs at the \emph{first} message after
-        compromise, not just after the first direction change.
+        reply carries the next ratchet public key.  In AURA, Bob's reply
+        triggers a ratchet and Alice's next message also triggers a directed
+        hybrid ratchet.
+  \item This makes the PCS recovery point explicit: classical PCS starts at
+        the next honest ratchet step, and full hybrid PCS needs the second
+        directed hybrid step.
 \end{enumerate}
 \end{lemma}
 
@@ -1205,11 +1207,10 @@ the most recent entries for replay detection.
 \label{sec:bounds}
 % ============================================================================
 
-\begin{table}[htb]
-\centering
+\begin{center}
+\textbf{Concrete security levels for AURA components and composite bounds.}
+
 \renewcommand{\arraystretch}{1.3}
-\caption{Concrete security levels for AURA components and composite bounds.}
-\label{tab:bounds}
 \small
 \begin{tabular}{@{}llr@{}}
 \toprule
@@ -1232,7 +1233,7 @@ PCS hybrid (\cref{thm:pcs}b), Gap-CDH + ML-KEM, 2 steps & --- & 128 \\
 Message security (\cref{thm:conf-int}), PRF + MRAE & --- & 128 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{center}
 
 \paragraph{Security loss.}
 The dominant loss factor is $q_s$ (number of sessions) in
@@ -1267,13 +1268,14 @@ hybrid ratchet (X25519 + Kyber-768) on the next outgoing message.  This
 provides:
 
 \begin{enumerate}[nosep]
-  \item \textbf{Stronger per-direction forward secrecy}: Each direction
-        change produces fresh key material, limiting the window of
-        vulnerability.
-  \item \textbf{Faster PCS recovery}: After state compromise, recovery
-        begins at the first message after the compromise rather than
-        waiting for a specific message pattern.
-  \item \textbf{Post-quantum resilience per ratchet step}: Each ratchet
+  \item \textbf{Per-direction forward secrecy}: Each direction change produces
+        fresh key material, limiting the window of vulnerability for a
+        compromised chain key.
+  \item \textbf{Explicit PCS recovery point}: After state compromise,
+        classical PCS starts at the next honest ratchet step; full hybrid PCS
+        needs the second directed hybrid step because the peer must first
+        advertise a fresh KEM public key.
+  \item \textbf{Post-quantum contribution per ratchet step}: Each ratchet
         contributes both classical and PQ key material.
 \end{enumerate}
 
@@ -1327,13 +1329,12 @@ alone for identity binding) because:
 \label{sec:conclusion}
 % ============================================================================
 
-We have provided a comprehensive game-based security analysis of the Aura
-Protection Protocol, establishing six security properties through constructive
-reductions.  The hybrid combiner achieves an either-or guarantee (secure if
-\emph{at least one} of X25519 or Kyber-768 is secure), the per-direction
-ratcheting provides stronger forward secrecy and faster PCS recovery than
-Signal, and the two-layer AEAD with GCM-SIV provides nonce-misuse-resistant
-confidentiality and integrity.
+This appendix gives a game-based security analysis of the Aura Protection
+Protocol, establishing six security properties through constructive reductions.
+The hybrid combiner achieves an either-or guarantee (secure if \emph{at least
+one} of X25519 or Kyber-768 is secure), the ratchet gives 1-step classical PCS
+and 2-step hybrid PCS under the stated compromise model, and the two-layer AEAD
+with GCM-SIV provides nonce-misuse-resistant confidentiality and integrity.
 
 The main technical contributions are: (1)~the formalization and proof of the
 hybrid combiner using the HKDF dual-PRF property with classical DH as salt

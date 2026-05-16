@@ -633,9 +633,10 @@ The key subtlety is the \emph{asymmetric recovery time} between classical and PQ
 \begin{lemma}[Per-Direction Ratchet]\label{lem:per-direction}
 Aura's per-direction ratcheting (the \path|send_ratchet_pending| flag
 set after every received message) ensures every direction change triggers
-a fresh hybrid ratchet step. This is stricter than Signal's DH-key-change
-trigger: PCS recovery occurs at the first message after compromise, not
-only after the first direction change.
+a fresh hybrid ratchet step. This makes the recovery point explicit in the
+implementation: after state compromise, classical PCS starts at the next
+honest ratchet step, while full hybrid PCS needs the second directed hybrid
+step described in \cref{thm:pcs}.
 \end{lemma}
 
 \subsection{Theorem 5: Message Confidentiality and Integrity}
@@ -1130,9 +1131,9 @@ the security claims are tied to concrete Rust modules.
 Signal ratchets only when a new DH public key is received from the peer, meaning that a burst of $n$ messages in one direction shares the same DH ratchet key. Aura uses per-direction ratcheting: after every received message, the \texttt{send\_ratchet\_pending} flag causes the next send to trigger a full hybrid ratchet. This provides:
 
 \begin{enumerate}
-  \item \textbf{Stronger per-direction forward secrecy.} Each direction change creates a new root key, limiting the damage of any single key compromise to one direction's chain.
-  \item \textbf{Faster PCS recovery.} Recovery occurs at the first message after compromise, not just after the first direction change.
-  \item \textbf{Per-ratchet PQ resilience.} Every ratchet step includes fresh Kyber-768 key material, ensuring quantum resistance is continuously maintained rather than relying on the initial handshake.
+  \item \textbf{Per-direction forward secrecy.} Each direction change creates a new root key, limiting the damage of a chain-key compromise to the affected direction and epoch.
+  \item \textbf{Explicit PCS recovery point.} After compromise, classical PCS starts at the next honest ratchet step; full hybrid PCS needs the second directed hybrid step because the peer must first advertise a fresh KEM public key.
+  \item \textbf{Per-ratchet PQ contribution.} Every ratchet step includes fresh Kyber-768 key material, so post-quantum material is refreshed beyond the initial handshake.
 \end{enumerate}
 
 \paragraph{Cost.}
@@ -1185,7 +1186,7 @@ The code keeps the historical wrapper name \texttt{KyberInterop}, but the crypto
 
 \subsection{Group Messaging}
 
-The construction analyzed in this paper targets a two-party session. The repository also contains MLS-inspired group-messaging modules with a hybrid TreeKEM-style update path, but those modules are implementation context rather than consequences of the two-party theorems. A publication-grade group claim would require a separate tree-state model, membership/authentication proof, and concurrency analysis. The augmented HKDF info binding (\cref{lem:augmented-hkdf}) and two-layer AEAD construction are compatible with tree-based constructions, but the bandwidth and proof obligations scale with the tree fanout.
+The construction analyzed in this paper targets a two-party session. The repository also contains MLS-inspired group-messaging modules with a hybrid TreeKEM-style update path, but those modules are implementation context rather than consequences of the two-party theorems. A group-security claim would require a separate tree-state model, membership/authentication proof, and concurrency analysis. The augmented HKDF info binding (\cref{lem:augmented-hkdf}) and two-layer AEAD construction are compatible with tree-based constructions, but the bandwidth and proof obligations scale with the tree fanout.
 
 \subsection{Operational Profiles}
 

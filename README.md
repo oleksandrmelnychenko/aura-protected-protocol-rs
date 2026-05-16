@@ -116,7 +116,7 @@ For deployment guidance, see `SECURITY.md`, `docs/client-production-checklist.md
 
 ### Group Protocol Properties
 
-These are implementation-level properties of the group module. They are not claimed as consequences of the paper's two-party theorems; a publication-grade group claim requires a separate TreeKEM model, proof-to-code map, and concurrency analysis.
+These are implementation-level properties of the group module. They are not claimed as consequences of the paper's two-party theorems; a group-security claim requires a separate TreeKEM model, proof-to-code map, and concurrency analysis.
 
 | Property | Mechanism |
 |----------|-----------|
