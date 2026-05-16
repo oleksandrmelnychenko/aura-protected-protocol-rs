@@ -21,6 +21,7 @@ Review the two-party Aura protocol as described by:
 - `tests/attack_poc.rs`
 - `benches/protocol_bench.rs`
 - `docs/artifact-reproducibility.md`
+- `docs/ablation-study.md`
 - `docs/reference-audit.md`
 
 The group protocol, VoIP path, Swift wrapper, and relay integration are useful
@@ -55,6 +56,7 @@ The paper and implementation do not claim:
 | Metadata encryption uses an independent per-epoch key rather than reusing payload message keys. | `src/protocol/session.rs`, paper AEAD equations, tests covering encrypted metadata |
 | Replay protection, skipped-key handling, and sealed-state rollback constraints match the security claims. | `src/protocol/session.rs`, `tests/attack_poc.rs`, artifact vectors |
 | Benchmark comparisons use one traffic model for handshake-only, sparse, periodic, and per-reply PQ profiles. | `benches/protocol_bench.rs`, `pq_traffic_profiles` Criterion group |
+| Ablation claims do not rely on production downgrade switches. | `docs/ablation-study.md`, negative ratchet/metadata/sealed-state tests |
 | References and URLs are real, cited, and not bibliography padding. | `docs/reference-audit.md` |
 
 ## Assumption ledger

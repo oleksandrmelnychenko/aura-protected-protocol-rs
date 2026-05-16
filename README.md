@@ -224,6 +224,8 @@ runs, main-branch pushes that touch benchmark/code paths, and release tags.
 
 Independent review scope, assumptions, commands, and sign-off fields are
 defined in [`docs/external-review-package.md`](docs/external-review-package.md).
+The ablation and sensitivity ledger is in
+[`docs/ablation-study.md`](docs/ablation-study.md).
 
 ### Clippy
 

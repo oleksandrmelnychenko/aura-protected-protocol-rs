@@ -118,6 +118,7 @@ Multi-epoch delayed-delivery vector:
 | ProVerif queries | `formal/proverif/aura.pv` | `make -C formal proverif` |
 | Performance numbers | `benches/protocol_bench.rs` | `cargo bench` |
 | PQ traffic-profile comparability | `benches/protocol_bench.rs` | `cargo bench --bench protocol_bench pq_traffic_profiles` |
+| Ablation and sensitivity ledger | `docs/ablation-study.md` | See commands inside `docs/ablation-study.md` |
 | Paper compilation | `docs/aura-paper.tex`, `docs/aura-paper-ua.tex` | `./scripts/reproduce-paper-artifact.sh paper` |
 | Reference validity | `docs/reference-audit.md` | See commands inside `docs/reference-audit.md` |
 
