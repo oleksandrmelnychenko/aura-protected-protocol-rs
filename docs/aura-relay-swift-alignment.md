@@ -45,7 +45,7 @@
 Для `session/group serialize sealed` діє єдиний контракт:
 
 - `external_counter` при serialize має бути `> 0`;
-- `min_external_counter` при deserialize має бути останнім прийнятим durable значенням;
+- `min_external_counter` при deserialize є мінімально дозволеним durable значенням; рівність дозволена для ідемпотентного re-restore того самого blob;
 - counter зберігається окремо від sealed blob;
 - rollback на менший counter має фейлити як replay.
 

@@ -148,10 +148,11 @@ secrecy/PCS models and game-based proofs.
 Every script mode writes `versions.txt` with:
 
 - git commit and dirty-worktree summary;
-- `rustc`, `cargo`, `protoc`;
-- `pdflatex`;
-- `tamarin-prover`;
-- `proverif`.
+- OS/kernel and CPU summary;
+- `rustc -vV`, `cargo`, `protoc`, `curl`, and `pdflatex`;
+- `tamarin-prover` and `proverif`;
+- `Cargo.lock` SHA-256, relevant `CARGO_*`/`RUSTFLAGS`/`RUSTUP_TOOLCHAIN`
+  variables, and build-profile context.
 
 For a paper artifact bundle, archive the entire `artifact-output/<timestamp>-full/`
 directory together with the git commit hash and verify it from inside the bundle
@@ -179,6 +180,10 @@ mode after installing Tamarin Prover and ProVerif. It uploads the formal
 stdout/stderr logs, tool-version capture, manifest, and checksums on pull
 requests, main-branch pushes, and tagged releases, subject to the same workflow
 artifact retention window.
+
+Benchmark CI uses `cargo bench` directly for the scheduled benchmark job. Local
+reproducible benchmark bundles use `./scripts/reproduce-paper-artifact.sh bench`,
+which archives Criterion output when `target/criterion` is present.
 
 ## Current submission-hardening gaps
 

@@ -5,13 +5,13 @@
 [![Benchmarks](https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs/actions/workflows/benchmarks.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Hybrid post-quantum secure messaging protocol combining **X25519 + Kyber-768** with a Double Ratchet, **AES-256-GCM-SIV**, and per-epoch metadata encryption. The crate also includes MLS-inspired group messaging modules with hybrid PQ TreeKEM, Shield mode, sealed messages, disappearing messages, and message franking; the paper proofs cover the 1:1 handshake and ratchet scope.
+Hybrid post-quantum secure messaging protocol combining **X25519 + ML-KEM-768** with a Double Ratchet, **AES-256-GCM-SIV**, and per-epoch metadata encryption. The crate also includes MLS-inspired group messaging modules with hybrid PQ TreeKEM, Shield mode, sealed messages, disappearing messages, and message franking; the paper proofs cover the 1:1 handshake and ratchet scope. Some Rust/FFI identifiers still use the historical `kyber` name for compatibility, but the implemented KEM is ML-KEM-768 via the `ml-kem` crate.
 
 ## Key Differentiators
 
 | Feature | Signal X3DH | Signal PQXDH | **Aura** |
 |---------|------------|-------------|--------------|
-| Per-ratchet PQ protection | No | No | **Yes** (X25519 + Kyber-768) |
+| Per-ratchet PQ protection | No | No | **Yes** (X25519 + ML-KEM-768) |
 | Metadata encryption | Sealed Sender | Sealed Sender | **Per-epoch rotating key** |
 | AEAD | AES-256-CBC + HMAC | AES-256-CBC + HMAC | **AES-256-GCM-SIV** (nonce-misuse resistant) |
 | Post-compromise recovery | 1-step (DH) | 1-step (DH) | **1-step classical / 2-step hybrid** |
@@ -27,7 +27,7 @@ Hybrid post-quantum secure messaging protocol combining **X25519 + Kyber-768** w
 ┌─────────────────────────┐           ┌──────────────────────────────────────┐
 │ Handshake (Hybrid X3DH) │           │ TreeKEM (Hybrid PQ)                  │
 │  4x X25519 DH            │           │  Left-balanced binary tree            │
-│  1x Kyber-768 KEM         │           │  X25519 + Kyber-768 per node          │
+│  1x ML-KEM-768 KEM        │           │  X25519 + ML-KEM-768 per node         │
 │  HKDF-SHA256 combiner     │           │  parent_hash chain verification       │
 │  HMAC key confirmation    │           │                                       │
 │  Ed25519 SPK signature    │           │ Sender Keys                           │
@@ -36,7 +36,7 @@ Hybrid post-quantum secure messaging protocol combining **X25519 + Kyber-768** w
 ┌─────────────────────────┐           │                                       │
 │ Session (Hybrid Ratchet) │           │ Epoch Advancement                     │
 │  Per-direction ratchet:   │           │  Commit + Welcome                     │
-│    X25519 DH + Kyber KEM  │           │  External Join                        │
+│    X25519 DH + ML-KEM KEM │           │  External Join                        │
 │  Chain KDF: HKDF-SHA256   │           │  PSK injection                        │
 │  AEAD: AES-256-GCM-SIV   │           │  ReInit proposals                     │
 │  Metadata: independent    │           └──────────────────────────────────────┘
@@ -123,7 +123,7 @@ These are implementation-level properties of the group module. They are not clai
 | Property | Mechanism |
 |----------|-----------|
 | Group forward secrecy | Epoch advancement via Commit; old epoch keys erased |
-| Group post-compromise security | TreeKEM UpdatePath re-encrypts path with fresh X25519 + Kyber-768 |
+| Group post-compromise security | TreeKEM UpdatePath re-encrypts path with fresh X25519 + ML-KEM-768 |
 | Sender authentication | Sender keys bound to leaf index; per-member symmetric ratchet |
 | Tree integrity | parent_hash chain from root to leaf verified on each UpdatePath |
 | External join security | KEM to deterministic external keys derived from init_secret |
@@ -214,7 +214,7 @@ Key performance numbers (Apple M-series):
 | Operation | Time |
 |-----------|------|
 | Full handshake (keygen + X3DH + Kyber + confirm) | ~1.1 ms |
-| Hybrid ratchet step (X25519 + Kyber-768) | ~259 us |
+| Hybrid ratchet step (X25519 + ML-KEM-768) | ~259 us |
 | Encrypt 256 bytes | ~17 us |
 | Decrypt 256 bytes | ~21 us |
 | Burst throughput (no ratchet) | ~15 us/msg |
@@ -263,7 +263,7 @@ cargo clippy --all-targets --features ffi -- -D warnings   # 0 warnings
 | `fuzz_dh_validator` | X25519 public key validation (small-order, field checks) |
 | `fuzz_kyber` | ML-KEM-768 keygen, encapsulate, decapsulate, validation |
 | `fuzz_secure_memory` | SecureMemoryHandle allocate/write/read/clone roundtrip |
-| `fuzz_master_key_derivation` | Master key derivation (Ed25519, X25519, Kyber seeds) |
+| `fuzz_master_key_derivation` | Master key derivation (Ed25519, X25519, ML-KEM seeds) |
 | `fuzz_identity` | Identity creation with fuzzed seeds |
 | `fuzz_nonce` | NonceGenerator state restore, counter monotonicity |
 | `fuzz_key_schedule` | Group key schedule epoch derivation, PSK injection |
@@ -309,13 +309,13 @@ The formal claims below cover the two-party handshake and session ratchet analyz
 
 **Ratchet model** (`formal/tamarin/aura_ratchet.spthy`) — 4 lemmas:
 - `pcs_sender_compromise` — 1-step PCS after sender state compromise
-- `ratchet_key_secrecy` — ratchet key secret unless both parties compromised
+- `ratchet_key_secrecy` — ratchet key secret absent sender or receiver compromise
 - `key_agreement` — both parties derive same root key
 - `ratchet_exists` — reachability
 
-### ProVerif (4/6 queries proven)
+### ProVerif (3/6 obligations discharged)
 
-`formal/proverif/aura.pv` — session key secrecy, authentication (non-injective + injective), and message secrecy proven. Q5/Q6 (message integrity / phase-based forward secrecy) are known ProVerif DH overapproximation limitations: Q6 is supported by Tamarin-style secrecy/PCS models and game-based proofs, while Q5 is supported by the game-based message-security proof and implementation tests.
+`formal/proverif/aura.pv` — KEM shared-secret secrecy, non-injective authentication, and message secrecy proven. Q3 is documented but disabled in the default artifact because the four-DH model does not terminate within the artifact budget. Q5/Q6 are negative stress obligations: Q5 is false for a broad unpartnered active trace, and Q6 is false for raw KEM-secret secrecy after KEM secret-key reveal.
 
 ### Game-Based Security Proofs
 
@@ -324,7 +324,7 @@ The formal claims below cover the two-party handshake and session ratchet analyz
 | Theorem | Property | Assumptions |
 |---------|----------|-------------|
 | 1 | Hybrid Combiner IND-CCA2 | Gap-CDH OR Kyber IND-CCA2 |
-| 2 | eCK-AKE Security | Gap-CDH + IND-CCA2 + dual-PRF + ROM |
+| 2 | eCK-style AKE security | Gap-CDH + IND-CCA2 + dual-PRF + ROM |
 | 3 | Forward Secrecy | Gap-CDH + dual-PRF; initial KEM gives HNDL only absent later KEM-SK disclosure |
 | 4 | Post-Compromise Security | 1-step classical (Gap-CDH); 2-step hybrid (Gap-CDH + IND-CCA2) under conservative both-endpoint compromise |
 | 5 | Message Confidentiality + Integrity | eCK + PRF + MRAE |
@@ -335,7 +335,7 @@ The formal claims below cover the two-party handshake and session ratchet analyz
 ```
 src/
   core/           Constants, error types, shared protocol limits
-  crypto/         AES-GCM-SIV, HKDF, Kyber-768, SecureMemory, Shamir SSS, padding
+  crypto/         AES-GCM-SIV, HKDF, ML-KEM-768, SecureMemory, Shamir SSS, padding
   identity/       Key generation, bundle creation, SPK signatures
   models/         Key material types (Ed25519, X25519, OPK)
   protocol/
@@ -344,7 +344,7 @@ src/
     session.rs    Hybrid Double Ratchet session
     group/        MLS-inspired group messaging protocol
       mod.rs        GroupSession API + Shield mode (create, add, remove, update, encrypt/decrypt)
-      tree.rs       RatchetTree (left-balanced binary, X25519 + Kyber-768 nodes)
+      tree.rs       RatchetTree (left-balanced binary, X25519 + ML-KEM-768 nodes)
       tree_kem.rs   Hybrid PQ TreeKEM (create/process UpdatePath)
       commit.rs     Commit creation/processing, epoch advancement, ExternalInit
       welcome.rs    Welcome message creation/processing
@@ -373,7 +373,7 @@ swift/
     AuraCrypto.swift     Shamir SSS + envelope validation
 formal/
   tamarin/        Tamarin models (handshake 6/6, ratchet 4/4)
-  proverif/       ProVerif model (4/6 queries)
+  proverif/       ProVerif model (3/6 obligations)
 docs/
   security-proof.tex       Game-based proofs (6 theorems, 8 lemmas)
   attachment-flow.md       Attachment encryption and transport contract
@@ -493,7 +493,7 @@ CI and scheduled workflows cover these categories:
 |-----|-------------|
 | **Check & Clippy** | `cargo check` + `cargo clippy -- -D warnings` (with and without `ffi` feature) |
 | **Test** | Release and feature-matrix test runs on Linux, macOS, Windows; local snapshot: 750 default scenarios, 889 with `--features ffi` |
-| **Formal Verification** | Tamarin Prover (10 lemmas) + ProVerif (4/6 queries proven), with uploaded formal artifact logs |
+| **Formal Verification** | Tamarin Prover (10 lemmas) + ProVerif (3/6 obligations discharged), with uploaded formal artifact logs |
 | **MSRV** | Minimum supported Rust version (1.86) |
 | **Fuzz Smoke Test** | All 42 libfuzzer targets (10s each) |
 | **Security Audit** | `cargo audit` for known vulnerabilities |

@@ -1,7 +1,7 @@
 /*
  * Aura Protection Protocol — Tamarin Prover Formal Model
  *
- * This model captures the hybrid post-quantum key exchange (X25519 + Kyber-768)
+ * This model captures the hybrid post-quantum key exchange (X25519 + ML-KEM-768)
  * and the per-direction hybrid double ratchet used in the Aura protocol.
  *
  * Properties specified (reference model; release verification uses decomposed models):
@@ -29,7 +29,7 @@ builtins: diffie-hellman, hashing, signing
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /*
- * Kyber-768 KEM (Module-Lattice Key Encapsulation Mechanism)
+ * ML-KEM-768 KEM (symbol names retain historical kyber_* spelling)
  * Modeled as an ideal KEM: Decaps(Encaps(ss, pk(sk)), sk) = ss
  */
 functions:
@@ -94,7 +94,7 @@ restriction OnlyOnceOPK:
  * Each principal gets:
  *   - X25519 identity keypair:  ik_priv / 'g'^ik_priv
  *   - Ed25519 signing keypair:  ed_sk / pk(ed_sk)   (Tamarin signing builtin)
- *   - Kyber-768 KEM keypair:    kyber_sk / kyber_pk(kyber_sk)
+ *   - ML-KEM-768 KEM keypair:   kyber_sk / kyber_pk(kyber_sk)
  *
  * Corresponds to: IdentityKeys::generate() in src/identity/mod.rs
  */
@@ -181,7 +181,7 @@ rule Initiator_X3DH:
         /* Classical X3DH derivation (Signal-style with 0xFF prefix) */
         classical_ikm = <fill_prefix, dh1, dh2, dh3, dh4>
         classical_shared = hkdf(classical_ikm, 'empty', x3dh_info)
-        /* Kyber-768 encapsulation */
+        /* ML-KEM-768 encapsulation */
         kyber_ct  = kyber_encaps(~kyber_ss, kpk_R)
         /* Hybrid combiner: HKDF(ikm=kyber_ss, salt=classical, info=HYBRID_X3DH_INFO) */
         hybrid_root = hkdf(~kyber_ss, classical_shared, hybrid_x3dh_info)

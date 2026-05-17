@@ -106,12 +106,11 @@ capture_criterion() {
 
 paper_build() {
   run_shell paper_english \
-    "cd '$ROOT/docs' && pdflatex -interaction=nonstopmode -halt-on-error aura-paper.tex >'$OUT/paper_english_pass1.log' && pdflatex -interaction=nonstopmode -halt-on-error aura-paper.tex >'$OUT/paper_english_pass2.log' && pdflatex -interaction=nonstopmode -halt-on-error aura-paper.tex && cp aura-paper.pdf '$OUT/aura-paper.pdf'"
+    "rm -rf '$OUT/aura-paper-build' && mkdir -p '$OUT/aura-paper-build' && cd '$ROOT/docs' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-build' aura-paper.tex >'$OUT/paper_english_pass1.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-build' aura-paper.tex >'$OUT/paper_english_pass2.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-build' aura-paper.tex && cp '$OUT/aura-paper-build/aura-paper.pdf' '$OUT/aura-paper.pdf'"
   run_shell paper_ukrainian \
-    "cd '$ROOT/docs' && pdflatex -interaction=nonstopmode -halt-on-error aura-paper-ua.tex >'$OUT/paper_ukrainian_pass1.log' && pdflatex -interaction=nonstopmode -halt-on-error aura-paper-ua.tex >'$OUT/paper_ukrainian_pass2.log' && pdflatex -interaction=nonstopmode -halt-on-error aura-paper-ua.tex && cp aura-paper-ua.pdf '$OUT/aura-paper-ua.pdf'"
+    "rm -rf '$OUT/aura-paper-ua-build' && mkdir -p '$OUT/aura-paper-ua-build' && cd '$ROOT/docs' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-ua-build' aura-paper-ua.tex >'$OUT/paper_ukrainian_pass1.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-ua-build' aura-paper-ua.tex >'$OUT/paper_ukrainian_pass2.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-ua-build' aura-paper-ua.tex && cp '$OUT/aura-paper-ua-build/aura-paper-ua.pdf' '$OUT/aura-paper-ua.pdf'"
   run_shell security_proof \
     "rm -rf '$OUT/security-proof-build' && mkdir -p '$OUT/security-proof-build' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/security-proof-build' '$ROOT/docs/security-proof.tex' >'$OUT/security_proof_pass1.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/security-proof-build' '$ROOT/docs/security-proof.tex' >'$OUT/security_proof_pass2.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/security-proof-build' '$ROOT/docs/security-proof.tex' && cp '$OUT/security-proof-build/security-proof.pdf' '$OUT/security-proof.pdf'"
-  rm -f "$ROOT"/docs/aura-paper.{aux,log,out,toc} "$ROOT"/docs/aura-paper-ua.{aux,log,out,toc}
 }
 
 reference_audit() {

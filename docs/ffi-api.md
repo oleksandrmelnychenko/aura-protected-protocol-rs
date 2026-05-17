@@ -33,7 +33,7 @@ API розрахований на три ролі:
 | `aura_identity_create_with_context` | + | + | - | Створити identity (seed + context) |
 | `aura_identity_get_x25519_public` | + | + | - | Отримати X25519 public key |
 | `aura_identity_get_ed25519_public` | + | + | - | Отримати Ed25519 public key |
-| `aura_identity_get_kyber_public` | + | + | - | Отримати Kyber public key |
+| `aura_identity_get_kyber_public` | + | + | - | Отримати ML-KEM public key |
 | `aura_identity_destroy` | + | + | - | Знищити identity |
 | `aura_time_provider_manual_create` | + | + | - | Створити manual clock |
 | `aura_time_provider_manual_set_now_unix` | + | + | - | Пересунути manual clock вперед |
@@ -268,7 +268,7 @@ typedef enum {
 |-----------|-------|------|
 | X25519 public key | 32 | Curve25519 DH public key |
 | Ed25519 public key | 32 | Ed25519 signing public key |
-| Kyber-768 public key | 1184 | Post-quantum KEM public key |
+| ML-KEM-768 public key | 1184 | Post-quantum KEM public key |
 | AES-256 key | 32 | Для sealed state encryption |
 | AES-GCM nonce | 12 | Для reveal_sealed |
 | HMAC / franking tag | 32 | Для SSS auth / franking |
@@ -358,7 +358,7 @@ AuraErrorCode aura_identity_create(
 );
 ```
 
-Створює нову випадкову ідентичність (Ed25519 + X25519 + Kyber-768 + Signed Pre-Key + 100 OPK).
+Створює нову випадкову ідентичність (Ed25519 + X25519 + ML-KEM-768 + Signed Pre-Key + 100 OPK).
 
 - `out_handle`: буде записано вказівник на новий `AuraIdentityHandle`
 - Після використання знищити через `aura_identity_destroy`
@@ -431,7 +431,7 @@ AuraErrorCode aura_identity_get_kyber_public(
 );
 ```
 
-Копіює Kyber-768 public key (1184 байти) у `out_key`.
+Копіює ML-KEM-768 public key (1184 байти) у `out_key`.
 
 ### `aura_identity_destroy`
 
@@ -507,7 +507,7 @@ AuraErrorCode aura_prekey_bundle_create(
 );
 ```
 
-Створює PreKey bundle для передачі іншій стороні (через сервер/HTTPS). Bundle містить: identity public keys, signed pre-key, one-time pre-keys, Kyber public key.
+Створює PreKey bundle для передачі іншій стороні (через сервер/HTTPS). Bundle містить: identity public keys, signed pre-key, one-time pre-keys, ML-KEM public key.
 
 - `out_bundle.data`: звільнити через `aura_buffer_release`
 - Bundle передається peer'у, який використає його в `aura_handshake_initiator_start`
@@ -559,7 +559,7 @@ AuraErrorCode aura_handshake_initiator_start(
 );
 ```
 
-Починає X3DH+Kyber handshake як ініціатор.
+Починає X3DH+ML-KEM handshake як ініціатор.
 
 **Потік:**
 1. Ініціатор викликає `start` → отримує `handshake_init` bytes
@@ -747,7 +747,7 @@ AuraErrorCode aura_session_deserialize_sealed(
     size_t         state_length,
     const uint8_t* key,                   // [in] 32 байти (той самий ключ)
     size_t         key_length,
-    uint64_t       min_external_counter,  // [in] останній прийнятий counter
+    uint64_t       min_external_counter,  // [in] мінімально дозволений counter
     uint64_t*      out_external_counter,  // [out] counter з blob
     AuraSessionHandle** out_handle,        // [out] відновлена сесія
     AuraError*      out_error
@@ -756,7 +756,7 @@ AuraErrorCode aura_session_deserialize_sealed(
 
 Відновлює сесію із sealed state.
 
-- Якщо counter у blob `<= min_external_counter` → `AURA_ERROR_REPLAY_ATTACK`
+- Якщо counter у blob `< min_external_counter` → `AURA_ERROR_REPLAY_ATTACK`; рівність дозволена як ідемпотентне re-restore того самого blob
 - `*out_external_counter` валідний тільки при `AURA_SUCCESS` (на помилці не використовувати/не persist-ити)
 - Після успішного імпорту зберегти `*out_external_counter` для наступного `min_external_counter`
 
@@ -1638,6 +1638,7 @@ AuraErrorCode aura_group_deserialize(
 
 Відновлює групову сесію. `identity_handle` потрібен для Ed25519 private key.
 
+- Якщо counter у blob `< min_external_counter` → replay/rollback помилка; рівність дозволена як ідемпотентне re-restore.
 - `*out_external_counter` валідний тільки при `AURA_SUCCESS` (на помилці не використовувати/не persist-ити)
 
 ### `aura_group_export_public_state`

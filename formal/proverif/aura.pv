@@ -11,7 +11,9 @@
  *
  * Reference implementation: src/protocol/handshake.rs, src/protocol/session.rs
  * Companion proofs:         docs/security-proof.tex (Theorems 1-6)
- * Companion Tamarin model:  formal/tamarin/aura.spthy
+ * Companion Tamarin models: formal/tamarin/aura_handshake.spthy and
+ *                            formal/tamarin/aura_ratchet.spthy
+ * Reference combined model: formal/tamarin/aura.spthy
  *
  * Style follows: Bhargavan et al. PQXDH (USENIX Security 2024)
  * ═══════════════════════════════════════════════════════════════════════════════ *)
@@ -22,9 +24,9 @@
 
 type skey.          (* X25519 / Ed25519 private key *)
 type pkey.          (* X25519 / Ed25519 public key *)
-type kyber_skey.    (* Kyber-768 secret key *)
-type kyber_pkey.    (* Kyber-768 public key *)
-type kyber_ct.      (* Kyber-768 ciphertext *)
+type kyber_skey.    (* ML-KEM-768 secret key; historical symbol name *)
+type kyber_pkey.    (* ML-KEM-768 public key; historical symbol name *)
+type kyber_ct.      (* ML-KEM-768 ciphertext; historical symbol name *)
 type key.           (* Symmetric key (AES-256, HMAC, HKDF output) *)
 type nonce_t.       (* AEAD nonce *)
 type epoch_t.       (* Ratchet epoch counter *)
@@ -61,7 +63,7 @@ fun ed25519_sign(bitstring, skey): signature.
 reduc forall m: bitstring, sk: skey;
     ed25519_verify(m, ed25519_sign(m, sk), ed25519_pk(sk)) = true.
 
-(* --- Kyber-768 KEM (Post-Quantum) --- *)
+(* --- ML-KEM-768 KEM (Post-Quantum) --- *)
 fun kyber_pk(kyber_skey): kyber_pkey.
 fun kyber_encaps(bitstring, kyber_pkey): kyber_ct.   (* Encapsulate ss under pk *)
 reduc forall ss: bitstring, sk: kyber_skey;
@@ -206,7 +208,7 @@ let Initiator(ik_priv_I: skey, ed_sk_I: skey, kyber_sk_I: kyber_skey) =
     let classical_ikm = (fill_prefix, dh1, dh2, dh3, dh4) in
     let classical_shared = hkdf(classical_ikm, fill_prefix, x3dh_info) in
 
-    (* Kyber-768 encapsulation *)
+    (* ML-KEM-768 encapsulation *)
     new kyber_ss_raw: bitstring;
     let kyber_ct = kyber_encaps(kyber_ss_raw, kpk_R) in
 
@@ -292,7 +294,7 @@ let Responder(ik_priv_R: skey, ed_sk_R: skey, kyber_sk_R: kyber_skey,
     let classical_ikm = (fill_prefix, dh1, dh2, dh3, dh4) in
     let classical_shared = hkdf(classical_ikm, fill_prefix, x3dh_info) in
 
-    (* Kyber-768 decapsulation *)
+    (* ML-KEM-768 decapsulation *)
     let kyber_ss_raw = kyber_decaps(kyber_ct, kyber_sk_R) in
 
     (* Hybrid combiner *)
@@ -441,7 +443,7 @@ let RatchetReceiver(root_key: key, dh_local_priv: skey,
    Each party generates:
      - X25519 identity keypair
      - Ed25519 signing keypair
-     - Kyber-768 KEM keypair
+     - ML-KEM-768 KEM keypair
      - Signed pre-key (SPK)
      - One-time pre-key (OPK) *)
 

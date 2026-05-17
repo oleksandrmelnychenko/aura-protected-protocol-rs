@@ -88,7 +88,7 @@ C FFI еквівалент (для прямої інтеграції без Swif
 | Що викликати (C FFI) | Що передавати | Повертає |
 |----------------------|---------------|----------|
 | `aura_session_serialize_sealed` | `handle`, `key` (32 байти), `external_counter` (зростаюче число, напр. з БД), `out_state`, `out_error` | код помилки; state в `out_state` |
-| `aura_session_deserialize_sealed` | `state_bytes`, `key`, `min_external_counter` (останній прийнятий counter), `out_external_counter`, `out_handle`, `out_error` | код помилки; сесія в `out_handle`; записати `out_external_counter` для наступного `min_external_counter` |
+| `aura_session_deserialize_sealed` | `state_bytes`, `key`, `min_external_counter` (мінімально дозволений counter), `out_external_counter`, `out_handle`, `out_error` | код помилки; сесія в `out_handle`; записати `out_external_counter` для наступного `min_external_counter` |
 
 Swift-обгортка:
 
@@ -99,7 +99,7 @@ Swift-обгортка:
 
 Правила anti-rollback:
 
-- імпорт вважається валідним лише якщо `sealed_counter > minExternalCounter` (рівність відхиляється);
+- імпорт вважається валідним лише якщо `sealed_counter >= minExternalCounter`; якщо інтегратор зберігає саме останній прийнятий counter і хоче відхиляти рівність, передавайте `lastAccepted + 1`;
 - для C FFI `out_external_counter` використовувати тільки коли код повернення `AURA_SUCCESS`.
 
 **Що передавати на Relay/сервер:** Клієнт може надсилати зашифрований envelope як є (binary). Сервер лише пересилає байти; дешифрування робить одержувач на своїй сесії.

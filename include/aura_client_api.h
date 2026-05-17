@@ -292,7 +292,7 @@ typedef struct {
  * Creates a new long-term identity consisting of:
  *   - X25519 Diffie-Hellman key pair (classic DH for X3DH)
  *   - Ed25519 signing key pair      (signature authentication)
- *   - Kyber-768 key pair            (post-quantum KEM)
+ *   - ML-KEM-768 key pair           (post-quantum KEM; historical API names use "kyber")
  *
  * Parameters:
  *   out_handle  — receives a pointer to the newly allocated identity handle.
@@ -428,12 +428,12 @@ AURA_API AuraErrorCode aura_identity_get_ed25519_public(
     AuraError*                out_error);
 
 /*
- * aura_identity_get_kyber_public — copy the Kyber-768 public key into a
+ * aura_identity_get_kyber_public — copy the ML-KEM-768 public key into a
  * caller-allocated buffer.
  *
  * Parameters:
  *   handle          — valid identity handle.
- *   out_key         — caller-allocated buffer; must be >= 1184 bytes (Kyber-768
+ *   out_key         — caller-allocated buffer; must be >= 1184 bytes (ML-KEM-768
  *                     public key size).
  *   out_key_length  — size of out_key in bytes.
  *   out_error       — optional error detail.
@@ -520,7 +520,7 @@ typedef struct {
  * aura_prekey_bundle_create — serialise the identity's public keys into a
  * prekey bundle suitable for upload to a key server.
  *
- * The bundle contains: identity public keys (X25519 + Ed25519 + Kyber-768),
+ * The bundle contains: identity public keys (X25519 + Ed25519 + ML-KEM-768),
  * signed one-time prekeys, and a signature over all fields.  Peers fetch
  * this bundle before initiating a handshake.
  *
@@ -572,7 +572,7 @@ AURA_API AuraErrorCode aura_prekey_bundle_replenish(
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * Handshake — hybrid X3DH + Kyber-768
+ * Handshake — hybrid X3DH + ML-KEM-768
  *
  * The handshake establishes a shared session key between two parties
  * (initiator and responder) using a hybrid post-quantum X3DH protocol.
@@ -593,7 +593,7 @@ AURA_API AuraErrorCode aura_prekey_bundle_replenish(
  * aura_handshake_initiator_start — begin a handshake as the initiating party.
  *
  * Fetches the peer's prekey bundle, generates ephemeral keys, performs the
- * hybrid X3DH+Kyber KEM, and produces the initial handshake message.
+ * hybrid X3DH+ML-KEM KEM, and produces the initial handshake message.
  *
  * Parameters:
  *   identity_keys          — caller's long-term identity (not consumed).
@@ -870,8 +870,9 @@ AURA_API AuraErrorCode aura_session_export_persisted_state(
 /*
  * aura_session_deserialize_sealed — restore a session from a sealed blob.
  *
- * LOW-LEVEL API: decrypts and validates the blob. Rejects it unless the stored
- * counter is strictly greater than min_external_counter. New clients should
+ * LOW-LEVEL API: decrypts and validates the blob. Rejects it when the stored
+ * counter is lower than min_external_counter; equality is allowed for
+ * idempotent re-restore of the same blob. New clients should
  * prefer aura_session_restore_persisted_state() when restoring from one
  * serialized slot record, or otherwise
  * aura_session_deserialize_sealed_with_tracker().
@@ -881,8 +882,7 @@ AURA_API AuraErrorCode aura_session_export_persisted_state(
  *   state_length         — byte length of state_bytes.
  *   key                  — 32-byte AES-256 decryption key (borrowed).
  *   key_length           — must be exactly 32.
- *   min_external_counter — restore watermark for this slot
- *                          (max_restored_counter).
+ *   min_external_counter — minimum accepted restore watermark for this slot.
  *   out_external_counter — receives the counter embedded in the blob.
  *                          After a successful restore, persist it as the new
  *                          max_restored_counter and raise
@@ -2224,7 +2224,7 @@ AURA_API AuraErrorCode aura_attachment_link_preview_create(
  * Group session — hybrid PQ TreeKEM (MLS-inspired)
  *
  * Groups use a left-balanced binary ratchet tree where each leaf holds a
- * hybrid X25519+Kyber-768 key pair.  Epoch transitions are driven by Commit
+ * hybrid X25519+ML-KEM-768 key pair.  Epoch transitions are driven by Commit
  * messages that update the tree and derive new epoch keys.
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -2808,8 +2808,7 @@ AURA_API AuraErrorCode aura_group_export_persisted_state(
  *   state_length         — byte length of state_bytes.
  *   key                  — 32-byte AES-256 decryption key (borrowed).
  *   key_length           — must be exactly 32.
- *   min_external_counter — restore watermark for this slot
- *                          (max_restored_counter).
+ *   min_external_counter — minimum accepted restore watermark for this slot.
  *   out_external_counter — receives the counter stored in the blob.
  *                          After successful restore, persist it as the new
  *                          max_restored_counter and raise

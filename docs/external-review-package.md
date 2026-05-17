@@ -42,10 +42,9 @@ The paper and implementation do not claim:
 - FIPS validation of the concrete cryptographic provider;
 - deployed operational maturity comparable to Signal or Apple iMessage;
 - group-protocol security under the two-party theorems;
-- ProVerif proofs for Q5 and Q6, which are documented as DH-overapproximation
-  limitations. Q6 is supported by Tamarin-style secrecy/PCS models and
-  game-based proofs; Q5 is supported by the game-based message-security proof
-  and implementation tests.
+- ProVerif proofs for Q3, Q5, and Q6. Q3 is documented but disabled in the
+  default artifact; Q5 and Q6 are negative stress obligations rather than
+  positive machine-checked claims.
 
 ## Claims to review
 
