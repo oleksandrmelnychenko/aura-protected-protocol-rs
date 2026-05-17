@@ -1,12 +1,13 @@
 (* ═══════════════════════════════════════════════════════════════════════════════
  * Aura Protection Protocol — ProVerif Formal Model
  *
- * Symbolic verification of:
- *   - Session key secrecy (absent long-term key compromise)
- *   - Mutual authentication (injective correspondence)
+ * Symbolic verification of the active handshake/message-path model:
+ *   - Handshake KEM shared-secret secrecy (absent long-term key compromise)
+ *   - Mutual authentication (non-injective correspondence)
  *   - Message secrecy (encrypted payload confidentiality)
- *   - Forward secrecy (phase-based long-term key reveal)
- *   - Message integrity (injective correspondence for delivery)
+ *   - Injective authentication and phase-based long-term key reveal as
+ *     documented but unproved stress obligations
+ *   - Message integrity (correspondence for delivery, kept as an unproved query)
  *
  * Reference implementation: src/protocol/handshake.rs, src/protocol/session.rs
  * Companion proofs:         docs/security-proof.tex (Theorems 1-6)
@@ -35,7 +36,7 @@ type mac_tag.       (* HMAC-SHA256 tag *)
    ───────────────────────────────────────────────────────────────────────────── *)
 
 free c: channel.                   (* Public network channel (Dolev-Yao adversary) *)
-free secret_msg_global: bitstring [private].  (* Global test secret — used only for ratchet process *)
+free secret_msg_global: bitstring [private].  (* Reference-only ratchet process test secret *)
 
 (* Trust anchor: identity keys verified out-of-band (TOFU, PKI, safety numbers).
  * This models the real-world assumption that each party knows the other's
@@ -131,33 +132,44 @@ event RecvRatchetDone(pkey, pkey).
    §5  Security Queries
    ───────────────────────────────────────────────────────────────────────────── *)
 
-(* Q1: Session key secrecy — attacker cannot derive the hybrid root key *)
-query attacker(new session_root_key).
+(* Q1: Handshake KEM shared-secret secrecy in the no-compromise phase.
+ *     The derived root key is a function output, so the active query is bound
+ *     to the fresh encapsulated secret that feeds the hybrid combiner. *)
+query attacker(new kyber_ss_raw) phase 0.
 
 (* Q2: Authentication — if initiator completes, responder participated *)
 query ik_pub_I: pkey, ik_pub_R: pkey, k: key;
     event(InitiatorCompleted(ik_pub_I, ik_pub_R, k))
     ==> event(ResponderAccepted(ik_pub_R, ik_pub_I, k)).
 
-(* Q3: Injective authentication — no replay of handshake *)
-query ik_pub_I: pkey, ik_pub_R: pkey, k: key;
-    inj-event(InitiatorCompleted(ik_pub_I, ik_pub_R, k))
-    ==> inj-event(ResponderAccepted(ik_pub_R, ik_pub_I, k)).
+(* Q3: Injective authentication — no replay of handshake.
+ *     This query does not terminate in the default four-DH ProVerif model
+ *     within the artifact budget. It is intentionally kept as a documented
+ *     obligation rather than reported as a discharged result.
+ *
+ * query ik_pub_I: pkey, ik_pub_R: pkey, k: key;
+ *     inj-event(InitiatorCompleted(ik_pub_I, ik_pub_R, k))
+ *     ==> inj-event(ResponderAccepted(ik_pub_R, ik_pub_I, k)).
+ *)
 
-(* Q4: Message secrecy — encrypted message content not derivable.
+(* Q4: Message secrecy in the no-compromise phase.
  *     Uses per-session fresh secret to avoid ProVerif's DH overapproximation. *)
-query attacker(new msg_secret).
+query attacker(new msg_secret) phase 0.
 
-(* Q5: Message integrity — correspondence (non-injective, sufficient for integrity proof).
- *     Note: injective correspondence for messages may fail in ProVerif due to DH
- *     equational theory overapproximation; non-injective is the meaningful property. *)
+(* Q5: Message integrity correspondence.
+ *     The broad unpartnered query is expected to be false: the active
+ *     adversary can start its own responder session and inject its own
+ *     payload, so no honest MessageSent event is required. The paper's
+ *     message-integrity theorem is stated for partnered sessions. *)
 query snd_pk: pkey, rcv_pk: pkey, m: bitstring;
     event(MessageReceived(rcv_pk, snd_pk, m))
     ==> event(MessageSent(snd_pk, rcv_pk, m)).
 
-(* Q6: Forward secrecy — session key secrecy after long-term key reveal
- *     Uses ProVerif phase model: phase 0 = honest, phase 1 = compromise *)
-query attacker(new session_root_key_fs) phase 1.
+(* Q6: Forward secrecy stress query after long-term KEM-key reveal.
+ *     This raw KEM-secret query is expected to be false after phase-1
+ *     disclosure of the responder KEM secret key. The game proof instead
+ *     reasons about the hybrid root under erased DH ephemerals. *)
+query attacker(new kyber_ss_raw) phase 1.
 
 (* ─────────────────────────────────────────────────────────────────────────────
    §6  Initiator Process
@@ -242,9 +254,7 @@ let Initiator(ik_priv_I: skey, ed_sk_I: skey, kyber_sk_I: kyber_skey) =
     event MessageSent(ik_pub_I, ik_pub_R, msg_secret);
     out(c, (ct, ad));
 
-    (* ── Forward secrecy test: publish root key in phase 1 ── *)
-    new session_root_key: key;    (* dummy fresh for secrecy query binding *)
-    new session_root_key_fs: key; (* bound to forward_secrecy query *)
+    (* ── Forward secrecy stress test: publish long-term keys in phase 1 ── *)
     phase 1;
     out(c, ik_priv_I);      (* Reveal long-term X25519 key *)
     out(c, ed_sk_I);         (* Reveal long-term Ed25519 key *)

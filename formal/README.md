@@ -25,16 +25,16 @@ complementing the game-based security proofs in `docs/security-proof.tex`.
 | `key_agreement` | **verified** | 11 |
 | `ratchet_exists` | **verified** | 5 |
 
-### ProVerif (4/6 queries proven)
+### ProVerif (3/6 obligations discharged)
 
 | Query | Result | Notes |
 |-------|--------|-------|
-| `session_key_secrecy` | **true** | |
+| `kem_shared_secret_secrecy` | **true** | Phase-0 query bound to the fresh KEM shared secret feeding the hybrid root |
 | `authentication` | **true** | |
-| `message_secrecy` | **true** | |
-| `message_integrity` | false | Known ProVerif DH limitation |
-| `ratchet_secrecy` | **true** | |
-| `forward_secrecy` | cannot be proved | Known ProVerif DH limitation |
+| `injective_authentication` | not terminated | Documented obligation; not enabled in the default artifact because the four-DH model does not terminate within the artifact budget |
+| `message_secrecy` | **true** | Phase-0 encrypted-payload secrecy |
+| `message_integrity` | false | Broad unpartnered query admits adversary-originated responder sessions; partnered-session integrity is covered by the game proof and tests |
+| `forward_secrecy_phase` | false | Raw KEM secret is recoverable after KEM SK reveal; hybrid-root FS is covered by the game proof and Tamarin abstraction |
 
 ## Models
 
@@ -43,7 +43,7 @@ complementing the game-based security proofs in `docs/security-proof.tex`.
 | `tamarin/aura_handshake.spthy` | Tamarin | Hybrid X3DH: secrecy, mutual auth, forward secrecy, key confirmation |
 | `tamarin/aura_ratchet.spthy` | Tamarin | Hybrid ratchet: PCS, key agreement, secrecy |
 | `tamarin/aura.spthy` | Tamarin | Full combined model (reference only — non-terminating due to DH complexity) |
-| `proverif/aura.pv` | ProVerif | Session-key secrecy, authentication, message secrecy; Q5/Q6 limitations documented |
+| `proverif/aura.pv` | ProVerif | Handshake KEM-secret secrecy, non-injective authentication, message secrecy; Q3/Q5/Q6 limitations documented |
 
 ## Design Decisions
 
@@ -115,7 +115,7 @@ make handshake
 # Tamarin ratchet only (4 lemmas, <1s)
 make ratchet
 
-# ProVerif (4/6 queries expected proven, ~2s)
+# ProVerif (3/6 obligations discharged; Q3 is documented but disabled by default)
 make proverif
 ```
 
@@ -123,7 +123,7 @@ make proverif
 
 ### Handshake Properties (Theorems 2-3)
 
-- **Session key secrecy** — Hybrid root secret absent any compromise
+- **Handshake secrecy** — Fresh KEM shared secret feeding the hybrid root in the no-compromise phase
 - **Mutual authentication** — Initiator-responder bilateral authentication
 - **Responder authentication** — Symmetric authentication guarantee
 - **Hybrid forward secrecy** — Classical-only compromise after session doesn't reveal key

@@ -133,13 +133,15 @@ The current formal status is:
 |---|---|
 | Tamarin handshake model | 6/6 lemmas verified |
 | Tamarin ratchet model | 4/4 lemmas verified |
-| ProVerif model | 4/6 queries proven |
+| ProVerif model | 3/6 obligations discharged for the handshake/message-path model |
 
-The two unproven ProVerif queries are not treated as machine-checked results.
-They remain documented limitations caused by DH equational-theory
-overapproximation. Q6 is covered by the Tamarin-style secrecy/PCS models and
-game-based proofs; Q5 is carried by the game-based message-security proof and
-implementation tests.
+The three non-discharged ProVerif obligations are not treated as machine-checked
+results. Q3 (injective authentication) is documented but disabled in the default
+artifact because it does not terminate in the four-DH model. Q5 is false for a
+broad unpartnered active trace and therefore does not match the partnered-session
+integrity theorem. Q6 is false for raw KEM-secret secrecy after KEM secret-key
+reveal; the claimed hybrid-root property is covered by the Tamarin-style
+secrecy/PCS models and game-based proofs.
 
 ## Environment capture
 

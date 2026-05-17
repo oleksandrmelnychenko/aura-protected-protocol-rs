@@ -135,13 +135,15 @@ $\concat$ for concatenation of byte strings.
 
 \subsection{Cryptographic Primitives}
 
-\begin{definition}[Diffie--Hellman Group]
+\begin{definition}[X25519 Diffie--Hellman Abstraction]
 \label{def:dh}
-Let $\mathbb{G}$ be the Curve25519 Montgomery curve group of
-prime order~$q = 2^{252} + 27742317777372353535851937790883648493$.
-The X25519 function computes scalar multiplication $\DH(a, B) = [a]B$.
-A keypair is $(a, A) \gets (\getsr \mathbb{Z}_q,\; [a]G)$ where $G$ is the
-base point $u = 9$.
+The proof models X25519 in the validated large prime-order subgroup of
+order~$q = 2^{252} + 27742317777372353535851937790883648493$.
+Curve25519 has cofactor 8; the implementation clamps scalars and rejects
+small-order inputs before using a received public key. The X25519 function
+computes scalar multiplication $\DH(a, B) = [a]B$. A keypair is
+$(a, A) \gets (\getsr \mathbb{Z}_q,\; [a]G)$ where $G$ is the base point
+$u = 9$.
 \end{definition}
 
 \begin{definition}[Gap Computational Diffie--Hellman, $\GapCDH$]
@@ -289,7 +291,7 @@ Responder $R$ publishes a \emph{pre-key bundle}:
   \]
   \item Derive session ID, metadata key, and key confirmation keys:
   \begin{align*}
-    \sid &= \HKDF(\rk_0,\; 16,\; \epsilon,\; \texttt{"Aura-SessionId"}) \\
+    \sid &= \HKDF(\rk_0,\; 16,\; \mathit{ct}_{\mathsf{ky}},\; \texttt{"Aura-SessionId"}) \\
     \mdk_0 &= \HKDF(\rk_0,\; 32,\; \mathit{ctx}_{\mathsf{md}},\; \texttt{"Aura-MetadataKey"}) \\
     \mathit{kc}_I &= \HKDF(\rk_0,\; 32,\; \epsilon,\; \texttt{"Aura-KeyConfirm-I"}) \\
     \mathit{kc}_R &= \HKDF(\rk_0,\; 32,\; \epsilon,\; \texttt{"Aura-KeyConfirm-R"})
@@ -392,10 +394,13 @@ where $\mathsf{aad}_{\mathsf{pay}} = \sid \concat \mathsf{identity\_binding\_has
 \concat \epoch \concat n \concat v$.
 
 \paragraph{Nonce Structure.}
-Each nonce is 12 bytes: $\mathsf{prefix}(8) \concat \mathsf{counter}(2) \concat
-\mathsf{msg\_index}(2)$ where $\mathsf{prefix}$ is random per epoch,
+Payload nonces are 12 bytes:
+$\mathsf{prefix}(8) \concat \mathsf{counter}(2) \concat
+\mathsf{msg\_index}(2)$, where $\mathsf{prefix}$ is sampled by the CSPRNG
+when the send nonce generator is created or reset at a ratchet boundary,
 $\mathsf{counter}$ is monotonically increasing, and $\mathsf{msg\_index}$
-is the chain position.
+is the chain position. Metadata encryption uses an independent 12-byte
+header nonce.
 
 
 % ============================================================================
@@ -446,8 +451,9 @@ length-prefixed concatenation of the pre-key bundle and handshake init message).
 
 A session $\pi_i^s$ with partner $\pi_j^t$ is \emph{fresh} if none of the following hold:
 \begin{enumerate}[nosep]
-  \item $\advA$ queried $\mathsf{RevealSessionKey}(\pi_i^s)$ or
-        $\mathsf{RevealSessionKey}(\pi_j^t)$.
+  \item $\advA$ queried $\mathsf{RevealSessionKey}$ or
+        $\mathsf{RevealState}$ on $\pi_i^s$ or $\pi_j^t$ before
+        $\mathsf{Test}$.
   \item $\advA$ queried both $\mathsf{Corrupt}(P_i)$ and
         $\mathsf{RevealState}(\pi_i^s)$.
   \item $\advA$ queried $\mathsf{Corrupt}(P_j)$ before
@@ -487,11 +493,11 @@ epoch $\geq e + k$ are secure, provided the adversary does not compromise the
 
 
 % ============================================================================
-\section{Theorem 1: Hybrid KEM Combiner Security}
+\section{Theorem 1: Hybrid Root-Key Pseudorandomness}
 \label{sec:thm1}
 % ============================================================================
 
-\begin{theorem}[Hybrid Combiner IND-CCA2]
+\begin{theorem}[Hybrid Root-Key Pseudorandomness]
 \label{thm:combiner}
 If $\KEM$ is $\INDCCA$ secure \textbf{or} $\DH$ satisfies $\GapCDH$ in the
 $\ROM$, then the Aura hybrid combiner
@@ -500,9 +506,9 @@ $\ROM$, then the Aura hybrid combiner
     \mathsf{salt} = \mathit{cs},\;
     \mathsf{info} = \texttt{"Aura-Hybrid-X3DH"})
 \]
-is $\INDCCA$ secure as a KEM.  Concretely, for any $\ppt$ adversary $\advA$:
+outputs a pseudorandom root key.  Concretely, for any $\ppt$ adversary $\advA$:
 \[
-  \adv^{\INDCCA}_{\mathsf{Hybrid}}(\advA)
+  \adv^{\mathsf{rk}}_{\mathsf{Hybrid}}(\advA)
   \;\leq\;
   \min\!\left\{
     \adv^{\INDCCA}_{\KEM}(\advB_1),
@@ -519,7 +525,7 @@ for guessing which of the four X3DH Diffie--Hellman computations is embedded.
 We use two alternative reductions and then take the tighter bound.
 
 \paragraph{Game 0.}
-The real $\INDCCA$ game for the hybrid combiner.  The challenger generates
+The real key-indistinguishability game for the hybrid combiner.  The challenger generates
 classical DH keypairs and Kyber keypairs, computes the classical shared secret
 $\mathit{cs}$ via HKDF over the concatenated DH outputs, encapsulates
 $(\mathit{ct}_{\mathsf{ky}}, \mathit{ss}_{\mathsf{ky}}) \gets
@@ -527,7 +533,7 @@ $(\mathit{ct}_{\mathsf{ky}}, \mathit{ss}_{\mathsf{ky}}) \gets
 $\rk_0 = \HKDF(\mathit{ss}_{\mathsf{ky}},\, \mathit{cs},\,
 \texttt{"Aura-Hybrid-X3DH"})$.  With probability $1/2$, the challenger
 replaces $\rk_0$ with a uniform random value.  $\advA$'s advantage is
-$\adv^{\INDCCA}_{\mathsf{Hybrid}}(\advA)$.
+$\adv^{\mathsf{rk}}_{\mathsf{Hybrid}}(\advA)$.
 
 \paragraph{Path K: Replace Kyber shared secret.}
 We construct a reduction $\advB_1$ to the $\INDCCA$ security of $\KEM$.
@@ -575,7 +581,7 @@ where $S_* \in \{S_K,S_D\}$ is the selected path.
 In Game~3, $\rk_0$ is uniformly random regardless of $b$, so
 $\advA$ has zero advantage.  Combining:
 \[
-  \adv^{\INDCCA}_{\mathsf{Hybrid}}(\advA)
+  \adv^{\mathsf{rk}}_{\mathsf{Hybrid}}(\advA)
   \;\leq\; \min\!\left\{\adv^{\INDCCA}_{\KEM}(\advB_1),
   4 \cdot \adv^{\GapCDH}_{\DH}(\advB_2)\right\}
   + \adv^{\dualPRF}_{\HKDF}(\advB_3) + \frac{q_H}{2^{256}}.
@@ -1164,10 +1170,10 @@ nonces, bounded at $W = 2048$ entries.
 For a replayed message with nonce $\nu$:
 \begin{itemize}[nosep]
   \item If $\nu$ is in the cache: rejected immediately (duplicate detection).
-  \item If $\nu$ was evicted from the cache: eviction removes the entries
-        with the \emph{smallest counters} (bytes [8..10] of the 12-byte nonce).
-        Since the replayed message has a counter $\leq$ the evicted counter,
-        and the ratchet epoch has advanced, the chain key and message key have
+  \item If $\nu$ was evicted from the cache: eviction removes the oldest
+        observed nonce entries. Since the replayed message is outside the
+        receiver's retained window and the ratchet epoch has advanced, the
+        chain key and message key have
         been rotated.  The stale message key is no longer derivable from the
         current chain state.
 \end{itemize}
@@ -1193,11 +1199,9 @@ W \cdot q_r / 2^{96} + \adv^{\INTCTXT}_{\AEAD}(\advB)$. \qedhere
 \end{proof}
 
 \begin{remark}[Nonce Pruning Correctness]
-The nonce cache pruning evicts entries with the smallest embedded
-\emph{counters} (bytes [8..10] of the 12-byte nonce), not the smallest
-message indices.  Since counters monotonically increase and represent
-temporal ordering, this correctly evicts the oldest nonces first, preserving
-the most recent entries for replay detection.
+The nonce cache pruning evicts the oldest observed nonce entries from the
+bounded insertion-order window. This preserves recent entries for replay
+detection without relying on ad hoc parsing of the nonce counter.
 \end{remark}
 
 
@@ -1216,10 +1220,10 @@ the most recent entries for replay detection.
 \textbf{Component / Assumption} & \textbf{Standard} & \textbf{Bits} \\
 \midrule
 X25519 / Gap-CDH & Curve25519 & 128 \\
-Kyber-768 / Module-LWE & FIPS 203, Level 3 & 182 \\
+ML-KEM-768 / Module-LWE & FIPS 203, category 3 & NIST 3 \\
 AES-256-GCM-SIV / MRAE & RFC 8452 & 128 \\
-HKDF-SHA256 / Dual-PRF & RFC 5869 & 256 \\
-HMAC-SHA256 / PRF & FIPS 198-1 & 256 \\
+HKDF-SHA256 / Dual-PRF & RFC 5869 & PRF, 256-bit output \\
+HMAC-SHA256 / PRF & FIPS 198-1 & PRF, 256-bit output \\
 Ed25519 / SUF-CMA & EdDSA & 128 \\
 \midrule
 \multicolumn{3}{@{}l}{\textbf{Composite protocol bounds}} \\
@@ -1239,10 +1243,9 @@ The dominant loss factor is $q_s$ (number of sessions) in
 \cref{thm:ake}, which is inherent in the eCK model's guessing
 argument.  For typical deployments with $q_s \leq 2^{30}$ sessions,
 the effective security is $128 - 30 = 98$ bits against classical
-adversaries, which remains well above the 80-bit minimum.
-In AKE/HNDL settings where the relevant KEM secret key is not later
-disclosed, the Kyber component gives $182 - 30 = 152$ bits against quantum
-adversaries.
+adversaries. ML-KEM-768 is treated as a NIST category-3 KEM; concrete
+Core-SVP bit estimates are estimator-dependent and are not protocol
+constants.
 
 \paragraph{Tightness.}
 The reductions in Theorems~3 and~4 are \emph{tight} (no guessing

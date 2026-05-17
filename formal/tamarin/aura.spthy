@@ -4,7 +4,7 @@
  * This model captures the hybrid post-quantum key exchange (X25519 + Kyber-768)
  * and the per-direction hybrid double ratchet used in the Aura protocol.
  *
- * Properties verified:
+ * Properties specified (reference model; release verification uses decomposed models):
  *   - Session key secrecy (absent compromise)
  *   - Mutual authentication (bilateral key confirmation)
  *   - Forward secrecy (long-term key compromise after session establishment)

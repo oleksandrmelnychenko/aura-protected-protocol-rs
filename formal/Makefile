@@ -1,16 +1,16 @@
 # Aura Protocol — Formal Verification
 #
 # Targets:
-#   make all            — run release-scope 1:1 verification (handshake + ratchet + proverif)
+#   make all            — run release-scope verification (handshake + ratchet + active proverif)
 #   make tamarin        — verify both Tamarin models
 #   make handshake      — Tamarin: X3DH handshake (secrecy, auth, FS)
 #   make ratchet        — Tamarin: double ratchet (PCS, key secrecy, agreement, reachability)
 #   make tamarin-full   — Tamarin: full combined model (may be very slow)
-#   make proverif       — run the ProVerif model (4/6 expected proven)
+#   make proverif       — run the active ProVerif model (3/6 obligations discharged)
 #   make clean          — remove generated artifacts
 
-TAMARIN  := tamarin-prover
-PROVERIF := proverif
+TAMARIN  ?= tamarin-prover
+PROVERIF ?= proverif
 
 SPTHY_FULL      := tamarin/aura.spthy
 SPTHY_HANDSHAKE := tamarin/aura_handshake.spthy

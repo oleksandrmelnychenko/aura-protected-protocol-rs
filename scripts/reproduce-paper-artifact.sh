@@ -70,14 +70,38 @@ versions() {
     echo "repo_root=$ROOT"
     git -C "$ROOT" rev-parse HEAD 2>/dev/null | sed 's/^/git_head=/'
     git -C "$ROOT" status --short 2>/dev/null | sed 's/^/git_status=/' || true
+    uname -a 2>/dev/null | sed 's/^/uname=/'
+    if [ -r /etc/os-release ]; then
+      . /etc/os-release
+      echo "os=${PRETTY_NAME:-unknown}"
+    fi
+    lscpu 2>/dev/null | awk -F: '/^(Architecture|CPU\(s\)|Model name|Vendor ID)/ { gsub(/^[ \t]+/, "", $2); print "cpu_" $1 "=" $2 }' || true
     rustc --version 2>/dev/null | sed 's/^/rustc=/'
+    rustc -vV 2>/dev/null | sed 's/^/rustc_vv=/' || true
     cargo --version 2>/dev/null | sed 's/^/cargo=/'
+    sha256sum "$ROOT/Cargo.lock" 2>/dev/null | awk '{ print "cargo_lock_sha256="$1 }' || true
+    env | LC_ALL=C sort | grep -E '^(CARGO|RUSTFLAGS|RUSTUP_TOOLCHAIN)=' | sed 's/^/env_/' || true
+    echo "artifact_build_profiles=release tests/examples; bench mode uses Cargo bench profile"
     protoc --version 2>/dev/null | sed 's/^/protoc=/' || echo "protoc=missing"
     curl --version 2>/dev/null | head -n 1 | sed 's/^/curl=/' || echo "curl=missing"
     pdflatex --version 2>/dev/null | head -n 1 | sed 's/^/pdflatex=/' || echo "pdflatex=missing"
-    tamarin-prover --version 2>/dev/null | head -n 1 | sed 's/^/tamarin=/' || echo "tamarin=missing"
-    proverif -version 2>/dev/null | head -n 1 | sed 's/^/proverif=/' || echo "proverif=missing"
+    if command -v tamarin-prover >/dev/null 2>&1; then
+      tamarin-prover --version 2>/dev/null | head -n 1 | sed 's/^/tamarin=/'
+    else
+      echo "tamarin=missing"
+    fi
+    if command -v proverif >/dev/null 2>&1; then
+      proverif -help 2>&1 | head -n 1 | sed 's/^/proverif=/'
+    else
+      echo "proverif=missing"
+    fi
   } | tee "$OUT/versions.txt"
+}
+
+capture_criterion() {
+  if [ -d "$ROOT/target/criterion" ]; then
+    tar -C "$ROOT/target" -czf "$OUT/criterion.tar.gz" criterion
+  fi
 }
 
 paper_build() {
@@ -123,6 +147,7 @@ case "$MODE" in
   bench)
     versions
     run benchmarks cargo bench
+    capture_criterion
     ;;
   full)
     versions
@@ -136,6 +161,7 @@ case "$MODE" in
     paper_build
     reference_audit
     run benchmarks cargo bench
+    capture_criterion
     ;;
   *)
     cat >&2 <<EOF

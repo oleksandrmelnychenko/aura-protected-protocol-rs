@@ -98,7 +98,7 @@
 \newcommand{\MLS}{\textsf{MLS}}
 
 % ─── Title ───────────────────────────────────────────────────
-\title{\textbf{Aura: A Hybrid Post-Quantum Secure Messaging Protocol\\with Per-Ratchet KEM Rotation and Formal Verification}}
+\title{\textbf{Aura: A Hybrid Post-Quantum Secure Messaging Protocol\\with Per-Ratchet KEM Rotation and Symbolic Models}}
 
 \author{%
   Oleksandr Melnychenko\\
@@ -119,7 +119,7 @@ Aura is a hybrid post-quantum messaging protocol built around X25519 and ML-KEM-
 
 The construction binds each new KEM public key into the HKDF transcript and separates payload encryption from metadata encryption by using an independent per-epoch metadata key. Relative to Signal \SPQR{}/Triple Ratchet and Apple \PQThree{}, the claim is limited to an open Rust artifact that exposes KEM-key binding, metadata-key rotation, and proof-to-code links in one inspectable implementation.
 
-The security argument consists of six game-based theorems under standard assumptions (Gap-CDH, ML-KEM IND-CCA2, dual-PRF, and MRAE), together with symbolic models: 10 Tamarin lemmas verify, and 4 of 6 ProVerif queries verify. The two remaining ProVerif queries are not discharged because ProVerif overapproximates Diffie--Hellman equational reasoning in this model: Q6 is supported by Tamarin-style secrecy/PCS models and game-based proofs, while Q5 is supported by the game-based message-security proof and implementation tests. The implementation contains approximately 35.9k lines in \texttt{src/}, 30.1k lines of tests, and 1.1k lines of benchmarks. The test matrix contains 750 default scenarios and 889 scenarios with \texttt{ffi} enabled.
+The security argument consists of six game-based theorems under standard assumptions (Gap-CDH, ML-KEM IND-CCA2, dual-PRF, and MRAE), together with symbolic models: 10 Tamarin lemmas verify, and 3 of 6 ProVerif obligations discharge for the handshake/message-path model. The remaining ProVerif obligations are not counted as machine-checked results: injective authentication does not terminate in the default four-DH model, the broad message-integrity query admits adversary-originated sessions, and the raw KEM-secret phase query is false after KEM secret-key disclosure. The implementation contains approximately 35.9k lines in \texttt{src/}, 30.1k lines of tests, and 1.1k lines of benchmarks. The full repository test matrix contains 750 default scenarios and 889 scenarios with \texttt{ffi} enabled.
 \end{abstract}
 
 \smallskip
@@ -167,7 +167,7 @@ In particular, the paper makes five concrete contributions:
 
   \item \textbf{N4: explicit PCS asymmetry.} The analysis states and proves the 1-step classical / 2-step hybrid recovery boundary. The extra hybrid step is treated as a consequence of KEM directionality, not as an implementation accident.
 
-  \item \textbf{N5: proof-to-code artifact chain.} The repository records explicit links among 6 theorems, 8 supporting lemmas, 10 verified Tamarin lemmas, 4 verified ProVerif queries, Rust tests, benchmarks, FFI boundaries, and the protocol state machine.
+  \item \textbf{N5: proof-to-code artifact chain.} The repository records explicit links among 6 theorems, 8 supporting lemmas, 10 verified Tamarin lemmas, 3 discharged ProVerif obligations, Rust tests, benchmarks, FFI boundaries, and the protocol state machine.
 \end{enumerate}
 
 % ═════════════════════════════════════════════════════════════
@@ -238,8 +238,13 @@ $N_{\max}$ & Maximum chain length (default 10{,}000) \\
 
 \subsection{Cryptographic Primitives}
 
-\begin{definition}[Diffie--Hellman on Curve25519]\label{def:dh}
-We work over the Montgomery curve Curve25519 of prime order $q = 2^{252} + 27742317777372353535851937790883648493$. The X25519 function~\cite{rfc7748} computes scalar multiplication $\DH(a, B) = [a]B$. A keypair is $(a, A)$ where $A = [a]G$ and $G$ is the base point $u = 9$.
+\begin{definition}[Diffie--Hellman on X25519]\label{def:dh}
+The proof models X25519 in the validated large prime-order subgroup of order
+$q = 2^{252} + 27742317777372353535851937790883648493$. Curve25519 itself
+has cofactor 8; the implementation clamps scalars and rejects small-order
+inputs before using a received public key. The X25519 function~\cite{rfc7748}
+computes scalar multiplication $\DH(a, B) = [a]B$. A keypair is $(a, A)$
+where $A = [a]G$ and $G$ is the base point $u = 9$.
 \end{definition}
 
 \begin{definition}[Gap-CDH]\label{def:gap-cdh}
@@ -341,14 +346,16 @@ $(\mathit{ct}_{\mathit{ky}},\, \mathit{ss}_{\mathit{ky}}) \gets \KEM.\Encaps(kpk
 $\rk_0 \gets \HKDF(\mathit{ss}_{\mathit{ky}},\, 32,\, \mathit{cs},\, \texttt{"Aura-Hybrid-X3DH"})$\;
 \BlankLine
 \Comment{Derive session keys}
-$\mathit{sid} \gets \HKDF(\rk_0,\, 16,\, \varepsilon,\, \texttt{"Aura-SessionId"})$\;
+$\mathit{sid} \gets \HKDF(\rk_0,\, 16,\, \mathit{ct}_{\mathit{ky}},\, \texttt{"Aura-SessionId"})$\;
+$\mathit{ctx}_{\mathit{md}} \gets \mathrm{sort}(\EK_I^{\mathit{pub}}, \SPK_R^{\mathit{pub}}) \concat \mathit{sid}$\;
 $\mdk_0 \gets \HKDF(\rk_0,\, 32,\, \mathit{ctx}_{\mathit{md}},\, \texttt{"Aura-MetadataKey"})$\;
 $\mathit{kc}_I \gets \HKDF(\rk_0,\, 32,\, \varepsilon,\, \texttt{"Aura-KeyConfirm-I"})$\;
 $\mathit{kc}_R \gets \HKDF(\rk_0,\, 32,\, \varepsilon,\, \texttt{"Aura-KeyConfirm-R"})$\;
 \BlankLine
 \Comment{Key confirmation}
-$\sigma_I^{\mathit{bind}} \gets \textsf{Ed25519.Sign}(ik_I^{\mathit{ed}},\, \mathit{ed}_I^{\mathit{pub}} \concat \IK_I^{\mathit{pub}} \concat kpk_I)$\;
-$\mathit{th} \gets \HMAC(\texttt{"Aura-Handshake-Transcript"},\, \mathit{len}(\mathit{Bundle}_R) \concat \mathit{Bundle}_R \concat \mathit{len}(\mathit{Init}) \concat \mathit{Init})$\;
+$m_I^{\mathit{bind}} \gets \texttt{"Aura-Handshake-Init-Identity-Binding"} \concat \mathit{ed}_I^{\mathit{pub}} \concat \IK_I^{\mathit{pub}} \concat kpk_I$\;
+$\sigma_I^{\mathit{bind}} \gets \textsf{Ed25519.Sign}(ik_I^{\mathit{ed}},\, m_I^{\mathit{bind}})$\;
+$\mathit{th} \gets \HMAC(\texttt{"Aura-Handshake-Transcript"},\, \mathit{len}(\mathit{Bundle}_R) \concat \mathit{Bundle}_R \concat \mathit{len}(\mathit{Init}_{\mathit{mac}=0}) \concat \mathit{Init}_{\mathit{mac}=0})$\;
 $\mathit{mac}_I \gets \HMAC(\mathit{kc}_I,\, \mathit{th})$\;
 \BlankLine
 Send $\mathit{Init} = (\mathit{ed}_I^{\mathit{pub}},\, \IK_I^{\mathit{pub}},\, \EK_I^{\mathit{pub}},\, \mathit{ct}_{\mathit{ky}},\, kpk_I,\, \sigma_I^{\mathit{bind}},\, \mathit{mac}_I,\, \mathit{opk\_id},\, N_{\max})$\;
@@ -449,15 +456,17 @@ The metadata layer ($\mdk_e$) and payload layer ($\mk_{e,n}$) use keys derived f
 \end{lemma}
 
 \paragraph{Nonce structure.}
-Each 12-byte nonce consists of an 8-byte epoch prefix and two 2-byte counters:
+Payload nonces use a structured 12-byte layout:
 \begin{equation}\label{eq:nonce-layout}
   \mathit{nonce} =
   \mathit{prefix}[8] \concat
   \mathit{counter}_{\mathrm{LE}}[2] \concat
   \mathit{msg\_index}_{\mathrm{LE}}[2].
 \end{equation}
-The prefix is derived for the epoch, the counter is monotonically increasing,
-and the message index provides per-chain addressability. The implementation
+The prefix is sampled by the CSPRNG when the send nonce generator is created
+or reset at a ratchet boundary, the counter is monotonically increasing,
+and the message index provides per-chain addressability. Metadata encryption
+uses an independent 12-byte \texttt{header\_nonce}. The implementation
 forces a ratchet at the message-chain limit ($N_{\max}=10{,}000$), before
 either 16-bit field is exhausted, and emits a nonce-budget warning when the
 remaining budget falls to 10\% or below.
@@ -474,7 +483,7 @@ where both Ed25519 and X25519 public key pairs are lexicographically sorted befo
 Replay protection is achieved through a bounded nonce cache:
 \begin{itemize}
   \item A $\mathsf{HashSet}$ of seen payload nonces, bounded to $W = 2{,}048$ entries.
-  \item Nonces embed a monotonic counter (bytes $[8{:}10]$); when the cache is full, entries with the smallest counter values are evicted first.
+  \item Nonces embed a monotonic counter (bytes $[8{:}10]$); when the cache is full, the oldest observed nonce entries are evicted first.
   \item Duplicate nonces are immediately rejected before payload decryption.
 \end{itemize}
 
@@ -482,7 +491,7 @@ Replay protection is achieved through a bounded nonce cache:
 
 Session state is serialized via Protocol Buffers and protected by two mechanisms:
 \begin{itemize}
-  \item \textbf{HMAC anti-rollback:} An HMAC-SHA256 tag computed over the serialized state (key derived from the root key via $\HKDF$) prevents state rollback attacks.
+  \item \textbf{State integrity HMAC:} An HMAC-SHA256 tag computed over the serialized state (key derived from the root key via $\HKDF$) authenticates serialized-state integrity. Rollback freshness requires the external monotonic counter used by sealed-state import/export.
   \item \textbf{Sealed export:} For persistent storage, the state is encrypted using a double-envelope construction: a random data encryption key (DEK) encrypts the state, and the DEK is encrypted under a caller-provided key encryption key (KEK), both using $\AEAD$.
 \end{itemize}
 
@@ -516,8 +525,8 @@ Sessions $\pi_i^s$ and $\pi_j^t$ are \emph{partnered} if they share the same tra
 \begin{definition}[Freshness]\label{def:freshness}
 A session $\pi_i^s$ with partner $\pi_j^t$ is \emph{fresh} if the adversary has not:
 \begin{enumerate}
-  \item Queried $\textsf{RevealSessionKey}$ on either $\pi_i^s$ or $\pi_j^t$.
-  \item Queried both $\textsf{Corrupt}(P_i)$ and $\textsf{RevealState}(\pi_i^s)$.
+  \item Queried $\textsf{RevealSessionKey}$ or $\textsf{RevealState}$ on either $\pi_i^s$ or $\pi_j^t$ before $\textsf{Test}$.
+  \item Queried both $\textsf{Corrupt}(P_i)$ and $\textsf{RevealState}(\pi_i^s)$ before the tested session completed.
   \item Queried $\textsf{Corrupt}(P_j)$ before session $\pi_j^t$ was created and no OPK was used.
 \end{enumerate}
 \end{definition}
@@ -546,16 +555,16 @@ After full state compromise at epoch $e$ via $\textsf{RevealState}$, messages at
 
 This section states six security theorems for the Aura protocol. Full proofs are available in the companion technical report~\cite{aura-security-proof}; the paper keeps the theorem statements and proof sketches in line with the main construction.
 
-\subsection{Theorem 1: Hybrid KEM Combiner Security}\label{sec:thm1}
+\subsection{Theorem 1: Hybrid Root-Key Pseudorandomness}\label{sec:thm1}
 
-\begin{theorem}[Hybrid Combiner $\INDCCA$]\label{thm:hybrid-combiner}
+\begin{theorem}[Hybrid Root-Key Pseudorandomness]\label{thm:hybrid-combiner}
 If $\KEM$ is $\INDCCA$ secure \textbf{or} $\DH$ satisfies $\GapCDH$ in the $\ROM$, then the Aura hybrid combiner
 \begin{equation}\label{eq:combiner-root}
   \rk_0 = \HKDF(\mathit{ss}_{\mathit{ky}},\, 32,\, \mathit{cs},\, \texttt{"Aura-Hybrid-X3DH"})
 \end{equation}
-is $\INDCCA$ secure as a KEM. Concretely:
+outputs a pseudorandom root key. Concretely:
 \begin{equation}\label{eq:combiner-bound}
-  \adv^{\INDCCA}_{\mathrm{Hybrid}}(\advA)
+  \adv^{\mathsf{rk}}_{\mathrm{Hybrid}}(\advA)
   \leq
   \min\!\left\{
     \adv^{\INDCCA}_{\KEM}(\advB_1),
@@ -701,7 +710,7 @@ For any adversary replaying at most $q_r$ messages within a window of $W = 2{,}0
 \end{theorem}
 
 \begin{proof}[Proof sketch]
-Exact replays are caught by the nonce cache ($W$ entries, FIFO with eviction by smallest counter). If a nonce was evicted, the stale message key is no longer derivable. Probability of cache miss on a valid nonce: $W/2^{96}$ per attempt. Modified replays (altered ciphertext) require forging an AEAD tag, reducing to $\INTCTXT$.
+Exact replays are caught by the nonce cache ($W$ entries, evicting the oldest observed nonce entries). If a nonce was evicted, the stale message key is no longer derivable. Probability of cache miss on a valid nonce: $W/2^{96}$ per attempt. Modified replays (altered ciphertext) require forging an AEAD tag, reducing to $\INTCTXT$.
 \end{proof}
 
 \subsection{Concrete Security Bounds}
@@ -715,10 +724,10 @@ Exact replays are caught by the nonce cache ($W$ entries, FIFO with eviction by 
 Component / Assumption & Standard & Security (bits) \\
 \midrule
 X25519 / $\GapCDH$ & Curve25519 & 128 \\
-Kyber-768 / Module-LWE & FIPS 203, Level 3 & 182 \\
+ML-KEM-768 / Module-LWE & FIPS 203, category 3 & NIST Level 3 \\
 AES-256-GCM-SIV / $\MRAE$ & RFC 8452 & 128 \\
-HKDF-SHA256 / $\dualPRF$ & RFC 5869 & 256 \\
-HMAC-SHA256 / $\PRF$ & FIPS 198-1 & 256 \\
+HKDF-SHA256 / $\dualPRF$ & RFC 5869 & PRF, 256-bit output \\
+HMAC-SHA256 / $\PRF$ & FIPS 198-1 & PRF, 256-bit output \\
 Ed25519 / SUF-CMA & EdDSA & 128 \\
 \midrule
 Hybrid combiner (\cref{thm:hybrid-combiner}) & $\GapCDH$ or ML-KEM & \textbf{128} \\
@@ -731,7 +740,7 @@ Message security (\cref{thm:msg-security}) & $\PRF$ + $\MRAE$ & \textbf{128} \\
 \end{tabular}
 \end{table}
 
-The dominant security loss arises from the session-guessing factor $q_s$ in \cref{thm:ake}. For $q_s \leq 2^{30}$: effective security is $128 - 30 = 98$ bits classical. In AKE/HNDL settings where the relevant KEM secret key is not later disclosed, the Kyber component gives $182 - 30 = 152$ bits against quantum adversaries. The FS and PCS bounds in \cref{thm:fs,thm:pcs} do not add a separate session-guessing factor.
+The dominant security loss arises from the session-guessing factor $q_s$ in \cref{thm:ake}. For $q_s \leq 2^{30}$, the classical 128-bit target leaves a 98-bit concrete bound in the AKE reduction. ML-KEM-768 is treated as a NIST category-3 KEM; any Core-SVP bit estimate should be read as estimator-dependent rather than as a protocol constant. The FS and PCS bounds in \cref{thm:fs,thm:pcs} do not add a separate session-guessing factor.
 
 
 % ═════════════════════════════════════════════════════════════
@@ -739,7 +748,7 @@ The dominant security loss arises from the session-guessing factor $q_s$ in \cre
 % ═════════════════════════════════════════════════════════════
 \section{Formal Verification}\label{sec:formal}
 
-The game-based proofs are accompanied by machine-checked symbolic models in two tools: Tamarin Prover~\cite{meier2013} for trace-based reasoning and ProVerif~\cite{blanchet2016} for Horn-clause analysis. Across these tool-specific models, 14 of 16 queried properties discharge; the two remaining ProVerif queries are reported as unproved obligations.
+The game-based proofs are accompanied by machine-checked symbolic models in two tools: Tamarin Prover~\cite{meier2013} for trace-based reasoning and ProVerif~\cite{blanchet2016} for Horn-clause analysis. Across these tool-specific models, 13 of 16 listed obligations discharge in the default artifact; the three remaining ProVerif obligations are reported explicitly rather than folded into the verified claim.
 
 \subsection{Tamarin Prover}\label{sec:tamarin}
 
@@ -754,7 +763,7 @@ The handshake model (\texttt{aura\_handshake.spthy}) uses Tamarin's built-in Dif
 
 \paragraph{Key design decisions.}
 \begin{itemize}
-  \item Only 2 of the 4 X3DH DH operations ($\mathit{dh}_1$ and $\mathit{dh}_2$) are modeled to avoid Tamarin's source saturation with $\geq 4$ DH operations. This abstraction is intended to be conservative: omitting DH contributions gives the adversary fewer secrets to distinguish and weakens the modeled protocol.
+  \item Only 2 of the 4 X3DH DH operations ($\mathit{dh}_1$ and $\mathit{dh}_2$) are modeled to avoid Tamarin's source saturation with $\geq 4$ DH operations. This removes two DH contributions; it is conservative for session-key secrecy, but it does not model every transcript-binding path in the implementation.
 
   \item A single \texttt{!Keys} fact merges all of a party's key material (identity key, signed pre-key, Kyber secret key), preventing cross-instance key mismatch attacks that arise from separate persistent facts.
 \end{itemize}
@@ -821,40 +830,40 @@ Lemma~1 (\texttt{pcs\_sender\_compromise}) captures the PCS property under the t
 
 \subsection{ProVerif}\label{sec:proverif}
 
-The ProVerif model (\texttt{aura.pv}) is more detailed than the Tamarin ratchet abstraction: it models all four X3DH DH operations, Ed25519 signature verification, the full chain KDF, and augmented HKDF info strings. It uses one public Dolev--Yao channel with 10 distinct symbolic types and supports unbounded session replication.
+The active ProVerif model (\texttt{aura.pv}) covers the handshake/message path. It models all four X3DH DH operations, Ed25519 signature verification, the initial chain KDF, and augmented HKDF info strings. It uses one public Dolev--Yao channel with 10 distinct symbolic types and supports unbounded session replication. Ratchet PCS is analyzed by the Tamarin ratchet model and the game-based theorem, not by an active ProVerif ratchet process.
 
 \paragraph{Trust model.}
 Identity keys are registered in a ProVerif \texttt{table}, modeling out-of-band key verification (TOFU / safety numbers).
 
 \paragraph{Phase-based forward secrecy.}
-Phase 0 represents honest execution; phase 1 reveals all long-term keys. Query~Q6 tests whether the session key established in phase~0 remains secret in phase~1.
+Phase 0 represents honest execution; phase 1 reveals all long-term keys. Queries Q1 and Q4 are no-compromise phase-0 secrecy checks; Q6 is a stress query for whether the phase-0 KEM shared secret remains hidden after phase-1 disclosure.
 
-\paragraph{Queries (4/6 proven).}
+\paragraph{Queries (3/6 discharged).}
 
 \begin{table}[H]
 \centering
-\caption{ProVerif model: 4/6 queries proven.}\label{tab:proverif}
+\caption{ProVerif model: 3/6 obligations discharged.}\label{tab:proverif}
 \small
 \begin{tabularx}{\textwidth}{@{}clXc@{}}
 \toprule
 \# & Query & Property & Status \\
 \midrule
-Q1 & Session key secrecy & $\rk_0$ secret from adversary & \checkmark \\
+Q1 & KEM shared-secret secrecy & Phase-0 KEM secret feeding $\rk_0$ hidden from adversary & \checkmark \\
 Q2 & Authentication (non-inj.) & Initiator complete $\Rightarrow$ responder accepted & \checkmark \\
-Q3 & Authentication (injective) & Injective correspondence of Q2 & \checkmark \\
-Q4 & Message secrecy & Encrypted payload secret from adversary & \checkmark \\
+Q3 & Authentication (injective) & Injective correspondence of Q2 & n/t \\
+Q4 & Message secrecy & Phase-0 encrypted payload secret from adversary & \checkmark \\
 Q5 & Message integrity & Correspondence between send/receive events & $\times$ \\
-Q6 & Forward secrecy (phase) & Phase-1 compromise does not break phase-0 key & $\times$ \\
+Q6 & Forward secrecy (phase) & Phase-1 compromise does not reveal phase-0 KEM secret & $\times$ \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
 \paragraph{Analysis of unproven queries.}
-Q5 and Q6 fail due to limitations of ProVerif's handling of the Diffie--Hellman equational theory: ProVerif uses Horn clause resolution that overapproximates the DH adversary's capabilities. The resulting traces have not been mapped to implementation attacks, so they are treated as unproved ProVerif obligations. Q6 is supported by the Tamarin-style secrecy/PCS models and the game-based proofs; Q5 is supported by the game-based message-security proof and implementation tests.
+Q3, Q5, and Q6 are not discharged by the current ProVerif model. Q3 is an injective-authentication obligation that does not terminate in the default four-DH model within the artifact budget. Q5 is a broad unpartnered message-integrity query; ProVerif finds an active trace in which the adversary starts its own responder session and injects its own payload, so the trace is outside the partnered-session theorem. Q6 asks for raw KEM-secret secrecy after the responder's long-term KEM secret key is revealed; that raw secret is recoverable by decapsulation and is not the claimed FS property. Authentication, partnered message integrity, and PCS are supported by the Tamarin models, the game-based proofs, and implementation tests.
 
 \subsection{Complementarity of Tools}
 
-The two tools are complementary: Tamarin provides precise DH reasoning but requires abstractions to avoid non-termination; ProVerif handles unbounded sessions with all four DH operations but overapproximates DH-dependent properties. The reported result is therefore 10/10 Tamarin lemmas and 4/6 ProVerif queries, with Q5/Q6 kept outside the machine-checked claim.
+The two tools are complementary: Tamarin provides precise DH reasoning but requires abstractions to avoid non-termination; ProVerif handles unbounded handshake/message sessions with all four DH operations and exposes scope errors in overly broad queries. The reported result is therefore 10/10 Tamarin lemmas and 3/6 discharged ProVerif obligations, with Q3/Q5/Q6 kept outside the machine-checked claim and ratchet PCS carried by the Tamarin ratchet model plus the game-based proof.
 
 
 % ═════════════════════════════════════════════════════════════
@@ -924,7 +933,7 @@ Key material is protected at multiple levels:
 The Kyber-768 integration has three implementation points that affect the protocol artifact:
 
 \begin{itemize}
-  \item \textbf{Self-testing.} Every keypair generation is followed by an immediate encapsulate/decapsulate round-trip with constant-time shared secret comparison. This detects KEM correctness failures, including gross RNG or library faults that cause encapsulation and decapsulation to disagree.
+  \item \textbf{Self-testing.} Random ML-KEM key generation is followed by an immediate encapsulate/decapsulate round-trip with constant-time shared secret comparison. Deterministic seeded generation is reserved for reproducible vectors. The self-test detects KEM correctness failures, including gross RNG or library faults that cause encapsulation and decapsulation to disagree.
 
   \item \textbf{Deterministic keygen.} For deterministic identity derivation from a master key, the wrapper derives a 32-byte seed and instantiates a local \texttt{ChaCha20Rng}; \texttt{MlKem768::generate} is then called with that local RNG. No global RNG hook or C library state is involved.
 
@@ -933,7 +942,7 @@ The Kyber-768 integration has three implementation points that affect the protoc
 
 \subsection{C Foreign Function Interface}
 
-The library exports a C-compatible API via the umbrella header \texttt{include/epp\_api.h} (which includes the split client/common headers), enabling integration with iOS (Swift/Objective-C), Android (JNI), and other platforms. The FFI layer provides:
+The library exports a C-compatible API via the umbrella header \texttt{include/aura\_api.h} (which includes the split client/common headers) and uses the \texttt{aura\_*} symbol prefix for exported functions. The FFI layer provides:
 
 \begin{itemize}
   \item Opaque handle types (\texttt{AuraIdentityHandle}, \texttt{AuraSessionHandle}, group/VoIP variants) with explicit create/destroy lifecycle.
@@ -952,7 +961,7 @@ Build targets: \texttt{staticlib} (C linking), \texttt{cdylib} (dynamic library)
 
 \subsection{Performance Benchmarks}\label{sec:benchmarks}
 
-All benchmarks were conducted using Criterion.rs (v0.8, 200 samples, 5-second measurement time) on the Apple M-series host used for the artifact run. The artifact records the exact model, OS, Rust version, and build profile. Results are summarized in \cref{tab:bench-core,tab:bench-payload,tab:bench-overhead}. The public benchmark harness also contains a fixed 128-message, 256-byte \texttt{pq\_traffic\_profiles} group for comparing handshake-only PQ, sparse chain-boundary PQ, periodic chain-boundary PQ, and per-reply PQ rekeying under the same measurement harness.
+Benchmarks are single-host Criterion.rs measurements from \texttt{cargo bench --bench protocol\_bench} with 200 samples and 5-second measurement time. Values are hardware-dependent implementation-cost snapshots, not security assumptions. The artifact records OS/CPU details, Rust versions, build-profile context, \texttt{Cargo.lock} hash, stdout logs, and Criterion result files. Results are summarized in \cref{tab:bench-core,tab:bench-payload,tab:bench-overhead}. The public benchmark harness also contains a fixed 128-message, 256-byte \texttt{pq\_traffic\_profiles} group for comparing handshake-only PQ, sparse chain-boundary PQ, periodic chain-boundary PQ, and per-reply PQ rekeying under the same measurement harness.
 
 \begin{table}[H]
 \centering
@@ -985,11 +994,11 @@ Shamir reconstruct (3-of-5, 32\,B) & $\sim$3\,$\mu$s \\
 
 \begin{table}[H]
 \centering
-\caption{Encrypt+decrypt round-trip latency by payload size.}\label{tab:bench-payload}
+\caption{Pre-generated envelope decrypt latency by payload size.}\label{tab:bench-payload}
 \small
 \begin{tabular}{@{}rr@{}}
 \toprule
-Payload Size & Round-Trip \\
+Payload Size & Decrypt Latency \\
 \midrule
 64\,B & $\sim$35\,$\mu$s \\
 256\,B & $\sim$38\,$\mu$s \\
@@ -1016,13 +1025,13 @@ Kyber-768 encap + decap (PQ overhead) & $\sim$190\,$\mu$s \\
 Full hybrid ratchet step (DH + Kyber + HKDF + encrypt) & $\sim$259\,$\mu$s \\
 \midrule
 Alternating throughput (ratchet every message, 256\,B) & $\sim$280\,$\mu$s/msg \\
-Burst throughput (no ratchet, 256\,B) & $\sim$15\,$\mu$s/msg \\
+Burst decrypt throughput (pre-generated envelopes, 256\,B) & $\sim$15\,$\mu$s/msg \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \paragraph{Analysis.}
-In these measurements, a hybrid ratchet step costs about $259\,\mu$s, versus about $50\,\mu$s for X25519 alone. Same-direction burst messages avoid ratchet work and measure about $15\,\mu$s/msg; alternating 256-byte messages measure about $280\,\mu$s/msg. The full handshake measures about $1.1$\,ms on the benchmark host.
+In these measurements, a hybrid ratchet step costs about $259\,\mu$s, versus about $50\,\mu$s for X25519 alone. Pre-generated same-direction burst decrypts measure about $15\,\mu$s/msg; alternating 256-byte messages, which time encryption and decryption in the loop, measure about $280\,\mu$s/msg. The full handshake measures about $1.1$\,ms on the benchmark host.
 
 \subsection{Test Coverage}\label{sec:tests}
 
@@ -1173,7 +1182,7 @@ Signal ratchets only when a new DH public key is received from the peer, meaning
 \end{enumerate}
 
 \paragraph{Cost.}
-Each hybrid ratchet step adds $\sim$259\,$\mu$s of computation and 2{,}304 bytes of bandwidth overhead (1{,}184 bytes for the Kyber public key, 1{,}088 bytes for the Kyber ciphertext, 32 bytes for the DH public key). For interactive messaging with alternating messages, the throughput is $\sim$280\,$\mu$s/msg versus $\sim$15\,$\mu$s/msg for burst messages.
+Each hybrid ratchet step adds $\sim$259\,$\mu$s of computation and 2{,}304 bytes of bandwidth overhead (1{,}184 bytes for the Kyber public key, 1{,}088 bytes for the Kyber ciphertext, 32 bytes for the DH public key). For interactive messaging with alternating messages, the measured profile is $\sim$280\,$\mu$s/msg; the $\sim$15\,$\mu$s/msg burst number is a decrypt-only measurement over pre-generated same-direction envelopes.
 
 \subsection{PCS Recovery: 1-Step vs.\ 2-Step}
 
@@ -1214,7 +1223,7 @@ Within this KEM-public-key ratchet pattern, we conjecture that 1-step hybrid PCS
 
 \subsection{ProVerif Limitations}
 
-Two of six ProVerif queries (Q5: message integrity, Q6: forward secrecy) fail due to ProVerif's overapproximation of the DH equational theory. These are known limitations documented in the ProVerif literature. Q6 is supported by the Tamarin-style secrecy/PCS models and the game-based proofs; Q5 is supported by the game-based message-security proof and implementation tests.
+Three of six ProVerif obligations are not discharged by the current model. Q3 (injective authentication) does not terminate in the default four-DH artifact. Q5 is false for an unpartnered active trace and therefore does not match the partnered-session integrity theorem. Q6 is false because raw KEM shared secrets are recoverable after the corresponding KEM secret key is revealed. These obligations are not counted as machine-checked results; the claimed properties are carried by the Tamarin-style authentication/secrecy/PCS models, the game-based proofs, and implementation tests.
 
 \subsection{Kyber/ML-KEM Terminology}
 
@@ -1291,8 +1300,8 @@ test-only deterministic entropy feature. Each artifact run emits tool versions,
 a manifest, and SHA-256 checksums; release CI uploads the quick and paper-build
 logs as a reviewable artifact bundle, and the formal CI job uploads
 Tamarin/ProVerif stdout/stderr logs with the same manifest and checksum format.
-Release-tag benchmark runs publish baselines for the fixed traffic-profile
-comparisons. The remaining reproducibility work is external rather than
+Release-tag benchmark workflows produce retention-limited artifacts for the
+fixed traffic-profile comparisons. The remaining reproducibility work is external rather than
 conceptual: record an independent review of the model/code alignment using the
 repository's external-review package.
 
@@ -1315,7 +1324,7 @@ repository's external-review package.
 
 Aura isolates a concrete design point for hybrid post-quantum messaging: KEM material is refreshed as part of the continuing ratchet state, not only during the initial X3DH-style handshake. The protocol combines per-ratchet KEM-key rotation, explicit KEM-key binding, per-epoch metadata encryption, and nonce-misuse-resistant AEAD.
 
-The evidence is split into the layers a reviewer can check: 6 game-based theorems, 10 Tamarin lemmas, 4 proven ProVerif queries for the analyzed two-party protocol, a proof-to-code map, and a Rust implementation. The current implementation measures approximately $1.1$\,ms for the full handshake and approximately $15\,\mu$s/msg for burst messages; the test matrix contains 750 default scenarios and 889 scenarios with \texttt{ffi} enabled, including property-based and concurrent stress tests.
+The evidence is split into the layers a reviewer can check: 6 game-based theorems, 10 Tamarin lemmas, 3 discharged ProVerif obligations for the analyzed two-party protocol, a proof-to-code map, and a Rust implementation. The current implementation measures approximately $1.1$\,ms for the full handshake and approximately $15\,\mu$s/msg for burst messages; the test matrix contains 750 default scenarios and 889 scenarios with \texttt{ffi} enabled, including property-based and concurrent stress tests.
 
 \section*{Acknowledgments}
 
@@ -1542,7 +1551,7 @@ O.~Melnychenko.
 
 \begin{table}[H]
 \centering
-\caption{Complete list of protocol constants.}\label{tab:constants}
+\caption{Selected two-party session constants.}\label{tab:constants}
 \small
 \begin{tabular}{@{}llr@{}}
 \toprule
@@ -1573,7 +1582,7 @@ Constant & Purpose & Value \\
 
 \begin{table}[H]
 \centering
-\caption{All 15 HKDF info strings used in Aura.}\label{tab:info-strings}
+\caption{Domain labels referenced by the two-party paper model.}\label{tab:info-strings}
 \small
 \begin{tabular}{@{}ll@{}}
 \toprule
@@ -1588,11 +1597,13 @@ Info String & Context \\
 \texttt{"Aura-Msg"} & Message key derivation from chain \\
 \texttt{"Aura-SessionId"} & Session identifier derivation \\
 \texttt{"Aura-MetadataKey"} & Metadata encryption key \\
+\texttt{"Aura-OPAQUE-Root"} & OPAQUE-to-session root derivation \\
 \texttt{"Aura-State-HMAC"} & State anti-rollback HMAC key \\
 \texttt{"Aura-KeyConfirm-I"} & Initiator key confirmation \\
 \texttt{"Aura-KeyConfirm-R"} & Responder key confirmation \\
 \texttt{"Aura-Handshake-Transcript"} & Transcript hash \\
 \texttt{"Aura-Identity-Binding"} & Identity binding hash \\
+\texttt{"Aura-Handshake-Init-Identity-Binding"} & Initiator identity binding signature \\
 \texttt{"Aura-PQ-Hybrid::"} & Hybrid KEM combiner salt prefix \\
 \bottomrule
 \end{tabular}
@@ -1605,13 +1616,15 @@ All messages are serialized using Protocol Buffers v3 (\texttt{prost} crate). Th
 \paragraph{Pre-Key Bundle.}
 \begin{lstlisting}
 message PreKeyBundle {
-  uint32 version = 1;            // PROTOCOL_VERSION (1)
-  bytes  ed25519_public = 2;     // 32 bytes
-  bytes  x25519_public = 3;      // 32 bytes
-  bytes  signed_pre_key = 4;     // 32 bytes
-  bytes  spk_signature = 5;      // 64 bytes (Ed25519)
-  bytes  kyber_public = 6;       // 1184 bytes
-  repeated OneTimePreKey opks = 7;
+  uint32 version = 1;
+  bytes  identity_ed25519_public = 2;
+  bytes  identity_x25519_public = 3;
+  uint32 signed_pre_key_id = 4;
+  bytes  signed_pre_key_public = 5;
+  bytes  signed_pre_key_signature = 6;
+  repeated OneTimePreKey one_time_pre_keys = 7;
+  bytes  kyber_public = 8;
+  bytes  identity_x25519_signature = 9;
 }
 \end{lstlisting}
 
