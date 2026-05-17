@@ -780,9 +780,8 @@ $(\IK_I, \IK_R, \mathit{ksk}_I, \mathit{ksk}_R)$ at time $t$:
 \[
   \adv^{\mathsf{FS}}_{\mathsf{AURA}}(\advA)
   \;\leq\;
-  \adv^{\GapCDH}_{\DH}(\advB_1) +
-  \adv^{\INDCCA}_{\KEM}(\advB_2) +
-  \adv^{\dualPRF}_{\HKDF}(\advB_3)
+  \adv^{\GapCDH}_{\DH}(\advB_1)
+  + \adv^{\dualPRF}_{\HKDF}(\advB_2)
 \]
 for sessions whose handshake completed before time~$t$.
 \end{theorem}
@@ -812,38 +811,25 @@ compute the shared secret without solving Gap-CDH:
   |\Pr[S_1] - \Pr[S_0]| \;\leq\; \adv^{\GapCDH}_{\DH}(\advB_1).
 \]
 
-\paragraph{Game 2: Kyber with erased secret key.}
-The Kyber shared secret $\mathit{ss}_{\mathsf{ky}}$ was derived via
-encapsulation against $\mathit{kpk}_R$.  Although $\advA$ now knows
-$\mathit{ksk}_R$, the \emph{encapsulation randomness} used during the
-handshake was ephemeral and erased.  However, since $\advA$ has
-$\mathit{ksk}_R$ \emph{and} sees $\mathit{ct}_{\mathsf{ky}}$, they can
-decapsulate.
-
-\textbf{Key insight}: Forward secrecy does \emph{not} rely on the Kyber
-component alone.  The classical DH component (Game~1) already provides
-forward secrecy.  The Kyber component provides \emph{additional}
-post-quantum forward secrecy for the case where Gap-CDH is broken by a
-quantum computer but Kyber remains secure.
-
-If instead $\advA$ is a quantum adversary who can break DH but not Kyber:
-the Kyber shared secret is IND-CCA2 secure (the adversary cannot efficiently
-compute $\mathit{ss}_{\mathsf{ky}}$ from $\mathit{ct}_{\mathsf{ky}}$ without
-$\mathit{ksk}_R$ before the compromise), and the HKDF dual-PRF property
-ensures the root key is pseudorandom:
+\paragraph{Game 2: Dual-PRF application.}
+The classical shared secret is computationally random and is used as the HKDF
+salt.  By the dual-PRF property:
 \[
-  |\Pr[S_2] - \Pr[S_1]| \;\leq\; \adv^{\INDCCA}_{\KEM}(\advB_2).
+  |\Pr[S_2] - \Pr[S_1]| \;\leq\; \adv^{\dualPRF}_{\HKDF}(\advB_2).
 \]
 
-\paragraph{Game 3: Dual-PRF application.}
-At least one HKDF input is computationally random (classical DH or Kyber SS
-depending on the adversary model).  By the dual-PRF property:
-\[
-  |\Pr[S_3] - \Pr[S_2]| \;\leq\; \adv^{\dualPRF}_{\HKDF}(\advB_3).
-\]
+In Game~2, the session's root key is random.  The adversary has zero
+advantage.
 
-In Game~3, the session's root key is random.  The adversary has zero
-advantage. \qedhere
+\paragraph{Scope of the KEM contribution.}
+The initial Kyber shared secret $\mathit{ss}_{\mathsf{ky}}$ was derived by
+encapsulating to $\mathit{kpk}_R$.  Under the FS oracle above, $\advA$ later
+learns $\mathit{ksk}_R$ and has the recorded ciphertext
+$\mathit{ct}_{\mathsf{ky}}$, so this initial KEM component is not counted as
+forward-secret.  It provides harvest-now-decrypt-later protection only if the
+corresponding KEM secret key is not later disclosed.  Post-compromise
+post-quantum recovery from fresh ratchet KEM keys is covered separately by
+\cref{thm:pcs}. \qedhere
 \end{proof}
 
 \begin{lemma}[Ephemeral Key Erasure]
@@ -1240,7 +1226,7 @@ Ed25519 / SUF-CMA & EdDSA & 128 \\
 \midrule
 Hybrid combiner (\cref{thm:combiner}), Gap-CDH $\lor$ ML-KEM & --- & 128 \\
 AKE security (\cref{thm:ake}), all assumptions & --- & 128 \\
-Forward secrecy (\cref{thm:fs}), Gap-CDH + ML-KEM & --- & 128 \\
+Forward secrecy (\cref{thm:fs}), Gap-CDH with erased DH ephemeral & --- & 128 \\
 PCS classical (\cref{thm:pcs}a), Gap-CDH, 1 step & --- & 128 \\
 PCS hybrid (\cref{thm:pcs}b), Gap-CDH + ML-KEM, 2 steps & --- & 128 \\
 Message security (\cref{thm:conf-int}), PRF + MRAE & --- & 128 \\
@@ -1254,8 +1240,9 @@ The dominant loss factor is $q_s$ (number of sessions) in
 argument.  For typical deployments with $q_s \leq 2^{30}$ sessions,
 the effective security is $128 - 30 = 98$ bits against classical
 adversaries, which remains well above the 80-bit minimum.
-Against quantum adversaries, $182 - 30 = 152$ bits from the Kyber
-component.
+In AKE/HNDL settings where the relevant KEM secret key is not later
+disclosed, the Kyber component gives $182 - 30 = 152$ bits against quantum
+adversaries.
 
 \paragraph{Tightness.}
 The reductions in Theorems~3 and~4 are \emph{tight} (no guessing

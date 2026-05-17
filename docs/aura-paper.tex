@@ -613,13 +613,21 @@ The 15 distinct HKDF info strings used in Aura ensure that keys derived for diff
 \begin{theorem}[Forward Secrecy]\label{thm:fs}
 For any $\ppt$ adversary $\advA$ who obtains all long-term keys at time $t$:
 \begin{equation}\label{eq:fs-bound}
-  \adv^{\mathrm{FS}}_{\mathrm{AURA}}(\advA) \leq \adv^{\GapCDH}_{\DH}(\advB_1) + \adv^{\INDCCA}_{\KEM}(\advB_2) + \adv^{\dualPRF}_{\HKDF}(\advB_3).
+  \adv^{\mathrm{FS}}_{\mathrm{AURA}}(\advA) \leq \adv^{\GapCDH}_{\DH}(\advB_1) + \adv^{\dualPRF}_{\HKDF}(\advB_2).
 \end{equation}
-This is a \emph{tight} reduction (no guessing factor beyond the hybrid combiner).
+This is a classical forward-secrecy bound under later disclosure of long-term
+KEM secret keys. The initial KEM ciphertext gives harvest-now-decrypt-later
+protection only while the corresponding KEM secret key is not later disclosed.
 \end{theorem}
 
 \begin{proof}[Proof sketch]
-In Game~1, the DH computation with the erased ephemeral key $\mathit{ek}_I$ is hard under $\GapCDH$. In Game~2, we observe that forward secrecy does \emph{not} rely on Kyber alone---classical DH already provides FS. Kyber provides additional PQ forward secrecy: a quantum adversary who can break DH but not Kyber still cannot recover the root key (reducing to $\INDCCA$ of $\KEM$). The reduction is tight because no session guessing is needed (the compromise happens \emph{after} the specific session completes).
+In Game~1, the DH computation with the erased ephemeral key $\mathit{ek}_I$
+is hard under $\GapCDH$. The resulting classical shared secret is used as the
+HKDF salt, so the $\dualPRF$ property makes the root key pseudorandom. The
+Kyber term is intentionally not counted in this FS bound: after later
+disclosure of $\mathit{ksk}_R$, a recorded KEM ciphertext can be decapsulated.
+Kyber's contribution in this setting is HNDL protection without later KEM
+secret-key disclosure, and PCS after fresh ratchet KEM keys appear.
 \end{proof}
 
 \begin{lemma}[Ephemeral Key Erasure]\label{lem:erasure}
@@ -709,7 +717,7 @@ Ed25519 / SUF-CMA & EdDSA & 128 \\
 \midrule
 Hybrid combiner (\cref{thm:hybrid-combiner}) & $\GapCDH$ or ML-KEM & \textbf{128} \\
 AKE security (\cref{thm:ake}) & All assumptions & \textbf{128} \\
-Forward secrecy (\cref{thm:fs}) & $\GapCDH$ + ML-KEM & \textbf{128} \\
+Forward secrecy (\cref{thm:fs}) & $\GapCDH$ with erased DH ephemeral & \textbf{128} \\
 PCS, classical (\cref{thm:pcs}a) & $\GapCDH$, 1 step & \textbf{128} \\
 PCS, hybrid (\cref{thm:pcs}b) & $\GapCDH$ + ML-KEM, 2 steps & \textbf{128} \\
 Message security (\cref{thm:msg-security}) & $\PRF$ + $\MRAE$ & \textbf{128} \\
@@ -717,7 +725,7 @@ Message security (\cref{thm:msg-security}) & $\PRF$ + $\MRAE$ & \textbf{128} \\
 \end{tabular}
 \end{table}
 
-The dominant security loss arises from the session-guessing factor $q_s$ in \cref{thm:ake}. For $q_s \leq 2^{30}$: effective security is $128 - 30 = 98$ bits classical, or $182 - 30 = 152$ bits from Kyber against quantum adversaries. \Cref{thm:fs,thm:pcs} are tight (no guessing factor).
+The dominant security loss arises from the session-guessing factor $q_s$ in \cref{thm:ake}. For $q_s \leq 2^{30}$: effective security is $128 - 30 = 98$ bits classical. In AKE/HNDL settings where the relevant KEM secret key is not later disclosed, the Kyber component gives $182 - 30 = 152$ bits against quantum adversaries. \Cref{thm:fs,thm:pcs} are tight (no guessing factor).
 
 
 % ═════════════════════════════════════════════════════════════
