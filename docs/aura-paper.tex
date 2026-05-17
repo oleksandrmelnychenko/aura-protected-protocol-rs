@@ -150,18 +150,24 @@ Unlike DH, where both parties contribute ephemeral keys symmetrically, KEM requi
 Standard Double Ratchet implementations transmit ratchet public keys, epoch counters, and message indices in cleartext envelope headers. Even with payload encryption, this metadata reveals communication patterns, message ordering, and session lifecycle to network observers.
 
 \medskip
-\noindent\textbf{Contributions.} The paper makes five technical contributions:
+\noindent\textbf{Contributions and novelty.} This paper does not claim
+priority for the broad idea of post-quantum ratcheting; Signal
+\SPQR{}/ML-KEM Braid~\cite{signal-spqr,mlkem-braid} and Apple
+\PQThree{}~\cite{apple-pq3,stebila-pq3,linker-pq3} are the relevant modern baselines.
+The contribution is a compact, open construction in which the protocol
+mechanism, proof obligations, and Rust invariants can be audited together.
+In particular, the paper makes five concrete contributions:
 
 \begin{enumerate}
-  \item \textbf{Per-direction hybrid ratcheting.} Every direction change triggers a full X25519~+~Kyber-768 key exchange and feeds both secrets into the next root key. The resulting PCS bound separates one-step classical recovery from two-step hybrid recovery (\cref{thm:pcs}).
+  \item \textbf{N1: per-direction hybrid ratcheting.} Every direction change triggers a full X25519~+~Kyber-768 key exchange and feeds both secrets into the next root key. The resulting PCS bound separates one-step classical recovery from two-step hybrid recovery (\cref{thm:pcs}).
 
-  \item \textbf{Augmented HKDF key derivation.} Each fresh Kyber public key is included in the HKDF info parameter during ratchet key derivation. This binds the advertised KEM key to the transcript without adding a per-ratchet signature (\cref{lem:augmented-hkdf}).
+  \item \textbf{N2: augmented HKDF key binding.} Each fresh Kyber public key is included in the HKDF info parameter during ratchet key derivation. This binds the advertised KEM key to the transcript without adding a per-ratchet signature (\cref{lem:augmented-hkdf}).
 
-  \item \textbf{Two-layer AEAD with metadata encryption.} Envelope metadata and payload bytes are encrypted under separate keys. The metadata key rotates by epoch, and both layers use AES-256-GCM-SIV for nonce-misuse resistance (\cref{lem:two-layer}).
+  \item \textbf{N3: two-layer AEAD with metadata-key rotation.} Envelope metadata and payload bytes are encrypted under separate keys. The metadata key rotates by epoch, and both layers use AES-256-GCM-SIV for nonce-misuse resistance (\cref{lem:two-layer}).
 
-  \item \textbf{Proof and model files.} The analysis includes 6 theorems, 8 supporting lemmas, 10 verified Tamarin lemmas, and 4 verified ProVerif queries. The proof obligations are mapped to the Rust modules and tests that enforce the corresponding invariants.
+  \item \textbf{N4: explicit PCS asymmetry.} The analysis states and proves the 1-step classical / 2-step hybrid recovery boundary. The extra hybrid step is treated as a consequence of KEM directionality, not as an implementation accident.
 
-  \item \textbf{Rust implementation.} The repository includes secure memory handling via \texttt{mlock} and \texttt{zeroize}, property-based and concurrent tests, benchmarks, and a C~FFI boundary.
+  \item \textbf{N5: proof-to-code artifact chain.} The repository ties 6 theorems, 8 supporting lemmas, 10 verified Tamarin lemmas, 4 verified ProVerif queries, Rust tests, benchmarks, and FFI boundaries to the same protocol state machine.
 \end{enumerate}
 
 \paragraph{Paper organization.}
