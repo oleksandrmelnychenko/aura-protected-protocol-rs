@@ -79,7 +79,7 @@ typedef struct AuraTimeProviderHandle AuraTimeProviderHandle;
  *   max_messages_per_chain
  *     Maximum number of messages that may be encrypted under a single ratchet
  *     chain key before a forced ratchet step is required.  Use 0 for the
- *     library default (100).  Smaller values improve forward secrecy at the
+ *     library default (1000).  Smaller values improve forward secrecy at the
  *     cost of slightly more frequent key-exchange round-trips.
  */
 typedef struct AuraSessionConfig {
@@ -91,7 +91,8 @@ typedef struct AuraSessionConfig {
  *
  *   max_messages_per_epoch
  *     Hard cap on sender-key messages before a mandatory Update commit is
- *     required.  0 = library default (1000).
+ *     required. aura_group_create() uses the Shield preset (1000/4). For
+ *     custom policies, 0 maps to the hard sender-key generation cap (100000).
  *
  *   max_skipped_keys_per_sender
  *     Maximum number of out-of-order message keys cached per sender.
@@ -226,8 +227,9 @@ AURA_API void aura_sealed_state_slot_destroy(
  *     message; use aura_group_compute_message_id() to derive the canonical ID.
  *
  *   content_type
- *     Message subtype: 0=normal, 1=sealed, 2=disappearing, 3=frankable,
- *     4=edit, 5=delete.
+ *     Message subtype: 0=normal, 1=sealed, 2=disappearing,
+ *     3=sealed_disappearing, 4=edit, 5=delete. Franking is indicated by
+ *     has_franking_data/franking_* fields, not by content_type.
  *
  *   ttl_seconds
  *     For disappearing messages: time-to-live in seconds from sent_timestamp.
@@ -235,7 +237,8 @@ AURA_API void aura_sealed_state_slot_destroy(
  *
  *   sent_timestamp
  *     Unix timestamp (seconds) embedded by the sender at encryption time.
- *     Not authenticated by the protocol; treat as informational only.
+ *     Authenticated by encryption/signature, but sender-supplied; do not treat
+ *     it as a trusted wall-clock value.
  *
  *   message_id
  *     Canonical message identifier bytes (32 bytes).
@@ -804,7 +807,7 @@ AURA_API AuraErrorCode aura_session_decrypt(
  * aura_session_serialize_sealed — persist the session state to an encrypted
  * blob for storage (e.g. on-disk or in a secure enclave).
  *
- * LOW-LEVEL API: the state is encrypted with AES-256-GCM using the provided
+ * LOW-LEVEL API: the state is encrypted with AES-256-GCM-SIV using the provided
  * key, and an external_counter is mixed into the AAD to prevent rollback
  * attacks. New clients should prefer
  * aura_session_export_persisted_state() when they can store one serialized slot
@@ -923,10 +926,11 @@ AURA_API AuraErrorCode aura_session_deserialize_sealed_with_time_provider(
 /*
  * aura_session_deserialize_sealed_with_tracker — managed sealed-state restore.
  *
- * Uses tracker_handle->max_restored_counter as the restore watermark and
- * advances the tracker only after a successful restore. The embedded blob
- * counter is not returned separately; inspect the tracker if the caller needs
- * the updated values.
+ * Uses max(tracker_handle->max_restored_counter,
+ * tracker_handle->latest_issued_counter) as the restore watermark and advances
+ * the tracker only after a successful restore. The embedded blob counter is
+ * not returned separately; inspect the tracker if the caller needs the updated
+ * values.
  */
 AURA_API AuraErrorCode aura_session_deserialize_sealed_with_tracker(
     const uint8_t*                       state_bytes,
@@ -2839,8 +2843,9 @@ AURA_API AuraErrorCode aura_group_deserialize(
 /*
  * aura_group_deserialize_with_tracker — managed group sealed-state restore.
  *
- * Uses tracker_handle->max_restored_counter as the restore watermark and
- * advances the tracker only after a successful restore.
+ * Uses max(tracker_handle->max_restored_counter,
+ * tracker_handle->latest_issued_counter) as the restore watermark and advances
+ * the tracker only after a successful restore.
  */
 AURA_API AuraErrorCode aura_group_deserialize_with_tracker(
     const uint8_t*                       state_bytes,
@@ -3129,7 +3134,7 @@ AURA_API AuraErrorCode aura_group_encrypt_delete(
  *   hint_length              — byte length of hint.
  *   encrypted_content        — inner ciphertext from the sealed payload (borrowed).
  *   encrypted_content_length — byte length of encrypted_content.
- *   nonce                    — 12-byte AES-GCM nonce from the sealed payload
+ *   nonce                    — 12-byte AES-GCM-SIV nonce from the sealed payload
  *                              (borrowed).
  *   nonce_length             — must be 12.
  *   seal_key                 — 32-byte seal key shared by the sender (borrowed).

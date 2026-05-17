@@ -11,7 +11,7 @@ Result:
 - Ukrainian paper: 33 `\bibitem` entries, 33 unique cited keys, 0 missing bibliography entries, 0 uncited bibliography entries.
 - External links: 32 unique URLs, all returned HTTP 200 with `curl -L` on 2026-05-17.
 - Local companion reference: `docs/security-proof.tex` exists and is intentionally local, not an external URL.
-- LaTeX build: both papers compile with `pdflatex`; final PDFs are 30 pages (`aura-paper.pdf`) and 36 pages (`aura-paper-ua.pdf`).
+- Source-build note: a separate `paper` artifact run on 2026-05-17 compiled both papers with `pdflatex`; the generated PDFs were 30 pages (`aura-paper.pdf`) and 36 pages (`aura-paper-ua.pdf`). The `references` mode below audits citations and URLs only.
 
 Verification commands:
 
@@ -25,7 +25,8 @@ The mode above wraps the standalone checker:
 ./scripts/audit-paper-references.sh
 ```
 
-The checker performs the same underlying operations:
+The checker performs the same underlying operations as the reference audit
+(the exact script also uses `curl --retry 2 --retry-delay 1`):
 
 ```sh
 for f in docs/aura-paper.tex docs/aura-paper-ua.tex; do
@@ -38,6 +39,7 @@ rg -o '\\url\{[^}]+\}' docs/aura-paper.tex docs/aura-paper-ua.tex |
   sort -u |
   while IFS= read -r u; do
     curl -L -A 'Mozilla/5.0 reference-audit' --connect-timeout 10 --max-time 30 \
+      --retry 2 --retry-delay 1 \
       -o /dev/null -s -w '%{http_code} %{url_effective}\n' "$u"
   done
 ```

@@ -11,11 +11,11 @@ Headers: `include/aura_api.h` (umbrella), `include/aura_client_api.h`, `include/
 
 API розрахований на три ролі:
 
-| Роль | Опис | Прапор збірки |
+| Роль | Опис | Профіль використання |
 |------|------|---------------|
 | **Client (Agent)** | Кінцевий пристрій користувача — ініціює handshake, шифрує/дешифрує, бере участь у групах | За замовчуванням (без прапорів) |
-| **Server (Endpoint)** | Сервер, що приймає з'єднання від клієнтів — відповідає на handshake, шифрує/дешифрує | `AURA_SERVER_BUILD` (ховає initiator) |
-| **Relay** | Проміжний сервер — лише пересилає зашифровані байти, не має ключів | `AURA_SERVER_BUILD` (використовує мінімум API) |
+| **Server (Endpoint)** | Сервер, що приймає з'єднання від клієнтів — відповідає на handshake, шифрує/дешифрує | Використовує responder/session surface |
+| **Relay** | Проміжний сервер — лише пересилає зашифровані байти, не має ключів | Використовує validation/franking/buffer helpers |
 
 ### Зведена таблиця функцій за ролями
 
@@ -155,9 +155,9 @@ aura_error_free / aura_error_string
 aura_secure_wipe
 ```
 
-### Server Endpoint — все крім initiator
+### Server Endpoint — responder/session subset
 
-При збірці з `AURA_SERVER_BUILD` handshake initiator функції та тип `AuraHandshakeInitiatorHandle` не компілюються. Сервер приймає з'єднання через responder.
+Поточний C header експортує initiator і responder surface без compile-time приховування. Серверна інтеграція просто не використовує initiator-функції й приймає з'єднання через responder.
 
 Примітка: low-level VoIP, managed sealed-state helpers і attachment streaming surface теж задекларовані в `include/aura_client_api.h`; для цих підрозділів header лишається найповнішим списком прототипів.
 
@@ -217,7 +217,7 @@ typedef struct AuraSessionHandle AuraSessionHandle;
 typedef struct AuraVoipSessionHandle AuraVoipSessionHandle;
 typedef struct AuraGroupSessionHandle AuraGroupSessionHandle;
 typedef struct AuraKeyPackageSecretsHandle AuraKeyPackageSecretsHandle;
-typedef struct AuraHandshakeInitiatorHandle AuraHandshakeInitiatorHandle;  // #ifndef AURA_SERVER_BUILD
+typedef struct AuraHandshakeInitiatorHandle AuraHandshakeInitiatorHandle;
 typedef struct AuraHandshakeResponderHandle AuraHandshakeResponderHandle;
 typedef struct AuraVoipCallInitiatorHandle AuraVoipCallInitiatorHandle;
 typedef struct AuraSealedStateCounterTrackerHandle AuraSealedStateCounterTrackerHandle;
@@ -270,7 +270,7 @@ typedef enum {
 | Ed25519 public key | 32 | Ed25519 signing public key |
 | ML-KEM-768 public key | 1184 | Post-quantum KEM public key |
 | AES-256 key | 32 | Для sealed state encryption |
-| AES-GCM nonce | 12 | Для reveal_sealed |
+| AES-GCM-SIV nonce | 12 | Для reveal_sealed |
 | HMAC / franking tag | 32 | Для SSS auth / franking |
 | PSK | 32 | Pre-Shared Key мінімум |
 
@@ -543,7 +543,7 @@ aura_buffer_release(&new_keys);
 ---
 
 ## Handshake — Initiator
-> Ролі: **Client only** — недоступні при `AURA_SERVER_BUILD`
+> Ролі: **Client initiator**
 
 ### `aura_handshake_initiator_start`
 
@@ -688,7 +688,7 @@ AuraErrorCode aura_session_nonce_remaining(
 );
 ```
 
-Повертає кількість nonce, що залишилось для шифрування. Максимум 65 535. Коли < 10% — рекомендовано ініціювати re-handshake.
+Повертає кількість nonce, що залишилось для шифрування. За замовчуванням chain send budget становить 1 000 повідомлень; 65 535 є жорсткою межею 16-бітного nonce-кодування. Коли < 10% — рекомендовано ініціювати re-handshake.
 
 ### `aura_session_destroy`
 
@@ -759,6 +759,7 @@ AuraErrorCode aura_session_deserialize_sealed(
 - Якщо counter у blob `< min_external_counter` → `AURA_ERROR_REPLAY_ATTACK`; рівність дозволена як ідемпотентне re-restore того самого blob
 - `*out_external_counter` валідний тільки при `AURA_SUCCESS` (на помилці не використовувати/не persist-ити)
 - Після успішного імпорту зберегти `*out_external_counter` для наступного `min_external_counter`
+- Managed tracker APIs використовують restore watermark `max(max_restored_counter, latest_issued_counter)`, тому не приймають blob із counter нижче вже відновленого або вже виданого для export значення.
 
 ---
 
@@ -1444,7 +1445,7 @@ AuraErrorCode aura_group_reveal_sealed(
     size_t         hint_length,
     const uint8_t* encrypted_content,        // [in] зашифрований контент
     size_t         encrypted_content_length,
-    const uint8_t* nonce,                    // [in] 12 байт AES-GCM nonce
+    const uint8_t* nonce,                    // [in] 12 байт AES-GCM-SIV nonce
     size_t         nonce_length,             // [in] == 12
     const uint8_t* seal_key,                 // [in] 32 байти seal key
     size_t         seal_key_length,          // [in] == 32

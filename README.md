@@ -5,7 +5,7 @@
 [![Benchmarks](https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs/actions/workflows/benchmarks.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Hybrid post-quantum secure messaging protocol combining **X25519 + ML-KEM-768** with a Double Ratchet, **AES-256-GCM-SIV**, and per-epoch metadata encryption. The crate also includes MLS-inspired group messaging modules with hybrid PQ TreeKEM, Shield mode, sealed messages, disappearing messages, and message franking; the paper proofs cover the 1:1 handshake and ratchet scope. Some Rust/FFI identifiers still use the historical `kyber` name for compatibility, but the implemented KEM is ML-KEM-768 via the `ml-kem` crate.
+Hybrid secure-messaging protocol targeting post-quantum confidentiality of session secrets under classical Ed25519 authentication, combining **X25519 + ML-KEM-768** with a Double Ratchet, **AES-256-GCM-SIV**, and per-epoch metadata encryption. The crate also includes MLS-inspired group messaging modules with hybrid PQ TreeKEM, Shield mode, sealed messages, disappearing messages, and message franking; the paper proofs cover the 1:1 handshake and ratchet scope. Some Rust/FFI identifiers still use the historical `kyber` name for compatibility, but the implemented KEM is ML-KEM-768 via the `ml-kem` crate.
 
 ## Key Differentiators
 
@@ -101,7 +101,7 @@ let policy = group.security_policy();
 | Post-compromise security | 1-step classical PCS; 2-step hybrid PCS under the conservative both-endpoint compromise model |
 | Replay protection | Bounded nonce cache (2048 entries) + monotonic counters |
 | Metadata privacy | Envelope metadata encrypted with rotating per-epoch key |
-| State integrity | HMAC-SHA256 anti-rollback over serialized state |
+| State integrity | HMAC-SHA256 over serialized state plus external counter freshness |
 | Nonce-misuse resistance | AES-256-GCM-SIV degrades gracefully on nonce reuse |
 | DoS guardrails | Hard limits on protobuf/envelope/plaintext sizes + handshake cache/bundle caps |
 | Media attachments | Envelope encryption for large files; relay/storage sees ciphertext only |
@@ -213,7 +213,7 @@ Key performance numbers (Apple M-series):
 
 | Operation | Time |
 |-----------|------|
-| Full handshake (keygen + X3DH + Kyber + confirm) | ~1.1 ms |
+| Full handshake (keygen + X3DH + ML-KEM + confirm) | ~1.1 ms |
 | Hybrid ratchet step (X25519 + ML-KEM-768) | ~259 us |
 | Encrypt 256 bytes | ~17 us |
 | Decrypt 256 bytes | ~21 us |
@@ -323,8 +323,8 @@ The formal claims below cover the two-party handshake and session ratchet analyz
 
 | Theorem | Property | Assumptions |
 |---------|----------|-------------|
-| 1 | Hybrid Combiner IND-CCA2 | Gap-CDH OR Kyber IND-CCA2 |
-| 2 | eCK-style AKE security | Gap-CDH + IND-CCA2 + dual-PRF + ROM |
+| 1 | Hybrid Combiner IND-CCA2 | Gap-CDH OR ML-KEM-768 IND-CCA2 |
+| 2 | Modified X3DH leakage-model AKE security | Gap-CDH + IND-CCA2 + dual-PRF + ROM |
 | 3 | Forward Secrecy | Gap-CDH + dual-PRF; initial KEM gives HNDL only absent later KEM-SK disclosure |
 | 4 | Post-Compromise Security | 1-step classical (Gap-CDH); 2-step hybrid (Gap-CDH + IND-CCA2) under conservative both-endpoint compromise |
 | 5 | Message Confidentiality + Integrity | eCK + PRF + MRAE |

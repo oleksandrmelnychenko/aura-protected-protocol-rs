@@ -3,6 +3,8 @@
 > For inclusion as supplementary material or Section 6 (Related Work / Comparison) in the Aura protocol publication.
 >
 > Data sources: Signal specifications (signal.org/docs/specifications/{pqxdh,doubleratchet,x3dh}), Aura source code, NIST PQC standards, published benchmarks.
+>
+> Status: legacy high-level comparison. The LaTeX papers are the authoritative submission text; this file is only orientation material and must not be read as a full post-quantum-authentication claim. Aura's current artifact targets hybrid post-quantum confidentiality of session secrets under classical Ed25519 authentication.
 
 ---
 
@@ -11,7 +13,7 @@
 | Aspect | Signal (X3DH + DR) | Signal PQXDH (2023) | **Aura** |
 |--------|-------------------|---------------------|--------------|
 | Handshake | X3DH (3–4 ECDH) | PQXDH (3–4 ECDH + 1 KEM) | Hybrid X3DH (3–4 ECDH + 1 KEM) |
-| Ratchet | Double Ratchet (X25519 DH) | Double Ratchet (X25519 DH) | **Hybrid Double Ratchet (X25519 + Kyber-768)** |
+| Ratchet | Double Ratchet (X25519 DH) | Double Ratchet (X25519 DH) | **Hybrid Double Ratchet (X25519 + ML-KEM-768)** |
 | PQ scope | None | Handshake only | **Handshake + every ratchet step** |
 | AEAD | AES-256-CBC + HMAC-SHA256 | AES-256-CBC + HMAC-SHA256 | **AES-256-GCM-SIV** |
 | Metadata encryption | Sealed Sender (sender identity) | Sealed Sender | **Per-message metadata AEAD (rotating key)** |
@@ -25,7 +27,7 @@
 | Primitive | Signal / PQXDH | **Aura** | Notes |
 |-----------|----------------|--------------|-------|
 | Key agreement (classical) | X25519 | X25519 | Identical |
-| Key agreement (PQ) | ML-KEM-1024 (Kyber-1024) | **Kyber-768** | Aura: NIST Security Level 3; Signal: Level 5 |
+| Key agreement (PQ) | ML-KEM-1024 (Kyber-1024) | **ML-KEM-768** | Aura: NIST Security Level 3; Signal: Level 5 |
 | Digital signatures | Ed25519 | Ed25519 | Identical |
 | Symmetric encryption | AES-256-CBC | **AES-256-GCM-SIV** | GCM-SIV: nonce-misuse resistant |
 | Authentication (messages) | HMAC-SHA256 (Encrypt-then-MAC) | AEAD tag (GCM-SIV) | Signal: separate MAC; Aura: integrated |
@@ -34,13 +36,13 @@
 | Secret sharing | — | **Shamir GF(2^8)** (HMAC-authenticated) | Aura: key backup/recovery |
 | Secure memory | Platform-dependent | **mlock + zeroize** (guard pages on Linux) | Aura: explicit secure memory API |
 
-### Why Kyber-768 vs Kyber-1024?
+### Why ML-KEM-768 vs ML-KEM-1024?
 
-Signal chose Kyber-1024 (NIST Level 5) for maximum security margin at the handshake. Aura uses Kyber-768 (Level 3) because:
+Signal chose ML-KEM-1024/Kyber-1024 (NIST Level 5) for maximum security margin at the handshake. Aura uses ML-KEM-768 (Level 3) because:
 
-1. **Ratchet frequency**: Aura runs Kyber on every direction-change ratchet, not just the handshake. Even if a single Kyber encapsulation is broken, the next ratchet step generates independent PQ material. This amortized approach provides comparable security to a single Kyber-1024 exchange.
-2. **Performance**: Kyber-768 is ~25% faster than Kyber-1024 for keygen/encap/decap (see Section 5), which matters when PQ operations occur on every ratchet.
-3. **Bandwidth**: Kyber-768 public keys are 1,184 bytes vs 1,568 bytes for Kyber-1024 — relevant for mobile/IoT.
+1. **Ratchet frequency**: Aura runs ML-KEM on every direction-change ratchet, not just the handshake. This improves state recovery after compromise, but it is not a claim that Level 3 ratcheting is categorically equivalent to one Level 5 exchange.
+2. **Performance**: ML-KEM-768 is smaller and faster than ML-KEM-1024 for keygen/encap/decap, which matters when PQ operations occur on ratchet boundaries.
+3. **Bandwidth**: ML-KEM-768 public keys are 1,184 bytes vs 1,568 bytes for ML-KEM-1024 — relevant for mobile/IoT.
 
 ---
 
@@ -51,10 +53,10 @@ This is the most significant architectural difference between the three protocol
 | Property | Signal X3DH | Signal PQXDH | **Aura** |
 |----------|------------|--------------|--------------|
 | PQ-protected handshake | No | **Yes** (1× KEM) | **Yes** (1× KEM) |
-| PQ-protected ratchet | No | No (X25519 only) | **Yes** (Kyber-768 per ratchet step) |
+| PQ-protected ratchet | No | No (X25519 only) | **Yes** (ML-KEM-768 per directed ratchet step) |
 | Harvest-now-decrypt-later defense | None | Handshake only | **Handshake + all ratchet epochs** |
 | PQ forward secrecy | None | Initial session key only | **Per-epoch** (each ratchet wipes PQ material) |
-| PQ post-compromise security | None | None (ratchet is classical) | **Yes** (fresh Kyber keygen per direction change) |
+| PQ post-compromise security | None | None (ratchet is classical) | **Hybrid recovery after the next directed step using a post-compromise KEM key** |
 
 ### Signal PQXDH Gap
 
@@ -66,23 +68,23 @@ Signal's PQXDH protects the initial key exchange against quantum adversaries, bu
 
 The PQXDH handshake key is only the initial seed — once the ratchet evolves past it using classical DH, the PQ protection is lost.
 
-Signal has documented future plans for a **Sparse Post-Quantum Ratchet (SPQR)** and a **Triple Ratchet** design (running Double Ratchet + SPQR in parallel), but as of the PQXDH specification these are not yet deployed.
+Signal has published **Sparse Post-Quantum Ratchet (SPQR)** and **Triple Ratchet** material (running Double Ratchet + SPQR in parallel). Those designs are the modern Signal-family baseline for ongoing PQ state evolution; Aura's paper does not claim broad priority over them.
 
 ### Aura Approach
 
-Aura integrates Kyber-768 into every hybrid ratchet step:
+Aura integrates ML-KEM-768 into every hybrid ratchet step:
 
 ```
-hybrid_ikm = DH(new_x25519_priv, peer_x25519_pub) || Kyber.Decap(ct, sk)
-salt        = old_root_key || "Aura-PQ-Hybrid::" || kyber_shared_secret
+hybrid_ikm = DH(new_x25519_priv, peer_x25519_pub) || KEM.Decap(ct, sk)
+salt        = old_root_key || "Aura-PQ-Hybrid::" || kem_shared_secret
 ratchet_out = HKDF(hybrid_ikm, 96, salt, "Aura-Hybrid-Ratchet")
   → new_root_key(32) || new_chain_key(32) || new_metadata_key(32)
 ```
 
-Each direction change generates a fresh Kyber-768 keypair locally and sends the public key + ciphertext to the peer. Old Kyber secret keys are wiped immediately after decapsulation. This provides:
+Each direction change generates a fresh ML-KEM-768 keypair locally and sends the public key + ciphertext to the peer. Old KEM secret keys are wiped immediately after decapsulation. This provides:
 
-- **Per-epoch PQ forward secrecy**: Compromising epoch N's Kyber key reveals nothing about epochs N−1 or N+1.
-- **PQ post-compromise security**: After a compromise, the next ratchet step generates fresh PQ keying material.
+- **Per-epoch PQ forward secrecy absent later KEM-SK disclosure**: Compromising epoch N's KEM key reveals nothing about independent epochs N-1 or N+1.
+- **Hybrid post-compromise recovery**: After a conservative two-endpoint compromise, classical recovery occurs after the next honest directed step, and hybrid recovery occurs after the next directed step that uses a post-compromise KEM public key.
 
 ---
 
@@ -93,13 +95,13 @@ Each direction change generates a fresh Kyber-768 keypair locally and sends the 
 | **Confidentiality** | AES-256-CBC + HMAC | AES-256-CBC + HMAC | AES-256-GCM-SIV |
 | **Forward secrecy (classical)** | Yes (DH ratchet) | Yes (DH ratchet) | Yes (DH ratchet) |
 | **Forward secrecy (PQ)** | No | Handshake only | **Per-epoch** |
-| **Post-compromise security** | Yes (DH ratchet) | Yes (DH ratchet, classical only) | **Yes (hybrid DH + Kyber ratchet)** |
+| **Post-compromise security** | Yes (DH ratchet) | Yes (DH ratchet, classical only) | **1-step classical / 2-step hybrid in the directed KEM schedule** |
 | **Replay protection** | Message counter + key consumption | Same | **Bounded nonce cache (2048) + key consumption** |
 | **Nonce misuse resistance** | No (CBC mode) | No | **Yes (GCM-SIV)** |
 | **Metadata privacy** | Sealed Sender (sender identity) | Sealed Sender | **Encrypted envelope metadata (rotating key)** |
 | **Deniability (offline)** | Yes (symmetric MACs) | Yes | Yes (symmetric MACs) |
 | **Deniability (online)** | Weak | Weak | **No** (by design — auth > deniability) |
-| **State integrity** | Database encryption (SQLCipher) | Same | **HMAC-SHA256 anti-rollback** |
+| **State integrity** | Database encryption (SQLCipher) | Same | **State HMAC plus external monotonic counter for rollback freshness** |
 | **Session teardown** | No explicit ceremony | No | **Explicit `destroy()` — 9-step key wipe** |
 | **Secure memory** | Platform-dependent | Same | **mlock + zeroize (guard pages on Linux)** |
 | **Small-order point rejection** | Yes | Yes | **Yes (constant-time, branchless)** |
@@ -125,22 +127,22 @@ Aura encrypts all envelope metadata with a dedicated metadata key that rotates o
 
 | Operation | Aura | Notes |
 |-----------|----------|-------|
-| Identity creation (5 OPKs) | ~450 µs | Ed25519 + X25519 + Kyber-768 keygen |
-| Full handshake (keygen + X3DH + confirm) | ~1.5 ms | Hybrid: 4× DH + 1× Kyber encap/decap |
+| Identity creation (5 OPKs) | ~450 µs | Ed25519 + X25519 + ML-KEM-768 keygen |
+| Full handshake (keygen + X3DH + confirm) | ~1.5 ms | Hybrid: 4× DH + 1× ML-KEM encap/decap |
 | Encrypt (256 B) | ~17 µs | AES-256-GCM-SIV + metadata AEAD |
 | Decrypt (256 B) | ~21 µs | + replay check + metadata AEAD |
 | Encrypt/decrypt roundtrip (64 B) | ~14 µs | Minimal payload |
 | Encrypt/decrypt roundtrip (4 KB) | ~57 µs | Larger payload |
-| Direction-change ratchet | ~430 µs | X25519 DH + Kyber-768 encap/decap + HKDF |
+| Direction-change ratchet | ~430 µs | X25519 DH + ML-KEM-768 encap/decap + HKDF |
 | Burst throughput (256 B, same chain) | ~15 µs | No ratchet, chain key advance only |
 | Alternating throughput (256 B) | ~524 µs | Full hybrid ratchet per message |
 | Out-of-order decrypt (20 msgs) | ~292 µs | Skipped key lookup + decrypt |
 | Cross-epoch decrypt | ~13 µs | Cached chain key lookup |
-| Session export (sealed) | ~105 µs | AES-GCM double encryption (KEK → DEK → state) |
+| Session export (sealed) | ~105 µs | AES-GCM-SIV sealed-state encryption |
 | Session import (sealed) | ~185 µs | Decrypt + HMAC verify + deserialize |
 | HKDF-SHA256 derive | ~1.6 µs | Single derivation |
-| Kyber-768 keygen | ~80 µs | liboqs via ChaCha20 PRNG |
-| Kyber-768 encap+decap | ~94 µs | Combined |
+| ML-KEM-768 keygen | ~80 µs | deterministic/vector provider in the historical benchmark |
+| ML-KEM-768 encap+decap | ~94 µs | Combined |
 | AES-256-GCM-SIV (256 B) | ~6 µs | Encrypt only |
 | AES-256-GCM-SIV (16 KB) | ~170 µs | Encrypt only |
 | Shamir split (3-of-5, 32 B) | ~44 µs | GF(2^8) with log/exp tables |
@@ -151,7 +153,7 @@ Aura encrypts all envelope metadata with a dedicated metadata key that rotates o
 | Component | Time | % of Hybrid Ratchet |
 |-----------|------|---------------------|
 | X25519 DH scalarmult | ~34 µs | 13% |
-| Kyber-768 encap+decap | ~94 µs | 36% |
+| ML-KEM-768 encap+decap | ~94 µs | 36% |
 | HKDF + key derivation + state update | ~131 µs | 51% |
 | **Total hybrid ratchet** | **~259 µs** | 100% |
 
@@ -167,7 +169,7 @@ Aura encrypts all envelope metadata with a dedicated metadata key that rotates o
 | Decrypt (256 B) | ~5–15 µs | Verify HMAC + AES-256-CBC |
 | DH ratchet step | ~35–50 µs | X25519 DH + HKDF (classical only) |
 
-> **Note**: Signal's ratchet step is ~7× faster than Aura's because it performs only X25519 DH (no Kyber). However, Signal's ratchet provides no post-quantum protection. The ~430 µs Aura ratchet is still sub-millisecond and imperceptible in interactive messaging.
+> **Note**: a classical-only ratchet step is faster because it performs only X25519 DH (no ML-KEM). Aura pays this cost to refresh KEM material at directed ratchet boundaries.
 
 ---
 
@@ -175,21 +177,21 @@ Aura encrypts all envelope metadata with a dedicated metadata key that rotates o
 
 | Metric | Signal | Signal PQXDH | **Aura** |
 |--------|--------|-------------|--------------|
-| Handshake init size | ~130 B | ~1,250 B (+Kyber-1024 CT) | ~1,170 B (+Kyber-768 CT) |
-| Pre-key bundle size | ~200 B | ~1,800 B (+Kyber-1024 PK) | ~1,400 B (+Kyber-768 PK) |
+| Handshake init size | ~130 B | ~1,250 B (+Kyber-1024 CT) | ~1,170 B (+ML-KEM-768 CT) |
+| Pre-key bundle size | ~200 B | ~1,800 B (+Kyber-1024 PK) | ~1,400 B (+ML-KEM-768 PK) |
 | Message overhead | ~57 B (key + counters + MAC) | ~57 B | ~80 B (key + metadata AEAD + nonce) |
-| Ratchet message (with PQ key) | ~57 B | ~57 B (no PQ in ratchet) | ~1,300 B (+Kyber-768 PK + CT) |
+| Ratchet message (with PQ key) | ~57 B | ~57 B (no PQ in ratchet) | ~1,300 B (+ML-KEM-768 PK + CT) |
 | Max envelope size | Not specified | Not specified | 1 MiB (enforced) |
 | Max handshake size | Not specified | Not specified | 16 KiB (enforced) |
 
 ### Bandwidth Trade-off
 
-Aura's ratchet messages are ~1,300 bytes larger than Signal's due to the embedded Kyber-768 public key and ciphertext. This overhead occurs only on direction changes (when one party starts responding after receiving), not on every message in a burst. For typical messaging patterns (alternating messages), the overhead is:
+Aura's ratchet messages are ~1,300 bytes larger than Signal's due to the embedded ML-KEM-768 public key and ciphertext. This overhead occurs only on direction changes (when one party starts responding after receiving), not on every message in a burst. For typical messaging patterns (alternating messages), the overhead is:
 
-- **~1.3 KB per direction change** (Kyber-768 PK: 1,184 B + CT: 1,088 B, partially compressed by protobuf)
+- **~1.3 KB per direction change** (ML-KEM-768 PK: 1,184 B + CT: 1,088 B, partially compressed by protobuf)
 - Versus **0 B per direction change** for Signal (classical DH key only: 32 B)
 
-For bandwidth-constrained environments, the Kyber material could be sent out-of-band or compressed, but the default includes it inline for simplicity and security.
+For bandwidth-constrained environments, KEM material could be sent out-of-band or compressed, but the default includes it inline for simplicity and security.
 
 ---
 
@@ -221,11 +223,11 @@ Master Key (BLAKE2b, optional — for deterministic derivation)
 ├── Ed25519 Identity Seed
 ├── X25519 Identity Seed
 ├── Signed Pre-Key Seed
-├── Kyber-768 Seed (2× BLAKE2b for 64-byte seed)
+├── ML-KEM-768 seed (2× BLAKE2b for 64-byte seed)
 ├── One-Time Pre-Key Seeds (indexed)
 │
 └── Hybrid X3DH  →  Root Key + Chain Key + Metadata Key
-    ├── Hybrid Ratchet (X25519 + Kyber-768)  →  new Root + Chain + Metadata
+    ├── Hybrid Ratchet (X25519 + ML-KEM-768)  →  new Root + Chain + Metadata
     │   ├── Chain HKDF  →  Message Key
     │   ├── Metadata Key  →  Envelope metadata AEAD
     │   └── State HMAC Key  →  Anti-rollback HMAC
@@ -243,8 +245,8 @@ Key separation: encryption / authentication / metadata / HMAC / identity — all
 
 | Feature | Signal | **Aura** |
 |---------|--------|--------------|
-| State persistence | Platform session store (abstract interface) | **Sealed export/import** (AES-GCM double encryption) |
-| State integrity | Database-level (SQLCipher) | **Cryptographic HMAC-SHA256 anti-rollback** |
+| State persistence | Platform session store (abstract interface) | **Sealed export/import** (AES-GCM-SIV + state HMAC) |
+| State integrity | Database-level (SQLCipher) | **State HMAC plus external counter freshness** |
 | Multi-device | Sesame protocol (per-device sessions) | Single device (exportable state) |
 | Session teardown | No explicit ceremony | **`destroy()` — 9-step documented key wipe** |
 | Secure memory | Platform-dependent | **mlock + zeroize (guard pages on Linux)** |
@@ -264,7 +266,7 @@ Key separation: encryption / authentication / metadata / HMAC / identity — all
 | Nonce-misuse resistant AEAD | ❌ | ❌ | ✅ |
 | Metadata key rotation | ❌ | ❌ | ✅ |
 | Encrypted envelope metadata | ❌ | ❌ | ✅ |
-| State anti-rollback HMAC | ❌ | ❌ | ✅ |
+| State integrity HMAC + external counter | ❌ | ❌ | ✅ |
 | Session teardown ceremony | ❌ | ❌ | ✅ |
 | Secure memory (mlock) | ❌¹ | ❌¹ | ✅ |
 | Shamir secret sharing | ❌ | ❌ | ✅ |
@@ -293,12 +295,12 @@ Key separation: encryption / authentication / metadata / HMAC / identity — all
 |--------|------------|-------|--------------|
 | Passive eavesdropper (classical) | ✅ Protected | ✅ Protected | ✅ Protected |
 | Active MITM (classical) | ✅ Protected (identity keys) | ✅ Protected | ✅ Protected |
-| Harvest-now-decrypt-later (quantum) | ❌ Vulnerable | ⚠️ Handshake protected | ✅ **All epochs protected** |
-| Quantum adversary (real-time) | ❌ Vulnerable | ⚠️ Handshake protected | ✅ **Per-ratchet protection** |
-| Compromised session state | ⚠️ PCS via DH ratchet | ⚠️ PCS (classical only) | ✅ **PCS (hybrid ratchet)** |
+| Harvest-now-decrypt-later (quantum) | ❌ Vulnerable | ⚠️ Handshake protected | ✅ **Session-secret confidentiality refreshed at directed KEM ratchets** |
+| Quantum adversary (real-time) | ❌ Vulnerable | ⚠️ Handshake protected | ⚠️ **Confidentiality hedged; authentication remains Ed25519** |
+| Compromised session state | ⚠️ PCS via DH ratchet | ⚠️ PCS (classical only) | ✅ **1-step classical / 2-step hybrid PCS in this schedule** |
 | Nonce reuse by implementation bug | ❌ CBC leaks data | ❌ CBC leaks data | ✅ **GCM-SIV: safe** |
-| State rollback attack | ❌ No detection | ❌ No detection | ✅ **HMAC anti-rollback** |
-| Metadata traffic analysis | ⚠️ Sealed Sender (partial) | ⚠️ Sealed Sender | ✅ **Encrypted metadata + rotation** |
+| State rollback attack | ❌ No detection | ❌ No detection | ✅ **State integrity plus external counter freshness** |
+| Metadata traffic analysis | ⚠️ Sealed Sender (partial) | ⚠️ Sealed Sender | ⚠️ **Encrypted envelope fields + rotation; no anonymity claim** |
 | Device fingerprinting (timestamps) | ❌ Not addressed | ❌ Not addressed | ✅ **Nanoseconds zeroed** |
 
 ---
@@ -307,13 +309,13 @@ Key separation: encryption / authentication / metadata / HMAC / identity — all
 
 ### Aura's Contributions
 
-1. **Hybrid post-quantum ratchet**: The primary contribution — extending the Double Ratchet with Kyber-768 KEM on every direction change, providing per-epoch PQ forward secrecy and PQ post-compromise security. Signal's PQXDH and planned SPQR/Triple Ratchet target similar goals but with different trade-offs.
+1. **Hybrid post-quantum confidentiality ratchet**: A compact two-party design point that adds ML-KEM-768 on direction-change ratchets, with a formal 1-step classical / 2-step hybrid PCS boundary for this schedule. Signal SPQR/Triple Ratchet and Apple PQ3 are broader modern baselines with different trade-offs.
 
 2. **Nonce-misuse resistant AEAD**: AES-256-GCM-SIV provides a strictly stronger security guarantee than AES-256-CBC for symmetric encryption.
 
 3. **Metadata forward secrecy**: Rotating metadata encryption keys on ratchet steps, with an old-epoch cache for out-of-order delivery. Signal's Sealed Sender addresses a different aspect of metadata privacy (sender anonymity from the server).
 
-4. **Cryptographic state integrity**: HMAC-SHA256 anti-rollback on serialized state, verified on every import. Signal relies on database-level encryption.
+4. **Cryptographic state integrity**: HMAC-SHA256 over serialized state plus an external monotonic counter freshness contract, verified on import. Signal relies on database-level encryption.
 
 5. **Explicit session teardown**: Documented 9-step key wipe ceremony with post-destroy guards on all operations.
 
@@ -324,13 +326,13 @@ Key separation: encryption / authentication / metadata / HMAC / identity — all
 | Per-epoch PQ protection | ~94 µs overhead per ratchet step |
 | Nonce-misuse resistance (GCM-SIV) | Slightly larger ciphertext (16-byte tag, same as GCM) |
 | Metadata encryption + rotation | ~80 B per-message overhead (metadata AEAD) |
-| Kyber-768 in ratchet | ~1.3 KB bandwidth per direction change |
-| State HMAC anti-rollback | ~32 B storage + HMAC computation on export/import |
+| ML-KEM-768 in ratchet | ~1.3 KB bandwidth per direction change |
+| State HMAC + external counter | ~32 B storage + HMAC computation on export/import |
 | Non-deniable (by design) | Loss of online deniability (deliberate) |
 
 ### Positioning Statement
 
-Aura targets the **post-quantum gap** in current messaging protocols: the period between NIST PQC standardization and full integration of PQ primitives into ongoing ratcheting. While Signal's PQXDH protects the initial handshake, Aura extends PQ protection to the entire session lifetime through a hybrid Double Ratchet with Kyber-768.
+Aura targets a narrow **post-quantum confidentiality gap**: moving KEM material from the initial handshake into ongoing two-party ratchet state. While Signal PQXDH protects the initial handshake, Aura studies a hybrid Double Ratchet profile with ML-KEM-768 at directed ratchet boundaries; authentication remains classical in the current artifact.
 
 ---
 

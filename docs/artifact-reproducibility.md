@@ -10,9 +10,10 @@ scope, and current gaps.
 ./scripts/reproduce-paper-artifact.sh quick
 ```
 
-The script writes logs under `artifact-output/<timestamp>-<mode>/`. Every run
-also writes `MANIFEST.txt` and `SHA256SUMS` in the same directory, including
-failed runs where partial logs are useful for diagnosis.
+By default the script writes logs under `artifact-output/<timestamp>-<mode>/`.
+Set `AURA_ARTIFACT_OUT=/path/to/output` to override the output directory.
+Every run also writes `MANIFEST.txt` and `SHA256SUMS` in the same directory,
+including failed runs where partial logs are useful for diagnosis.
 
 Modes:
 

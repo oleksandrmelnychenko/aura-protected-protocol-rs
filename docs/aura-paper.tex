@@ -98,7 +98,7 @@
 \newcommand{\MLS}{\textsf{MLS}}
 
 % ─── Title ───────────────────────────────────────────────────
-\title{\textbf{Aura: A Hybrid Post-Quantum Secure Messaging Protocol\\with Per-Ratchet KEM Rotation and Symbolic Models}}
+\title{\textbf{Aura: Hybrid Post-Quantum Confidentiality for Stateful Messaging\\with Per-Ratchet KEM Rotation and Symbolic Models}}
 
 \author{%
   Oleksandr Melnychenko\\
@@ -115,11 +115,11 @@
 % ABSTRACT
 % ─────────────────────────────────────────────────────────────
 \begin{abstract}
-Aura is a hybrid post-quantum messaging protocol built around X25519 and ML-KEM-768. It uses post-quantum material in the initial X3DH-style handshake and again when the message direction changes: each directed ratchet step derives a new root key from fresh X25519 and KEM inputs. In the conservative compromise model analyzed here, this gives classical post-compromise recovery after one honest ratchet step and hybrid recovery after two directed steps.
+Aura is a hybrid secure-messaging research protocol that targets post-quantum confidentiality for session secrets under classical Ed25519 identity and signed-pre-key authentication. It uses X25519 and ML-KEM-768 in the initial X3DH-style handshake and again on directed ratchet steps. In the conservative compromise model analyzed here, classical recovery follows the first honest directed step and hybrid recovery follows the next directed step that uses a post-compromise KEM public key.
 
 The construction binds each new KEM public key into the HKDF transcript and separates payload encryption from metadata encryption by using an independent per-epoch metadata key. Relative to Signal \SPQR{}/Triple Ratchet and Apple \PQThree{}, Aura does not claim priority for post-quantum ratcheting or deployment maturity. Its narrower contribution is a reproducible two-party design point: eager per-direction X25519+ML-KEM ratchet transitions, HKDF-info binding of the advertised KEM public key, a rotating envelope-metadata key, and proof-to-code links in one Rust artifact.
 
-The security argument consists of six game-based theorems under standard assumptions (Gap-CDH, ML-KEM IND-CCA2, dual-PRF, and MRAE), together with symbolic models: 10 Tamarin lemmas verify, and 3 of 6 ProVerif obligations discharge for the handshake/message-path model. The remaining ProVerif obligations are not counted as machine-checked results: injective authentication does not terminate in the default four-DH model, the broad message-integrity query admits adversary-originated sessions, and the raw KEM-secret phase query is false after KEM secret-key disclosure. The implementation contains approximately 35.9k lines in \texttt{src/}, 30.1k lines of tests, and 1.1k lines of benchmarks. The full repository test matrix contains 750 default scenarios and 889 scenarios with \texttt{ffi} enabled.
+The security argument consists of six game-based theorems under Gap-CDH, ML-KEM IND-CCA2, dual-PRF, and MRAE assumptions. Symbolic evidence is deliberately scoped: 10 Tamarin lemmas verify a two-DH handshake abstraction and a terminal one-step ratchet abstraction, and 3 of 6 ProVerif obligations discharge for the handshake/message-path model. The remaining ProVerif obligations are not counted as machine-checked results. The Rust artifact implements the analyzed two-party protocol and includes deterministic vectors, reproducibility scripts, regression tests, and a proof-to-code map; repository-wide line and test counts are artifact context, not separate security evidence.
 \end{abstract}
 
 \smallskip
@@ -143,8 +143,8 @@ An adversary that records ECDH-based traffic today could later derive affected s
 \paragraph{Challenge 2: KEM integration granularity.}
 The Signal PQXDH proposal~\cite{signal-pqxdh} introduces a single Kyber encapsulation during the initial handshake but does not include post-quantum key material in subsequent ratchet steps. This protects the start of the session against harvest-now-decrypt-later attacks, but post-compromise recovery after the handshake relies on classical DH. More recent systems, including Signal \SPQR{}/Triple Ratchet~\cite{signal-spqr,signal-double-ratchet,mlkem-braid} and Apple \PQThree{}~\cite{apple-pq3,stebila-pq3,linker-pq3}, move post-quantum material into ongoing state evolution. Aura should therefore be compared with ongoing post-quantum ratcheting designs, not only with PQXDH.
 
-\paragraph{Challenge 3: Asymmetric KEM recovery.}
-Unlike DH, where both parties contribute ephemeral keys symmetrically, KEM requires one party to advertise a public key before the other can encapsulate. This introduces an inherent asymmetry in hybrid ratchet protocols: classical PCS recovery occurs in one ratchet step, but full hybrid recovery requires two steps.
+\paragraph{Challenge 3: Directed KEM recovery in this construction.}
+Unlike DH, a KEM schedule must advertise encapsulation material before the peer can encapsulate. In Aura's directed KEM-public-key schedule, a conservative two-endpoint compromise leaves the first post-compromise encapsulation targeted at a compromised KEM key. The first honest directed step restores the fresh DH contribution; the next directed step that uses a post-compromise KEM public key restores the hybrid contribution. Other SCKA-style schedules make different latency, bandwidth, and state-retention tradeoffs.
 
 \paragraph{Challenge 4: Metadata leakage.}
 Standard Double Ratchet implementations transmit ratchet public keys, epoch counters, and message indices in cleartext envelope headers. Even with payload encryption, this metadata reveals communication patterns, message ordering, and session lifecycle to network observers.
@@ -165,7 +165,7 @@ In particular, the paper makes five concrete contributions:
 
   \item \textbf{N3: two-layer AEAD with metadata-key rotation.} Envelope metadata and payload bytes are encrypted under separate keys. The metadata key rotates by epoch, and both layers use AES-256-GCM-SIV for nonce-misuse resistance (\cref{lem:two-layer}).
 
-  \item \textbf{N4: explicit PCS asymmetry.} The analysis states and proves the 1-step classical / 2-step hybrid recovery boundary. The extra hybrid step is treated as a consequence of KEM directionality, not as an implementation accident.
+  \item \textbf{N4: explicit PCS asymmetry.} The analysis states and proves the 1-step classical / 2-step hybrid recovery boundary for this directed KEM-public-key schedule. The extra hybrid step is treated as a protocol scheduling consequence, not as an implementation accident.
 
   \item \textbf{N5: proof-to-code artifact chain.} The repository records explicit links among 6 theorems, 8 supporting lemmas, 10 verified Tamarin lemmas, 3 discharged ProVerif obligations, Rust tests, benchmarks, FFI boundaries, and the protocol state machine.
 \end{enumerate}
@@ -230,7 +230,7 @@ $\mk_{e,n}$ & Message key at epoch $e$, chain index $n$ \\
 $\mdk_e$ & Metadata key at epoch $e$ \\
 $R(\cdot)$ & Hybrid ratchet step function \\
 $q_s$ & Number of sessions \\
-$q_m$ & Number of messages per session \\
+$q_m$ & Total encrypted message attempts across all sessions \\
 $N_{\max}$ & Negotiated per-chain limit; API default 1{,}000, protocol cap 10{,}000 \\
 \bottomrule
 \end{tabular}
@@ -239,12 +239,13 @@ $N_{\max}$ & Negotiated per-chain limit; API default 1{,}000, protocol cap 10{,}
 \subsection{Cryptographic Primitives}
 
 \begin{definition}[Diffie--Hellman on X25519]\label{def:dh}
-The proof models X25519 in the validated large prime-order subgroup of order
-$q = 2^{252} + 27742317777372353535851937790883648493$. Curve25519 itself
-has cofactor 8; the implementation clamps scalars and rejects small-order
-inputs before using a received public key. The X25519 function~\cite{rfc7748}
-computes scalar multiplication $\DH(a, B) = [a]B$. A keypair is $(a, A)$
-where $A = [a]G$ and $G$ is the base point $u = 9$.
+The proof uses an idealized prime-order X25519 abstraction of order
+$q = 2^{252} + 27742317777372353535851937790883648493$. Curve25519 has
+cofactor 8; the implementation follows RFC~7748 clamping and rejects malformed
+field encodings, small-order inputs, and all-zero shared secrets where
+applicable. Cofactor and twist subtleties are not modeled beyond this
+abstraction. The X25519 function~\cite{rfc7748} computes scalar multiplication
+$\DH(a, B) = [a]B$ with base point $u = 9$.
 \end{definition}
 
 \begin{definition}[Gap-CDH]\label{def:gap-cdh}
@@ -369,10 +370,10 @@ Erase $\mathit{ek}_I$, copies of $\mathit{ik}_I$, all $\mathit{dh}_i$, $\mathit{
 
 Here $\mathsf{LP}(x)$ denotes the length-prefixed canonical encoding used by the transcript serializer.
 
-The responder performs the symmetric computation: it recomputes the four DH shared secrets using its own private keys, decapsulates the Kyber ciphertext, derives the same root key $\rk_0$, verifies $\mathit{mac}_I$, and sends $\mathit{Ack} = (\mathit{mac}_R)$. The initiator finalizes by verifying $\mathit{mac}_R$ in constant time.
+The responder performs the symmetric computation: it recomputes the four DH shared secrets using its own private keys, decapsulates the ML-KEM ciphertext, derives the same root key $\rk_0$, verifies $\mathit{mac}_I$, and sends $\mathit{Ack} = (\mathit{mac}_R)$. The initiator finalizes by verifying $\mathit{mac}_R$ in constant time.
 
 \paragraph{Hybrid combiner design.}
-The combiner uses the classical DH output $\mathit{cs}$ as the HKDF salt and the Kyber shared secret $\mathit{ss}_{\mathit{ky}}$ as input keying material. This matches the RFC~5869 extract-and-expand interface~\cite{rfc5869} and relies on the $\dualPRF$ property of HKDF: the output $\rk_0$ is pseudorandom provided either the salt (classical) or the IKM (post-quantum) is uniformly random. Concretely, if the classical DH assumption holds, $\mathit{cs}$ is computationally indistinguishable from random (as a salt), and if Kyber is $\INDCCA$ secure, $\mathit{ss}_{\mathit{ky}}$ is indistinguishable from random (as IKM). The hybrid combiner remains secure as long as at least one assumption holds.
+The combiner uses the classical DH output $\mathit{cs}$ as the HKDF salt and the ML-KEM shared secret $\mathit{ss}_{\mathit{ky}}$ as input keying material. This matches the RFC~5869 extract-and-expand interface~\cite{rfc5869} and relies on the $\dualPRF$ property of HKDF: the output $\rk_0$ is pseudorandom provided either the salt (classical) or the IKM (post-quantum) is uniformly random. Concretely, if the classical DH assumption holds, $\mathit{cs}$ is computationally indistinguishable from random (as a salt), and if ML-KEM-768 is $\INDCCA$ secure, $\mathit{ss}_{\mathit{ky}}$ is indistinguishable from random (as IKM). The hybrid combiner remains secure as long as at least one assumption holds.
 
 \paragraph{Key confirmation.}
 Bilateral key confirmation prevents unknown key-share (UKS) attacks~\cite{lamacchia2007}. The transcript hash $\mathit{th}$ is computed using $\HMAC$ (rather than raw $\SHA$) over length-prefixed encodings to prevent length-extension and canonicality attacks. Separate confirmation keys $\mathit{kc}_I$ and $\mathit{kc}_R$ are derived from $\rk_0$ using distinct HKDF info strings, ensuring domain separation.
@@ -398,13 +399,13 @@ The old chain key $\ck_e^{(n)}$ is securely erased after derivation, providing p
 \begin{algorithm}[H]
 \caption{Send-side hybrid ratchet (epoch $e \to e+1$).}\label{alg:send-ratchet}
 \DontPrintSemicolon
-\KwIn{Current root key $\rk_e$, peer's DH public key $D_{\mathit{peer}}$, peer's Kyber public key $kpk_{\mathit{peer}}$}
+\KwIn{Current root key $\rk_e$, peer's DH public key $D_{\mathit{peer}}$, peer's ML-KEM public key $kpk_{\mathit{peer}}$}
 \KwOut{New root key $\rk_{e+1}$, new chain key $\ck_{e+1}$, new metadata key $\mdk_{e+1}^{\mathit{send}}$, ratchet header}
 
 Generate fresh X25519 keypair $(d_{e+1}, D_{e+1})$\;
 $\mathit{dh}_{e+1} \gets \DH(d_{e+1}, D_{\mathit{peer}})$\;
 $(\mathit{ct}_{e+1}, \mathit{ss}_{e+1}) \gets \KEM.\Encaps(kpk_{\mathit{peer}})$\;
-Generate fresh Kyber keypair $(kpk_{e+1}, ksk_{e+1})$\;
+Generate fresh ML-KEM keypair $(kpk_{e+1}, ksk_{e+1})$\;
 \BlankLine
 $\mathit{ikm} \gets \mathit{dh}_{e+1} \concat \mathit{ss}_{e+1}$\;
 $\mathit{info} \gets \texttt{"Aura-Hybrid-Ratchet"} \concat kpk_{e+1}$\;
@@ -415,24 +416,24 @@ Erase $d_e$, $ksk_e$, $\rk_e$, $\mathit{dh}_{e+1}$, $\mathit{ss}_{e+1}$\;
 \end{algorithm}
 
 \paragraph{Ratchet trigger.}
-Unlike Signal, which triggers a DH ratchet only when a new DH public key is received, Aura triggers a full hybrid ratchet on \emph{every direction change}: after receiving a message, the \texttt{send\_ratchet\_pending} flag is set, causing the next \texttt{encrypt()} call to execute \cref{alg:send-ratchet}. Additionally, a chain exhaustion ratchet is triggered when the negotiated per-chain limit is reached; the public API default is 1{,}000 messages and the protocol cap is 10{,}000.
+In the classical Double Ratchet, the DH ratchet advances when a new DH public key is received from the peer~\cite{signal-double-ratchet}; Signal's current Triple Ratchet adds \SPQR{} as a separate sparse post-quantum component~\cite{signal-spqr,mlkem-braid}. Aura instead uses one protocol-level policy for this design point: after every received message, the \texttt{send\_ratchet\_pending} flag causes the next \texttt{encrypt()} call to execute a full hybrid ratchet. Additionally, a chain exhaustion ratchet is triggered when the negotiated per-chain limit is reached; the public API default is 1{,}000 messages and the protocol cap is 10{,}000.
 
 \paragraph{Augmented info string.}
-The HKDF info parameter includes the new Kyber public key $kpk_{e+1}$ (\cref{alg:send-ratchet}, line~7). This binding supports the following lemma:
+The HKDF info parameter includes the new ML-KEM public key $kpk_{e+1}$ (\cref{alg:send-ratchet}, line~7). This binding supports the following lemma:
 
 \begin{lemma}[Augmented HKDF Info Binding]\label{lem:augmented-hkdf}
 If an adversary substitutes $kpk' \neq kpk_{e+1}$ in the ratchet header, the receiver computes a different root key $\rk'_{e+1} \neq \rk_{e+1}$ with overwhelming probability (under the $\PRF$ property of HKDF). Consequently, all derived chain and message keys differ, and AEAD decryption fails (under the $\INTCTXT$ property of $\AEAD$). This provides an implicit state-binding check for the KEM public key without per-step signatures; it is not a separate identity-authentication mechanism.
 \end{lemma}
 
 \paragraph{Receive-side ratchet.}
-The receiver mirrors the computation: it decapsulates the Kyber ciphertext, computes the DH shared secret, derives the new root key using the augmented info string, and caches the old metadata key for decrypting delayed messages from previous epochs.
+The receiver mirrors the computation: it decapsulates the KEM ciphertext, computes the DH shared secret, derives the new root key using the augmented info string, and caches the old metadata key for decrypting delayed messages from previous epochs.
 
 \paragraph{Transactional rollback.}
-Before applying a received ratchet, the implementation snapshots the full session state (root key, chain keys, DH/Kyber private keys, skipped key cache, metadata key cache). If metadata or payload decryption fails after the ratchet is applied, the snapshot is restored, preventing a forged ratchet envelope from desynchronizing the peers.
+Before applying a received ratchet, the implementation snapshots the full session state (root key, chain keys, DH/ML-KEM private keys, skipped key cache, metadata key cache). If metadata or payload decryption fails after the ratchet is applied, the snapshot is restored, preventing a forged ratchet envelope from desynchronizing the peers.
 
 \subsubsection{Session Initialization}
 
-After the X3DH handshake produces $\rk_0$ and the Kyber shared secret, the session is initialized via an initial hybrid ratchet step:
+After the X3DH handshake produces $\rk_0$ and the ML-KEM shared secret, the session is initialized via an initial hybrid ratchet step:
 \begin{align}
   \mathit{dh}_{\mathit{init}} &= \DH(d_{\mathit{local}}, D_{\mathit{remote}}), \label{eq:init-dh} \\
   \mathit{hybrid\_ikm} &= \mathit{dh}_{\mathit{init}} \concat \mathit{ss}_{\mathit{ky}}, \label{eq:init-hybrid-ikm} \\
@@ -459,7 +460,7 @@ where $\mathit{aad}_{\mathit{md}} = \mathit{sid} \concat \mathit{ibh} \concat \e
 where $\mathit{aad}_{\mathit{pay}} = \mathit{sid} \concat \mathit{ibh} \concat \epoch \concat n \concat v$ additionally includes the message index $n$.
 
 \begin{lemma}[Two-Layer AEAD Independence]\label{lem:two-layer}
-The metadata layer ($\mdk_e$) and payload layer ($\mk_{e,n}$) use keys derived from different HKDF computations with distinct info strings. Given only $\mk_{e,n}$ and not the root or metadata key material, the adversary obtains no information about $\mdk_e$ under the HKDF assumptions.
+For a ratchet epoch, the chain key $\ck_e$ and metadata key $\mdk_e$ are disjoint segments of a jointly pseudorandom HKDF output; the payload message key $\mk_{e,n}$ is later derived from $\ck_e$ under the \texttt{"Aura-Msg"} domain label. Given only $\mk_{e,n}$ and not the root or metadata key material, the adversary obtains no information about $\mdk_e$ under the HKDF PRF assumption and the one-way chain derivation.
 \end{lemma}
 
 \paragraph{Nonce structure.}
@@ -519,7 +520,7 @@ The adversary $\advA$ has access to the following oracles:
 \begin{itemize}
   \item $\textsf{Send}(\pi_i^s, m)$: Deliver message $m$ to session $\pi_i^s$ and obtain the response.
   \item $\textsf{Corrupt}(P_i)$: Obtain all long-term keys of $P_i$ ($\mathit{ik}_i$, $ksk_i$).
-  \item $\textsf{RevealState}(\pi_i^s)$: Obtain the full session state (root key, chain keys, metadata keys, DH/Kyber private keys, nonce state).
+  \item $\textsf{RevealState}(\pi_i^s)$: Obtain the full session state (root key, chain keys, metadata keys, DH/ML-KEM private keys, nonce state).
   \item $\textsf{RevealSessionKey}(\pi_i^s)$: Obtain the current root key $\rk_e$.
   \item $\textsf{Test}(\pi_i^s)$: Challenge oracle. Flip coin $b \getsr \{0,1\}$; return $\rk_e$ if $b = 0$, or a uniformly random key if $b = 1$. At most one $\textsf{Test}$ query is allowed.
 \end{itemize}
@@ -583,7 +584,7 @@ where $q_H$ is the number of random oracle queries and the factor 4 arises from 
 \end{theorem}
 
 \begin{proof}[Proof sketch]
-There are two reduction paths. In the KEM path, we replace the Kyber shared
+There are two reduction paths. In the KEM path, we replace the ML-KEM shared
 secret $\mathit{ss}_{\mathit{ky}}$ with a uniformly random value, reducing
 the distinguishing advantage to $\adv^{\INDCCA}_{\KEM}(\advB_1)$. In the
 classical path, we replace the X3DH shared secret $\mathit{cs}$ with a random
@@ -597,7 +598,7 @@ random oracle collisions.
 
 \subsection{Theorem 2: AKE Security}
 
-\begin{theorem}[$\eCK$-Style AKE Security]\label{thm:ake}
+\begin{theorem}[AKE Security in the Modified X3DH Leakage Model]\label{thm:ake}
 The Aura hybrid X3DH satisfies the AKE security definition above. For any $\ppt$ adversary $\advA$ making at most $q_s$ session queries:
 \begin{align}
   \adv^{\eCK}_{\mathrm{AURA}}(\advA)
@@ -646,9 +647,9 @@ transcript-visible term $\mathit{dh}_2=\DH(\mathit{ek}_I,\IK_R^{\mathit{pub}})$
 is not counted after $\mathit{ik}_R$ disclosure, because it can be recomputed
 from $\IK_R$ and $\EK_I^{\mathit{pub}}$. The surviving classical shared secret
 is used as the HKDF salt, so the $\dualPRF$ property makes the root key
-pseudorandom. The Kyber term is intentionally not counted in this FS bound:
+pseudorandom. The initial KEM term is intentionally not counted in this FS bound:
 after later disclosure of $\mathit{ksk}_R$, a recorded KEM ciphertext can be
-decapsulated. Kyber's contribution in this setting is HNDL protection without
+decapsulated. The KEM contribution in this setting is HNDL protection without
 later KEM secret-key disclosure, and PCS after fresh ratchet KEM keys appear.
 \end{proof}
 
@@ -662,13 +663,14 @@ The implementation erases ephemeral keys immediately after use: the X25519 ephem
 If the adversary compromises full session state at epoch $e$ via
 $\textsf{RevealState}$:
 
-\noindent\textbf{(a) Classical PCS (1-step):} Messages at epoch $\geq e+1$ are secure:
+\noindent\textbf{(a) Classical PCS (1-step):} Messages after the first honest directed ratchet step are secure:
 \begin{equation}\label{eq:pcs-classical-bound}
   \adv^{\mathrm{PCS}\text{-}1}_{\mathrm{AURA}}(\advA) \leq \adv^{\GapCDH}_{\DH}(\advB_1) + \adv^{\dualPRF}_{\HKDF}(\advB_2).
 \end{equation}
 
 \noindent\textbf{(b) Hybrid PCS (2-step):} Under the conservative two-endpoint
-compromise model, messages at epoch $\geq e+2$ are secure:
+compromise model, messages after the next directed step that uses a
+post-compromise KEM public key are secure:
 \begin{equation}\label{eq:pcs-hybrid-bound}
   \adv^{\mathrm{PCS}\text{-}2}_{\mathrm{AURA}}(\advA) \leq \adv^{\GapCDH}_{\DH}(\advB_1) + \adv^{\INDCCA}_{\KEM}(\advB_3) + 2 \cdot \adv^{\dualPRF}_{\HKDF}(\advB_2).
 \end{equation}
@@ -683,9 +685,9 @@ including the peer KEM secret key targeted by the first post-compromise
 encapsulation. Under one-endpoint compromise, that first ratchet step may
 already include an uncompromised peer KEM contribution.
 
-\textbf{Part (a):} At epoch $e+1$, the honest party generates a fresh DH keypair $(d_{e+1}, D_{e+1})$ unknown to the adversary. The Kyber encapsulation at $e+1$ uses the old $kpk_e^{\mathit{peer}}$ (compromised), so Kyber does not contribute security. However, the DH shared secret is fresh, and by $\GapCDH$ hardness and the $\dualPRF$ property, the new root key $\rk_{e+1}$ is pseudorandom.
+\textbf{Part (a):} At the first honest directed step, the honest party generates a fresh DH keypair $(d_{e+1}, D_{e+1})$ unknown to the adversary. The KEM encapsulation at that step uses the old $kpk_e^{\mathit{peer}}$ (compromised), so KEM does not contribute security. However, the DH shared secret is fresh, and by $\GapCDH$ hardness and the $\dualPRF$ property, the new root key is pseudorandom.
 
-\textbf{Part (b):} At epoch $e+1$, the honest party generated a fresh Kyber keypair $(kpk_{e+1}, ksk_{e+1})$. At epoch $e+2$, the peer encapsulates against $kpk_{e+1}$, which the adversary does not hold the secret key for. The shared secret is indistinguishable from random by $\INDCCA$. Combined with a fresh DH at $e+2$, both components are fresh, and the $\dualPRF$ property gives pseudorandomness of $\rk_{e+2}$.
+\textbf{Part (b):} During the first honest directed step, the honest party also generated a fresh ML-KEM keypair $(kpk_{e+1}, ksk_{e+1})$. At the next directed step that uses this public key, the peer encapsulates against $kpk_{e+1}$, whose secret key was generated after compromise. The shared secret is indistinguishable from random by $\INDCCA$. Combined with a fresh DH contribution on that step, both components are fresh, and the $\dualPRF$ property gives pseudorandomness of the next root key.
 \end{proof}
 
 \begin{lemma}[Per-Direction Ratchet]\label{lem:per-direction}
@@ -700,7 +702,7 @@ step described in \cref{thm:pcs}.
 \subsection{Theorem 5: Message Confidentiality and Integrity}
 
 \begin{theorem}[Message Security]\label{thm:msg-security}
-Under $\MRAE$ security of $\AEAD$ and $\PRF$ security of the chain KDF, each message key $\mk_{e,n}$ is indistinguishable from random and each ciphertext provides $\INDCPA$ + $\INTCTXT$ security:
+Under $\MRAE$ security of $\AEAD$ and $\PRF$ security of the chain KDF, each message key $\mk_{e,n}$ is indistinguishable from random and each ciphertext provides $\INDCPA$ + $\INTCTXT$ security over $q_m$ total encrypted message attempts:
 \begin{equation}\label{eq:msg-security-bound}
   \adv^{\mathrm{Conf}}_{\mathrm{AURA}}(\advA) \leq \adv^{\eCK}_{\mathrm{AURA}}(\advB_0) + q_m \cdot \adv^{\PRF}_{\mathrm{chain}}(\advB_1) + q_m \cdot \adv^{\MRAE}_{\AEAD}(\advB_2) + \frac{q_m^2}{2^{96}}.
 \end{equation}
@@ -779,14 +781,15 @@ The handshake model (\texttt{aura\_handshake.spthy}) uses Tamarin's built-in Dif
 \begin{itemize}
   \item Only 2 of the 4 X3DH DH operations ($\mathit{dh}_1$ and $\mathit{dh}_2$) are modeled to avoid Tamarin's source saturation with $\geq 4$ DH operations. This removes two DH contributions; it is conservative for session-key secrecy, but it does not model every transcript-binding path in the implementation.
 
-  \item A single \texttt{!Keys} fact merges all of a party's key material (identity key, signed pre-key, Kyber secret key), preventing cross-instance key mismatch attacks that arise from separate persistent facts.
+  \item A single \texttt{!Keys} fact merges all of a party's key material (identity key, signed pre-key, KEM secret key), preventing cross-instance key mismatch attacks that arise from separate persistent facts.
+  \item The symbolic authentication model treats the responder KEM public key as a trusted bundle field, which is stronger than the implementation's shape-validation plus transcript/key-confirmation binding; KEM-key substitution is covered by \cref{lem:augmented-hkdf} and tamper tests.
 \end{itemize}
 
 \paragraph{Threat model.}
 The Dolev--Yao adversary has full network control. Two compromise rules model different adversary capabilities:
 \begin{itemize}
   \item \textbf{Classical compromise:} Reveals X25519 identity and signed pre-key private keys (models side-channel or CRQC).
-  \item \textbf{Full compromise:} Additionally reveals Kyber secret key (total break).
+  \item \textbf{Full compromise:} Additionally reveals the ML-KEM secret key (total break).
 \end{itemize}
 
 \paragraph{Verified lemmas (6/6).}
@@ -802,18 +805,18 @@ The Dolev--Yao adversary has full network control. Two compromise rules model di
 1 & \texttt{session\_key\_secrecy} & Hybrid root secret secure unless at least one party is compromised \\
 2 & \texttt{mutual\_authentication} & Bilateral key confirmation prevents UKS: initiator commits imply responder was running \\
 3 & \texttt{responder\_authentication} & Symmetric: responder commits imply initiator was running \\
-4 & \texttt{forward\_secrecy\_hybrid} & Classical-only compromise (without Kyber SK) does not break session key secrecy \\
+4 & \texttt{forward\_secrecy\_hybrid} & Classical-only compromise (without KEM SK) does not break session key secrecy \\
 5 & \texttt{key\_confirmation} & Partnered sessions derive identical root keys \\
 6 & \texttt{session\_exists} & Reachability: an honest session can complete \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-Lemma~4 (\texttt{forward\_secrecy\_hybrid}) is the hybrid secrecy property in the Tamarin handshake abstraction: if the adversary learns the session key $k$, then either (a) a party was compromised \emph{before} the session (active impersonation), or (b) \emph{full} compromise (including Kyber SK) occurred. Classical-only compromise after the session does not break secrecy in that model.
+Lemma~4 (\texttt{forward\_secrecy\_hybrid}) is the hybrid secrecy property in the Tamarin handshake abstraction: if the adversary learns the session key $k$, then either (a) a party was compromised \emph{before} the session (active impersonation), or (b) \emph{full} compromise (including KEM SK) occurred. Classical-only compromise after the session does not break secrecy in that model.
 
 \subsubsection{Ratchet Model}
 
-The ratchet model (\texttt{aura\_ratchet.spthy}) abstracts DH as a classical KEM (avoiding Tamarin's non-termination with DH in state-loop rules) and uses a terminal (single-step) model.
+The ratchet model (\texttt{aura\_ratchet.spthy}) abstracts DH as a classical KEM (avoiding Tamarin's non-termination with DH in state-loop rules) and uses a terminal (single-step) model. It verifies the decomposed PCS/key-agreement shape for that step; the unbounded ratchet PCS statement remains game-based, and augmented KEM-public-key binding is handled by the HKDF lemma and implementation tests.
 
 \paragraph{Key design decisions.}
 \begin{itemize}
@@ -933,11 +936,11 @@ Secret zeroing & \texttt{zeroize} crate & \texttt{Zeroizing} wrapper for panic-s
 Key material is protected at multiple levels:
 
 \begin{enumerate}
-  \item \textbf{Guarded memory allocation.} Long-lived secret keys (DH private keys, Kyber secret keys) are stored in \texttt{SecureMemoryHandle} objects. On Linux/Unix targets that permit page locking, this uses \texttt{mlock} and, on Linux, \texttt{MADV\_DONTDUMP}; on platforms that cannot lock pages, the implementation falls back to heap storage with automatic zeroing via \texttt{zeroize} on drop.
+  \item \textbf{Guarded memory allocation.} Long-lived secret keys (DH private keys, ML-KEM secret keys) are stored in \texttt{SecureMemoryHandle} objects. On Linux/Unix targets that permit page locking, this uses \texttt{mlock} and, on Linux, \texttt{MADV\_DONTDUMP}; on platforms that cannot lock pages, the implementation falls back to heap storage with automatic zeroing via \texttt{zeroize} on drop.
 
   \item \textbf{Zeroize-on-drop.} Intermediate key material (PRK from HKDF extract, chain key copies) is wrapped in \texttt{Zeroizing<Vec<u8>>} from the \texttt{zeroize} crate, ensuring automatic zeroing even on error paths (when the Rust \texttt{?} operator triggers early returns).
 
-  \item \textbf{Explicit wiping.} All DH shared secrets, IKM buffers, classical shared secrets, and Kyber shared secrets are explicitly wiped via \texttt{zeroize::Zeroize} (volatile writes with compiler barriers) immediately after use.
+  \item \textbf{Explicit wiping.} All DH shared secrets, IKM buffers, classical shared secrets, and ML-KEM shared secrets are explicitly wiped via \texttt{zeroize::Zeroize} (volatile writes with compiler barriers) immediately after use.
 
   \item \textbf{Timestamp rounding.} Nanosecond fields in message timestamps are deliberately zeroed to prevent device fingerprinting via timing analysis.
 \end{enumerate}
@@ -951,7 +954,7 @@ The ML-KEM-768 integration has three implementation points that affect the proto
 
   \item \textbf{Deterministic keygen.} For deterministic identity derivation from a master key, the wrapper derives a 32-byte seed and instantiates a local \texttt{ChaCha20Rng}; \texttt{MlKem768::generate} is then called with that local RNG. No global RNG hook or C library state is involved.
 
-  \item \textbf{Bandwidth overhead.} Each hybrid ratchet step adds $1{,}184 + 1{,}088 + 32 = 2{,}304$ bytes to the message envelope (Kyber public key + ciphertext + DH public key). For messaging applications with typical message sizes of 100--1{,}000 bytes, this represents a 3--23$\times$ overhead per ratchet step.
+  \item \textbf{Bandwidth overhead.} Each hybrid ratchet step adds $1{,}184 + 1{,}088 + 32 = 2{,}304$ bytes to the message envelope (ML-KEM public key + ciphertext + DH public key). For messaging applications with typical message sizes of 100--1{,}000 bytes, this represents a 3--23$\times$ overhead per ratchet step.
 \end{itemize}
 
 \subsection{C Foreign Function Interface}
@@ -996,7 +999,7 @@ the same measurement harness.
 Operation & Latency \\
 \midrule
 Identity creation (5 OPKs) & $\sim$1.5\,ms \\
-Full handshake (keygen + X3DH + Kyber + confirm) & $\sim$1.1\,ms \\
+Full handshake (keygen + X3DH + ML-KEM + confirm) & $\sim$1.1\,ms \\
 Handshake only (pre-created identity) & $\sim$0.7\,ms \\
 Hybrid ratchet step (X25519 + ML-KEM-768) & $\sim$259\,$\mu$s \\
 Encrypt 256\,B (same chain, no ratchet) & $\sim$17\,$\mu$s \\
@@ -1046,7 +1049,7 @@ Component & Latency \\
 \midrule
 X25519 DH scalar multiplication (classical baseline) & $\sim$50\,$\mu$s \\
 ML-KEM-768 encap + decap (PQ overhead) & $\sim$190\,$\mu$s \\
-Full hybrid ratchet step (DH + Kyber + HKDF + encrypt) & $\sim$259\,$\mu$s \\
+Full hybrid ratchet step (DH + ML-KEM + HKDF + encrypt) & $\sim$259\,$\mu$s \\
 \midrule
 Alternating throughput (ratchet every message, 256\,B) & $\sim$280\,$\mu$s/msg \\
 Burst decrypt throughput (pre-generated envelopes, 256\,B) & $\sim$15\,$\mu$s/msg \\
@@ -1144,7 +1147,7 @@ Good baseline for initial harvest-now-decrypt-later protection, not for PQ-PCS i
 \addlinespace
 Signal \SPQR{}/Triple Ratchet~\cite{signal-spqr,signal-double-ratchet,mlkem-braid} &
 Sparse PQ ratchet alongside the classical Double Ratchet &
-PQ-PCS through SCKA epochs; progress depends on Braid chunks/codewords and participant message-sending behavior &
+PQ-PCS through SCKA epochs governed by ML-KEM Braid state and chunk/codeword delivery &
 Open specifications, public SPQR Rust/hax/ProVerif artifact, and Signal engineering notes &
 Open Signal-family baseline for ongoing PQ state evolution. \\
 \addlinespace
@@ -1161,8 +1164,8 @@ IETF standard &
 Reference for group state evolution, not a direct two-party messaging competitor. \\
 \addlinespace
 \textbf{Aura} &
-Hybrid handshake and KEM rotation at ratchet boundaries &
-1 classical step; 2 hybrid steps for PQ recovery &
+Hybrid handshake and KEM rotation at directed ratchet boundaries &
+Classical recovery after the next honest directed step; hybrid recovery after a step using a post-compromise KEM key &
 Repo-integrated Rust research artifact, six theorems, Tamarin/ProVerif, proof-to-code map &
 Narrow contribution: explicit KEM-key binding, per-epoch metadata encryption, and implementation-level invariants in an open Rust codebase. \\
 \bottomrule
@@ -1180,8 +1183,8 @@ Feature & PQXDH & \SPQR{} & \PQThree{} & \textbf{Aura} \\
 \midrule
 PQ contribution after handshake & No & Yes & Yes & \textbf{Yes} \\
 PQ update schedule & One-time KEM & Sparse PQ ratchet & Periodic in-band rekeying & \textbf{KEM rotation at ratchet boundaries} \\
-Fresh PQ material binding mechanism & Handshake KEM only & Public SCKA/Braid state specifies KEM-key updates & Public PQ3 material describes signed in-band PQ rekeying fields & \textbf{KEM public key in HKDF info} \\
-Separate per-epoch envelope-metadata AEAD & No comparable PQXDH layer & Signal Double Ratchet has a header-encryption variant; no comparable per-epoch envelope-metadata AEAD is claimed for this SPQR baseline & No independent per-epoch envelope key is claimed in the public design & \textbf{Per-epoch metadata key} \\
+PQ-material binding & Initial KEM/session transcript & Braid authenticator MACs over header/ciphertext state & Authenticated in-band PQ rekeying in public analyses & \textbf{Ratchet KEM public key in HKDF info, AEAD-confirmed by the next message} \\
+Separate envelope-metadata AEAD & Not specified by PQXDH & Not the focus of public Triple Ratchet/SPQR specs & PQ3 discusses padding and delivery receipts, not this envelope-key split & \textbf{Separate per-epoch metadata key} \\
 Public artifact for this design point & Specification & Public SPQR repository and specifications & Public design, closed implementation & \textbf{Rust code, tests, proof-to-code map} \\
 Formalized PQ-PCS delay & No & SCKA epoch analysis & Published PQ3 analysis & \textbf{1-step classical / 2-step hybrid theorem} \\
 \bottomrule
@@ -1197,7 +1200,7 @@ the security claims are tied to concrete Rust modules.
 
 \subsection{Ratcheting Strategy}
 
-Signal ratchets only when a new DH public key is received from the peer, meaning that a burst of $n$ messages in one direction shares the same DH ratchet key. Aura uses per-direction ratcheting: after every received message, the \texttt{send\_ratchet\_pending} flag causes the next send to trigger a full hybrid ratchet. This provides:
+In the classical Double Ratchet, the DH ratchet advances when a new DH public key is received from the peer~\cite{signal-double-ratchet}; Signal's current Triple Ratchet adds \SPQR{} as a separate sparse post-quantum component~\cite{signal-spqr,mlkem-braid}. Aura uses per-direction hybrid ratcheting for this design point: after every received message, the \texttt{send\_ratchet\_pending} flag causes the next send to trigger a full hybrid ratchet. This provides:
 
 \begin{enumerate}
   \item \textbf{Per-direction forward secrecy.} Each direction change creates a new root key, limiting the damage of a chain-key compromise to the affected direction and epoch.
@@ -1206,15 +1209,15 @@ Signal ratchets only when a new DH public key is received from the peer, meaning
 \end{enumerate}
 
 \paragraph{Cost.}
-Each hybrid ratchet step adds $\sim$259\,$\mu$s of computation and 2{,}304 bytes of bandwidth overhead (1{,}184 bytes for the Kyber public key, 1{,}088 bytes for the Kyber ciphertext, 32 bytes for the DH public key). For interactive messaging with alternating messages, the measured profile is $\sim$280\,$\mu$s/msg; the $\sim$15\,$\mu$s/msg burst number is a decrypt-only measurement over pre-generated same-direction envelopes.
+Each hybrid ratchet step adds $\sim$259\,$\mu$s of computation and 2{,}304 bytes of bandwidth overhead (1{,}184 bytes for the ML-KEM public key, 1{,}088 bytes for the ML-KEM ciphertext, 32 bytes for the DH public key). For interactive messaging with alternating messages, the measured profile is $\sim$280\,$\mu$s/msg; the $\sim$15\,$\mu$s/msg burst number is a decrypt-only measurement over pre-generated same-direction envelopes.
 
 \subsection{PCS Recovery: 1-Step vs.\ 2-Step}
 
-Signal achieves 1-step PCS via a fresh DH exchange. Aura provides 1-step \emph{classical} PCS (via $\GapCDH$ on the fresh DH) and 2-step \emph{hybrid} PCS (additionally requiring a fresh Kyber encapsulation against a non-compromised public key). In Aura's directed KEM ratchet, this asymmetry follows from the order of operations: one party first advertises a fresh KEM public key, and the peer can encapsulate to it only on the next directed step. \Cref{thm:pcs} formalizes that recovery boundary for the construction analyzed in this paper.
+Signal-style DH ratchets achieve 1-step PCS via a fresh DH exchange. Aura provides 1-step \emph{classical} PCS (via $\GapCDH$ on the fresh DH) and 2-step \emph{hybrid} PCS (additionally requiring a fresh KEM encapsulation against a non-compromised public key). In Aura's directed KEM ratchet, this asymmetry follows from the order of operations: one party first advertises a fresh KEM public key, and the peer can encapsulate to it only on the next directed step. \Cref{thm:pcs} formalizes that recovery boundary for the construction analyzed in this paper.
 
 \subsection{Identity Binding}
 
-Signal relies implicitly on the DH key agreement to bind identities. Aura uses an explicit identity binding hash $\mathit{ibh} = \SHA(\texttt{"Aura-Identity-Binding"} \concat \mathrm{sort}(\cdot))$ embedded in every AEAD additional data field. Benefits include:
+Signal-style protocols obtain identity binding through authenticated key-agreement transcripts, signed pre-keys, and associated data. Aura adds an explicit implementation-level identity binding hash $\mathit{ibh} = \SHA(\texttt{"Aura-Identity-Binding"} \concat \mathrm{sort}(\cdot))$ embedded in every AEAD additional data field. Benefits include:
 
 \begin{itemize}
   \item Explicit identity inclusion prevents cross-session identity confusion.
@@ -1236,14 +1239,14 @@ The primary cost of per-ratchet hybrid key exchange is bandwidth: each ratchet s
 \begin{itemize}
   \item \textbf{Batching:} In burst messaging scenarios (multiple messages in the same direction), only the first message carries the ratchet header; subsequent messages in the same epoch have zero KEM overhead.
   \item \textbf{Compression:} No compression is assumed in the protocol. Any compression of KEM-related fields should be treated as future work and analyzed for security and side-channel effects.
-  \item \textbf{Smaller KEM:} Kyber-512 (NIST Level 1) reduces the per-ratchet overhead to $1{,}568$ bytes ($800 + 768$) at the cost of lower quantum security ($\sim$118 bits).
+  \item \textbf{Smaller KEM:} ML-KEM-512 (NIST Level 1) reduces the per-ratchet overhead to $1{,}568$ bytes ($800 + 768$) at the cost of lower quantum security ($\sim$118 bits).
 \end{itemize}
 
 \subsection{2-Step Hybrid PCS}
 
-The 2-step hybrid PCS recovery follows from the directed KEM-public-key ratchet used in Aura: at epoch $e+1$ after compromise, the fresh DH provides classical security, but the Kyber encapsulation uses the compromised peer public key. Full hybrid security is restored at epoch $e+2$ when the peer's fresh Kyber public key (generated at $e+1$) is used.
+The 2-step hybrid PCS recovery follows from the directed KEM-public-key ratchet used in Aura: on the first honest directed step after compromise, the fresh DH provides classical security, but the KEM encapsulation uses the compromised peer public key. Full hybrid security is restored on the next directed step that uses the peer's fresh post-compromise KEM public key.
 
-Within this KEM-public-key ratchet pattern, we conjecture that 1-step hybrid PCS for \emph{both} parties simultaneously would require either: (a) both parties to independently generate and transmit fresh KEM public keys in the same protocol message, or (b) a post-quantum interactive key exchange primitive (analogous to DH but based on lattice assumptions).
+Within this KEM-public-key ratchet pattern, one-step hybrid recovery would require a different schedule, such as simultaneous KEM-key transport, explicit acknowledgements, or another post-quantum SCKA design. We leave that design space outside this paper rather than claiming a lower bound.
 
 \subsection{ProVerif Limitations}
 
@@ -1325,9 +1328,9 @@ a manifest, and SHA-256 checksums; release CI uploads the quick and paper-build
 logs as a reviewable artifact bundle, and the formal CI job uploads
 Tamarin/ProVerif stdout/stderr logs with the same manifest and checksum format.
 Release-tag benchmark workflows produce retention-limited artifacts for the
-fixed traffic-profile comparisons. The remaining reproducibility work is external rather than
-conceptual: record an independent review of the model/code alignment using the
-repository's external-review package.
+fixed traffic-profile comparisons. The remaining evidence gap is independent
+review: the proof-to-code map is author-maintained until an external reviewer
+records model/code alignment using the repository's review package.
 
 \subsection{Limitations}
 
@@ -1346,9 +1349,9 @@ repository's external-review package.
 % ═════════════════════════════════════════════════════════════
 \section{Conclusion}\label{sec:conclusion}
 
-Aura isolates a concrete design point for hybrid post-quantum messaging: KEM material is refreshed as part of the continuing ratchet state, not only during the initial X3DH-style handshake. The protocol combines per-ratchet KEM-key rotation, explicit KEM-key binding, per-epoch metadata encryption, and nonce-misuse-resistant AEAD.
+Aura isolates a concrete design point for hybrid post-quantum confidentiality in secure messaging: KEM material is refreshed in continuing ratchet state, while identity authentication remains classical in the current artifact. The protocol combines per-ratchet KEM-key rotation, explicit KEM-key binding, per-epoch metadata encryption, and nonce-misuse-resistant AEAD.
 
-The evidence is split into the layers a reviewer can check: 6 game-based theorems, 10 Tamarin lemmas, 3 discharged ProVerif obligations for the analyzed two-party protocol, a proof-to-code map, and a Rust implementation. The current implementation measures approximately $1.1$\,ms for the full handshake and approximately $15\,\mu$s/msg for burst messages; the test matrix contains 750 default scenarios and 889 scenarios with \texttt{ffi} enabled, including property-based and concurrent stress tests.
+The evidence is split into layers a reviewer can check: 6 game-based theorems, 10 Tamarin lemmas over decomposed abstractions, 3 discharged ProVerif obligations, a proof-to-code map, and a Rust implementation. The current implementation measures approximately $1.1$\,ms for the full handshake, $280\,\mu$s/msg for alternating 256-byte messages, and $15\,\mu$s/msg for pre-generated same-direction decrypts. These are cost snapshots, not security claims; the test matrix contains 750 default scenarios and 889 scenarios with \texttt{ffi} enabled.
 
 \section*{Acknowledgments}
 
@@ -1594,6 +1597,7 @@ Constant & Purpose & Value \\
 \texttt{MAX\_SKIPPED\_MESSAGE\_KEYS} & Out-of-order cache limit & 1{,}000 \\
 \texttt{MAX\_SEEN\_NONCES} & Replay nonce cache size & 2{,}048 \\
 \texttt{MAX\_CACHED\_METADATA\_KEYS} & Metadata key cache limit & 100 \\
+\texttt{MAX\_METADATA\_KEY\_EPOCH\_AGE} & Metadata key age limit & 32 \\
 \texttt{KYBER\_PUBLIC\_KEY\_BYTES} & ML-KEM public key & 1{,}184 \\
 \texttt{KYBER\_SECRET\_KEY\_BYTES} & ML-KEM secret key & 2{,}400 \\
 \texttt{KYBER\_CIPHERTEXT\_BYTES} & ML-KEM ciphertext & 1{,}088 \\
@@ -1601,6 +1605,11 @@ Constant & Purpose & Value \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+Delayed old-epoch metadata decryptability is bounded by both
+\texttt{MAX\_CACHED\_METADATA\_KEYS} and
+\texttt{MAX\_METADATA\_KEY\_EPOCH\_AGE}; the implementation evicts by count and
+by epoch age.
 
 \section{HKDF Domain Separation Strings}\label{app:info-strings}
 
@@ -1622,7 +1631,7 @@ Info String & Context \\
 \texttt{"Aura-SessionId"} & Session identifier derivation \\
 \texttt{"Aura-MetadataKey"} & Metadata encryption key \\
 \texttt{"Aura-OPAQUE-Root"} & OPAQUE-to-session root derivation \\
-\texttt{"Aura-State-HMAC"} & State anti-rollback HMAC key \\
+\texttt{"Aura-State-HMAC"} & State integrity HMAC key \\
 \texttt{"Aura-KeyConfirm-I"} & Initiator key confirmation \\
 \texttt{"Aura-KeyConfirm-R"} & Responder key confirmation \\
 \texttt{"Aura-Handshake-Transcript"} & Transcript hash \\

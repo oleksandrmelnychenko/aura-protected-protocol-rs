@@ -97,11 +97,12 @@
 
 \begin{abstract}
 We provide a rigorous game-based security analysis of the Aura Protection
-Protocol (AURA), a hybrid post-quantum secure messaging protocol combining
-X25519 Diffie--Hellman key exchange with ML-KEM-768 and AES-256-GCM-SIV
+Protocol (AURA), a hybrid secure-messaging protocol targeting post-quantum
+confidentiality of session secrets under classical Ed25519 authentication and
+combining X25519 Diffie--Hellman key exchange with ML-KEM-768 and AES-256-GCM-SIV
 authenticated encryption.  AURA extends the Signal X3DH/Double Ratchet paradigm
 with (i)~a hybrid combiner achieving IND-CCA2 security under the
-\emph{either-or} assumption (classical Gap-CDH \emph{or} Kyber IND-CCA2),
+\emph{either-or} assumption (classical Gap-CDH \emph{or} ML-KEM-768 IND-CCA2),
 (ii)~per-direction hybrid ratcheting with explicit forward-secrecy and
 post-compromise recovery bounds, and (iii)~two-layer AEAD with nonce-misuse
 resistance.
@@ -137,10 +138,12 @@ $\concat$ for concatenation of byte strings.
 
 \begin{definition}[X25519 Diffie--Hellman Abstraction]
 \label{def:dh}
-The proof models X25519 in the validated large prime-order subgroup of
+The proof uses an idealized prime-order X25519 abstraction of
 order~$q = 2^{252} + 27742317777372353535851937790883648493$.
-Curve25519 has cofactor 8; the implementation clamps scalars and rejects
-small-order inputs before using a received public key. The X25519 function
+Curve25519 has cofactor 8; the implementation follows RFC~7748 clamping and
+rejects malformed field encodings, small-order inputs, and all-zero shared
+secrets where applicable before using a received public key. Cofactor and twist
+subtleties are not modeled beyond this abstraction. The X25519 function
 computes scalar multiplication $\DH(a, B) = [a]B$. A keypair is
 $(a, A) \gets (\getsr \mathbb{Z}_q,\; [a]G)$ where $G$ is the base point
 $u = 9$.
@@ -228,7 +231,7 @@ $\mdk_e$ & Metadata key at epoch $e$ \\
 $\epoch$ & Ratchet epoch counter \\
 $R(\cdot)$ & Hybrid ratchet step function \\
 $q_s$ & Number of sessions \\
-$q_m$ & Number of messages per session \\
+$q_m$ & Total encrypted message attempts across all sessions \\
 $N_{\max}$ & Negotiated per-chain limit; API default 1{,}000, protocol cap 10{,}000 \\
 \bottomrule
 \end{tabular}
@@ -259,8 +262,11 @@ Responder $R$ publishes a \emph{pre-key bundle}:
 \]
 where $\sigma_{\mathit{IKX}}$ binds the X25519 identity key to the Ed25519 identity key
 and $\sigma_{\SPK}$ signs the responder's medium-term signed pre-key. The
-ML-KEM public key is validated and transcript-bound by key confirmation; it is
-not a separate Ed25519-signed field in the current artifact.
+ML-KEM public key is shape-validated and transcript-bound by key confirmation;
+it is not a separate Ed25519-signed field in the current artifact. Symbolic
+authentication models that treat this field as trusted therefore use a stronger
+pre-key-bundle assumption than the implementation; KEM-key substitution is
+handled by the augmented-HKDF lemma and implementation tests.
 
 \subsubsection{Initiator Computation}
 
@@ -285,7 +291,7 @@ not a separate Ed25519-signed field in the current artifact.
       \ell = 32,\; \mathsf{salt} = \epsilon,\;
       \mathsf{info} = \texttt{"Aura-X3DH"}\bigr)
   \]
-  \item Kyber encapsulation:
+  \item ML-KEM encapsulation:
   $(\mathit{ct}_{\mathsf{ky}}, \mathit{ss}_{\mathsf{ky}}) \gets \KEM.\Encaps(\mathit{kpk}_R)$.
   \item \textbf{Hybrid combiner} (classical as salt, PQ as IKM):
   \[
@@ -374,9 +380,9 @@ of leaving recovery to an implicit message-pattern assumption.
   \item Generate fresh DH keypair: $(d_{e+1}, D_{e+1}) \gets \DH.\KeyGen()$.
   \item Compute DH: $\mathit{dh}_{e+1} = \DH(d_{e+1},\; D_{\mathsf{peer}})$.
   \item Encapsulate: $(\mathit{ct}_{e+1}, \mathit{ss}_{e+1}) \gets \KEM.\Encaps(\mathit{kpk}_{\mathsf{peer}})$.
-  \item Generate fresh Kyber keypair: $(\mathit{kpk}_{e+1}, \mathit{ksk}_{e+1}) \gets \KEM.\KeyGen()$.
+  \item Generate fresh ML-KEM keypair: $(\mathit{kpk}_{e+1}, \mathit{ksk}_{e+1}) \gets \KEM.\KeyGen()$.
   \item Combine: $\mathit{ikm} = \mathit{dh}_{e+1} \concat \mathit{ss}_{e+1}$.
-  \item \textbf{Augmented HKDF} (binds Kyber PK into derivation):
+  \item \textbf{Augmented HKDF} (binds ML-KEM public key into derivation):
   \[
     (\rk_{e+1},\; \ck_{e+1},\; \mdk_{e+1}^{\mathsf{send}}) =
     \HKDF\bigl(\mathit{ikm},\; 96,\;
@@ -430,9 +436,9 @@ header nonce.
 \label{sec:model}
 % ============================================================================
 
-We use an $\eCK$-style AKE model~\cite{lamacchia2007} for the hybrid
-post-quantum setting. The oracle set and freshness predicate below define the
-exact leakage model used by the reductions.
+We use a modified X3DH leakage model inspired by $\eCK$~\cite{lamacchia2007}
+for the hybrid post-quantum setting. The oracle set and freshness predicate
+below define the exact leakage model used by the reductions.
 
 \subsection{Parties and Sessions}
 
@@ -453,9 +459,12 @@ The adversary $\advA$ interacts with the protocol via the following oracles:
         returns the protocol's response.
   \item $\mathsf{Corrupt}(P_i)$: Return all long-term secret keys of $P_i$
         ($ik_i$, $\mathit{ksk}_i$). Models full long-term key compromise.
+  \item $\mathsf{RevealSPK}(P_i,\mathit{spk\_id})$: Return the private scalar
+        for a selected signed pre-key. Models medium-term pre-key compromise
+        separately from identity-key and KEM secret-key compromise.
   \item $\mathsf{RevealState}(\pi_i^s)$: Return the full session state of
         $\pi_i^s$ (root key, chain keys, metadata keys, DH private key,
-        Kyber secret key, nonce state). Models state compromise at a point in time.
+        KEM secret key, nonce state). Models state compromise at a point in time.
   \item $\mathsf{RevealSessionKey}(\pi_i^s)$: Return the session key
         (root key $\rk_e$ at current epoch).
   \item $\mathsf{Test}(\pi_i^s)$: If $b = 0$, return the real session key;
@@ -481,6 +490,9 @@ A session $\pi_i^s$ with partner $\pi_j^t$ is \emph{fresh} if none of the follow
         $\mathsf{RevealState}(\pi_i^s)$.
   \item $\advA$ queried $\mathsf{Corrupt}(P_j)$ before
         session $\pi_j^t$ was created \textbf{and} no OPK was used.
+  \item $\advA$ queried $\mathsf{RevealSPK}(P_j,\mathit{spk\_id})$ for the
+        responder signed pre-key used in the tested session before
+        $\mathsf{Test}$ \textbf{and} no OPK was used and deleted.
 \end{enumerate}
 
 \subsection{AKE Security}
@@ -550,7 +562,7 @@ We use two alternative reductions and then take the tighter bound.
 
 \paragraph{Game 0.}
 The real key-indistinguishability game for the hybrid combiner.  The challenger generates
-classical DH keypairs and Kyber keypairs, computes the classical shared secret
+classical DH keypairs and ML-KEM keypairs, computes the classical shared secret
 $\mathit{cs}$ via HKDF over the concatenated DH outputs, encapsulates
 $(\mathit{ct}_{\mathsf{ky}}, \mathit{ss}_{\mathsf{ky}}) \gets
 \KEM.\Encaps(\mathit{kpk}_R)$, then derives
@@ -559,7 +571,7 @@ $\rk_0 = \HKDF(\mathit{ss}_{\mathsf{ky}},\, \mathit{cs},\,
 replaces $\rk_0$ with a uniform random value.  $\advA$'s advantage is
 $\adv^{\mathsf{rk}}_{\mathsf{Hybrid}}(\advA)$.
 
-\paragraph{Path K: Replace Kyber shared secret.}
+\paragraph{Path K: Replace ML-KEM shared secret.}
 We construct a reduction $\advB_1$ to the $\INDCCA$ security of $\KEM$.
 $\advB_1$ receives an $\INDCCA$ challenge $(\mathit{pk}^*, \mathit{ct}^*,
 \mathit{ss}_b)$ and embeds $\mathit{pk}^*$ as $\mathit{kpk}_R$ and
@@ -650,7 +662,7 @@ lattice-based assumptions are weakened.
 \label{sec:thm2}
 % ============================================================================
 
-\begin{theorem}[AKE Security in the $\eCK$-Style Model]
+\begin{theorem}[AKE Security in the Modified X3DH Leakage Model]
 \label{thm:ake}
 The Aura hybrid X3DH satisfies \cref{def:ake}
 under the $\GapCDH$, $\INDCCA$ (ML-KEM-768), $\dualPRF$ (HKDF-SHA256), and
@@ -687,9 +699,11 @@ This introduces a loss factor of $q_s$:
 
 \paragraph{Game 2: Simulate DH using Gap-CDH oracle.}
 For the target session $s^*$, the challenger embeds Gap-CDH challenges into
-the four DH computations.  By the $\eCK$ freshness condition, at least one
+the four DH computations. By the modified freshness condition, at least one
 DH pair $(a, B)$ has \emph{either} $a$ uncompromised (no $\mathsf{RevealState}$)
-\emph{or} the long-term key uncompromised (no $\mathsf{Corrupt}$).
+\emph{or} the long-term key uncompromised (no $\mathsf{Corrupt}$). The
+freshness predicate also excludes responder signed-pre-key disclosure for
+tested no-OPK sessions.
 
 We consider cases based on which keys are compromised.  In each case, at
 least one DH shared secret is computationally hard to compute:
@@ -706,9 +720,9 @@ The reduction $\advB_1$ guesses which of the 4 DH pairs to embed (factor $1/4$):
   |\Pr[S_2] - \Pr[S_1]| \;\leq\; 4 \cdot \adv^{\GapCDH}_{\DH}(\advB_1).
 \]
 
-\paragraph{Game 3: Replace Kyber shared secret.}
-By the $\eCK$ freshness condition, if the adversary has corrupted $R$'s
-long-term Kyber key $\mathit{ksk}_R$, then $R$'s ephemeral state (specifically
+\paragraph{Game 3: Replace ML-KEM shared secret.}
+By the modified freshness condition, if the adversary has corrupted $R$'s
+long-term KEM key $\mathit{ksk}_R$, then $R$'s ephemeral state (specifically
 $ek_I$) must be uncompromised, so the classical component provides security
 (handled in Game~2).  If $\mathit{ksk}_R$ is \emph{not} corrupted, we reduce
 to $\INDCCA$ of $\KEM$:
@@ -849,7 +863,7 @@ In Game~2, the session's root key is random.  The adversary has zero
 advantage.
 
 \paragraph{Scope of the KEM contribution.}
-The initial Kyber shared secret $\mathit{ss}_{\mathsf{ky}}$ was derived by
+The initial ML-KEM shared secret $\mathit{ss}_{\mathsf{ky}}$ was derived by
 encapsulating to $\mathit{kpk}_R$.  Under the FS oracle above, $\advA$ later
 learns $\mathit{ksk}_R$ and has the recorded ciphertext
 $\mathit{ct}_{\mathsf{ky}}$, so this initial KEM component is not counted as
@@ -919,8 +933,8 @@ and post-quantum components due to the KEM encapsulation timing.
 \paragraph{Setup.} At epoch $e$, $\advA$ obtains:
 \begin{itemize}[nosep]
   \item Root key $\rk_e$, chain keys $\ck_e$, metadata keys $\mdk_e$.
-  \item DH private key $d_e$ and Kyber secret key $\mathit{ksk}_e$.
-  \item Peer's public keys: $D_{\mathsf{peer}}$ (DH) and $\mathit{kpk}_e^{\mathsf{peer}}$ (Kyber).
+  \item DH private key $d_e$ and KEM secret key $\mathit{ksk}_e$.
+  \item Peer's public keys: $D_{\mathsf{peer}}$ (DH) and $\mathit{kpk}_e^{\mathsf{peer}}$ (KEM).
   \item For the conservative two-endpoint hybrid-PCS claim, the peer's
         epoch-$e$ KEM secret key corresponding to
         $\mathit{kpk}_e^{\mathsf{peer}}$.
@@ -930,7 +944,7 @@ and post-quantum components due to the KEM encapsulation timing.
 and must distinguish a message key at epoch $e + k$ (for $k \geq 1$ or $k \geq 2$)
 from random.
 
-\paragraph{Game 1: Epoch $e{+}1$ --- fresh DH, compromised Kyber.}
+\paragraph{Game 1: Epoch $e{+}1$ --- fresh DH, compromised KEM key.}
 At epoch $e{+}1$, the honest party generates a \emph{new} DH keypair
 $(d_{e+1}, D_{e+1}) \gets \DH.\KeyGen()$.  The adversary does not know $d_{e+1}$.
 The DH shared secret is:
@@ -943,8 +957,8 @@ so computing $\mathit{dh}_{e+1}$ requires solving Gap-CDH:
   |\Pr[S_1] - \Pr[S_0]| \;\leq\; \adv^{\GapCDH}_{\DH}(\advB_1).
 \]
 
-\textbf{However}, the Kyber encapsulation at epoch $e{+}1$ uses
-$\mathit{kpk}_e^{\mathsf{peer}}$ (the \emph{peer's} Kyber public key from
+\textbf{However}, the KEM encapsulation at epoch $e{+}1$ uses
+$\mathit{kpk}_e^{\mathsf{peer}}$ (the \emph{peer's} KEM public key from
 epoch~$e$, which the adversary obtained during compromise).  The adversary
 knows the corresponding $\mathit{ksk}_e^{\mathsf{peer}}$ in the conservative
 two-endpoint compromise model, so $\mathit{ss}_{e+1}$ is known to the
@@ -961,8 +975,8 @@ IKM containing one random component:
 \textbf{Result}: $\rk_{e+1}$ is pseudorandom.  This proves part~(a): 1-step
 classical PCS.
 
-\paragraph{Game 2: Epoch $e{+}2$ --- fresh DH and fresh Kyber.}
-At epoch $e{+}1$, the honest party also generated a fresh Kyber keypair
+\paragraph{Game 2: Epoch $e{+}2$ --- fresh DH and fresh KEM key.}
+At epoch $e{+}1$, the honest party also generated a fresh ML-KEM keypair
 $(\mathit{kpk}_{e+1}, \mathit{ksk}_{e+1})$ and advertised $\mathit{kpk}_{e+1}$
 in the ratchet header.  The adversary does \emph{not} know $\mathit{ksk}_{e+1}$
 (it was generated after the compromise and stored in guarded memory).
@@ -977,7 +991,7 @@ $\INDCCA$ of $\KEM$:
   |\Pr[S_2] - \Pr[S_1']| \;\leq\; \adv^{\INDCCA}_{\KEM}(\advB_3).
 \]
 
-Now \emph{both} DH and Kyber components at epoch $e{+}2$ are fresh.  Applying
+Now \emph{both} DH and KEM components at epoch $e{+}2$ are fresh.  Applying
 the dual-PRF property once more:
 \[
   |\Pr[S_3] - \Pr[S_2]| \;\leq\; \adv^{\dualPRF}_{\HKDF}(\advB_2).
@@ -1010,8 +1024,8 @@ The ratchet HKDF uses an augmented info string:
 \[
   \mathsf{info} = \texttt{"Aura-Hybrid-Ratchet"} \concat \mathit{kpk}_{e+1}.
 \]
-This binds the new Kyber public key $\mathit{kpk}_{e+1}$ into the key
-derivation.  If an adversary substitutes a different Kyber public key
+This binds the new ML-KEM public key $\mathit{kpk}_{e+1}$ into the key
+derivation.  If an adversary substitutes a different KEM public key
 $\mathit{kpk}'$ in the ratchet header, the receiver will compute a different
 HKDF info string, producing a different $\rk_{e+1}$, and subsequent AEAD
 decryption will fail (INT-CTXT of AES-256-GCM-SIV).  This provides implicit
@@ -1049,7 +1063,8 @@ fails with overwhelming probability (INT-CTXT security). \qedhere
 Under $\MRAE$ security of AES-256-GCM-SIV and $\PRF$ security of the
 chain KDF, each message key $\mk_{e,n}$ is indistinguishable from random
 and each ciphertext provides $\INDCPA$ + $\INTCTXT$ security.
-For any $\ppt$ adversary $\advA$ over $q_m$ messages in $q_s$ sessions:
+For any $\ppt$ adversary $\advA$ over $q_m$ total encrypted message attempts
+across all sessions:
 \begin{multline*}
   \adv^{\mathsf{Conf}}_{\mathsf{AURA}}(\advA)
   \;\leq\;
@@ -1075,7 +1090,7 @@ plaintext from random, or forge a valid ciphertext.
 By \cref{thm:ake} (or \cref{thm:fs,thm:pcs} depending on the adversary's
 corruption pattern), the root key $\rk_0$ is computationally random.  For
 ratcheted root keys $\rk_e$ ($e > 0$), each is derived from the previous
-root key plus fresh DH/Kyber material, so by induction and \cref{thm:pcs}:
+root key plus fresh DH/KEM material, so by induction and \cref{thm:pcs}:
 \[
   |\Pr[S_1] - \Pr[S_0]| \;\leq\; \adv^{\eCK}_{\mathsf{AURA}}(\advB_0).
 \]
@@ -1141,11 +1156,14 @@ Combining all transitions yields the stated bound. \qedhere
 The metadata layer (encrypted under $\mdk_e$) and payload layer (encrypted
 under $\mk_{e,n}$) use cryptographically independent keys:
 \begin{itemize}[nosep]
-  \item $\mdk_e$ is derived from the ratchet output (separate 32-byte segment).
-  \item $\mk_{e,n}$ is derived from the chain KDF.
+  \item $\mdk_e$ is a separate 32-byte segment of the ratchet HKDF output.
+  \item $\mk_{e,n}$ is derived later from $\ck_e$ by the chain KDF under the
+        \texttt{"Aura-Msg"} domain label.
 \end{itemize}
-Since these keys are derived with different HKDF info strings from
-different inputs, compromise of one layer does not affect the other.
+For ratchet epochs, $\ck_e$ and $\mdk_e$ are disjoint segments of one jointly
+pseudorandom HKDF output rather than outputs of distinct HKDF-info strings.
+Under the HKDF PRF assumption and the one-way chain derivation, compromise of
+one layer key does not reveal the other layer key.
 An adversary who learns $\mk_{e,n}$ (e.g., via $\mathsf{RevealSessionKey}$)
 still cannot decrypt metadata (which contains message indices and types).
 \end{lemma}
@@ -1303,9 +1321,9 @@ provides:
         contributes both classical and PQ key material.
 \end{enumerate}
 
-The cost is increased computational overhead ($\sim$1 ms per Kyber
+The cost is increased computational overhead ($\sim$1 ms per ML-KEM
 encapsulation/decapsulation) and bandwidth overhead
-($+1184 + 1088 = 2272$ bytes per ratchet step for Kyber public key +
+($+1184 + 1088 = 2272$ bytes per ratchet step for ML-KEM public key +
 ciphertext, plus 32 bytes for the new DH public key).
 
 \subsection{PCS Recovery: 1-Step vs 2-Step}
@@ -1317,17 +1335,17 @@ A subtle consequence of the hybrid design is the asymmetry in PCS recovery:
         After compromise, the first ratchet step with a new DH keypair fully
         recovers security.
   \item \textbf{AURA (hybrid)}: 1-step \emph{classical} PCS, 2-step
-        \emph{hybrid} PCS.  At step $e{+}1$, the new DH component is
-        secure (fresh keypair) but the Kyber encapsulation uses the
-        \emph{old} Kyber public key (from the compromised state).
-        Full hybrid security is restored at step $e{+}2$ when
-        encapsulation uses the new Kyber public key generated at $e{+}1$.
+        \emph{hybrid} PCS in the directed KEM-public-key schedule. At the first
+        post-compromise directed step, the new DH component is secure (fresh
+        keypair) but the KEM encapsulation uses the \emph{old} peer KEM public
+        key from the compromised state. Full hybrid security is restored on the
+        next directed step that uses the new KEM public key generated after
+        compromise.
 \end{itemize}
 
-This is an inherent property of \emph{any} hybrid KEM protocol where the
-KEM public key must be advertised before encapsulation: there is always a
-one-step delay between keypair generation and the first secure
-encapsulation against that keypair.
+This statement is scoped to Aura's directed KEM-public-key schedule. Other
+SCKA-style schedules can trade bandwidth, acknowledgements, and state retention
+for different recovery latency.
 
 \subsection{Identity Binding}
 
@@ -1337,9 +1355,9 @@ AURA computes the identity binding hash as
   \mathsf{sort}(\mathit{ed}_{I}, \mathit{ed}_{R}) \concat
   \mathsf{sort}(\mathit{x}_{I}, \mathit{x}_{R})\bigr)
 \]
-and embeds this in every AEAD additional data.  This provides stronger
-identity binding than Signal's approach (which relies on the DH computations
-alone for identity binding) because:
+and embeds this in every AEAD additional data. Signal-style protocols obtain
+identity binding through authenticated transcripts, signed pre-keys, and
+associated data; Aura adds the following implementation-level binding:
 \begin{enumerate}[nosep]
   \item Identity keys are explicitly included in the authenticated data.
   \item The sorted canonicalization prevents role confusion attacks.
@@ -1362,7 +1380,7 @@ with GCM-SIV provides nonce-misuse-resistant confidentiality and integrity.
 
 The main technical contributions are: (1)~the formalization and proof of the
 hybrid combiner using the HKDF dual-PRF property with classical DH as salt
-and Kyber shared secret as IKM; (2)~the explicit characterization of 1-step
+and ML-KEM shared secret as IKM; (2)~the explicit characterization of 1-step
 classical vs.\ 2-step hybrid PCS recovery in \cref{thm:pcs}; and (3)~the
 augmented HKDF info string binding that provides an implicit state-binding
 check for the KEM public key without per-step signatures.

@@ -14,13 +14,14 @@
 
 1. decode `HandshakeInit`;
 2. резерв replay guard;
-3. commit replay guard;
-4. лише потім consume OPK.
+3. process/validate handshake;
+4. consume OPK;
+5. commit replay guard.
 
 Чому це важливо:
 
-- якщо distributed replay commit падає, OPK не має "згоріти";
-- повторна спроба тим самим `handshake_init` після recovery інфраструктури лишається можливою;
+- якщо distributed replay commit падає після consume OPK, OPK може бути втрачений навмисно: one-time-use унікальність важливіша за повторне використання того самого OPK;
+- повторна спроба тим самим `handshake_init` після recovery інфраструктури має пройти replay/OPK policy як нова спроба, а не тихо reuse-ити вже спожитий OPK;
 - клієнт і relay не розходяться в очікуваннях щодо prekey lifecycle.
 
 Цей інваріант покритий інтеграційним тестом у `tests/integration_test.rs`.
