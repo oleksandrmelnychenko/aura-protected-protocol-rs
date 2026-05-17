@@ -556,13 +556,28 @@ If $\KEM$ is $\INDCCA$ secure \textbf{or} $\DH$ satisfies $\GapCDH$ in the $\ROM
 \end{equation}
 is $\INDCCA$ secure as a KEM. Concretely:
 \begin{equation}\label{eq:combiner-bound}
-  \adv^{\INDCCA}_{\mathrm{Hybrid}}(\advA) \leq \adv^{\INDCCA}_{\KEM}(\advB_1) + 4 \cdot \adv^{\GapCDH}_{\DH}(\advB_2) + \adv^{\dualPRF}_{\HKDF}(\advB_3) + \frac{q_H}{2^{256}},
+  \adv^{\INDCCA}_{\mathrm{Hybrid}}(\advA)
+  \leq
+  \min\!\left\{
+    \adv^{\INDCCA}_{\KEM}(\advB_1),
+    4 \cdot \adv^{\GapCDH}_{\DH}(\advB_2)
+  \right\}
+  + \adv^{\dualPRF}_{\HKDF}(\advB_3) + \frac{q_H}{2^{256}},
 \end{equation}
-where $q_H$ is the number of random oracle queries and the factor 4 arises from the four DH key pairs.
+where $q_H$ is the number of random oracle queries and the factor 4 arises from the four DH key pairs in the classical X3DH component.
 \end{theorem}
 
 \begin{proof}[Proof sketch]
-We proceed via a 4-game sequence. In Game~0, we play the real $\INDCCA$ game. In Game~1, we replace the Kyber shared secret $\mathit{ss}_{\mathit{ky}}$ with a uniformly random value, reducing the distinguishing advantage to $\adv^{\INDCCA}_{\KEM}(\advB_1)$. In Game~2, we replace each DH output with a random value via the $\GapCDH$ oracle (the DDH oracle enables consistent simulation; the factor~4 accounts for the four DH pairs $\mathit{dh}_1, \ldots, \mathit{dh}_4$). In Game~3, we apply the $\dualPRF$ property: since at least one of the HKDF inputs (salt or IKM) is now uniformly random, the output $\rk_0$ is indistinguishable from random. The $q_H/2^{256}$ term bounds random oracle collisions.
+There are two reduction paths. In the KEM path, we replace the Kyber shared
+secret $\mathit{ss}_{\mathit{ky}}$ with a uniformly random value, reducing
+the distinguishing advantage to $\adv^{\INDCCA}_{\KEM}(\advB_1)$. In the
+classical path, we replace the X3DH shared secret $\mathit{cs}$ with a random
+value via the $\GapCDH$ oracle; the factor~4 accounts for guessing one of the
+four DH pairs $\mathit{dh}_1, \ldots, \mathit{dh}_4$. Either path leaves at
+least one HKDF input (IKM or salt) uniformly random, so the $\dualPRF$
+property makes $\rk_0$ indistinguishable from random. Taking the tighter of
+the two paths yields \cref{eq:combiner-bound}; the $q_H/2^{256}$ term bounds
+random oracle collisions.
 \end{proof}
 
 \subsection{Theorem 2: AKE Security}

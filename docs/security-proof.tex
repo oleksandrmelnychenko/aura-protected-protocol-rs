@@ -502,17 +502,21 @@ $\ROM$, then the Aura hybrid combiner
 \]
 is $\INDCCA$ secure as a KEM.  Concretely, for any $\ppt$ adversary $\advA$:
 \[
-  \adv^{\INDCCA}_{\mathsf{Hybrid}}(\advA) \;\leq\;
-  \adv^{\INDCCA}_{\KEM}(\advB_1) +
-  4 \cdot \adv^{\GapCDH}_{\DH}(\advB_2) +
-  \adv^{\dualPRF}_{\HKDF}(\advB_3) +
-  \frac{q_H}{2^{256}}
+  \adv^{\INDCCA}_{\mathsf{Hybrid}}(\advA)
+  \;\leq\;
+  \min\!\left\{
+    \adv^{\INDCCA}_{\KEM}(\advB_1),
+    4 \cdot \adv^{\GapCDH}_{\DH}(\advB_2)
+  \right\}
+  + \adv^{\dualPRF}_{\HKDF}(\advB_3)
+  + \frac{q_H}{2^{256}}
 \]
-where $q_H$ is the number of random oracle queries.
+where $q_H$ is the number of random oracle queries and the factor 4 accounts
+for guessing which of the four X3DH Diffie--Hellman computations is embedded.
 \end{theorem}
 
 \begin{proof}
-We proceed via a sequence of games.
+We use two alternative reductions and then take the tighter bound.
 
 \paragraph{Game 0.}
 The real $\INDCCA$ game for the hybrid combiner.  The challenger generates
@@ -525,7 +529,7 @@ $\rk_0 = \HKDF(\mathit{ss}_{\mathsf{ky}},\, \mathit{cs},\,
 replaces $\rk_0$ with a uniform random value.  $\advA$'s advantage is
 $\adv^{\INDCCA}_{\mathsf{Hybrid}}(\advA)$.
 
-\paragraph{Game 1: Replace Kyber shared secret.}
+\paragraph{Path K: Replace Kyber shared secret.}
 We construct a reduction $\advB_1$ to the $\INDCCA$ security of $\KEM$.
 $\advB_1$ receives an $\INDCCA$ challenge $(\mathit{pk}^*, \mathit{ct}^*,
 \mathit{ss}_b)$ and embeds $\mathit{pk}^*$ as $\mathit{kpk}_R$ and
@@ -536,39 +540,45 @@ $\mathit{ss}_b \getsr \bits^{256}$ (random).
 If $\advA$ can distinguish Game~0 from the game where $\mathit{ss}_{\mathsf{ky}}$
 is random, $\advB_1$ breaks $\INDCCA$ of $\KEM$.  Thus:
 \[
-  |\Pr[S_1] - \Pr[S_0]| \;\leq\; \adv^{\INDCCA}_{\KEM}(\advB_1).
+  |\Pr[S_K] - \Pr[S_0]| \;\leq\; \adv^{\INDCCA}_{\KEM}(\advB_1).
 \]
+In $S_K$, the HKDF input keying material is uniformly random.
 
-\paragraph{Game 2: Replace classical DH output.}
-\emph{Alternatively}, if the classical component is secure, we construct
+\paragraph{Path D: Replace classical DH output.}
+Alternatively, if the classical component is secure, we construct
 $\advB_2$ reducing to $\GapCDH$.  Given a Gap-CDH challenge $(G, A, B)$,
 $\advB_2$ embeds $A$ as one of the DH public keys and $B$ as the other.
 Using the DDH oracle, $\advB_2$ can simulate all protocol operations except
 computing the target DH shared secret.
 
 If $\advA$ can distinguish real $\mathit{cs}$ from random given that
-$\mathit{ss}_{\mathsf{ky}}$ may be real, then $\advB_2$ can solve Gap-CDH
-on at least one of the four DH pairs:
+$\mathit{ss}_{\mathsf{ky}}$ may remain real, then $\advB_2$ can solve
+Gap-CDH on at least one of the four DH pairs:
 \[
-  |\Pr[S_2] - \Pr[S_1]| \;\leq\; 4 \cdot \adv^{\GapCDH}_{\DH}(\advB_2).
+  |\Pr[S_D] - \Pr[S_0]| \;\leq\; 4 \cdot \adv^{\GapCDH}_{\DH}(\advB_2).
 \]
 The factor 4 accounts for the four DH computations; $\advB_2$ guesses which
 one to embed (loss factor $1/4$ absorbed into the advantage).
+In $S_D$, the HKDF salt is uniformly random.
 
-\paragraph{Game 3: Apply dual-PRF.}
-In this game, \emph{at least one} of the HKDF inputs ($\mathit{ss}_{\mathsf{ky}}$
-as IKM, or $\mathit{cs}$ as salt) is uniformly random.  By the dual-PRF
-property of $\HKDF$ (\cref{def:dualprf}), the output $\rk_0$ is
-computationally indistinguishable from random:
+\paragraph{Apply dual-PRF.}
+Choose the better of Path~K and Path~D.  In the resulting game,
+\emph{at least one} of the HKDF inputs ($\mathit{ss}_{\mathsf{ky}}$ as IKM,
+or $\mathit{cs}$ as salt) is uniformly random.  By the dual-PRF property of
+$\HKDF$ (\cref{def:dualprf}), the output $\rk_0$ is computationally
+indistinguishable from random:
 \[
-  |\Pr[S_3] - \Pr[S_2]| \;\leq\; \adv^{\dualPRF}_{\HKDF}(\advB_3).
+  |\Pr[S_3] - \Pr[S_*]| \;\leq\; \adv^{\dualPRF}_{\HKDF}(\advB_3),
 \]
+where $S_* \in \{S_K,S_D\}$ is the selected path.
 
 In Game~3, $\rk_0$ is uniformly random regardless of $b$, so
 $\advA$ has zero advantage.  Combining:
 \[
   \adv^{\INDCCA}_{\mathsf{Hybrid}}(\advA)
-  \;\leq\; \adv^{\INDCCA}_{\KEM}(\advB_1) + 4 \cdot \adv^{\GapCDH}_{\DH}(\advB_2) + \adv^{\dualPRF}_{\HKDF}(\advB_3) + \frac{q_H}{2^{256}}.
+  \;\leq\; \min\!\left\{\adv^{\INDCCA}_{\KEM}(\advB_1),
+  4 \cdot \adv^{\GapCDH}_{\DH}(\advB_2)\right\}
+  + \adv^{\dualPRF}_{\HKDF}(\advB_3) + \frac{q_H}{2^{256}}.
 \]
 The last term accounts for random oracle collisions. \qedhere
 \end{proof}
