@@ -504,7 +504,7 @@ is $\INDCCA$ secure as a KEM.  Concretely, for any $\ppt$ adversary $\advA$:
 \[
   \adv^{\INDCCA}_{\mathsf{Hybrid}}(\advA) \;\leq\;
   \adv^{\INDCCA}_{\KEM}(\advB_1) +
-  \adv^{\GapCDH}_{\DH}(\advB_2) +
+  4 \cdot \adv^{\GapCDH}_{\DH}(\advB_2) +
   \adv^{\dualPRF}_{\HKDF}(\advB_3) +
   \frac{q_H}{2^{256}}
 \]
