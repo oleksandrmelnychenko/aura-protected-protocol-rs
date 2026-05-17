@@ -392,8 +392,8 @@ where $\mathsf{aad}_{\mathsf{pay}} = \sid \concat \mathsf{identity\_binding\_has
 \concat \epoch \concat n \concat v$.
 
 \paragraph{Nonce Structure.}
-Each nonce is 12 bytes: $\mathsf{prefix}(4) \concat \mathsf{counter}(4) \concat
-\mathsf{msg\_index}(4)$ where $\mathsf{prefix}$ is random per session,
+Each nonce is 12 bytes: $\mathsf{prefix}(8) \concat \mathsf{counter}(2) \concat
+\mathsf{msg\_index}(2)$ where $\mathsf{prefix}$ is random per epoch,
 $\mathsf{counter}$ is monotonically increasing, and $\mathsf{msg\_index}$
 is the chain position.
 
@@ -846,10 +846,9 @@ The implementation erases ephemeral keys immediately after use:
   \item All intermediate DH outputs $\mathit{dh}_1, \ldots, \mathit{dh}_4$
         are individually wiped \emph{(handshake.rs, lines~327--330)}.
 \end{itemize}
-This erasure pattern ensures that even with memory forensics \emph{after} the
-handshake, the ephemeral secrets are unrecoverable (assuming
-\texttt{zeroize} provides effective memory erasure, which it does via
-volatile writes and compiler barriers).
+This erasure pattern reduces the window in which post-handshake memory
+inspection can recover ephemeral secrets, assuming \texttt{zeroize} provides
+effective memory erasure through volatile writes and compiler barriers.
 \end{lemma}
 
 
@@ -1085,13 +1084,13 @@ This provides:
 \end{itemize}
 
 \paragraph{Nonce collision bound.}
-Each nonce is 96 bits: $\mathsf{prefix}(32) \concat
-\mathsf{counter}(32) \concat \mathsf{msg\_index}(32)$ (all in bits).
+Each nonce is 96 bits: $\mathsf{prefix}(64) \concat
+\mathsf{counter}(16) \concat \mathsf{msg\_index}(16)$ (all in bits).
 Within a single session, nonces are unique by construction (counter is
 monotonic).  Across sessions, nonce collision probability is bounded by the
-birthday bound on the 32-bit random prefix:
+birthday bound on the 64-bit random prefix:
 \[
-  \Pr[\text{cross-session nonce collision}] \;\leq\; \frac{q_s^2 \cdot q_m^2}{2^{32}}.
+  \Pr[\text{cross-session nonce collision}] \;\leq\; \frac{q_s^2 \cdot q_m^2}{2^{64}}.
 \]
 However, cross-session nonce reuse is harmless because different sessions
 use different keys.  Within a session, the full 96-bit nonce space gives:
@@ -1166,7 +1165,7 @@ For a replayed message with nonce $\nu$:
 \begin{itemize}[nosep]
   \item If $\nu$ is in the cache: rejected immediately (duplicate detection).
   \item If $\nu$ was evicted from the cache: eviction removes the entries
-        with the \emph{smallest counters} (bytes [4..8] of the 12-byte nonce).
+        with the \emph{smallest counters} (bytes [8..10] of the 12-byte nonce).
         Since the replayed message has a counter $\leq$ the evicted counter,
         and the ratchet epoch has advanced, the chain key and message key have
         been rotated.  The stale message key is no longer derivable from the
@@ -1195,7 +1194,7 @@ W \cdot q_r / 2^{96} + \adv^{\INTCTXT}_{\AEAD}(\advB)$. \qedhere
 
 \begin{remark}[Nonce Pruning Correctness]
 The nonce cache pruning evicts entries with the smallest embedded
-\emph{counters} (bytes [4..8] of the 12-byte nonce), not the smallest
+\emph{counters} (bytes [8..10] of the 12-byte nonce), not the smallest
 message indices.  Since counters monotonically increase and represent
 temporal ordering, this correctly evicts the oldest nonces first, preserving
 the most recent entries for replay detection.
