@@ -879,6 +879,11 @@ $\mathsf{RevealState}$), then:
           2 \cdot \adv^{\dualPRF}_{\HKDF}(\advB_2).
         \]
 \end{enumerate}
+The hybrid 2-step statement is stated for the conservative two-endpoint
+compromise model, where both endpoints' epoch-$e$ session states, including
+the KEM secret key targeted by the first post-compromise encapsulation, are
+exposed.  Under one-endpoint compromise, the first ratchet step may already
+include an uncompromised peer KEM contribution.
 \end{theorem}
 
 \begin{proof}
@@ -890,6 +895,9 @@ and post-quantum components due to the KEM encapsulation timing.
   \item Root key $\rk_e$, chain keys $\ck_e$, metadata keys $\mdk_e$.
   \item DH private key $d_e$ and Kyber secret key $\mathit{ksk}_e$.
   \item Peer's public keys: $D_{\mathsf{peer}}$ (DH) and $\mathit{kpk}_e^{\mathsf{peer}}$ (Kyber).
+  \item For the conservative two-endpoint hybrid-PCS claim, the peer's
+        epoch-$e$ KEM secret key corresponding to
+        $\mathit{kpk}_e^{\mathsf{peer}}$.
 \end{itemize}
 
 \paragraph{Game 0: Real PCS game.} $\advA$ has the full state at epoch $e$
@@ -912,16 +920,9 @@ so computing $\mathit{dh}_{e+1}$ requires solving Gap-CDH:
 \textbf{However}, the Kyber encapsulation at epoch $e{+}1$ uses
 $\mathit{kpk}_e^{\mathsf{peer}}$ (the \emph{peer's} Kyber public key from
 epoch~$e$, which the adversary obtained during compromise).  The adversary
-knows the corresponding $\mathit{ksk}_e^{\mathsf{peer}}$%
-\footnote{Strictly, the adversary compromised their \emph{own} Kyber secret key
-$\mathit{ksk}_e$, not the peer's. But if both parties are compromised, the
-adversary also has the peer's state. In the standard PCS model, we assume full
-state compromise of one party; the Kyber encapsulation targets the
-\emph{peer's} public key, so the adversary needs the peer's secret key to
-decapsulate. If only one party is compromised, the Kyber component at epoch
-$e{+}1$ is secure even at 1 step. For the conservative claim (both parties
-compromised), we need 2 steps.}%
-, so $\mathit{ss}_{e+1}$ is known to the adversary.
+knows the corresponding $\mathit{ksk}_e^{\mathsf{peer}}$ in the conservative
+two-endpoint compromise model, so $\mathit{ss}_{e+1}$ is known to the
+adversary.
 
 The hybrid IKM at epoch $e{+}1$ is $\mathit{dh}_{e+1} \concat \mathit{ss}_{e+1}$.
 Since $\mathit{dh}_{e+1}$ is random (by Gap-CDH) but $\mathit{ss}_{e+1}$ is

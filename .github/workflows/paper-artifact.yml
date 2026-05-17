@@ -7,10 +7,14 @@ on:
       - 'v*'
   pull_request:
     paths:
+      - 'Cargo.lock'
+      - 'Cargo.toml'
       - 'docs/**'
       - 'examples/paper_vectors.rs'
+      - 'formal/**'
       - 'scripts/audit-paper-references.sh'
       - 'scripts/reproduce-paper-artifact.sh'
+      - 'src/**'
       - 'tests/paper_vectors.rs'
       - '.github/workflows/paper-artifact.yml'
 

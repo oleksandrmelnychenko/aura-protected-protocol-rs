@@ -32,9 +32,9 @@ complementing the game-based security proofs in `docs/security-proof.tex`.
 | `session_key_secrecy` | **true** | |
 | `authentication` | **true** | |
 | `message_secrecy` | **true** | |
-| `forward_secrecy` | cannot be proved | Known ProVerif DH limitation |
 | `message_integrity` | false | Known ProVerif DH limitation |
 | `ratchet_secrecy` | **true** | |
+| `forward_secrecy` | cannot be proved | Known ProVerif DH limitation |
 
 ## Models
 
@@ -43,7 +43,7 @@ complementing the game-based security proofs in `docs/security-proof.tex`.
 | `tamarin/aura_handshake.spthy` | Tamarin | Hybrid X3DH: secrecy, mutual auth, forward secrecy, key confirmation |
 | `tamarin/aura_ratchet.spthy` | Tamarin | Hybrid ratchet: PCS, key agreement, secrecy |
 | `tamarin/aura.spthy` | Tamarin | Full combined model (reference only — non-terminating due to DH complexity) |
-| `proverif/aura.pv` | ProVerif | Secrecy, authentication, injective correspondence |
+| `proverif/aura.pv` | ProVerif | Session-key secrecy, authentication, message secrecy; Q5/Q6 limitations documented |
 
 ## Design Decisions
 
@@ -66,11 +66,12 @@ and Apple PQ3 (USENIX Security 2025), we decompose into:
 
 ### Forward Secrecy
 
-The `forward_secrecy_hybrid` lemma (Theorem 3) captures the hybrid guarantee:
-classical-only compromise (DH keys) AFTER a session does NOT reveal the session
-key, because the Kyber component protects the hybrid root. Full compromise
-(including Kyber SK) at any time does break secrecy — this is expected and
-documented as `FullCompromise` in the model.
+The `forward_secrecy_hybrid` lemma captures the model's hybrid secrecy
+scenario: classical-only compromise (DH keys) after a session does not reveal
+the session key while the Kyber secret key remains undisclosed. The paper's
+forward-secrecy theorem is narrower for later disclosure of long-term KEM
+secret keys: classical FS is carried by erased DH ephemerals, while the initial
+KEM component is HNDL protection unless its secret key is later disclosed.
 
 ## Prerequisites
 
@@ -83,10 +84,11 @@ Pre-built binaries are available at https://github.com/tamarin-prover/tamarin-pr
 brew install tamarin-prover
 
 # Linux (pre-built binary)
+sudo apt-get install -y maude
 curl -fsSL https://github.com/tamarin-prover/tamarin-prover/releases/download/1.10.0/tamarin-prover-1.10.0-linux64-ubuntu.tar.gz \
   -o /tmp/tamarin.tar.gz
 tar xzf /tmp/tamarin.tar.gz -C /tmp
-sudo install /tmp/tamarin-prover-1.10.0-linux64-ubuntu/bin/tamarin-prover /usr/local/bin/
+sudo install /tmp/tamarin-prover /usr/local/bin/
 
 # Or see https://tamarin-prover.com/manual/master/book/002_installation.html
 ```
@@ -113,7 +115,7 @@ make handshake
 # Tamarin ratchet only (4 lemmas, <1s)
 make ratchet
 
-# ProVerif (6 queries, ~2s)
+# ProVerif (4/6 queries expected proven, ~2s)
 make proverif
 ```
 

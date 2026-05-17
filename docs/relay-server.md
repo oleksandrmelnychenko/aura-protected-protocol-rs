@@ -200,4 +200,4 @@
 
 Уся криптографія (дешифрування, перевірка підписів всередині payload) виконується на клієнті; сервер лише валідує формат і маршрутизує.
 
-Див. також узгоджений контракт `protocol <-> relay <-> Swift`: [docs/epp-relay-swift-alignment.md](epp-relay-swift-alignment.md).
+Див. також узгоджений контракт `protocol <-> relay <-> Swift`: [docs/aura-relay-swift-alignment.md](aura-relay-swift-alignment.md).

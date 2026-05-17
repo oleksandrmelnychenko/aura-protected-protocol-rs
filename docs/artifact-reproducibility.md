@@ -24,10 +24,12 @@ Modes:
 | Paper build | `./scripts/reproduce-paper-artifact.sh paper` | Rebuild English, Ukrainian, and companion proof PDFs with `pdflatex` |
 | Reference audit | `./scripts/reproduce-paper-artifact.sh references` | Check bibliography/citation consistency and external URL reachability |
 | Benchmarks | `./scripts/reproduce-paper-artifact.sh bench` | Criterion benchmark suite |
-| Full artifact | `./scripts/reproduce-paper-artifact.sh full` | Tests, formal models, PDFs, benchmarks |
+| Full artifact | `./scripts/reproduce-paper-artifact.sh full` | Tests, formal models, PDFs, reference audit, benchmarks |
 
-The `formal` and `full` modes require `tamarin-prover`, `proverif`, and
-`pdflatex` to be installed. The quick mode only needs the Rust toolchain and
+The `formal` mode requires `tamarin-prover` and `proverif`. The `paper` mode
+requires `pdflatex`; consequently `full` requires the Rust toolchain,
+formal-verification tools, `pdflatex`, `protoc`, `curl`, network access, and
+benchmark dependencies. The quick mode only needs the Rust toolchain and
 `protoc`. The `references` mode also requires `curl` and network access.
 
 ## Fixed paper vectors
@@ -135,8 +137,9 @@ The current formal status is:
 
 The two unproven ProVerif queries are not treated as machine-checked results.
 They remain documented limitations caused by DH equational-theory
-overapproximation; the corresponding claims are carried by the game-based proof
-and Tamarin models.
+overapproximation. Q6 is covered by the Tamarin-style secrecy/PCS models and
+game-based proofs; Q5 is carried by the game-based message-security proof and
+implementation tests.
 
 ## Environment capture
 
@@ -161,15 +164,19 @@ sha256sum -c SHA256SUMS
 
 The `Paper Artifact` GitHub Actions workflow runs the quick fixed-vector suite,
 rebuilds the English, Ukrainian, and companion proof PDFs, and audits paper
-references on pull requests that touch the artifact surface, on tagged
-releases, and on manual dispatch. It uploads the full `artifact-output/**` tree
-as a release-reviewable artifact, including generated PDFs, `versions.txt`,
-`MANIFEST.txt`, and `SHA256SUMS` for each mode.
+references on pull requests that touch the artifact surface, source code,
+formal models, or artifact scripts, on tagged releases, and on manual dispatch.
+It uploads the full `artifact-output/**` tree as a reviewable workflow artifact,
+including generated PDFs, `versions.txt`, `MANIFEST.txt`, and `SHA256SUMS` for
+each mode. GitHub workflow artifacts are retention-limited; durable submission
+or release bundles should be archived separately or attached to a tagged
+release.
 
 The main CI `Formal Verification` job uses the same artifact script in `formal`
 mode after installing Tamarin Prover and ProVerif. It uploads the formal
 stdout/stderr logs, tool-version capture, manifest, and checksums on pull
-requests, main-branch pushes, and tagged releases.
+requests, main-branch pushes, and tagged releases, subject to the same workflow
+artifact retention window.
 
 ## Current submission-hardening gaps
 

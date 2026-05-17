@@ -46,6 +46,8 @@ finish() {
 }
 
 trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 run() {
   local name="$1"
@@ -80,11 +82,11 @@ versions() {
 
 paper_build() {
   run_shell paper_english \
-    "cd '$ROOT/docs' && pdflatex -interaction=nonstopmode -halt-on-error aura-paper.tex >/tmp/aura-paper-repro-1.log && pdflatex -interaction=nonstopmode -halt-on-error aura-paper.tex >/tmp/aura-paper-repro-2.log && pdflatex -interaction=nonstopmode -halt-on-error aura-paper.tex && cp aura-paper.pdf '$OUT/aura-paper.pdf'"
+    "cd '$ROOT/docs' && pdflatex -interaction=nonstopmode -halt-on-error aura-paper.tex >'$OUT/paper_english_pass1.log' && pdflatex -interaction=nonstopmode -halt-on-error aura-paper.tex >'$OUT/paper_english_pass2.log' && pdflatex -interaction=nonstopmode -halt-on-error aura-paper.tex && cp aura-paper.pdf '$OUT/aura-paper.pdf'"
   run_shell paper_ukrainian \
-    "cd '$ROOT/docs' && pdflatex -interaction=nonstopmode -halt-on-error aura-paper-ua.tex >/tmp/aura-paper-ua-repro-1.log && pdflatex -interaction=nonstopmode -halt-on-error aura-paper-ua.tex >/tmp/aura-paper-ua-repro-2.log && pdflatex -interaction=nonstopmode -halt-on-error aura-paper-ua.tex && cp aura-paper-ua.pdf '$OUT/aura-paper-ua.pdf'"
+    "cd '$ROOT/docs' && pdflatex -interaction=nonstopmode -halt-on-error aura-paper-ua.tex >'$OUT/paper_ukrainian_pass1.log' && pdflatex -interaction=nonstopmode -halt-on-error aura-paper-ua.tex >'$OUT/paper_ukrainian_pass2.log' && pdflatex -interaction=nonstopmode -halt-on-error aura-paper-ua.tex && cp aura-paper-ua.pdf '$OUT/aura-paper-ua.pdf'"
   run_shell security_proof \
-    "rm -rf '$OUT/security-proof-build' && mkdir -p '$OUT/security-proof-build' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/security-proof-build' '$ROOT/docs/security-proof.tex' >/tmp/aura-security-proof-repro-1.log && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/security-proof-build' '$ROOT/docs/security-proof.tex' >/tmp/aura-security-proof-repro-2.log && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/security-proof-build' '$ROOT/docs/security-proof.tex' && cp '$OUT/security-proof-build/security-proof.pdf' '$OUT/security-proof.pdf'"
+    "rm -rf '$OUT/security-proof-build' && mkdir -p '$OUT/security-proof-build' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/security-proof-build' '$ROOT/docs/security-proof.tex' >'$OUT/security_proof_pass1.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/security-proof-build' '$ROOT/docs/security-proof.tex' >'$OUT/security_proof_pass2.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/security-proof-build' '$ROOT/docs/security-proof.tex' && cp '$OUT/security-proof-build/security-proof.pdf' '$OUT/security-proof.pdf'"
   rm -f "$ROOT"/docs/aura-paper.{aux,log,out,toc} "$ROOT"/docs/aura-paper-ua.{aux,log,out,toc}
 }
 
@@ -132,6 +134,7 @@ case "$MODE" in
     run formal_ratchet make -C "$ROOT/formal" ratchet
     run formal_proverif make -C "$ROOT/formal" proverif
     paper_build
+    reference_audit
     run benchmarks cargo bench
     ;;
   *)
@@ -144,7 +147,7 @@ formal - Tamarin handshake/ratchet + ProVerif
 paper  - rebuild English, Ukrainian, and companion proof PDFs
 references - verify paper bibliography/citation consistency and URL reachability
 bench  - Criterion benchmark suite
-full   - test + formal + paper + bench
+full   - test + formal + paper + references + bench
 
 Logs are written to: $OUT
 EOF

@@ -43,7 +43,9 @@ The paper and implementation do not claim:
 - deployed operational maturity comparable to Signal or Apple iMessage;
 - group-protocol security under the two-party theorems;
 - ProVerif proofs for Q5 and Q6, which are documented as DH-overapproximation
-  limitations and covered by Tamarin plus game-based arguments instead.
+  limitations. Q6 is supported by Tamarin-style secrecy/PCS models and
+  game-based proofs; Q5 is supported by the game-based message-security proof
+  and implementation tests.
 
 ## Claims to review
 
@@ -52,7 +54,7 @@ The paper and implementation do not claim:
 | Hybrid X3DH derives a shared root under the either-or classical/PQ combiner argument. | `docs/aura-paper.tex`, `docs/security-proof.tex`, `src/protocol/handshake.rs`, Tamarin handshake lemmas |
 | The KEM public key used for the next ratchet epoch is bound into HKDF `info`. | `src/protocol/session.rs`, `docs/aura-paper.tex`, paper equations and proof-to-code map |
 | A receiver rejects partial ratchet headers and rolls back state on malformed ratchet envelopes. | `src/protocol/session.rs`, `tests/attack_poc.rs` |
-| Classical PCS is recovered after one honest DH ratchet step; full hybrid PCS takes two directed hybrid steps after compromise. | Theorem 4 in the paper, `docs/security-proof.tex`, Tamarin ratchet model |
+| Under the conservative two-endpoint compromise model, classical PCS is recovered after one honest DH ratchet step; full hybrid PCS takes two directed hybrid steps. Under one-endpoint compromise, the first ratchet step may already include an uncompromised peer KEM contribution. | Theorem 4 in the paper, `docs/security-proof.tex`, Tamarin ratchet model |
 | Metadata encryption uses an independent per-epoch key rather than reusing payload message keys. | `src/protocol/session.rs`, paper AEAD equations, tests covering encrypted metadata |
 | Replay protection, skipped-key handling, and sealed-state rollback constraints match the security claims. | `src/protocol/session.rs`, `tests/attack_poc.rs`, artifact vectors |
 | Benchmark comparisons use one traffic model for handshake-only, sparse, periodic, and per-reply PQ profiles. | `benches/protocol_bench.rs`, `pq_traffic_profiles` Criterion group |

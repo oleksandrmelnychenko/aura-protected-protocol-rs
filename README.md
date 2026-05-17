@@ -62,7 +62,9 @@ Shield mode is an enhanced security policy for group sessions that enables stric
 | Mandatory franking | Off | **On** |
 | Block external join | Off | **On** |
 | Max messages per epoch | 1000 | 1000 |
-| Max skipped keys per sender | 256 | 256 |
+| Effective max skipped keys per sender | 32 | 4 |
+
+The implementation keeps a broader global skipped-key hard cap of 256 entries.
 
 ```swift
 // Swift — create a shielded group
@@ -95,8 +97,8 @@ let policy = group.security_policy();
 |----------|-----------|
 | Confidentiality | AES-256-GCM-SIV with per-message keys |
 | Authenticity | HMAC-SHA256 key confirmation + Ed25519 signatures |
-| Forward secrecy | Ephemeral keys erased after use; chain keys ratcheted |
-| Post-compromise security | Direction-change triggers hybrid ratchet (fresh DH + KEM) |
+| Forward secrecy | Classical FS from erased DH ephemerals and ratcheted chain keys; initial KEM is HNDL only unless its secret key remains undisclosed |
+| Post-compromise security | 1-step classical PCS; 2-step hybrid PCS under the conservative both-endpoint compromise model |
 | Replay protection | Bounded nonce cache (2048 entries) + monotonic counters |
 | Metadata privacy | Envelope metadata encrypted with rotating per-epoch key |
 | State integrity | HMAC-SHA256 anti-rollback over serialized state |
@@ -176,7 +178,7 @@ cargo test --release --features ffi
 cargo test --all-features
 ```
 
-Coverage spans Rust API, integration, FFI, VoIP, attack-PoC, and property-based tests. The current local snapshot enumerates 746 default test scenarios and 885 scenarios with `--features ffi`.
+Coverage spans Rust API, integration, FFI, VoIP, attack-PoC, and property-based tests. The current local snapshot enumerates 750 default test scenarios and 889 scenarios with `--features ffi`.
 
 ### Paper Artifact Reproduction
 
@@ -238,7 +240,7 @@ cargo clippy --all-targets --features ffi -- -D warnings   # 0 warnings
 
 ## Fuzzing
 
-32 libfuzzer targets in `fuzz/fuzz_targets/`:
+42 libfuzzer targets in `fuzz/fuzz_targets/`:
 
 | Target | What it fuzzes |
 |--------|---------------|
@@ -273,6 +275,16 @@ cargo clippy --all-targets --features ffi -- -D warnings   # 0 warnings
 | `fuzz_tree_operations` | RatchetTree operations (add, remove, blank) |
 | `fuzz_update_path` | UpdatePath creation and processing |
 | `fuzz_membership` | Group membership proposal validation and application |
+| `fuzz_voip_frame_header` | VoIP frame header parsing and serialization |
+| `fuzz_voip_frame_roundtrip` | VoIP frame encode/decode roundtrip |
+| `fuzz_voip_frame_decrypt` | VoIP frame decryption with malformed input |
+| `fuzz_voip_header_decrypt` | VoIP header decryption and validation |
+| `fuzz_voip_key_ratchet` | VoIP media key ratchet advancement |
+| `fuzz_voip_protobuf` | VoIP protobuf decode and roundtrip behavior |
+| `fuzz_voip_rekey_messages` | VoIP rekey message parsing and validation |
+| `fuzz_voip_rekey_signature` | VoIP rekey signature handling |
+| `fuzz_voip_relay` | VoIP relay envelope validation and routing |
+| `fuzz_voip_replay_window` | VoIP replay-window behavior under arbitrary packets |
 | `fuzz_ffi` | FFI function calls with arbitrary inputs |
 
 Run with:
@@ -303,7 +315,7 @@ The formal claims below cover the two-party handshake and session ratchet analyz
 
 ### ProVerif (4/6 queries proven)
 
-`formal/proverif/aura.pv` — session key secrecy, authentication (non-injective + injective), forward secrecy. Q4/Q5 (message secrecy/integrity) are known ProVerif DH overapproximation limitations, covered by game-based proofs.
+`formal/proverif/aura.pv` — session key secrecy, authentication (non-injective + injective), and message secrecy proven. Q5/Q6 (message integrity / phase-based forward secrecy) are known ProVerif DH overapproximation limitations: Q6 is supported by Tamarin-style secrecy/PCS models and game-based proofs, while Q5 is supported by the game-based message-security proof and implementation tests.
 
 ### Game-Based Security Proofs
 
@@ -313,8 +325,8 @@ The formal claims below cover the two-party handshake and session ratchet analyz
 |---------|----------|-------------|
 | 1 | Hybrid Combiner IND-CCA2 | Gap-CDH OR Kyber IND-CCA2 |
 | 2 | eCK-AKE Security | Gap-CDH + IND-CCA2 + dual-PRF + ROM |
-| 3 | Forward Secrecy | Gap-CDH + IND-CCA2 + dual-PRF |
-| 4 | Post-Compromise Security | 1-step classical (Gap-CDH); 2-step hybrid (+IND-CCA2) |
+| 3 | Forward Secrecy | Gap-CDH + dual-PRF; initial KEM gives HNDL only absent later KEM-SK disclosure |
+| 4 | Post-Compromise Security | 1-step classical (Gap-CDH); 2-step hybrid (Gap-CDH + IND-CCA2) under conservative both-endpoint compromise |
 | 5 | Message Confidentiality + Integrity | eCK + PRF + MRAE |
 | 6 | Replay Resistance | INT-CTXT + bounded nonce cache |
 
@@ -371,14 +383,14 @@ docs/
     message-franking.md      Message franking design doc
     shield-mode.md           Shield mode design doc
   ffi-swift.md            Swift FFI guide
-  epp-relay-swift-alignment.md  Cross-repo contract (AURA <-> Relay <-> Swift)
+  aura-relay-swift-alignment.md  Cross-repo contract (AURA <-> Relay <-> Swift)
   relay-server.md         Relay server guide
 proto/
   protocol/       Protobuf message definitions
 benches/
   protocol_bench.rs    Criterion benchmarks (1:1 + group protocol)
 fuzz/
-  fuzz_targets/        32 libfuzzer targets
+  fuzz_targets/        42 libfuzzer targets
 tests/
   api_test.rs          Rust API regression coverage
   ffi_test.rs          FFI contract and lifecycle coverage
@@ -471,19 +483,19 @@ All relay functions are in `aura_protected_protocol::api::relay`:
 - `PendingEventStore` trait — event persistence (store/fetch/ack by device_id)
 
 See [docs/relay-server.md](docs/relay-server.md) for full guide.
-Cross-repo integration contract is documented in [docs/epp-relay-swift-alignment.md](docs/epp-relay-swift-alignment.md).
+Cross-repo integration contract is documented in [docs/aura-relay-swift-alignment.md](docs/aura-relay-swift-alignment.md).
 
 ## CI
 
-GitHub Actions pipeline with 8 jobs:
+CI and scheduled workflows cover these categories:
 
 | Job | What it does |
 |-----|-------------|
 | **Check & Clippy** | `cargo check` + `cargo clippy -- -D warnings` (with and without `ffi` feature) |
-| **Test** | Release and feature-matrix test runs on Linux, macOS, Windows; local snapshot: 746 default scenarios, 885 with `--features ffi` |
-| **Formal Verification** | Tamarin Prover (10 lemmas) + ProVerif (6 queries), with uploaded formal artifact logs |
+| **Test** | Release and feature-matrix test runs on Linux, macOS, Windows; local snapshot: 750 default scenarios, 889 with `--features ffi` |
+| **Formal Verification** | Tamarin Prover (10 lemmas) + ProVerif (4/6 queries proven), with uploaded formal artifact logs |
 | **MSRV** | Minimum supported Rust version (1.86) |
-| **Fuzz Smoke Test** | All 32 libfuzzer targets (10s each) |
+| **Fuzz Smoke Test** | All 42 libfuzzer targets (10s each) |
 | **Security Audit** | `cargo audit` for known vulnerabilities |
 | **Security Scan** | cargo-deny, TruffleHog secret scanning, license compliance |
 | **Benchmarks** | Criterion benchmarks on Linux, macOS, Windows (weekly + on push) |

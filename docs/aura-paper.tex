@@ -119,7 +119,7 @@ Aura is a hybrid post-quantum messaging protocol built around X25519 and ML-KEM-
 
 The construction also binds each new KEM public key into the HKDF transcript and separates payload encryption from metadata encryption by using an independent per-epoch metadata key. Relative to Signal \SPQR{}/Triple Ratchet and Apple \PQThree{}, the comparison is narrower: Aura is a compact open Rust design with explicit KEM-key binding, metadata-key rotation, and a proof-to-code map.
 
-The security argument consists of six game-based theorems under standard assumptions (Gap-CDH, ML-KEM IND-CCA2, dual-PRF, and MRAE), together with symbolic models: 10 Tamarin lemmas verify, and 4 of 6 ProVerif queries verify. The two remaining ProVerif queries run into the usual overapproximation issues for DH equational theories; the corresponding properties are covered by the game-based and Tamarin analyses. The implementation contains approximately 35.6k lines in \texttt{src/}, 29.6k lines of tests, and 1.0k lines of benchmarks. The test matrix contains 746 default scenarios and 885 scenarios with \texttt{ffi} enabled.
+The security argument consists of six game-based theorems under standard assumptions (Gap-CDH, ML-KEM IND-CCA2, dual-PRF, and MRAE), together with symbolic models: 10 Tamarin lemmas verify, and 4 of 6 ProVerif queries verify. The two remaining ProVerif queries run into the usual overapproximation issues for DH equational theories: Q6 is supported by Tamarin-style secrecy/PCS models and game-based proofs, while Q5 is supported by the game-based message-security proof and implementation tests. The implementation contains approximately 35.9k lines in \texttt{src/}, 30.1k lines of tests, and 1.1k lines of benchmarks. The test matrix contains 750 default scenarios and 889 scenarios with \texttt{ffi} enabled.
 \end{abstract}
 
 \smallskip
@@ -637,14 +637,16 @@ The implementation erases ephemeral keys immediately after use: the X25519 ephem
 \subsection{Theorem 4: Post-Compromise Security}\label{sec:thm-pcs}
 
 \begin{theorem}[Post-Compromise Security]\label{thm:pcs}
-If the adversary compromises full session state at epoch $e$ via $\textsf{RevealState}$:
+If the adversary compromises full session state at epoch $e$ via
+$\textsf{RevealState}$:
 
 \noindent\textbf{(a) Classical PCS (1-step):} Messages at epoch $\geq e+1$ are secure:
 \begin{equation}\label{eq:pcs-classical-bound}
   \adv^{\mathrm{PCS}\text{-}1}_{\mathrm{AURA}}(\advA) \leq \adv^{\GapCDH}_{\DH}(\advB_1) + \adv^{\dualPRF}_{\HKDF}(\advB_2).
 \end{equation}
 
-\noindent\textbf{(b) Hybrid PCS (2-step):} Messages at epoch $\geq e+2$ are secure:
+\noindent\textbf{(b) Hybrid PCS (2-step):} Under the conservative two-endpoint
+compromise model, messages at epoch $\geq e+2$ are secure:
 \begin{equation}\label{eq:pcs-hybrid-bound}
   \adv^{\mathrm{PCS}\text{-}2}_{\mathrm{AURA}}(\advA) \leq \adv^{\GapCDH}_{\DH}(\advB_1) + \adv^{\INDCCA}_{\KEM}(\advB_3) + 2 \cdot \adv^{\dualPRF}_{\HKDF}(\advB_2).
 \end{equation}
@@ -652,7 +654,12 @@ Both reductions are \emph{tight}.
 \end{theorem}
 
 \begin{proof}[Proof sketch]
-The key subtlety is the \emph{asymmetric recovery time} between classical and PQ components.
+The key subtlety is the \emph{asymmetric recovery time} between classical and
+PQ components. The 2-step hybrid statement uses a conservative two-endpoint
+compromise model: the adversary has both endpoints' epoch-$e$ states,
+including the peer KEM secret key targeted by the first post-compromise
+encapsulation. Under one-endpoint compromise, that first ratchet step may
+already include an uncompromised peer KEM contribution.
 
 \textbf{Part (a):} At epoch $e+1$, the honest party generates a fresh DH keypair $(d_{e+1}, D_{e+1})$ unknown to the adversary. The Kyber encapsulation at $e+1$ uses the old $kpk_e^{\mathit{peer}}$ (compromised), so Kyber does not contribute security. However, the DH shared secret is fresh, and by $\GapCDH$ hardness and the $\dualPRF$ property, the new root key $\rk_{e+1}$ is pseudorandom.
 
@@ -815,7 +822,7 @@ Lemma~1 (\texttt{pcs\_sender\_compromise}) captures the central PCS property: ev
 
 \subsection{ProVerif}\label{sec:proverif}
 
-The ProVerif model (\texttt{aura.pv}) provides a higher-fidelity representation, modeling all four X3DH DH operations, Ed25519 signature verification, the full chain KDF, and augmented HKDF info strings. It uses strongly-typed channels with 10 distinct types and supports unbounded session replication.
+The ProVerif model (\texttt{aura.pv}) provides a higher-fidelity representation, modeling all four X3DH DH operations, Ed25519 signature verification, the full chain KDF, and augmented HKDF info strings. It uses one public Dolev--Yao channel with 10 distinct symbolic types and supports unbounded session replication.
 
 \paragraph{Trust model.}
 Identity keys are registered in a ProVerif \texttt{table}, modeling out-of-band key verification (TOFU / safety numbers).
@@ -844,11 +851,11 @@ Q6 & Forward secrecy (phase) & Phase-1 compromise does not break phase-0 key & $
 \end{table}
 
 \paragraph{Analysis of unproven queries.}
-Q5 and Q6 fail due to known limitations of ProVerif's handling of the Diffie--Hellman equational theory: ProVerif uses Horn clause resolution that overapproximates the DH adversary's capabilities, producing spurious attacks that do not correspond to real protocol vulnerabilities. These properties are proven in our Tamarin models (which handle DH precisely) and in the game-based proofs.
+Q5 and Q6 fail due to known limitations of ProVerif's handling of the Diffie--Hellman equational theory: ProVerif uses Horn clause resolution that overapproximates the DH adversary's capabilities, producing spurious attacks that do not correspond to real protocol vulnerabilities. Q6 is covered by the Tamarin-style secrecy/PCS models and the game-based proofs; Q5 is covered by the game-based message-security proof and implementation tests.
 
 \subsection{Complementarity of Tools}
 
-The two tools are complementary: Tamarin provides precise DH reasoning but requires abstractions to avoid non-termination; ProVerif handles unbounded sessions with all four DH operations but overapproximates DH-dependent properties. Combined, 14 out of 16 total properties are machine-verified, with the 2 unproven ProVerif queries covered by Tamarin and game-based proofs.
+The two tools are complementary: Tamarin provides precise DH reasoning but requires abstractions to avoid non-termination; ProVerif handles unbounded sessions with all four DH operations but overapproximates DH-dependent properties. Combined, 14 out of 16 total queries are machine-verified. The 2 unproven ProVerif queries are treated as documented tool limitations rather than machine-checked results.
 
 
 % ═════════════════════════════════════════════════════════════
@@ -856,7 +863,7 @@ The two tools are complementary: Tamarin provides precise DH reasoning but requi
 % ═════════════════════════════════════════════════════════════
 \section{Implementation}\label{sec:implementation}
 
-The Aura protocol is implemented in Rust (edition 2021, MSRV 1.86). The current repository snapshot contains approximately 35.6k lines in \texttt{src/}, 29.6k lines of test code, and 1.0k lines of benchmarks, organized around the following modules:
+The Aura protocol is implemented in Rust (edition 2021, MSRV 1.86). The current repository snapshot contains approximately 35.9k lines in \texttt{src/}, 30.1k lines of test code, and 1.1k lines of benchmarks, organized around the following modules:
 
 \begin{table}[H]
 \centering
@@ -1020,7 +1027,7 @@ The hybrid ratchet step adds approximately $\sim$209\,$\mu$s over a classical-on
 
 \subsection{Test Coverage}\label{sec:tests}
 
-The implementation is validated by the current test matrix: 746 scenarios in the default configuration and 885 scenarios with \texttt{ffi} enabled.
+The implementation is validated by the current test matrix: 750 scenarios in the default configuration and 889 scenarios with \texttt{ffi} enabled.
 
 \begin{table}[H]
 \centering
@@ -1036,10 +1043,11 @@ End-to-end integration and protocol-state tests & 392 \\
 Attack-PoC and adversarial regression scenarios & 40 \\
 Header contracts, time provider, malformed-input, and property scenarios & 13 \\
 VoIP and VoIP attack-regression scenarios & 194 \\
+Additional current regression scenarios & 4 \\
 \midrule
-\textbf{Default configuration total} & \textbf{746} \\
+\textbf{Default configuration total} & \textbf{750} \\
 C FFI scenarios under \texttt{cargo test --features ffi} & 139 \\
-\textbf{Feature-matrix total with FFI} & \textbf{885} \\
+\textbf{Feature-matrix total with FFI} & \textbf{889} \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -1207,7 +1215,7 @@ We conjecture that any protocol achieving 1-step hybrid PCS for \emph{both} part
 
 \subsection{ProVerif Limitations}
 
-Two of six ProVerif queries (Q5: message integrity, Q6: forward secrecy) fail due to ProVerif's overapproximation of the DH equational theory. These are known limitations documented in the ProVerif literature. The properties are verified by our Tamarin models and game-based proofs, providing three complementary layers of assurance.
+Two of six ProVerif queries (Q5: message integrity, Q6: forward secrecy) fail due to ProVerif's overapproximation of the DH equational theory. These are known limitations documented in the ProVerif literature. Q6 is supported by the Tamarin-style secrecy/PCS models and the game-based proofs; Q5 is supported by the game-based message-security proof and implementation tests.
 
 \subsection{Kyber/ML-KEM Terminology}
 
@@ -1304,7 +1312,7 @@ repository's external-review package.
 % ═════════════════════════════════════════════════════════════
 \section{Conclusion}\label{sec:conclusion}
 
-This paper describes Aura, a hybrid post-quantum secure messaging protocol with per-ratchet KEM key rotation, per-epoch metadata encryption, and nonce-misuse-resistant AEAD. The security analysis consists of 6 game-based theorems, 10 Tamarin lemmas, and 4 proven ProVerif queries for the analyzed two-party protocol. The Rust implementation has measured handshake latency of approximately $1.1$\,ms and burst message throughput of approximately $15\,\mu$s/msg; the current test matrix contains 746 default scenarios and 885 scenarios with \texttt{ffi} enabled, including property-based and concurrent stress tests.
+This paper describes Aura, a hybrid post-quantum secure messaging protocol with per-ratchet KEM key rotation, per-epoch metadata encryption, and nonce-misuse-resistant AEAD. The security analysis consists of 6 game-based theorems, 10 Tamarin lemmas, and 4 proven ProVerif queries for the analyzed two-party protocol. The Rust implementation has measured handshake latency of approximately $1.1$\,ms and burst message throughput of approximately $15\,\mu$s/msg; the current test matrix contains 750 default scenarios and 889 scenarios with \texttt{ffi} enabled, including property-based and concurrent stress tests.
 
 The structural point is that post-quantum material can be part of the continuing Double Ratchet state evolution, not only the initial X3DH-style handshake. In Aura this is done with explicit KEM-key binding, rotating metadata keys, and a proof-to-code map for the implementation analyzed in this work.
 
