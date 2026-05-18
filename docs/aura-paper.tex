@@ -22,7 +22,10 @@
 \usepackage{float}
 \usepackage{caption}
 \usepackage{subcaption}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,calc,shapes.geometric}
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 \setlength{\emergencystretch}{3em}
 
 % ─── Algorithms ──────────────────────────────────────────────
@@ -290,23 +293,38 @@ $\AEAD$ satisfies $\MRAE$ security if:
 % ═════════════════════════════════════════════════════════════
 \section{Protocol Design}\label{sec:protocol}
 
-Aura consists of two phases: a \emph{hybrid X3DH handshake} (\cref{sec:handshake}) that establishes initial shared state, and a \emph{hybrid Double Ratchet} (\cref{sec:ratchet}) that continuously refreshes key material. Messages are protected by a \emph{two-layer AEAD} construction (\cref{sec:two-layer}).
+Aura consists of two phases: a \emph{hybrid X3DH handshake} (\cref{sec:handshake}) that establishes initial shared state, and a \emph{hybrid Double Ratchet} (\cref{sec:ratchet}) that continuously refreshes key material. Messages are protected by a \emph{two-layer AEAD} construction (\cref{sec:two-layer}). \Cref{fig:architecture} summarizes the protocol phases and the key material refreshed in each phase.
 
 \begin{figure}[t]
 \centering
-\begin{minipage}{0.95\textwidth}
-\begin{verbatim}
-  Handshake (Hybrid X3DH)          Session (Hybrid Double Ratchet)
-  +-------------------------+      +----------------------------------+
-  | 4x X25519 DH            |      | Per-direction ratchet:           |
-  | 1x ML-KEM-768 KEM      |----->|   X25519 DH + ML-KEM-768 KEM     |
-  | HKDF-SHA256 combiner    |      | Chain KDF: HKDF-SHA256           |
-  | HMAC key confirmation   |      | AEAD: AES-256-GCM-SIV            |
-  | Ed25519 SPK signature   |      | Metadata: independent AEAD layer |
-  +-------------------------+      +----------------------------------+
-\end{verbatim}
-\end{minipage}
-\caption{High-level architecture of the Aura protocol.}\label{fig:architecture}
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  stage/.style={draw,rounded corners=2pt,align=center,minimum width=3.2cm,minimum height=0.82cm,fill=blue!5},
+  data/.style={draw,rounded corners=2pt,align=center,minimum width=2.7cm,minimum height=0.70cm,fill=green!6,font=\scriptsize},
+  arrow/.style={-Latex,thick},
+  node distance=0.68cm and 0.78cm
+]
+\node[stage] (bundle) {Authenticated\\pre-key bundle};
+\node[stage,right=of bundle] (handshake) {Hybrid X3DH\\4 DH + 1 KEM};
+\node[stage,right=of handshake] (root) {Root state\\$\rk_0,\mdk_0,\mathit{sid}$};
+\node[stage,right=of root] (ratchet) {Directed hybrid\\Double Ratchet};
+\node[stage,right=of ratchet] (message) {Two-layer\\message envelope};
+
+\node[data,below=of handshake] (confirm) {HMAC transcript\\key confirmation};
+\node[data,below=of ratchet] (kemrot) {per-direction\\DH + ML-KEM};
+\node[data,below=of message] (aead) {payload key\\metadata key};
+
+\draw[arrow] (bundle) -- (handshake);
+\draw[arrow] (handshake) -- (root);
+\draw[arrow] (root) -- (ratchet);
+\draw[arrow] (ratchet) -- (message);
+\draw[arrow] (confirm) -- (handshake);
+\draw[arrow] (kemrot) -- (ratchet);
+\draw[arrow] (aead) -- (message);
+\end{tikzpicture}%
+}
+\caption{Protocol phases and cryptographic inputs used by Aura.}\label{fig:architecture}
 \end{figure}
 
 \subsection{Pre-Key Bundle}\label{sec:bundle}
@@ -322,7 +340,36 @@ where $\sigma_{\mathit{IKX}}=\textsf{Ed25519.Sign}(ed_R^{\mathit{sk}},\IK_R^{\ma
 
 \subsection{Hybrid X3DH Key Agreement}\label{sec:handshake}
 
-The handshake extends Signal's X3DH with an ML-KEM-768 encapsulation and bilateral key confirmation.
+The handshake extends Signal's X3DH with an ML-KEM-768 encapsulation and bilateral key confirmation. The message flow and root-key inputs are shown in \cref{fig:handshake-flow}.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  role/.style={draw,rounded corners=2pt,align=center,minimum width=2.55cm,minimum height=0.75cm,fill=gray!8},
+  msg/.style={-Latex,thick},
+  box/.style={draw,rounded corners=2pt,align=center,minimum width=4.1cm,minimum height=0.85cm,fill=blue!5,font=\scriptsize},
+  note/.style={draw,rounded corners=2pt,align=center,minimum width=3.6cm,minimum height=0.70cm,fill=green!6,font=\scriptsize}
+]
+\node[role] (init) at (0,0) {Initiator $I$};
+\node[role] (dir) at (4.2,0) {Pre-key\\directory};
+\node[role] (resp) at (8.4,0) {Responder $R$};
+
+\draw[msg] (resp) -- node[above,font=\scriptsize,align=center]{publish signed SPK, OPKs,\\identity keys, $kpk_R$} (dir);
+\draw[msg] (init) -- node[above,font=\scriptsize]{fetch bundle} (dir);
+\draw[msg] (dir) -- node[below,font=\scriptsize,align=center]{validated\\$\mathit{Bundle}_R$} (init);
+
+\node[box] (derive) at (0,-1.75) {$4$ X25519 DH values\\$+$ ML-KEM encapsulation\\$\xrightarrow{\HKDF}$ $\rk_0,\mdk_0,\mathit{sid}$};
+\node[note] (kcinit) at (8.4,-1.75) {same DH/KEM combiner\\after decapsulation};
+\draw[msg] (init) -- node[above,font=\scriptsize,align=center]{$\mathit{Init}$: $\EK_I^{pub}, ct_{ky}, kpk_I,$\\$\sigma_I^{bind}, mac_I$} (resp);
+\draw[msg] (resp) -- node[below,font=\scriptsize]{$\mathit{Ack}$: $mac_R$} (init);
+\draw[msg] (derive) -- (init);
+\draw[msg] (kcinit) -- (resp);
+\end{tikzpicture}%
+}
+\caption{Hybrid X3DH handshake messages and root-key inputs. The KEM public key is validated and transcript-bound by key confirmation; it is not a separate per-session signature.}\label{fig:handshake-flow}
+\end{figure}
 
 \begin{algorithm}[H]
 \caption{Initiator X3DH computation.}\label{alg:initiator}
@@ -420,11 +467,40 @@ Attach $(D_{e+1},\, \mathit{ct}_{e+1},\, kpk_{e+1})$ to envelope header\;
 Erase $d_e$, $ksk_e$, $\rk_e$, $\mathit{dh}_{e+1}$, $\mathit{ss}_{e+1}$\;
 \end{algorithm}
 
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  input/.style={draw,rounded corners=2pt,align=center,minimum width=3.0cm,minimum height=0.75cm,fill=gray!8},
+  core/.style={draw,rounded corners=2pt,align=center,minimum width=3.4cm,minimum height=1.05cm,fill=blue!6},
+  output/.style={draw,rounded corners=2pt,align=center,minimum width=3.0cm,minimum height=0.75cm,fill=green!7},
+  header/.style={draw,rounded corners=2pt,align=center,minimum width=3.25cm,minimum height=0.78cm,fill=orange!9},
+  arrow/.style={-Latex,thick},
+  node distance=0.75cm and 0.95cm
+]
+\node[input] (rk) {$\rk_e$\\HKDF salt};
+\node[input,below=of rk] (dh) {$\DH(d_{e+1},D_{peer})$};
+\node[input,below=of dh] (kem) {$\KEM.\Encaps(kpk_{peer})$};
+\node[core,right=of dh] (hkdf) {$\HKDF$\\$\mathit{info}=\texttt{"Aura-Hybrid-Ratchet"}\concat kpk_{e+1}$};
+\node[output,right=of hkdf] (out) {$\rk_{e+1}$\\$\ck_{e+1}$\\$\mdk^{send}_{e+1}$};
+\node[header,below=of out] (hdr) {ratchet header\\$D_{e+1},ct_{e+1},kpk_{e+1}$};
+
+\draw[arrow] (rk) -| (hkdf);
+\draw[arrow] (dh) -- (hkdf);
+\draw[arrow] (kem) -| (hkdf);
+\draw[arrow] (hkdf) -- (out);
+\draw[arrow] (hkdf) |- (hdr);
+\end{tikzpicture}%
+}
+\caption{Send-side hybrid ratchet derivation and transmitted ratchet header. The new KEM public key is part of the HKDF info string, binding the advertised post-quantum state to the derived root.}\label{fig:ratchet-derivation}
+\end{figure}
+
 \paragraph{Ratchet trigger.}
 In the classical Double Ratchet, the DH ratchet advances when a new DH public key is received from the peer~\cite{signal-double-ratchet}; Signal's current Triple Ratchet adds \SPQR{} as a separate sparse post-quantum component~\cite{signal-spqr,mlkem-braid}. Aura instead uses one protocol-level policy for this design point: after every received message, the \texttt{send\_ratchet\_pending} flag causes the next \texttt{encrypt()} call to execute a full hybrid ratchet. Additionally, a chain exhaustion ratchet is triggered when the negotiated per-chain limit is reached; the public API default is 1{,}000 messages and the protocol cap is 10{,}000.
 
 \paragraph{Augmented info string.}
-The HKDF info parameter includes the new ML-KEM public key $kpk_{e+1}$ in \cref{alg:send-ratchet}. This binding supports the following lemma:
+The HKDF info parameter includes the new ML-KEM public key $kpk_{e+1}$ in \cref{alg:send-ratchet,fig:ratchet-derivation}. This binding supports the following lemma:
 
 \begin{lemma}[Augmented HKDF Info Binding]\label{lem:augmented-hkdf}
 If an adversary substitutes $kpk' \neq kpk_{e+1}$ in the ratchet header, the receiver's derived root key is computationally independent of the sender's root key, except with negligible HKDF-output collision probability. Consequently, all derived chain and message keys differ, and AEAD decryption fails (under the $\INTCTXT$ property of $\AEAD$). This provides an implicit state-binding check for the KEM public key without per-step signatures; it is not a separate identity-authentication mechanism.
@@ -463,6 +539,36 @@ where $\mathit{aad}_{\mathit{md}} = \mathit{sid} \concat \mathit{ibh} \concat \e
   \mathit{ct}_{\mathit{pay}} = \AEAD.\Enc(\mk_{e,n},\, \mathit{nonce}_{\mathit{pay}},\, \mathit{plaintext},\, \mathit{aad}_{\mathit{pay}}),
 \end{equation}
 where $\mathit{aad}_{\mathit{pay}} = \mathit{sid} \concat \mathit{ibh} \concat \epoch \concat n \concat v$ additionally includes the message index $n$.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  lane/.style={draw,rounded corners=2pt,align=center,minimum width=4.3cm,minimum height=0.78cm},
+  key/.style={draw,rounded corners=2pt,align=center,minimum width=2.9cm,minimum height=0.62cm,fill=gray!8,font=\scriptsize},
+  arrow/.style={-Latex,thick},
+  node distance=0.55cm and 0.65cm
+]
+\node[lane,fill=gray!8] (visible) {Visible envelope: version, epoch, header nonce, optional ratchet public material};
+\node[lane,below=of visible,fill=blue!6] (metadata) {Encrypted metadata: message index, envelope type, correlation id, payload nonce};
+\node[lane,below=of metadata,fill=green!7] (payload) {Encrypted payload: padded application plaintext};
+
+\node[key,right=of metadata] (mdkey) {$\mdk_e^{send}$\\metadata key};
+\node[key,right=of payload] (msgkey) {$\mk_{e,n}$\\message key};
+\node[key,left=of metadata] (mdaad) {$\mathit{sid},\mathit{ibh},e,v$\\as AAD};
+\node[key,left=of payload] (payaad) {$\mathit{sid},\mathit{ibh},e,n,v$\\as AAD};
+
+\draw[arrow] (mdkey) -- (metadata);
+\draw[arrow] (msgkey) -- (payload);
+\draw[arrow] (mdaad) -- (metadata);
+\draw[arrow] (payaad) -- (payload);
+\draw[arrow] (visible) -- (metadata);
+\draw[arrow] (metadata) -- (payload);
+\end{tikzpicture}%
+}
+\caption{Envelope protection split: visible transport fields, encrypted metadata, and encrypted payload. Delivery timing, sizes, and ratchet public material remain visible; sender metadata and application content are protected by separate AEAD keys.}\label{fig:two-layer-envelope}
+\end{figure}
 
 \begin{lemma}[Two-Layer AEAD Independence]\label{lem:two-layer}
 For a ratchet epoch, the chain key $\ck_e$ and metadata key $\mdk_e$ are disjoint segments of a jointly pseudorandom HKDF output; the payload message key $\mk_{e,n}$ is later derived from $\ck_e$ under the \texttt{"Aura-Msg"} domain label. Given only $\mk_{e,n}$ and not the root or metadata key material, the adversary obtains no information about $\mdk_e$ under the HKDF PRF assumption and the one-way chain derivation.
@@ -557,7 +663,12 @@ where $\advA$ wins by correctly guessing $b$ for a fresh tested session.
 \end{definition}
 
 \begin{definition}[Forward Secrecy]\label{def:fs}
-Compromise of long-term identity and KEM keys $(\IK_I, \IK_R, ksk_I, ksk_R)$ at time $t$ does not allow decryption of messages encrypted before $t$ in sessions whose key agreement completed before the compromise, provided the responder signed-pre-key private scalar remains undisclosed or a consumed OPK private scalar was used and deleted.
+If an adversary learns the parties' long-term identity keys and
+long-term KEM decapsulation keys at time $t$, the adversary still
+cannot decrypt messages sent before $t$ in sessions whose key agreement
+completed before the compromise. This claim requires that either the
+responder signed-pre-key private scalar remains undisclosed or a
+consumed OPK private scalar was used and deleted.
 \end{definition}
 
 \begin{definition}[Post-Compromise Security~\cite{cohn-gordon2020}]\label{def:pcs}
@@ -667,6 +778,37 @@ The implementation erases temporary copies and intermediate DH outputs immediate
 \end{lemma}
 
 \subsection{Post-Compromise Security}\label{sec:thm-pcs}
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  tick/.style={draw,circle,minimum size=0.62cm,inner sep=0pt,fill=gray!8},
+  event/.style={draw,rounded corners=2pt,align=center,minimum width=3.1cm,minimum height=0.70cm,font=\scriptsize},
+  good/.style={event,fill=green!7},
+  warn/.style={event,fill=orange!10},
+  bad/.style={event,fill=red!7},
+  arrow/.style={-Latex,thick}
+]
+\node[tick] (e) at (0,0) {$e$};
+\node[tick] (e1) at (3.6,0) {$e+1$};
+\node[tick] (e2) at (7.2,0) {$e+2$};
+\draw[arrow] (e) -- (e1);
+\draw[arrow] (e1) -- (e2);
+
+\node[bad] (comp) at (0,-1.0) {state compromise};
+\node[good] (local) at (3.6,1.0) {local compromise:\\classical PCS after\\first honest directed step};
+\node[warn] (twofirst) at (3.6,-1.0) {two-endpoint compromise:\\no first-step hybrid claim};
+\node[good] (twohyb) at (7.2,-1.0) {hybrid recovery after\\post-compromise peer\\DH + KEM material};
+
+\draw[arrow] (comp) -- (local);
+\draw[arrow] (comp) -- (twofirst);
+\draw[arrow] (twofirst) -- (twohyb);
+\end{tikzpicture}%
+}
+\caption{Recovery boundary for local versus two-endpoint state compromise. The figure summarizes the theorem boundary only; it is not a claim of recovery without a later honest directed ratchet step.}\label{fig:pcs-timeline}
+\end{figure}
 
 \begin{theorem}[Post-Compromise Security]\label{thm:pcs}
 If the adversary compromises session state at epoch $e$ via
@@ -1084,7 +1226,7 @@ Six property-based tests using the \texttt{proptest} framework generate random i
 \centering
 \caption{Test-to-proof mapping: formal properties and implementation coverage.}\label{tab:test-proof-mapping}
 \small
-\begin{tabularx}{\textwidth}{@{}p{0.28\textwidth}Y@{}}
+\begin{tabularx}{\textwidth}{@{}L{0.28\textwidth}Y@{}}
 \toprule
 Security Property & Validating Tests \\
 \midrule
@@ -1205,7 +1347,7 @@ supports the design.
 \caption{Positioning of Aura against current post-quantum messaging
 baselines.}\label{tab:sota-comparison}
 \scriptsize
-\begin{tabularx}{\textwidth}{@{}p{0.16\textwidth}p{0.19\textwidth}p{0.18\textwidth}p{0.17\textwidth}X@{}}
+\begin{tabularx}{\textwidth}{@{}L{0.16\textwidth}L{0.19\textwidth}L{0.18\textwidth}L{0.17\textwidth}Y@{}}
 \toprule
 Protocol & Where PQ material is used & PCS after compromise & Public evidence & Implication for Aura \\
 \midrule
@@ -1247,7 +1389,7 @@ Narrow contribution: explicit KEM-key binding, per-epoch metadata encryption, an
 \caption{Compact comparison against nearest post-quantum messaging baselines.}
 \label{tab:comparison}
 \small
-\begin{tabularx}{\textwidth}{@{}p{0.22\textwidth}YYYY@{}}
+\begin{tabularx}{\textwidth}{@{}L{0.22\textwidth}YYYY@{}}
 \toprule
 Feature & PQXDH & \SPQR{} & \PQThree{} & \textbf{Aura} \\
 \midrule

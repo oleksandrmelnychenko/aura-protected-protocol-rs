@@ -266,6 +266,36 @@ confirmation MAC. The design therefore keeps admission state explicit: a
 member joins after decrypting Welcome and accepting the resulting epoch state,
 not because the relay appended an identity to a roster.
 
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  joinstep/.style={draw,rounded corners=2pt,align=center,minimum width=3.0cm,minimum height=0.78cm,fill=blue!6},
+  check/.style={draw,rounded corners=2pt,align=center,minimum width=2.75cm,minimum height=0.68cm,fill=green!7,font=\scriptsize},
+  arrow/.style={-Latex,thick},
+  node distance=0.62cm and 0.74cm
+]
+\node[joinstep] (kp) {Joiner\\signed KeyPackage};
+\node[joinstep,right=of kp] (commit) {Member creates\\Add commit};
+\node[joinstep,right=of commit] (welcome) {Welcome encrypts\\joiner secret};
+\node[joinstep,right=of welcome] (rebuild) {Joiner rebuilds\\tree and epoch};
+\node[joinstep,right=of rebuild] (accept) {Accepted\\group state};
+
+\node[check,below=of rebuild] (verify) {verify tree hash\\policy bytes\\confirmation MAC};
+\node[check,below=of welcome] (secret) {decrypt Welcome\\with leaf DH+KEM};
+
+\draw[arrow] (kp) -- (commit);
+\draw[arrow] (commit) -- (welcome);
+\draw[arrow] (welcome) -- (rebuild);
+\draw[arrow] (rebuild) -- (accept);
+\draw[arrow] (secret) -- (welcome);
+\draw[arrow] (verify) -- (rebuild);
+\end{tikzpicture}%
+}
+\caption{Welcome/admission boundary. A new member becomes authoritative only after reconstructing the tree, parsing the policy, deriving the epoch keys, and verifying the confirmation MAC.}\label{fig:welcome-admission}
+\end{figure}
+
 \begin{table}[H]
 \centering
 \caption{Group-state objects and their role.}\label{tab:objects}
@@ -558,6 +588,37 @@ TreeKEM path secret, confirmation MAC, or final client-side membership state
 because it has no group secrets. This separation is important: relay-side
 validation is useful for abuse resistance and routing, but it is not a
 cryptographic authority.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  lane/.style={draw,rounded corners=2pt,align=center,minimum width=4.25cm,minimum height=0.78cm},
+  relay/.style={lane,fill=orange!9},
+  member/.style={lane,fill=blue!6},
+  endrelay/.style={lane,fill=orange!15,thick},
+  endmember/.style={lane,fill=green!8,thick},
+  arrow/.style={-Latex,thick},
+  node distance=0.48cm and 0.75cm
+]
+\node[relay] (r1) at (0,0) {Relay lane: size, version, group id, epoch};
+\node[relay,right=of r1] (r2) {signature syntax\\routing target};
+\node[endrelay,right=of r2] (r3) {tentative routing\\state only};
+
+\node[member] (m1) at (0,-1.45) {Member lane: decrypt sender data};
+\node[member,right=of m1] (m2) {process UpdatePath\\tree hash, policy, MAC};
+\node[endmember,right=of m2] (m3) {accepted epoch\\or accepted message};
+
+\draw[arrow] (r1) -- (r2);
+\draw[arrow] (r2) -- (r3);
+\draw[arrow] (m1) -- (m2);
+\draw[arrow] (m2) -- (m3);
+\draw[arrow,dashed] (r2) -- node[right,font=\scriptsize,align=center]{cannot verify\\group secrets} (m2);
+\end{tikzpicture}%
+}
+\caption{Relay/member authority split. Relay checks are structural and useful for routing, while cryptographic acceptance remains a member-side state transition.}\label{fig:relay-authority}
+\end{figure}
 
 \begin{table}[H]
 \centering
