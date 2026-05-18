@@ -160,7 +160,8 @@ Swift wrapper надає `AuraGroupSession` та `AuraGroupKeyPackageSecrets`. �
 |--------------|---------------|----------|
 | `aura_group_create` | `identity_handle`, `credential`, `credential_length`, `out_handle`, `out_error` | Нова група (автор — єдиний член) |
 | `aura_group_join` | `identity_handle`, `welcome_bytes`, `welcome_length`, `secrets_handle`, `out_group_handle`, `out_error` | Приєднатися через Welcome (після Add комміту) |
-| `aura_group_join_external` | `identity_handle`, `public_state`, `public_state_length`, `credential`, `credential_length`, `out_group_handle`, `out_commit`, `out_error` | Зовнішній join через публічний стан; commit надіслати групі |
+| `aura_group_authorize_external_join` | member handle + joiner identity/public-state inputs, `out_authorization`, `out_error` | Чинний член видає authorization artifact для joiner-а |
+| `aura_group_join_external` | `identity_handle`, `public_state`, `public_state_length`, `authorization`, `authorization_length`, `credential`, `credential_length`, `out_group_handle`, `out_commit`, `out_error` | Зовнішній join через публічний стан і authorization; commit надіслати групі |
 
 ### Управління учасниками
 
@@ -177,7 +178,7 @@ Swift wrapper надає `AuraGroupSession` та `AuraGroupKeyPackageSecrets`. �
 |--------------|---------------|----------|
 | `aura_group_encrypt` | `handle`, `plaintext`, `plaintext_length`, `out_ciphertext`, `out_error` | Зашифрований GroupMessage |
 | `aura_group_decrypt` | `handle`, `ciphertext`, `ciphertext_length`, `out_plaintext`, `out_sender_leaf`, `out_generation`, `out_error` | Plaintext + `sender_leaf` + `generation` |
-| `aura_group_encrypt_sealed` | `handle`, `plaintext`, `plaintext_length`, `hint`, `hint_length`, `out_ciphertext`, `out_error` | Sealed-повідомлення (анонімний відправник) |
+| `aura_group_encrypt_sealed` | `handle`, `plaintext`, `plaintext_length`, `hint`, `hint_length`, `out_ciphertext`, `out_error` | Sealed inner payload; sender metadata still comes from group decrypt result |
 | `aura_group_encrypt_disappearing` | `handle`, `plaintext`, `plaintext_length`, `ttl_seconds`, `out_ciphertext`, `out_error` | Повідомлення, що зникає (TTL) |
 | `aura_group_encrypt_frankable` | `handle`, `plaintext`, `plaintext_length`, `out_ciphertext`, `out_error` | Frankable-повідомлення (можна довести автентичність третій стороні) |
 | `aura_group_reveal_sealed` | `hint`, `hint_length`, `encrypted_content`, `encrypted_content_length`, `nonce`, `nonce_length`, `seal_key`, `seal_key_length`, `out_plaintext`, `out_error` | Розшифрувати sealed-повідомлення за ключем |

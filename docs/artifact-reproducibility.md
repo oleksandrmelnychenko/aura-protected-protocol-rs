@@ -134,9 +134,9 @@ The current formal status is:
 |---|---|
 | Tamarin handshake model | 6/6 lemmas verified |
 | Tamarin ratchet model | 4/4 lemmas verified |
-| ProVerif model | 3/6 obligations discharged for the handshake/message-path model |
+| ProVerif model | 3/6 queries discharged for the handshake/message-path model |
 
-The three non-discharged ProVerif obligations are not treated as machine-checked
+The three non-discharged ProVerif queries are not treated as machine-checked
 results. Q3 (injective authentication) is documented but disabled in the default
 artifact because it does not terminate in the four-DH model. Q5 is false for a
 broad unpartnered active trace and therefore does not match the partnered-session

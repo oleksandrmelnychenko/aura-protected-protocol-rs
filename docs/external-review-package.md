@@ -43,7 +43,7 @@ The paper and implementation do not claim:
 - deployed operational maturity comparable to Signal or Apple iMessage;
 - group-protocol security under the two-party theorems;
 - ProVerif proofs for Q3, Q5, and Q6. Q3 is documented but disabled in the
-  default artifact; Q5 and Q6 are negative stress obligations rather than
+  default artifact; Q5 and Q6 are negative stress queries rather than
   positive machine-checked claims.
 
 ## Claims to review
@@ -51,9 +51,9 @@ The paper and implementation do not claim:
 | Claim | Evidence |
 |---|---|
 | Hybrid X3DH derives a shared root under the either-or classical/PQ combiner argument. | `docs/aura-paper.tex`, `docs/security-proof.tex`, `src/protocol/handshake.rs`, Tamarin handshake lemmas |
-| The KEM public key used for the next ratchet epoch is bound into HKDF `info`. | `src/protocol/session.rs`, `docs/aura-paper.tex`, paper equations and proof-to-code map |
+| The KEM public key used for the next ratchet epoch is bound into HKDF `info`. | `src/protocol/session.rs`, `docs/aura-paper.tex`, paper equations and implementation cross-reference map |
 | A receiver rejects partial ratchet headers and rolls back state on malformed ratchet envelopes. | `src/protocol/session.rs`, `tests/attack_poc.rs` |
-| Under the conservative two-endpoint compromise model, classical PCS is recovered after one honest DH ratchet step; full hybrid PCS takes two directed hybrid steps. Under one-endpoint compromise, the first ratchet step may already include an uncompromised peer KEM contribution. | Theorem 4 in the paper, `docs/security-proof.tex`, Tamarin ratchet model |
+| After local endpoint compromise, classical PCS is recovered after one honest directed step. Under conservative two-endpoint compromise, no first-step PCS is claimed; hybrid recovery starts after a directed step uses peer DH/KEM material generated after compromise. | Theorem 4 in the paper, `docs/security-proof.tex`, Tamarin ratchet model |
 | Metadata encryption uses an independent per-epoch key rather than reusing payload message keys. | `src/protocol/session.rs`, paper AEAD equations, tests covering encrypted metadata |
 | Replay protection, skipped-key handling, and sealed-state rollback constraints match the security claims. | `src/protocol/session.rs`, `tests/attack_poc.rs`, artifact vectors |
 | Benchmark comparisons use one traffic model for handshake-only, sparse, periodic, and per-reply PQ profiles. | `benches/protocol_bench.rs`, `pq_traffic_profiles` Criterion group |

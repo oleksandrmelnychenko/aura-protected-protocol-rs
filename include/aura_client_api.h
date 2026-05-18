@@ -109,8 +109,9 @@ typedef struct AuraSessionConfig {
  *
  *   mandatory_franking
  *     Non-zero: all outgoing group messages MUST include a franking tag.
- *     Calls to aura_group_encrypt() (non-frankable) will return
- *     AURA_ERROR_INVALID_STATE when this flag is set.
+ *     aura_group_encrypt() auto-upgrades the normal send path to include
+ *     franking under this policy; aura_group_encrypt_frankable() is the
+ *     explicit form.
  */
 typedef struct AuraGroupSecurityPolicy {
     uint32_t max_messages_per_epoch;
@@ -228,7 +229,8 @@ AURA_API void aura_sealed_state_slot_destroy(
  *
  *   content_type
  *     Message subtype: 0=normal, 1=sealed, 2=disappearing,
- *     3=sealed_disappearing, 4=edit, 5=delete. Franking is indicated by
+ *     3=sealed_disappearing, 4=edit, 5=delete, 6=reaction,
+ *     7=read_receipt, 8=typing. Franking is indicated by
  *     has_franking_data/franking_* fields, not by content_type.
  *
  *   ttl_seconds
@@ -317,7 +319,7 @@ AURA_API AuraErrorCode aura_identity_create(
  *
  * Parameters:
  *   seed         — pointer to seed bytes (borrowed for the duration of call).
- *   seed_length  — byte length of seed; minimum 16, recommended >= 32.
+ *   seed_length  — byte length of seed; minimum 32, recommended >= 32.
  *   out_handle   — receives the newly allocated identity handle.
  *   out_error    — optional error detail.
  *
@@ -340,7 +342,7 @@ AURA_API AuraErrorCode aura_identity_create_from_seed(
  *
  * Parameters:
  *   seed                — seed bytes (borrowed).
- *   seed_length         — byte length of seed; minimum 16, recommended >= 32.
+ *   seed_length         — byte length of seed; minimum 32, recommended >= 32.
  *   membership_id       — arbitrary UTF-8 string identifying the context
  *                         (e.g. "service:v1:user42").  Not required to be
  *                         null-terminated; length is given explicitly.
@@ -895,7 +897,8 @@ AURA_API AuraErrorCode aura_session_export_persisted_state(
  *   out_error            — optional error detail.
  *
  * Returns: AURA_SUCCESS, AURA_ERROR_DECRYPTION, AURA_ERROR_DECODE,
- *          AURA_ERROR_INVALID_INPUT, or AURA_ERROR_REPLAY_ATTACK.
+ *          AURA_ERROR_INVALID_INPUT, or AURA_ERROR_INVALID_STATE for
+ *          external-counter rollback.
  */
 AURA_API AuraErrorCode aura_session_deserialize_sealed(
     const uint8_t*      state_bytes,
@@ -1720,7 +1723,9 @@ AURA_API AuraErrorCode aura_voip_process_recording_consent_message(
  *   user_context_length       — byte length of user_context.
  *   out_root_key              — caller-allocated buffer to receive the
  *                               derived key bytes.
- *   out_root_key_length       — requested key length in bytes (1–64).
+ *   out_root_key_length       — requested key length in bytes (32–64 for
+ *                               the C FFI guard; the Rust helper can derive
+ *                               shorter outputs).
  *   out_error                 — optional error detail.
  *
  * Returns: AURA_SUCCESS, AURA_ERROR_INVALID_INPUT, or AURA_ERROR_DERIVE_KEY.
@@ -2278,7 +2283,7 @@ AURA_API void aura_group_key_package_secrets_destroy(
  * aura_group_validate_key_package — validate a serialized KeyPackage before
  * trusting identity public keys from it.
  *
- * Checks the protobuf shape, key sizes, X25519/Kyber public-key validity, and
+ * Checks the protobuf shape, key sizes, X25519/ML-KEM public-key validity, and
  * the KeyPackage Ed25519 signature using strict verification.
  *
  * Parameters:
@@ -2539,7 +2544,8 @@ AURA_API AuraErrorCode aura_group_process_commit(
  * to decrypt out-of-order messages within the epoch.
  *
  * If mandatory_franking is set in the group's security policy this function
- * returns AURA_ERROR_INVALID_STATE; use aura_group_encrypt_frankable() instead.
+ * auto-includes franking data; aura_group_encrypt_frankable() is the explicit
+ * form for callers that want to request frankable output directly.
  *
  * Parameters:
  *   handle           — active group session handle.
@@ -2639,8 +2645,8 @@ AURA_API void aura_group_decrypt_result_free(AuraGroupDecryptResult* result);
  * uses the same computation (Rust side) for deduplication and ordering.
  *
  * The ID is derived as:
- *   HKDF-Expand(epoch_secret, group_id || epoch || sender_leaf_index ||
- *               generation, 32)
+ *   SHA-256(GROUP_MSG_ID_INFO || group_id || LE64(epoch) ||
+ *           LE32(sender_leaf_index) || LE32(generation))
  *
  * Parameters:
  *   group_id            — group identifier bytes (borrowed).
@@ -2827,7 +2833,8 @@ AURA_API AuraErrorCode aura_group_export_persisted_state(
  *   out_error            — optional error detail.
  *
  * Returns: AURA_SUCCESS, AURA_ERROR_DECRYPTION, AURA_ERROR_DECODE,
- *          AURA_ERROR_INVALID_INPUT, or AURA_ERROR_REPLAY_ATTACK.
+ *          AURA_ERROR_INVALID_INPUT, or AURA_ERROR_INVALID_STATE for
+ *          external-counter rollback.
  */
 AURA_API AuraErrorCode aura_group_deserialize(
     const uint8_t*          state_bytes,
@@ -3250,7 +3257,7 @@ AURA_API void aura_group_destroy(AuraGroupSessionHandle** handle);
 
 /*
  * AuraOnHandshakeCompleted — fired once when both sides have completed the
- * X3DH+Kyber handshake and the session is ready for encrypt/decrypt.
+ * X3DH+ML-KEM handshake and the session is ready for encrypt/decrypt.
  *
  *   session_id     — pointer to the 16-byte session identifier (borrowed for
  *                    the duration of the callback only; do NOT retain).
@@ -3582,13 +3589,13 @@ AURA_API AuraErrorCode aura_identity_set_event_handler(
  *   - channel_id:            16 bytes (UUID)
  *   - channel_key_id:        16 bytes (UUID)
  *   - device X25519 public:  32 bytes
- *   - device Kyber public:   1184 bytes
+ *   - device ML-KEM public:  1184 bytes
  *   - sender Ed25519 secret: 32 bytes (seed)
  *   - sender Ed25519 public: 32 bytes
  *   - nonce:                 12 bytes (AES-GCM-SIV)
  *   - signature:             64 bytes (Ed25519)
  *   - wrapped key blob:      1180 bytes
- *       (32 ephemeral X25519 + 1088 Kyber CT + 12 nonce + 48 ciphertext)
+ *       (32 ephemeral X25519 + 1088 ML-KEM CT + 12 nonce + 48 ciphertext)
  *
  * The wire envelope (channel_key_id + generation + nonce + ciphertext + signature)
  * is assembled by the calling layer and sent through the gateway.
@@ -3619,7 +3626,8 @@ AURA_API AuraErrorCode aura_channel_generate_key(
  * Parameters:
  *   channel_key          — 32-byte symmetric channel key.
  *   device_x25519_public — 32-byte device X25519 public key.
- *   device_kyber_public  — 1184-byte device Kyber/ML-KEM public key.
+ *   device_kyber_public  — 1184-byte device ML-KEM public key
+ *                          (historical parameter name).
  *   out_blob             — receives the 1180-byte wrapped blob.
  *   out_error            — optional error detail.
  *
@@ -3635,7 +3643,7 @@ AURA_API AuraErrorCode aura_channel_wrap_key_for_device(
 
 /*
  * aura_channel_unwrap_key_blob — unwrap a previously wrapped channel key blob
- * using the device identity handle's X25519 and Kyber/ML-KEM secret keys.
+ * using the device identity handle's X25519 and ML-KEM secret keys.
  *
  * Parameters:
  *   blob                 — wrapped key blob (must be exactly 1180 bytes).

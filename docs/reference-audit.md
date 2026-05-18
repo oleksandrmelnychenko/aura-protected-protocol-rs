@@ -1,6 +1,6 @@
 # Reference audit for Aura papers
 
-Audit date: 2026-05-17.
+Audit date: 2026-05-18.
 
 Scope:
 - `docs/aura-paper.tex`
@@ -9,9 +9,9 @@ Scope:
 Result:
 - English paper: 33 `\bibitem` entries, 33 unique cited keys, 0 missing bibliography entries, 0 uncited bibliography entries.
 - Ukrainian paper: 33 `\bibitem` entries, 33 unique cited keys, 0 missing bibliography entries, 0 uncited bibliography entries.
-- External links: 32 unique URLs, all returned HTTP 200 with `curl -L` on 2026-05-17.
-- Local companion reference: `docs/security-proof.tex` exists and is intentionally local, not an external URL.
-- Source-build note: a separate `paper` artifact run on 2026-05-17 compiled both papers with `pdflatex`; the generated PDFs were 30 pages (`aura-paper.pdf`) and 36 pages (`aura-paper-ua.pdf`). The `references` mode below audits citations and URLs only.
+- External links: 32 unique URLs, all returned HTTP 200 with `curl -L` on 2026-05-18.
+- Local companion reference: `docs/security-proof.tex` exists and is intentionally local; the checker validates its presence separately from external URLs.
+- Source-build note: a separate `paper` artifact run on 2026-05-18 compiled both papers with `pdflatex`; the generated PDFs were 31 pages (`aura-paper.pdf`) and 36 pages (`aura-paper-ua.pdf`). The `references` mode below audits citations, URLs, and the local companion reference.
 
 Verification commands:
 

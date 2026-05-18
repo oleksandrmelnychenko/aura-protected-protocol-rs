@@ -75,16 +75,19 @@ Signal has published **Sparse Post-Quantum Ratchet (SPQR)** and **Triple Ratchet
 Aura integrates ML-KEM-768 into every hybrid ratchet step:
 
 ```
-hybrid_ikm = DH(new_x25519_priv, peer_x25519_pub) || KEM.Decap(ct, sk)
-salt        = old_root_key || "Aura-PQ-Hybrid::" || kem_shared_secret
-ratchet_out = HKDF(hybrid_ikm, 96, salt, "Aura-Hybrid-Ratchet")
+ikm         = DH(new_x25519_priv, peer_x25519_pub) || KEM.Encaps(peer_ml_kem_pk).ss
+info        = "Aura-Hybrid-Ratchet" || new_ml_kem_public
+ratchet_out = HKDF(ikm, 96, old_root_key, info)
   → new_root_key(32) || new_chain_key(32) || new_metadata_key(32)
 ```
 
-Each direction change generates a fresh ML-KEM-768 keypair locally and sends the public key + ciphertext to the peer. Old KEM secret keys are wiped immediately after decapsulation. This provides:
+The receive side performs the matching decapsulation for the KEM ciphertext in
+the ratchet header. Each direction change generates a fresh ML-KEM-768 keypair
+locally and sends the public key + ciphertext to the peer. Old KEM secret keys
+are wiped immediately after decapsulation. This provides:
 
 - **Per-epoch PQ forward secrecy absent later KEM-SK disclosure**: Compromising epoch N's KEM key reveals nothing about independent epochs N-1 or N+1.
-- **Hybrid post-compromise recovery**: After a conservative two-endpoint compromise, classical recovery occurs after the next honest directed step, and hybrid recovery occurs after the next directed step that uses a post-compromise KEM public key.
+- **Hybrid post-compromise recovery**: After local endpoint compromise, classical recovery occurs at the next honest directed step. After two-endpoint state compromise, recovery requires a directed step that uses peer DH and KEM material generated after the compromise.
 
 ---
 
@@ -95,7 +98,7 @@ Each direction change generates a fresh ML-KEM-768 keypair locally and sends the
 | **Confidentiality** | AES-256-CBC + HMAC | AES-256-CBC + HMAC | AES-256-GCM-SIV |
 | **Forward secrecy (classical)** | Yes (DH ratchet) | Yes (DH ratchet) | Yes (DH ratchet) |
 | **Forward secrecy (PQ)** | No | Handshake only | **Per-epoch** |
-| **Post-compromise security** | Yes (DH ratchet) | Yes (DH ratchet, classical only) | **1-step classical / 2-step hybrid in the directed KEM schedule** |
+| **Post-compromise security** | Yes (DH ratchet) | Yes (DH ratchet, classical only) | **Local classical PCS after one honest directed step; two-endpoint hybrid recovery after post-compromise peer DH/KEM material is used** |
 | **Replay protection** | Message counter + key consumption | Same | **Bounded nonce cache (2048) + key consumption** |
 | **Nonce misuse resistance** | No (CBC mode) | No | **Yes (GCM-SIV)** |
 | **Metadata privacy** | Sealed Sender (sender identity) | Sealed Sender | **Encrypted envelope metadata (rotating key)** |
@@ -117,7 +120,11 @@ Aura uses AES-256-GCM-SIV (RFC 8452), which maintains authenticity even under no
 
 Signal's Sealed Sender hides the sender's identity from the server but does not encrypt per-message metadata (message index, payload nonce, envelope type). This metadata is visible in the outer envelope.
 
-Aura encrypts all envelope metadata with a dedicated metadata key that rotates on each ratchet step, providing forward secrecy for metadata. Old-epoch metadata keys are cached (up to 100 entries) for out-of-order delivery.
+Aura encrypts the inner envelope metadata it controls with a dedicated metadata
+key that rotates on each ratchet step. Outer delivery metadata, packet size,
+timing, and ratchet public material remain visible. Old-epoch metadata keys are
+cached (up to 100 entries) for out-of-order delivery, which creates a bounded
+exposure window rather than perfect immediate erasure.
 
 ---
 
@@ -128,14 +135,14 @@ Aura encrypts all envelope metadata with a dedicated metadata key that rotates o
 | Operation | Aura | Notes |
 |-----------|----------|-------|
 | Identity creation (5 OPKs) | ~450 µs | Ed25519 + X25519 + ML-KEM-768 keygen |
-| Full handshake (keygen + X3DH + confirm) | ~1.5 ms | Hybrid: 4× DH + 1× ML-KEM encap/decap |
+| Full handshake (keygen + X3DH + confirm) | ~1.1 ms | Hybrid: 4× DH + 1× ML-KEM encap/decap |
 | Encrypt (256 B) | ~17 µs | AES-256-GCM-SIV + metadata AEAD |
 | Decrypt (256 B) | ~21 µs | + replay check + metadata AEAD |
 | Encrypt/decrypt roundtrip (64 B) | ~14 µs | Minimal payload |
 | Encrypt/decrypt roundtrip (4 KB) | ~57 µs | Larger payload |
-| Direction-change ratchet | ~430 µs | X25519 DH + ML-KEM-768 encap/decap + HKDF |
+| Direction-change ratchet | ~259 µs | X25519 DH + ML-KEM-768 encap/decap + HKDF |
 | Burst throughput (256 B, same chain) | ~15 µs | No ratchet, chain key advance only |
-| Alternating throughput (256 B) | ~524 µs | Full hybrid ratchet per message |
+| Alternating throughput (256 B) | ~280 µs | Full hybrid ratchet per message |
 | Out-of-order decrypt (20 msgs) | ~292 µs | Skipped key lookup + decrypt |
 | Cross-epoch decrypt | ~13 µs | Cached chain key lookup |
 | Session export (sealed) | ~105 µs | AES-GCM-SIV sealed-state encryption |
@@ -177,19 +184,23 @@ Aura encrypts all envelope metadata with a dedicated metadata key that rotates o
 
 | Metric | Signal | Signal PQXDH | **Aura** |
 |--------|--------|-------------|--------------|
-| Handshake init size | ~130 B | ~1,250 B (+Kyber-1024 CT) | ~1,170 B (+ML-KEM-768 CT) |
+| Handshake init size | ~130 B | ~1,250 B (+Kyber-1024 CT) | 2,485 B in the deterministic artifact vector |
 | Pre-key bundle size | ~200 B | ~1,800 B (+Kyber-1024 PK) | ~1,400 B (+ML-KEM-768 PK) |
 | Message overhead | ~57 B (key + counters + MAC) | ~57 B | ~80 B (key + metadata AEAD + nonce) |
-| Ratchet message (with PQ key) | ~57 B | ~57 B (no PQ in ratchet) | ~1,300 B (+ML-KEM-768 PK + CT) |
+| Ratchet message (with PQ key) | ~57 B | ~57 B (no PQ in ratchet) | 2,304 B of cryptographic ratchet material, plus framing |
 | Max envelope size | Not specified | Not specified | 1 MiB (enforced) |
 | Max handshake size | Not specified | Not specified | 16 KiB (enforced) |
 
 ### Bandwidth Trade-off
 
-Aura's ratchet messages are ~1,300 bytes larger than Signal's due to the embedded ML-KEM-768 public key and ciphertext. This overhead occurs only on direction changes (when one party starts responding after receiving), not on every message in a burst. For typical messaging patterns (alternating messages), the overhead is:
+Aura's ratchet messages are larger than Signal's due to the embedded ML-KEM-768
+public key and ciphertext plus a fresh DH public key. This overhead occurs only
+on direction changes (when one party starts responding after receiving), not on
+every message in a burst. For typical messaging patterns (alternating messages),
+the overhead is:
 
-- **~1.3 KB per direction change** (ML-KEM-768 PK: 1,184 B + CT: 1,088 B, partially compressed by protobuf)
-- Versus **0 B per direction change** for Signal (classical DH key only: 32 B)
+- **2,304 bytes per direction change** (ML-KEM-768 PK: 1,184 B + CT: 1,088 B + X25519 public key: 32 B), plus protobuf framing
+- Versus **32 bytes per direction change** for Signal's classical DH public key, before framing
 
 For bandwidth-constrained environments, KEM material could be sent out-of-band or compressed, but the default includes it inline for simplicity and security.
 
@@ -297,7 +308,7 @@ Key separation: encryption / authentication / metadata / HMAC / identity — all
 | Active MITM (classical) | ✅ Protected (identity keys) | ✅ Protected | ✅ Protected |
 | Harvest-now-decrypt-later (quantum) | ❌ Vulnerable | ⚠️ Handshake protected | ✅ **Session-secret confidentiality refreshed at directed KEM ratchets** |
 | Quantum adversary (real-time) | ❌ Vulnerable | ⚠️ Handshake protected | ⚠️ **Confidentiality hedged; authentication remains Ed25519** |
-| Compromised session state | ⚠️ PCS via DH ratchet | ⚠️ PCS (classical only) | ✅ **1-step classical / 2-step hybrid PCS in this schedule** |
+| Compromised session state | ⚠️ PCS via DH ratchet | ⚠️ PCS (classical only) | ✅ **local classical PCS after one honest step; hybrid recovery after post-compromise peer KEM material is used** |
 | Nonce reuse by implementation bug | ❌ CBC leaks data | ❌ CBC leaks data | ✅ **GCM-SIV: safe** |
 | State rollback attack | ❌ No detection | ❌ No detection | ✅ **State integrity plus external counter freshness** |
 | Metadata traffic analysis | ⚠️ Sealed Sender (partial) | ⚠️ Sealed Sender | ⚠️ **Encrypted envelope fields + rotation; no anonymity claim** |
@@ -309,7 +320,7 @@ Key separation: encryption / authentication / metadata / HMAC / identity — all
 
 ### Aura's Contributions
 
-1. **Hybrid post-quantum confidentiality ratchet**: A compact two-party design point that adds ML-KEM-768 on direction-change ratchets, with a formal 1-step classical / 2-step hybrid PCS boundary for this schedule. Signal SPQR/Triple Ratchet and Apple PQ3 are broader modern baselines with different trade-offs.
+1. **Hybrid post-quantum confidentiality ratchet**: A compact two-party design point that adds ML-KEM-768 on direction-change ratchets, with a formal PCS boundary that separates local compromise from two-endpoint compromise in this schedule. Signal SPQR/Triple Ratchet and Apple PQ3 are broader modern baselines with different trade-offs.
 
 2. **Nonce-misuse resistant AEAD**: AES-256-GCM-SIV provides a strictly stronger security guarantee than AES-256-CBC for symmetric encryption.
 
@@ -326,7 +337,7 @@ Key separation: encryption / authentication / metadata / HMAC / identity — all
 | Per-epoch PQ protection | ~94 µs overhead per ratchet step |
 | Nonce-misuse resistance (GCM-SIV) | Slightly larger ciphertext (16-byte tag, same as GCM) |
 | Metadata encryption + rotation | ~80 B per-message overhead (metadata AEAD) |
-| ML-KEM-768 in ratchet | ~1.3 KB bandwidth per direction change |
+| ML-KEM-768 in ratchet | 2,304 bytes of cryptographic ratchet material per direction change, plus framing |
 | State HMAC + external counter | ~32 B storage + HMAC computation on export/import |
 | Non-deniable (by design) | Loss of online deniability (deliberate) |
 

@@ -90,7 +90,7 @@ API розрахований на три ролі:
 | **Group — Encrypt / Decrypt** | | | |
 | `aura_group_encrypt` | + | + | - | Шифрування (група) |
 | `aura_group_decrypt` | + | + | - | Дешифрування (група) |
-| `aura_group_encrypt_sealed` | + | + | - | Sealed (анонімне) |
+| `aura_group_encrypt_sealed` | + | + | - | Sealed inner payload |
 | `aura_group_encrypt_disappearing` | + | + | - | Disappearing (TTL) |
 | `aura_group_encrypt_frankable` | + | + | - | Frankable (доказ) |
 | `aura_group_reveal_sealed` | + | + | - | Розшифрувати sealed |
@@ -392,7 +392,9 @@ AuraErrorCode aura_identity_create_with_context(
 );
 ```
 
-Як `create_from_seed`, але з явним `membership_id`. Різні `membership_id` з одним seed дають різні ключі. Корисно для multi-device / multi-account.
+Як `create_from_seed`, але з явним `membership_id`. `seed_length` має бути
+щонайменше 32 байти. Різні `membership_id` з одним seed дають різні ключі.
+Корисно для multi-device / multi-account.
 
 ### `aura_identity_get_x25519_public`
 
@@ -756,7 +758,7 @@ AuraErrorCode aura_session_deserialize_sealed(
 
 Відновлює сесію із sealed state.
 
-- Якщо counter у blob `< min_external_counter` → `AURA_ERROR_REPLAY_ATTACK`; рівність дозволена як ідемпотентне re-restore того самого blob
+- Якщо counter у blob `< min_external_counter` → raw session/group restore currently returns `AURA_ERROR_INVALID_STATE`; рівність дозволена як ідемпотентне re-restore того самого blob
 - `*out_external_counter` валідний тільки при `AURA_SUCCESS` (на помилці не використовувати/не persist-ити)
 - Після успішного імпорту зберегти `*out_external_counter` для наступного `min_external_counter`
 - Managed tracker APIs використовують restore watermark `max(max_restored_counter, latest_issued_counter)`, тому не приймають blob із counter нижче вже відновленого або вже виданого для export значення.
@@ -1330,7 +1332,7 @@ typedef struct AuraGroupDecryptResult {
     AuraBuffer plaintext;             // розшифрований payload
     uint32_t  sender_leaf_index;     // leaf index відправника
     uint32_t  generation;           // generation counter
-    uint32_t  content_type;         // 0=Normal 1=Sealed 2=Disappearing 3=SealedDisappearing 4=Edit 5=Delete
+    uint32_t  content_type;         // 0=Normal 1=Sealed 2=Disappearing 3=SealedDisappearing 4=Edit 5=Delete 6=Reaction 7=ReadReceipt 8=Typing
     uint32_t  ttl_seconds;          // TTL (для Disappearing; 0 якщо не встановлено)
     uint64_t  sent_timestamp;       // unix timestamp відправника (для Disappearing)
     AuraBuffer message_id;           // 32 байти стабільний Message ID
@@ -1406,7 +1408,7 @@ AuraErrorCode aura_group_encrypt_sealed(
 );
 ```
 
-Шифрує sealed-повідомлення (анонімний відправник). Одержувачі бачать повідомлення, але не знають від кого. `hint` — опціональна підказка для розкриття.
+Шифрує sealed inner payload. Одержувачі після `aura_group_decrypt_ex` бачать outer sender metadata (`sender_leaf_index`, `generation`) і отримують `seal_key` для `aura_group_reveal_sealed`; це не є recipient-side sender anonymity. `hint` — опціональна підказка для розкриття.
 
 ### `aura_group_encrypt_disappearing`
 
@@ -1639,7 +1641,7 @@ AuraErrorCode aura_group_deserialize(
 
 Відновлює групову сесію. `identity_handle` потрібен для Ed25519 private key.
 
-- Якщо counter у blob `< min_external_counter` → replay/rollback помилка; рівність дозволена як ідемпотентне re-restore.
+- Якщо counter у blob `< min_external_counter` → raw restore повертає `AURA_ERROR_INVALID_STATE` як rollback/invalid-state помилку; рівність дозволена як ідемпотентне re-restore.
 - `*out_external_counter` валідний тільки при `AURA_SUCCESS` (на помилці не використовувати/не persist-ити)
 
 ### `aura_group_export_public_state`

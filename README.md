@@ -14,11 +14,11 @@ Hybrid secure-messaging protocol targeting post-quantum confidentiality of sessi
 | Per-ratchet PQ protection | No | No | **Yes** (X25519 + ML-KEM-768) |
 | Metadata encryption | Sealed Sender | Sealed Sender | **Per-epoch rotating key** |
 | AEAD | AES-256-CBC + HMAC | AES-256-CBC + HMAC | **AES-256-GCM-SIV** (nonce-misuse resistant) |
-| Post-compromise recovery | 1-step (DH) | 1-step (DH) | **1-step classical / 2-step hybrid** |
+| Post-compromise recovery | 1-step (DH) | 1-step (DH) | **local classical PCS after one step; hybrid recovery after post-compromise peer KEM material is used** |
 | Group module | N/A | N/A | **MLS-inspired hybrid PQ TreeKEM** (outside 1:1 proof scope) |
 | Shield mode | No | No | **Yes** (enhanced key schedule, mandatory franking) |
 | Message features | Basic | Basic | **Sealed, disappearing, frankable, edit, delete** |
-| Formal proofs | eCK sketch | High-level | **6 theorems + 10 Tamarin lemmas** (1:1 handshake/ratchet) |
+| Formal proofs | eCK sketch | High-level | **6 theorems + 10 Tamarin lemmas + 3 ProVerif queries** (1:1 handshake/ratchet) |
 
 ## Architecture
 
@@ -43,7 +43,7 @@ Hybrid secure-messaging protocol targeting post-quantum confidentiality of sessi
 │    AEAD layer             │
 └─────────────────────────┘           Message Features (1:1 + Group)
                                        ┌──────────────────────────────────────┐
-Shield Mode                            │ Sealed messages (anonymous sender)    │
+Shield Mode                            │ Sealed inner content + reveal key      │
 ┌─────────────────────────┐           │ Disappearing messages (TTL at proto)  │
 │ Enhanced 2-pass KDF       │           │ Message franking (abuse reporting)    │
 │ Mandatory franking        │           │ Edit / Delete messages                │
@@ -98,7 +98,7 @@ let policy = group.security_policy();
 | Confidentiality | AES-256-GCM-SIV with per-message keys |
 | Authenticity | HMAC-SHA256 key confirmation + Ed25519 signatures |
 | Forward secrecy | Classical FS from erased DH ephemerals and ratcheted chain keys; initial KEM is HNDL only unless its secret key remains undisclosed |
-| Post-compromise security | 1-step classical PCS; 2-step hybrid PCS under the conservative both-endpoint compromise model |
+| Post-compromise security | Local endpoint compromise: classical PCS after one honest directed step; two-endpoint state compromise: hybrid recovery after a directed step uses post-compromise peer DH/KEM material |
 | Replay protection | Bounded nonce cache (2048 entries) + monotonic counters |
 | Metadata privacy | Envelope metadata encrypted with rotating per-epoch key |
 | State integrity | HMAC-SHA256 over serialized state plus external counter freshness |
@@ -118,7 +118,7 @@ For deployment guidance, see `SECURITY.md`, `docs/client-production-checklist.md
 
 ### Group Protocol Properties
 
-These are implementation-level properties of the group module. They are not claimed as consequences of the paper's two-party theorems; a group-security claim requires a separate TreeKEM model, proof-to-code map, and concurrency analysis.
+These are implementation-level properties of the group module. They are not claimed as consequences of the paper's two-party theorems; a group-security claim requires a separate TreeKEM model, implementation cross-reference map, and concurrency analysis.
 
 | Property | Mechanism |
 |----------|-----------|
@@ -127,7 +127,7 @@ These are implementation-level properties of the group module. They are not clai
 | Sender authentication | Sender keys bound to leaf index; per-member symmetric ratchet |
 | Tree integrity | parent_hash chain from root to leaf verified on each UpdatePath |
 | External join security | KEM to deterministic external keys derived from init_secret |
-| Anonymous sending | Sealed messages with derived seal_key hide sender identity |
+| Sealed content | Sealed messages encrypt an inner payload and expose a reveal key after group decrypt; they do not hide the sender from group recipients |
 | Abuse reporting | Message franking: franking_tag outside ciphertext, franking_key inside |
 | Expiring content | Disappearing messages with TTL enforced at decrypt time |
 | Shield enforcement | Enhanced key schedule, mandatory franking, external join blocking |
@@ -313,9 +313,9 @@ The formal claims below cover the two-party handshake and session ratchet analyz
 - `key_agreement` — both parties derive same root key
 - `ratchet_exists` — reachability
 
-### ProVerif (3/6 obligations discharged)
+### ProVerif (3/6 queries discharged)
 
-`formal/proverif/aura.pv` — KEM shared-secret secrecy, non-injective authentication, and message secrecy proven. Q3 is documented but disabled in the default artifact because the four-DH model does not terminate within the artifact budget. Q5/Q6 are negative stress obligations: Q5 is false for a broad unpartnered active trace, and Q6 is false for raw KEM-secret secrecy after KEM secret-key reveal.
+`formal/proverif/aura.pv` — KEM shared-secret secrecy, non-injective authentication, and message secrecy proven. Q3 is documented but disabled in the default artifact because the four-DH model does not terminate within the artifact budget. Q5/Q6 are negative stress queries: Q5 is false for a broad unpartnered active trace, and Q6 is false for raw KEM-secret secrecy after KEM secret-key reveal.
 
 ### Game-Based Security Proofs
 
@@ -326,8 +326,8 @@ The formal claims below cover the two-party handshake and session ratchet analyz
 | 1 | Hybrid Combiner IND-CCA2 | Gap-CDH OR ML-KEM-768 IND-CCA2 |
 | 2 | Modified X3DH leakage-model AKE security | Gap-CDH + IND-CCA2 + dual-PRF + ROM |
 | 3 | Forward Secrecy | Gap-CDH + dual-PRF; initial KEM gives HNDL only absent later KEM-SK disclosure |
-| 4 | Post-Compromise Security | 1-step classical (Gap-CDH); 2-step hybrid (Gap-CDH + IND-CCA2) under conservative both-endpoint compromise |
-| 5 | Message Confidentiality + Integrity | eCK + PRF + MRAE |
+| 4 | Post-Compromise Security | Local classical PCS under Gap-CDH; delayed hybrid recovery under Gap-CDH + IND-CCA2 after post-compromise peer DH/KEM material is used |
+| 5 | Message Confidentiality + Integrity | Modified X3DH leakage model + PRF + MRAE |
 | 6 | Replay Resistance | INT-CTXT + bounded nonce cache |
 
 ## Project Structure
@@ -373,7 +373,7 @@ swift/
     AuraCrypto.swift     Shamir SSS + envelope validation
 formal/
   tamarin/        Tamarin models (handshake 6/6, ratchet 4/4)
-  proverif/       ProVerif model (3/6 obligations)
+  proverif/       ProVerif model (3/6 queries)
 docs/
   security-proof.tex       Game-based proofs (6 theorems, 8 lemmas)
   attachment-flow.md       Attachment encryption and transport contract
@@ -493,7 +493,7 @@ CI and scheduled workflows cover these categories:
 |-----|-------------|
 | **Check & Clippy** | `cargo check` + `cargo clippy -- -D warnings` (with and without `ffi` feature) |
 | **Test** | Release and feature-matrix test runs on Linux, macOS, Windows; local snapshot: 750 default scenarios, 889 with `--features ffi` |
-| **Formal Verification** | Tamarin Prover (10 lemmas) + ProVerif (3/6 obligations discharged), with uploaded formal artifact logs |
+| **Formal Verification** | Tamarin Prover (10 lemmas) + ProVerif (3/6 queries discharged), with uploaded formal artifact logs |
 | **MSRV** | Minimum supported Rust version (1.86) |
 | **Fuzz Smoke Test** | All 42 libfuzzer targets (10s each) |
 | **Security Audit** | `cargo audit` for known vulnerabilities |

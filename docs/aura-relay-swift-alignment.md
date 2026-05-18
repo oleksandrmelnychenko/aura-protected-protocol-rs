@@ -48,7 +48,7 @@
 - `external_counter` при serialize має бути `> 0`;
 - `min_external_counter` при deserialize є мінімально дозволеним durable значенням; рівність дозволена для ідемпотентного re-restore того самого blob;
 - counter зберігається окремо від sealed blob;
-- rollback на менший counter має фейлити як replay.
+- rollback на менший counter має фейлити; raw FFI restore paths currently surface this as `AURA_ERROR_INVALID_STATE`.
 
 На стороні Swift це означає:
 

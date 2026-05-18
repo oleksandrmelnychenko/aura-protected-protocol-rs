@@ -193,8 +193,8 @@ Shield Mode сумісний з усіма типами повідомлень:
 // Disappearing + Shield → franking автоматично додається
 session.encrypt_disappearing(b"secret", 3600)?;
 
-// Sealed + Shield → анонімність + enhanced crypto
-session.encrypt_sealed(b"anonymous", b"hint")?;
+// Sealed + Shield → inner content remains hidden until reveal
+session.encrypt_sealed(b"sealed", b"hint")?;
 
 // Frankable + Shield → mandatory franking вже увімкнений, explicit frankable = no-op
 session.encrypt_frankable(b"reportable")?;

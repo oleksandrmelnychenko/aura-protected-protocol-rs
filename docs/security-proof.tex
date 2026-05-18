@@ -109,9 +109,9 @@ resistance.
 
 We prove six theorems establishing: hybrid combiner security (Theorem~1), AKE
 security in the extended Canetti--Krawczyk model (Theorem~2), forward secrecy
-(Theorem~3), post-compromise security with explicit 1-step classical and
-2-step hybrid recovery bounds (Theorem~4), message confidentiality and
-integrity (Theorem~5), and replay resistance (Theorem~6).  All proofs are
+(Theorem~3), post-compromise security with separate local-compromise and
+two-endpoint-compromise recovery bounds (Theorem~4), message confidentiality
+and integrity (Theorem~5), and replay resistance (Theorem~6).  All proofs are
 constructive reductions with concrete security bounds.
 \end{abstract}
 
@@ -443,8 +443,9 @@ below define the exact leakage model used by the reductions.
 \subsection{Parties and Sessions}
 
 There are at most $N$ parties $P_1, \ldots, P_N$.  Each party $P_i$ has a
-long-term X25519 identity keypair $\IK_i$, a long-term ML-KEM-768 keypair
-$(\mathit{kpk}_i, \mathit{ksk}_i)$, and rotating signed pre-keys $\SPK_i$.
+long-term X25519 identity keypair $\IK_i$, a long-term Ed25519 signing key,
+a long-term ML-KEM-768 keypair $(\mathit{kpk}_i, \mathit{ksk}_i)$,
+rotating signed pre-keys $\SPK_i$, and one-time pre-keys.
 A \emph{session} $\pi_i^s$ is an instance of the protocol run by $P_i$ with
 intended partner $P_j$.
 
@@ -458,10 +459,13 @@ The adversary $\advA$ interacts with the protocol via the following oracles:
   \item $\mathsf{Send}(\pi_i^s, m)$: Deliver message $m$ to session $\pi_i^s$;
         returns the protocol's response.
   \item $\mathsf{Corrupt}(P_i)$: Return all long-term secret keys of $P_i$
-        ($ik_i$, $\mathit{ksk}_i$). Models full long-term key compromise.
+        ($ik_i$, Ed25519 signing key, $\mathit{ksk}_i$). Models full
+        long-term key compromise.
   \item $\mathsf{RevealSPK}(P_i,\mathit{spk\_id})$: Return the private scalar
         for a selected signed pre-key. Models medium-term pre-key compromise
         separately from identity-key and KEM secret-key compromise.
+  \item $\mathsf{RevealOPK}(P_i,\mathit{opk\_id})$: Return the private scalar
+        for an unused one-time pre-key. Consumed OPKs are modeled as deleted.
   \item $\mathsf{RevealState}(\pi_i^s)$: Return the full session state of
         $\pi_i^s$ (root key, chain keys, metadata keys, DH private key,
         KEM secret key, nonce state). Models state compromise at a point in time.
@@ -493,6 +497,8 @@ A session $\pi_i^s$ with partner $\pi_j^t$ is \emph{fresh} if none of the follow
   \item $\advA$ queried $\mathsf{RevealSPK}(P_j,\mathit{spk\_id})$ for the
         responder signed pre-key used in the tested session before
         $\mathsf{Test}$ \textbf{and} no OPK was used and deleted.
+  \item $\advA$ queried $\mathsf{RevealOPK}(P_j,\mathit{opk\_id})$ for the
+        OPK used in the tested session before it was consumed.
 \end{enumerate}
 
 \subsection{AKE Security}
@@ -875,11 +881,11 @@ post-quantum recovery from fresh ratchet KEM keys is covered separately by
 
 \begin{lemma}[Ephemeral Key Erasure]
 \label{lem:eph-erasure}
-The implementation erases ephemeral keys immediately after use:
+The implementation erases temporary key material immediately after use:
 \begin{itemize}[nosep]
-  \item $ek_I$ is wiped via \texttt{CryptoInterop::secure\_wipe} after DH
-        computation and before sending $\mathsf{Init}$
-        \emph{(handshake.rs, post line~494)}.
+  \item temporary copies of $ek_I$ are wiped after DH computation; the X25519
+        key that becomes current ratchet state remains in guarded memory until
+        the next ratchet replaces it.
   \item $ik_I$ copy is wiped after DH computation
         \emph{(handshake.rs, post line~494)}.
   \item \texttt{IdentityKeys::clear\_ephemeral\_key\_pair()} zeroes the
@@ -888,8 +894,10 @@ The implementation erases ephemeral keys immediately after use:
         are individually wiped \emph{(handshake.rs, lines~327--330)}.
 \end{itemize}
 This erasure pattern reduces the window in which post-handshake memory
-inspection can recover ephemeral secrets, assuming \texttt{zeroize} provides
-effective memory erasure through volatile writes and compiler barriers.
+inspection can recover temporary secrets, while active ratchet private keys are
+treated as live session state until replaced. The argument assumes
+\texttt{zeroize} provides effective memory erasure through volatile writes and
+compiler barriers.
 \end{lemma}
 
 
@@ -900,18 +908,23 @@ effective memory erasure through volatile writes and compiler barriers.
 
 \begin{theorem}[Post-Compromise Security]
 \label{thm:pcs}
-If the adversary compromises the full session state at epoch~$e$ (via
-$\mathsf{RevealState}$), then:
+If the adversary compromises session state at epoch~$e$ (via
+$\mathsf{RevealState}$) and then stops learning post-compromise secrets, then:
 \begin{enumerate}[(a)]
-  \item \textbf{Classical PCS (1-step)}: Messages at epoch $\geq e{+}1$ are
+  \item \textbf{Local classical PCS (1-step)}: If the compromise is local to
+        the sender endpoint, or the peer DH private scalar used by the next
+        directed DH remains undisclosed, messages at epoch $\geq e{+}1$ are
         secure under $\GapCDH$:
         \[
           \adv^{\mathsf{PCS\text{-}1}}_{\mathsf{AURA}}(\advA)
           \;\leq\; \adv^{\GapCDH}_{\DH}(\advB_1) +
           \adv^{\dualPRF}_{\HKDF}(\advB_2).
         \]
-  \item \textbf{Hybrid PCS (2-step)}: Messages at epoch $\geq e{+}2$ are
-        secure under $\GapCDH$ \textbf{and} $\KEM$-$\INDCCA$:
+  \item \textbf{Two-endpoint hybrid recovery}: If both endpoints' epoch-$e$
+        DH and KEM ratchet secrets are exposed, no first-step PCS is claimed.
+        Messages at epoch $\geq e{+}2$, after a directed step uses
+        post-compromise peer DH and KEM public keys, are secure under
+        $\GapCDH$ \textbf{and} $\KEM$-$\INDCCA$:
         \[
           \adv^{\mathsf{PCS\text{-}2}}_{\mathsf{AURA}}(\advA)
           \;\leq\; \adv^{\GapCDH}_{\DH}(\advB_1) +
@@ -919,40 +932,42 @@ $\mathsf{RevealState}$), then:
           2 \cdot \adv^{\dualPRF}_{\HKDF}(\advB_2).
         \]
 \end{enumerate}
-The hybrid 2-step statement is stated for the conservative two-endpoint
-compromise model, where both endpoints' epoch-$e$ session states, including
-the KEM secret key targeted by the first post-compromise encapsulation, are
-exposed.  Under one-endpoint compromise, the first ratchet step may already
-include an uncompromised peer KEM contribution.
+Under one-endpoint compromise, the first ratchet step may already include an
+uncompromised peer KEM contribution; the conservative two-endpoint clause does
+not rely on that.
 \end{theorem}
 
 \begin{proof}
-The key subtlety is the \emph{asymmetric recovery time} between the classical
-and post-quantum components due to the KEM encapsulation timing.
+The key subtlety is the \emph{asymmetric recovery time} between local and
+two-endpoint compromise. The first post-compromise directed step still uses the
+peer's epoch-$e$ DH and KEM public keys. If the corresponding peer DH private
+scalar was also revealed, the adversary can compute that first DH contribution
+from the sender's new public key.
 
 \paragraph{Setup.} At epoch $e$, $\advA$ obtains:
 \begin{itemize}[nosep]
   \item Root key $\rk_e$, chain keys $\ck_e$, metadata keys $\mdk_e$.
   \item DH private key $d_e$ and KEM secret key $\mathit{ksk}_e$.
   \item Peer's public keys: $D_{\mathsf{peer}}$ (DH) and $\mathit{kpk}_e^{\mathsf{peer}}$ (KEM).
-  \item For the conservative two-endpoint hybrid-PCS claim, the peer's
-        epoch-$e$ KEM secret key corresponding to
-        $\mathit{kpk}_e^{\mathsf{peer}}$.
+  \item For the conservative two-endpoint recovery claim, the peer's epoch-$e$
+        DH private scalar and KEM secret key corresponding to
+        $D_{\mathsf{peer}}$ and $\mathit{kpk}_e^{\mathsf{peer}}$.
 \end{itemize}
 
 \paragraph{Game 0: Real PCS game.} $\advA$ has the full state at epoch $e$
 and must distinguish a message key at epoch $e + k$ (for $k \geq 1$ or $k \geq 2$)
 from random.
 
-\paragraph{Game 1: Epoch $e{+}1$ --- fresh DH, compromised KEM key.}
+\paragraph{Game 1: Epoch $e{+}1$ --- fresh local DH, possibly compromised peer KEM key.}
 At epoch $e{+}1$, the honest party generates a \emph{new} DH keypair
 $(d_{e+1}, D_{e+1}) \gets \DH.\KeyGen()$.  The adversary does not know $d_{e+1}$.
 The DH shared secret is:
 \[
   \mathit{dh}_{e+1} = \DH(d_{e+1}, D_{\mathsf{peer}}).
 \]
-The adversary knows $D_{\mathsf{peer}}$ but not $d_{e+1}$ (freshly generated),
-so computing $\mathit{dh}_{e+1}$ requires solving Gap-CDH:
+In the local-compromise case, the adversary knows $D_{\mathsf{peer}}$ but not
+the corresponding peer private scalar, so computing $\mathit{dh}_{e+1}$
+requires solving Gap-CDH:
 \[
   |\Pr[S_1] - \Pr[S_0]| \;\leq\; \adv^{\GapCDH}_{\DH}(\advB_1).
 \]
@@ -972,14 +987,16 @@ IKM containing one random component:
   |\Pr[S_1'] - \Pr[S_1]| \;\leq\; \adv^{\dualPRF}_{\HKDF}(\advB_2).
 \]
 
-\textbf{Result}: $\rk_{e+1}$ is pseudorandom.  This proves part~(a): 1-step
-classical PCS.
+If the peer DH private scalar is also compromised, this first DH value is
+computable and no first-step PCS is claimed. Otherwise $\rk_{e+1}$ is
+pseudorandom. This proves part~(a): 1-step classical PCS for the local or
+peer-DH-fresh compromise scope.
 
 \paragraph{Game 2: Epoch $e{+}2$ --- fresh DH and fresh KEM key.}
-At epoch $e{+}1$, the honest party also generated a fresh ML-KEM keypair
-$(\mathit{kpk}_{e+1}, \mathit{ksk}_{e+1})$ and advertised $\mathit{kpk}_{e+1}$
-in the ratchet header.  The adversary does \emph{not} know $\mathit{ksk}_{e+1}$
-(it was generated after the compromise and stored in guarded memory).
+At epoch $e{+}1$, the honest party also generated fresh DH and ML-KEM keypairs
+and advertised their public components in the ratchet header. The adversary
+does \emph{not} know the post-compromise private scalars or
+$\mathit{ksk}_{e+1}$.
 
 At epoch $e{+}2$, the peer encapsulates against $\mathit{kpk}_{e+1}$:
 \[
@@ -991,14 +1008,15 @@ $\INDCCA$ of $\KEM$:
   |\Pr[S_2] - \Pr[S_1']| \;\leq\; \adv^{\INDCCA}_{\KEM}(\advB_3).
 \]
 
-Now \emph{both} DH and KEM components at epoch $e{+}2$ are fresh.  Applying
-the dual-PRF property once more:
+The DH component at epoch $e{+}2$ also uses post-compromise DH material rather
+than the peer's exposed epoch-$e$ DH scalar. Applying the dual-PRF property once more:
 \[
   |\Pr[S_3] - \Pr[S_2]| \;\leq\; \adv^{\dualPRF}_{\HKDF}(\advB_2).
 \]
 
-$\rk_{e+2}$ is pseudorandom with both components contributing.  This proves
-part~(b): 2-step hybrid PCS. \qedhere
+$\rk_{e+2}$ is pseudorandom with both components contributing. This proves
+part~(b): two-endpoint recovery after the next directed step that uses
+post-compromise peer DH and KEM material. \qedhere
 \end{proof}
 
 \begin{lemma}[Per-Direction Ratcheting]
@@ -1012,9 +1030,10 @@ the following operational sense:
         reply carries the next ratchet public key.  In AURA, Bob's reply
         triggers a ratchet and Alice's next message also triggers a directed
         hybrid ratchet.
-  \item This makes the PCS recovery point explicit: classical PCS starts at
-        the next honest ratchet step, and full hybrid PCS needs the second
-        directed hybrid step.
+  \item This makes the PCS recovery point explicit: after local compromise,
+        classical PCS starts at the next honest ratchet step; after
+        two-endpoint compromise, hybrid recovery needs a directed step that
+        uses post-compromise peer DH and KEM material.
 \end{enumerate}
 \end{lemma}
 
@@ -1060,7 +1079,8 @@ fails with overwhelming probability (INT-CTXT security). \qedhere
 
 \begin{theorem}[Message Confidentiality and Integrity]
 \label{thm:conf-int}
-Under $\MRAE$ security of AES-256-GCM-SIV and $\PRF$ security of the
+For fresh partnered sessions under non-adversary-established root keys, and
+under $\MRAE$ security of AES-256-GCM-SIV and $\PRF$ security of the
 chain KDF, each message key $\mk_{e,n}$ is indistinguishable from random
 and each ciphertext provides $\INDCPA$ + $\INTCTXT$ security.
 For any $\ppt$ adversary $\advA$ over $q_m$ total encrypted message attempts
@@ -1174,9 +1194,8 @@ AES-256-GCM-SIV~\cite{rfc8452} provides:
 \begin{itemize}[nosep]
   \item Under unique nonces: full $\INDCPA$ + $\INTCTXT$ (standard AEAD).
   \item Under nonce reuse: degrades to $\mathsf{DAE}$ (deterministic
-        authenticated encryption) --- only identical plaintexts with
-        identical nonces produce identical ciphertexts.  $\INTCTXT$ is
-        preserved.
+        authenticated encryption) --- repeated key/nonce/AAD/plaintext tuples
+        expose equality patterns. $\INTCTXT$ is preserved.
 \end{itemize}
 Since AURA uses monotonic counters for nonces within each chain, nonce reuse
 does not occur in normal operation.  GCM-SIV provides defense-in-depth
@@ -1313,16 +1332,15 @@ provides:
   \item \textbf{Per-direction forward secrecy}: Each direction change produces
         fresh key material, limiting the window of vulnerability for a
         compromised chain key.
-  \item \textbf{Explicit PCS recovery point}: After state compromise,
-        classical PCS starts at the next honest ratchet step; full hybrid PCS
-        needs the second directed hybrid step because the peer must first
-        advertise a fresh KEM public key.
+  \item \textbf{Explicit PCS recovery point}: After local state compromise,
+        classical PCS starts at the next honest ratchet step. After
+        two-endpoint state compromise, recovery needs a directed step that
+        uses peer DH and KEM material generated after the compromise.
   \item \textbf{Post-quantum contribution per ratchet step}: Each ratchet
         contributes both classical and PQ key material.
 \end{enumerate}
 
-The cost is increased computational overhead ($\sim$1 ms per ML-KEM
-encapsulation/decapsulation) and bandwidth overhead
+The cost is increased computational overhead and bandwidth overhead
 ($+1184 + 1088 = 2272$ bytes per ratchet step for ML-KEM public key +
 ciphertext, plus 32 bytes for the new DH public key).
 
@@ -1334,13 +1352,11 @@ A subtle consequence of the hybrid design is the asymmetry in PCS recovery:
   \item \textbf{Signal (classical only)}: 1-step PCS recovery via fresh DH.
         After compromise, the first ratchet step with a new DH keypair fully
         recovers security.
-  \item \textbf{AURA (hybrid)}: 1-step \emph{classical} PCS, 2-step
-        \emph{hybrid} PCS in the directed KEM-public-key schedule. At the first
-        post-compromise directed step, the new DH component is secure (fresh
-        keypair) but the KEM encapsulation uses the \emph{old} peer KEM public
-        key from the compromised state. Full hybrid security is restored on the
-        next directed step that uses the new KEM public key generated after
-        compromise.
+  \item \textbf{AURA (hybrid)}: local endpoint compromise admits 1-step
+        \emph{classical} PCS. If both endpoints' current DH and KEM ratchet
+        secrets were exposed, no first-step PCS is claimed; hybrid recovery
+        starts only when a directed step uses peer DH and KEM material generated
+        after compromise.
 \end{itemize}
 
 This statement is scoped to Aura's directed KEM-public-key schedule. Other
@@ -1360,7 +1376,9 @@ identity binding through authenticated transcripts, signed pre-keys, and
 associated data; Aura adds the following implementation-level binding:
 \begin{enumerate}[nosep]
   \item Identity keys are explicitly included in the authenticated data.
-  \item The sorted canonicalization prevents role confusion attacks.
+  \item The sorted canonicalization gives a stable unordered peer-set binding;
+        role separation is provided by transcript/key-confirmation domains and
+        send/receive chain assignment.
   \item SHA-256 domain separation (\texttt{"Aura-Identity-Binding"})
         prevents cross-protocol attacks.
 \end{enumerate}
@@ -1375,13 +1393,14 @@ This appendix gives a game-based security analysis of the Aura Protection
 Protocol, establishing six security properties through constructive reductions.
 The hybrid combiner achieves an either-or guarantee (secure if \emph{at least
 one} of X25519 or ML-KEM-768 is secure), the ratchet gives 1-step classical PCS
-and 2-step hybrid PCS under the stated compromise model, and the two-layer AEAD
+for the local-compromise case and delayed hybrid recovery for full
+two-endpoint state compromise under the stated model, and the two-layer AEAD
 with GCM-SIV provides nonce-misuse-resistant confidentiality and integrity.
 
 The main technical contributions are: (1)~the formalization and proof of the
 hybrid combiner using the HKDF dual-PRF property with classical DH as salt
 and ML-KEM shared secret as IKM; (2)~the explicit characterization of 1-step
-classical vs.\ 2-step hybrid PCS recovery in \cref{thm:pcs}; and (3)~the
+local-compromise vs.\ two-endpoint PCS recovery in \cref{thm:pcs}; and (3)~the
 augmented HKDF info string binding that provides an implicit state-binding
 check for the KEM public key without per-step signatures.
 
