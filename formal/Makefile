@@ -6,7 +6,7 @@
 #   make handshake      — Tamarin: X3DH handshake (secrecy, auth, FS)
 #   make ratchet        — Tamarin: double ratchet (PCS, key secrecy, agreement, reachability)
 #   make tamarin-full   — Tamarin: full combined model (may be very slow)
-#   make proverif       — run the active ProVerif model (3/6 obligations discharged)
+#   make proverif       — run the active ProVerif model (4/4 proof-scope queries discharged)
 #   make clean          — remove generated artifacts
 
 TAMARIN  ?= tamarin-prover

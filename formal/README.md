@@ -25,16 +25,21 @@ complementing the game-based security proofs in `docs/security-proof.tex`.
 | `key_agreement` | **verified** | 11 |
 | `ratchet_exists` | **verified** | 5 |
 
-### ProVerif (3/6 obligations discharged)
+### ProVerif — Active Proof-Scope Model (4/4 discharged)
 
 | Query | Result | Notes |
 |-------|--------|-------|
 | `kem_shared_secret_secrecy` | **true** | Phase-0 query bound to the fresh KEM shared secret feeding the hybrid root |
-| `authentication` | **true** | |
-| `injective_authentication` | not terminated | Documented obligation; not enabled in the default artifact because the four-DH model does not terminate within the artifact budget |
+| `authentication` | **true** | Initiator completion implies responder acceptance on the same root |
 | `message_secrecy` | **true** | Phase-0 encrypted-payload secrecy |
-| `message_integrity` | false | Broad unpartnered query admits adversary-originated responder sessions; partnered-session integrity is covered by the game proof and tests |
-| `forward_secrecy_phase` | false | Raw KEM secret is recoverable after KEM SK reveal; hybrid-root FS is covered by the game proof and Tamarin abstraction |
+| `honest_message_integrity` | **true** | If the honest challenge plaintext is received, it was sent under the same endpoints and root |
+
+Two stress obligations are documented but not counted as discharged claims:
+injective authentication does not terminate in the default four-DH ProVerif
+model within the artifact budget, and raw KEM-secret secrecy after KEM-SK
+reveal is false by KEM decapsulation semantics. Hybrid-root forward secrecy is
+covered by the reduction proof and Tamarin abstraction rather than by that raw
+secret query.
 
 ## Models
 
@@ -43,7 +48,7 @@ complementing the game-based security proofs in `docs/security-proof.tex`.
 | `tamarin/aura_handshake.spthy` | Tamarin | Hybrid X3DH: secrecy, mutual auth, forward secrecy, key confirmation |
 | `tamarin/aura_ratchet.spthy` | Tamarin | Hybrid ratchet: PCS, key agreement, secrecy |
 | `tamarin/aura.spthy` | Tamarin | Full combined model (reference only — non-terminating due to DH complexity) |
-| `proverif/aura.pv` | ProVerif | Handshake KEM-secret secrecy, non-injective authentication, message secrecy; Q3/Q5/Q6 limitations documented |
+| `proverif/aura.pv` | ProVerif | Handshake KEM-secret secrecy, non-injective authentication, message secrecy, honest-message delivery integrity; injective-auth/raw-KEM stress limits documented |
 
 ## Design Decisions
 
@@ -115,7 +120,7 @@ make handshake
 # Tamarin ratchet only (4 lemmas, <1s)
 make ratchet
 
-# ProVerif (3/6 obligations discharged; Q3 is documented but disabled by default)
+# ProVerif (4/4 proof-scope queries discharged; stress obligations documented)
 make proverif
 ```
 

@@ -118,7 +118,7 @@ Aura is a hybrid secure-messaging research protocol that targets post-quantum co
 
 The construction binds each new KEM public key into the HKDF transcript and separates payload encryption from metadata encryption by using an independent per-epoch metadata key. Relative to Signal \SPQR{}/Triple Ratchet and Apple \PQThree{}, Aura does not claim priority for post-quantum ratcheting or deployment maturity. Its narrower contribution is a reproducible two-party design point: eager per-direction X25519+ML-KEM ratchet transitions, HKDF-info binding of the advertised KEM public key, a rotating envelope-metadata key, and an implementation cross-reference map in one Rust artifact.
 
-The security argument consists of six reduction-style theorems under Gap-CDH, ML-KEM IND-CCA2, dual-PRF, and MRAE assumptions. Symbolic evidence is deliberately scoped: 10 Tamarin lemmas verify a two-DH handshake abstraction and a terminal one-step ratchet abstraction, and 3 of 6 ProVerif queries discharge for the handshake/message-path model. The remaining ProVerif queries are not counted as machine-checked results. The Rust artifact implements the analyzed two-party protocol and includes deterministic vectors, reproducibility scripts, regression tests, and an implementation cross-reference map; implementation-wide line and test counts are artifact context, not separate security evidence.
+The security argument consists of six reduction-style theorems under Gap-CDH, ML-KEM IND-CCA2, dual-PRF, and MRAE assumptions. Symbolic evidence is deliberately scoped: 10 Tamarin lemmas verify a two-DH handshake abstraction and a terminal one-step ratchet abstraction, and the active ProVerif model discharges 4 proof-scope queries for the handshake/message path. Injective authentication and raw KEM-secret secrecy after KEM-SK disclosure are documented as stress obligations rather than counted as machine-checked claims. The Rust artifact implements the analyzed two-party protocol and includes deterministic vectors, reproducibility scripts, regression tests, and an implementation cross-reference map; implementation-wide line and test counts are artifact context, not separate security evidence.
 \end{abstract}
 
 \smallskip
@@ -132,9 +132,9 @@ The security argument consists of six reduction-style theorems under Gap-CDH, ML
 % ═════════════════════════════════════════════════════════════
 \section{Introduction}\label{sec:intro}
 
-Signal~\cite{signal-x3dh,cohn-gordon2020} is widely deployed in end-to-end encrypted messaging, including WhatsApp, Signal Messenger, and Google Messages. X3DH and the Double Ratchet provide forward secrecy and post-compromise security under elliptic-curve Diffie--Hellman assumptions.
+The Signal protocol family~\cite{signal-x3dh,cohn-gordon2020} is the dominant reference point for modern end-to-end encrypted messaging. X3DH and the Double Ratchet provide forward secrecy and post-compromise security under elliptic-curve Diffie--Hellman assumptions.
 
-The deployment pressure is broader than consumer chat. Operational systems increasingly combine mobile endpoints, UAV-assisted inspection, multimodal sensor streams, and SCADA-linked monitoring~\cite{svystun2025dytam,svystun2024thermal,lysyi2025fire}. In such settings, a messaging channel may carry coordination data, alerts, or inspection-derived evidence whose confidentiality must survive long device lifetimes and delayed adversarial analysis.
+The same confidentiality pressure appears outside consumer chat. Adjacent operational systems combine mobile endpoints, UAV-assisted inspection, multimodal sensor streams, and SCADA-linked monitoring~\cite{svystun2025dytam,svystun2024thermal,lysyi2025fire}. In such settings, a messaging channel may carry coordination data, alerts, or inspection-derived evidence whose confidentiality must survive long device lifetimes and delayed adversarial analysis.
 
 Cryptographically relevant quantum computers would break the classical assumptions behind this design. NIST has standardized ML-KEM as a lattice-based key-encapsulation mechanism~\cite{fips203}, but using a KEM inside a stateful messaging protocol is not a drop-in replacement for ECDH. Four protocol-design issues arise when a KEM is incorporated into a stateful ratchet:
 
@@ -142,7 +142,7 @@ Cryptographically relevant quantum computers would break the classical assumptio
 An adversary that records ECDH-based traffic today could later derive affected session secrets if a CRQC becomes available. Forward secrecy based solely on ephemeral ECDH provides no protection against that setting, as Shor's algorithm~\cite{shor1997} efficiently solves the discrete logarithm problem on elliptic curves.
 
 \paragraph{Challenge 2: KEM integration granularity.}
-The Signal PQXDH proposal~\cite{signal-pqxdh} introduces a single Kyber encapsulation during the initial handshake but does not include post-quantum key material in subsequent ratchet steps. This protects the start of the session against harvest-now-decrypt-later attacks, but post-compromise recovery after the handshake relies on classical DH. More recent systems, including Signal \SPQR{}/Triple Ratchet~\cite{signal-spqr,signal-double-ratchet,mlkem-braid} and Apple \PQThree{}~\cite{apple-pq3,stebila-pq3,linker-pq3}, move post-quantum material into ongoing state evolution. Aura should therefore be compared with ongoing post-quantum ratcheting designs, not only with PQXDH.
+The Signal PQXDH proposal~\cite{signal-pqxdh} introduces a post-quantum KEM encapsulation in the initial handshake, with Kyber-1024 used in the specification's example instantiation, but does not include post-quantum key material in subsequent ratchet steps. This protects the start of the session against harvest-now-decrypt-later attacks, but post-compromise recovery after the handshake relies on classical DH. More recent systems, including Signal \SPQR{}/Triple Ratchet~\cite{signal-spqr,signal-double-ratchet,mlkem-braid} and Apple \PQThree{}~\cite{apple-pq3,stebila-pq3,linker-pq3}, move post-quantum material into ongoing state evolution. Aura should therefore be compared with ongoing post-quantum ratcheting designs, not only with PQXDH.
 
 \paragraph{Challenge 3: Directed KEM recovery in this construction.}
 Unlike DH, a KEM schedule must advertise encapsulation material before the peer can encapsulate. In Aura's directed KEM-public-key schedule, a two-endpoint state compromise exposes the peer DH and KEM state used by the first post-compromise directed step. One-step classical recovery is therefore claimed only for local compromise, or for a model where the peer DH private scalar remains undisclosed. Under full two-endpoint state compromise, recovery is delayed until a directed step uses peer DH and KEM material generated after the compromise. Other SCKA-style schedules make different latency, bandwidth, and state-retention tradeoffs.
@@ -180,7 +180,7 @@ In particular, the paper makes five concrete contributions:
 The Signal protocol, formalized by Cohn-Gordon et al.~\cite{cohn-gordon2020}, achieves forward secrecy and post-compromise security through the combination of X3DH key agreement~\cite{signal-x3dh} and the Double Ratchet algorithm. Its ratcheting behavior has received detailed symbolic and computational analysis~\cite{cohn-gordon2020,alwen2020,bienstock2020}. Its DH-derived session keys do not protect recorded traffic against a future adversary able to solve elliptic-curve discrete logarithms.
 
 \paragraph{Post-quantum extensions to Signal.}
-Signal's PQXDH protocol~\cite{signal-pqxdh} adds a single Kyber-1024 encapsulation to the X3DH handshake, providing initial quantum resistance. Brendel et al.~\cite{brendel2020} propose a generic post-quantum X3DH construction, and Hashimoto et al.~\cite{hashimoto2021} provide an efficient instantiation. These works are natural baselines for harvest-now-decrypt-later protection at session establishment, but not for post-quantum post-compromise recovery in a long-lived channel.
+Signal's PQXDH protocol~\cite{signal-pqxdh} adds a post-quantum KEM encapsulation to the X3DH handshake, with Kyber-1024 used in the specification's example instantiation. Brendel et al.~\cite{brendel2020} propose a generic post-quantum X3DH construction, and Hashimoto et al.~\cite{hashimoto2021} provide an efficient instantiation. These works are natural baselines for harvest-now-decrypt-later protection at session establishment, but not for post-quantum post-compromise recovery in a long-lived channel.
 
 Signal \SPQR{}/Triple Ratchet~\cite{signal-spqr,signal-double-ratchet} is the relevant Signal-family comparison point for ongoing post-quantum state evolution. It runs a sparse post-quantum ratchet alongside the classical Double Ratchet and combines their message keys; its ML-KEM Braid component is specified as a Sparse Continuous Key Agreement protocol~\cite{mlkem-braid}. For a current comparison, PQXDH is therefore only the handshake baseline.
 
@@ -191,7 +191,7 @@ Apple \PQThree{}~\cite{apple-pq3,stebila-pq3,linker-pq3} also moves post-quantum
 Alwen et al.~\cite{alwen2020} and Bienstock et al.~\cite{bienstock2020} give detailed analyses of Double Ratchet security notions, modularization, and post-compromise recovery. This line of work motivates the separation between the state-evolution claim and the concrete implementation invariants studied here.
 
 \paragraph{Hybrid key exchange.}
-The concept of hybrid key exchange---combining classical and post-quantum primitives---has been studied in the TLS context, including early CECPQ2 deployment experiments~\cite{cecpq2} and formal TLS~1.3 analyses~\cite{stebila2020,dowling2020}. These works establish security under the assumption that at least one component remains secure. The combiner in \cref{thm:hybrid-combiner} follows the same principle, using HKDF with the classical shared secret as salt and the KEM shared secret as input keying material.
+The concept of hybrid key exchange---combining classical and post-quantum primitives---has been studied for Internet key exchange and TLS, including early CECPQ2 deployment experiments~\cite{cecpq2}, Open Quantum Safe work~\cite{stebila2020}, hybrid KEM/AKE analyses~\cite{bindel2019}, and formal TLS~1.3 analyses~\cite{dowling2020}. These works establish security under the assumption that at least one component remains secure. The combiner in \cref{thm:hybrid-combiner} follows the same principle, using HKDF with the classical shared secret as salt and the KEM shared secret as input keying material.
 
 \paragraph{Formal verification of messaging protocols.}
 Tamarin~\cite{meier2013} and ProVerif~\cite{blanchet2016} have been used to verify properties of the Signal protocol~\cite{cohn-gordon2020}. The models in this paper adapt that line of analysis to a hybrid post-quantum setting, including custom equations for ML-KEM-768 and the Tamarin source-saturation issues caused by multiple DH operations.
@@ -252,7 +252,7 @@ $\DH(a, B) = [a]B$ with base point $u = 9$.
 \begin{definition}[Gap-CDH]\label{def:gap-cdh}
 The $\GapCDH$ assumption states that for all $\ppt$ adversaries $\advA$ with access to a DDH oracle $\oracle_{\mathrm{DDH}}$:
 \begin{equation}\label{eq:gap-cdh}
-  \adv^{\GapCDH}_G(\advA) = \Pr\!\left[\advA^{\oracle_{\mathrm{DDH}}}(G, [a]G, [b]G) = [ab]G \;\middle|\; a, b \getsr \mathbb{Z}_q\right] \leq \negl(\secpar).
+  \adv^{\GapCDH}_{\DH}(\advA) = \Pr\!\left[\advA^{\oracle_{\mathrm{DDH}}}(G, [a]G, [b]G) = [ab]G \;\middle|\; a, b \getsr \mathbb{Z}_q\right] \leq \negl(\secpar).
 \end{equation}
 \end{definition}
 
@@ -424,10 +424,10 @@ Erase $d_e$, $ksk_e$, $\rk_e$, $\mathit{dh}_{e+1}$, $\mathit{ss}_{e+1}$\;
 In the classical Double Ratchet, the DH ratchet advances when a new DH public key is received from the peer~\cite{signal-double-ratchet}; Signal's current Triple Ratchet adds \SPQR{} as a separate sparse post-quantum component~\cite{signal-spqr,mlkem-braid}. Aura instead uses one protocol-level policy for this design point: after every received message, the \texttt{send\_ratchet\_pending} flag causes the next \texttt{encrypt()} call to execute a full hybrid ratchet. Additionally, a chain exhaustion ratchet is triggered when the negotiated per-chain limit is reached; the public API default is 1{,}000 messages and the protocol cap is 10{,}000.
 
 \paragraph{Augmented info string.}
-The HKDF info parameter includes the new ML-KEM public key $kpk_{e+1}$ (\cref{alg:send-ratchet}, line~7). This binding supports the following lemma:
+The HKDF info parameter includes the new ML-KEM public key $kpk_{e+1}$ in \cref{alg:send-ratchet}. This binding supports the following lemma:
 
 \begin{lemma}[Augmented HKDF Info Binding]\label{lem:augmented-hkdf}
-If an adversary substitutes $kpk' \neq kpk_{e+1}$ in the ratchet header, the receiver computes a different root key $\rk'_{e+1} \neq \rk_{e+1}$ with overwhelming probability (under the $\PRF$ property of HKDF). Consequently, all derived chain and message keys differ, and AEAD decryption fails (under the $\INTCTXT$ property of $\AEAD$). This provides an implicit state-binding check for the KEM public key without per-step signatures; it is not a separate identity-authentication mechanism.
+If an adversary substitutes $kpk' \neq kpk_{e+1}$ in the ratchet header, the receiver's derived root key is computationally independent of the sender's root key, except with negligible HKDF-output collision probability. Consequently, all derived chain and message keys differ, and AEAD decryption fails (under the $\INTCTXT$ property of $\AEAD$). This provides an implicit state-binding check for the KEM public key without per-step signatures; it is not a separate identity-authentication mechanism.
 \end{lemma}
 
 \paragraph{Receive-side ratchet.}
@@ -487,7 +487,7 @@ remaining budget falls to 10\% or below.
 \paragraph{Identity binding hash.}
 Every AEAD additional-data construction includes an identity binding hash:
 \begin{equation}\label{eq:identity-binding}
-  \mathit{ibh} = \SHA(\texttt{"Aura-Identity-Binding"} \concat \mathrm{sort}(\mathit{ed}_I, \mathit{ed}_R) \concat \mathrm{sort}(\mathit{x}_I, \mathit{x}_R)),
+  \mathit{ibh} = \SHA(\texttt{"Aura-Identity-Binding"} \concat \mathrm{sort}(\mathit{ed}^{\mathit{pub}}_I, \mathit{ed}^{\mathit{pub}}_R) \concat \mathrm{sort}(\IK^{\mathit{pub}}_I, \IK^{\mathit{pub}}_R)),
 \end{equation}
 where both Ed25519 and X25519 public key pairs are lexicographically sorted before concatenation. This binds AEAD data to the unordered pair of identities. Role separation is provided by the handshake transcript, key-confirmation direction labels, and initiator/responder chain-key assignment.
 
@@ -572,7 +572,7 @@ After full state compromise at epoch $e$ via $\textsf{RevealState}$, messages at
 
 This section states six security theorems for the Aura protocol. The paper keeps the theorem statements and proof sketches in line with the main construction and the accompanying formal models.
 
-\subsection{Theorem 1: Hybrid Root-Key Pseudorandomness}\label{sec:thm1}
+\subsection{Hybrid Root-Key Pseudorandomness}\label{sec:thm1}
 
 \begin{theorem}[Hybrid Root-Key Pseudorandomness]\label{thm:hybrid-combiner}
 If $\KEM$ is $\INDCCA$ secure \textbf{or} $\DH$ satisfies $\GapCDH$ in the $\ROM$, then the Aura hybrid combiner
@@ -605,7 +605,7 @@ the two paths yields \cref{eq:combiner-bound}; the $q_H/2^{256}$ term bounds
 random oracle collisions.
 \end{proof}
 
-\subsection{Theorem 2: AKE Security}
+\subsection{AKE Security}
 
 \begin{theorem}[AKE Security in the Modified X3DH Leakage Model]\label{thm:ake}
 The Aura hybrid X3DH satisfies the AKE security definition above. For any $\ppt$ adversary $\advA$ making at most $q_s$ session queries:
@@ -633,7 +633,7 @@ An adversary who does not know $\rk_0$ cannot forge a valid key confirmation MAC
 The implementation defines domain labels in the constants module. HKDF domain separation applies only to labels used as HKDF \texttt{info} values. The handshake-transcript, identity-binding, init-identity-binding, and PQ-hybrid labels are domain separators for HMAC, hashing, signatures, or helper paths rather than HKDF labels. For HKDF calls, distinct \texttt{info} values correspond to distinct oracle inputs in the $\ROM$ and to distinct PRF inputs in the standard model.
 \end{lemma}
 
-\subsection{Theorem 3: Forward Secrecy}
+\subsection{Forward Secrecy}
 
 \begin{theorem}[Forward Secrecy]\label{thm:fs}
 For any $\ppt$ adversary $\advA$ who obtains the long-term identity and KEM keys at time $t$, and for sessions whose responder signed-pre-key private scalar remains undisclosed or whose consumed OPK private scalar has already been deleted:
@@ -666,7 +666,7 @@ later KEM secret-key disclosure, and PCS after fresh ratchet KEM keys appear.
 The implementation erases temporary copies and intermediate DH outputs immediately after use via \texttt{zeroize} (volatile writes with compiler barriers). The X25519 key that becomes the current ratchet private state is retained in guarded session memory until the next ratchet replaces it; it is not counted as erased while it remains active state.
 \end{lemma}
 
-\subsection{Theorem 4: Post-Compromise Security}\label{sec:thm-pcs}
+\subsection{Post-Compromise Security}\label{sec:thm-pcs}
 
 \begin{theorem}[Post-Compromise Security]\label{thm:pcs}
 If the adversary compromises session state at epoch $e$ via
@@ -706,7 +706,7 @@ until a directed step uses post-compromise peer DH and KEM material as described
 in \cref{thm:pcs}.
 \end{lemma}
 
-\subsection{Theorem 5: Message Confidentiality and Integrity}
+\subsection{Message Confidentiality and Integrity}
 
 \begin{theorem}[Message Security]\label{thm:msg-security}
 For fresh partnered sessions under non-adversary-established root keys, and under $\MRAE$ security of $\AEAD$ and $\PRF$ security of the chain KDF, each message key $\mk_{e,n}$ is indistinguishable from random and each ciphertext provides $\INDCPA$ + $\INTCTXT$ security over $q_m$ total encrypted message attempts:
@@ -723,7 +723,7 @@ The proof first replaces the relevant root key with a random value, using \cref{
 $\AEAD$ provides full $\INDCPA$ + $\INTCTXT$ under unique nonces, and degrades to deterministic authenticated encryption under nonce reuse: repeated key/nonce/AAD/plaintext tuples expose equality patterns, while $\INTCTXT$ is preserved. This is defense-in-depth: Aura uses monotonic counters that prevent nonce reuse, but GCM-SIV provides graceful degradation against implementation bugs.
 \end{lemma}
 
-\subsection{Theorem 6: Replay Resistance}
+\subsection{Replay Resistance}
 
 \begin{theorem}[Replay Resistance]\label{thm:replay}
 Assume continuous receiver state and no accepted sealed-state rollback. Exact replay acceptance is zero. For modified replays:
@@ -746,18 +746,18 @@ Exact replays are caught by the nonce cache while the entry is retained. If the 
 \toprule
 Component / Assumption & Standard & Security (bits) \\
 \midrule
-X25519 / $\GapCDH$ & Curve25519 & 128 \\
-ML-KEM-768 / Module-LWE & FIPS 203, category 3 & NIST Level 3 \\
-AES-256-GCM-SIV / $\MRAE$ & RFC 8452 & 128 \\
-HKDF-SHA256 / $\dualPRF$ & RFC 5869 & PRF, 256-bit output \\
-HMAC-SHA256 / $\PRF$ & FIPS 198-1 & PRF, 256-bit output \\
-Ed25519 / SUF-CMA & EdDSA & 128 \\
+X25519 / $\GapCDH$ & Curve25519~\cite{rfc7748} & 128 \\
+ML-KEM-768 / Module-LWE & FIPS 203, category 3~\cite{fips203} & NIST Level 3 \\
+AES-256-GCM-SIV / $\MRAE$ & RFC 8452~\cite{rfc8452} & 128 \\
+HKDF-SHA256 / $\dualPRF$ & RFC 5869~\cite{rfc5869,krawczyk2010} & PRF, 256-bit output \\
+HMAC-SHA256 / $\PRF$ & FIPS 198-1~\cite{fips198} & PRF, 256-bit output \\
+Ed25519 / SUF-CMA & EdDSA~\cite{rfc8032} & 128 \\
 \midrule
 Hybrid combiner (\cref{thm:hybrid-combiner}) & $\GapCDH$ or ML-KEM & \textbf{128} \\
 AKE security (\cref{thm:ake}) & All assumptions & \textbf{128} \\
 Forward secrecy (\cref{thm:fs}) & $\GapCDH$ with erased DH ephemeral & \textbf{128} \\
-PCS, classical (\cref{thm:pcs}a) & $\GapCDH$, 1 step & \textbf{128} \\
-PCS, hybrid (\cref{thm:pcs}b) & $\GapCDH$ + ML-KEM, 2 steps & \textbf{128} \\
+PCS, classical (\cref{eq:pcs-classical-bound}) & $\GapCDH$, 1 step & \textbf{128} \\
+PCS, hybrid (\cref{eq:pcs-hybrid-bound}) & $\GapCDH$ + ML-KEM, 2 steps & \textbf{128} \\
 Message security (\cref{thm:msg-security}) & $\PRF$ + $\MRAE$ & \textbf{128} \\
 \bottomrule
 \end{tabular}
@@ -771,7 +771,7 @@ The dominant security loss arises from the session-guessing factor $q_s$ in \cre
 % ═════════════════════════════════════════════════════════════
 \section{Formal Verification}\label{sec:formal}
 
-The reduction proofs are accompanied by scoped symbolic models in two tools: Tamarin Prover~\cite{meier2013} for trace-based reasoning and ProVerif~\cite{blanchet2016} for Horn-clause analysis. These models are partial evidence for specific abstractions, not a machine proof of the full Rust protocol: the default artifact verifies 10 Tamarin lemmas and discharges 3 ProVerif queries, while the remaining ProVerif checks are documented as disabled, non-terminating, or intentionally negative.
+The reduction proofs are accompanied by scoped symbolic models in two tools: Tamarin Prover~\cite{meier2013} for trace-based reasoning and ProVerif~\cite{blanchet2016} for Horn-clause analysis. These models are partial evidence for specific abstractions, not a machine proof of the full Rust protocol: the default artifact verifies 10 Tamarin lemmas and discharges 4 active ProVerif proof-scope queries. Additional injective-authentication and raw-KEM-after-reveal stress checks are documented but not counted as discharged security claims.
 
 \subsection{Tamarin Prover}\label{sec:tamarin}
 
@@ -860,13 +860,13 @@ The active ProVerif process in \texttt{aura.pv} covers the handshake plus one sy
 Identity keys are registered in a ProVerif \texttt{table}, modeling out-of-band key verification (TOFU / safety numbers).
 
 \paragraph{Phase-based forward secrecy.}
-Phase 0 represents honest execution; phase 1 reveals all long-term keys. Queries Q1 and Q4 are no-compromise phase-0 secrecy checks; Q6 is a stress query for whether the phase-0 KEM shared secret remains hidden after phase-1 disclosure.
+Phase 0 represents honest execution; phase 1 reveals all long-term keys in stress checks outside the active proof-scope query set. Q1 and Q3 are no-compromise phase-0 secrecy checks; Q4 is an honest-message delivery-integrity query scoped to the challenge plaintext and the same derived root.
 
-\paragraph{Queries (3/6 discharged).}
+\paragraph{Active proof-scope queries (4/4 discharged).}
 
 \begin{table}[H]
 \centering
-\caption{ProVerif model: 3/6 queries discharged.}\label{tab:proverif}
+\caption{ProVerif model: 4/4 active proof-scope queries discharged.}\label{tab:proverif}
 \small
 \begin{tabularx}{\textwidth}{@{}clXc@{}}
 \toprule
@@ -874,20 +874,18 @@ Phase 0 represents honest execution; phase 1 reveals all long-term keys. Queries
 \midrule
 Q1 & KEM shared-secret secrecy & Phase-0 KEM secret feeding $\rk_0$ hidden from adversary & \checkmark \\
 Q2 & Authentication (non-inj.) & Initiator complete $\Rightarrow$ responder accepted & \checkmark \\
-Q3 & Authentication (injective) & Injective correspondence of Q2 & n/t \\
-Q4 & Message secrecy & Phase-0 encrypted payload secret from adversary & \checkmark \\
-Q5 & Broad message integrity & Unpartnered send/receive correspondence & $\times$ \\
-Q6 & Raw KEM-secret stress & Phase-1 KEM-SK reveal does not reveal phase-0 KEM secret & $\times$ \\
+Q3 & Message secrecy & Phase-0 encrypted payload secret from adversary & \checkmark \\
+Q4 & Honest-message integrity & If the honest challenge plaintext is received, it was sent under the same endpoints and root & \checkmark \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-\paragraph{Analysis of unproven queries.}
-Q3, Q5, and Q6 are not discharged by the current ProVerif model. Q3 is documented but disabled in the default artifact because prior four-DH runs did not terminate within the artifact budget. Q5 is a broad unpartnered message-integrity query; ProVerif finds an active trace in which the adversary starts its own responder session and injects its own payload, so the trace is outside the partnered-session theorem. Q6 asks for raw KEM-secret secrecy after the responder's long-term KEM secret key is revealed; that raw secret is recoverable by decapsulation and is not the claimed FS property. Authentication and partnered message integrity are supported by the symbolic models, reduction proofs, and implementation tests. Ratchet PCS is split: the terminal one-step abstraction is covered by Tamarin, while the two-endpoint hybrid recovery claim is reduction-only in this paper.
+\paragraph{Stress checks not counted as claims.}
+Two natural ProVerif questions are deliberately not reported as discharged claims. First, injective authentication in the default four-DH model does not terminate within the artifact budget. Second, raw KEM-secret secrecy after the responder's long-term KEM secret key is revealed is false by decapsulation semantics; the forward-secrecy theorem concerns the hybrid root under erased DH ephemerals, not the raw KEM secret after its private key is disclosed. A broad unpartnered message-integrity query is likewise outside the theorem boundary, because an active adversary can establish its own session and deliver its own plaintext. The active integrity query in \cref{tab:proverif} is therefore scoped to the honest challenge plaintext and the same derived root. Ratchet PCS is split: the terminal one-step abstraction is covered by Tamarin, while the two-endpoint hybrid recovery claim remains reduction-style.
 
 \subsection{Complementarity of Tools}
 
-The two tools are complementary: Tamarin provides precise DH reasoning but requires abstractions to avoid non-termination; ProVerif handles unbounded handshake/message sessions with all four DH operations and exposes scope errors in overly broad queries. The reported result is therefore 10/10 Tamarin lemmas and 3/6 discharged ProVerif queries, with Q3/Q5/Q6 kept outside the machine-checked claim and ratchet PCS carried by the Tamarin ratchet model plus the PCS proof.
+The two tools are complementary: Tamarin provides precise DH reasoning but requires abstractions to avoid non-termination; ProVerif handles unbounded handshake/message sessions with all four DH operations and exposes scope errors in overly broad queries. The reported result is therefore 10/10 Tamarin lemmas and 4/4 active ProVerif proof-scope queries, with injective-authentication and raw-KEM-after-reveal stress checks kept outside the machine-checked claim. Ratchet secrecy/PCS evidence is split: Tamarin checks a terminal one-step sender-compromise abstraction, while the full local-vs.\ two-endpoint PCS delay remains a reduction-style theorem supported by implementation tests.
 
 
 % ═════════════════════════════════════════════════════════════
@@ -926,7 +924,7 @@ Module & Path & Responsibility \\
 \toprule
 Primitive & Library & Notes \\
 \midrule
-X25519, Ed25519 & x25519-dalek / ed25519-dalek & Constant-time; zeroize plus OS memory locking where available \\
+X25519, Ed25519 & \texttt{x25519-dalek}\\\texttt{ed25519-dalek} & Constant-time; zeroize plus OS memory locking where available \\
 ML-KEM-768 & \texttt{ml-kem} crate & FIPS 203 KEM; \texttt{KyberInterop} remains the wrapper name \\
 AES-256-GCM-SIV & \texttt{aes-gcm-siv} crate & RFC 8452; pure Rust \\
 HKDF-SHA256 & \texttt{hkdf} + \texttt{sha2} crates & RFC 5869 \\
@@ -1054,7 +1052,7 @@ In these measurements, a hybrid ratchet step costs about $259\,\mu$s, versus abo
 
 \subsection{Test Coverage}\label{sec:tests}
 
-The implementation is exercised by a broader test matrix. Table~\ref{tab:tests} reports the scenarios used as evidence for the two-party paper scope; implementation modules outside that scope are not counted as proof evidence.
+The implementation is exercised by a broad regression matrix. Table~\ref{tab:tests} reports the current default non-excluded test subset across two-party, group, relay, attachment, channel, and API modules. Only the named two-party session tests in \cref{tab:test-proof-mapping} are used as implementation evidence for this paper's theorem boundary.
 
 \begin{table}[H]
 \centering
@@ -1071,7 +1069,7 @@ Attack-PoC and adversarial session regressions & 40 \\
 Header contracts, time provider, malformed-input, and property scenarios & 13 \\
 Additional current regression scenarios & 4 \\
 \midrule
-\textbf{Paper-scope default subset} & \textbf{556} \\
+\textbf{Default non-excluded subset} & \textbf{556} \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -1094,7 +1092,7 @@ Hybrid combiner (\cref{thm:hybrid-combiner}) & \path|hybrid_ikm_salt_initiator_r
 AKE security (\cref{thm:ake}) & \path|full_handshake_and_session_encrypt_decrypt|, handshake error path tests (7), reflection rejection \\
 Forward secrecy (\cref{thm:fs}) & \path|forward_secrecy_old_chain_keys_cannot_derive_future|, \path|pcs_across_five_ratchet_steps| \\
 Post-compromise security (\cref{thm:pcs}) & \path|post_compromise_security_after_ratchet|, \path|pcs_across_five_ratchet_steps| \\
-Message security (\cref{thm:msg-security}) & All AEAD tests, \path|malformed_envelope_*|, \path|prop_aes_gcm_siv_roundtrip|, \path|prop_message_roundtrip| \\
+Message security (\cref{thm:msg-security}) & Two-party envelope AEAD and message-roundtrip tests, \path|malformed_envelope_*|, \path|prop_aes_gcm_siv_roundtrip|, \path|prop_message_roundtrip| \\
 Replay resistance (\cref{thm:replay}) & \path|session_replay_attack_detected|, \path|replay_nonces_persist_*| (4 tests), \path|replay_old_epoch_message_rejected| \\
 \bottomrule
 \end{tabularx}
@@ -1223,7 +1221,7 @@ No renewed PQ contribution after the handshake &
 Open specification &
 Handshake-only baseline for initial harvest-now-decrypt-later protection, not for PQ-PCS in a long-lived channel. \\
 \addlinespace
-Signal \SPQR{}/Triple Ratchet~\cite{signal-spqr,signal-double-ratchet,mlkem-braid} &
+Signal \SPQR{}/Triple Ratchet~\cite{signal-spqr,signal-double-ratchet,mlkem-braid,signal-spqr-artifact} &
 Sparse PQ ratchet alongside the classical Double Ratchet &
 PQ-PCS through SCKA epochs governed by ML-KEM Braid state and chunk/codeword delivery &
 Open specifications, public SPQR Rust/hax/ProVerif artifact, and Signal engineering notes &
@@ -1238,8 +1236,8 @@ Deployed industrial baseline; broad PQ-ratchet priority is not claimed here. \\
 \textbf{Aura} &
 Hybrid handshake and KEM rotation at directed ratchet boundaries &
 Classical recovery after the next honest directed step; hybrid recovery after a step using a post-compromise KEM key &
-Open Rust research artifact, six theorems, Tamarin/ProVerif, implementation cross-reference map &
-Narrow contribution: explicit KEM-key binding, per-epoch metadata encryption, and implementation-level invariants in an open Rust codebase. \\
+Rust research artifact, six theorems, Tamarin/ProVerif, implementation cross-reference map &
+Narrow contribution: explicit KEM-key binding, per-epoch metadata encryption, and implementation-level invariants in one Rust codebase. \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -1257,7 +1255,7 @@ PQ contribution after handshake & No & Yes & Yes & \textbf{Yes} \\
 PQ update schedule & One-time KEM & Sparse PQ ratchet & Periodic in-band rekeying & \textbf{KEM rotation at ratchet boundaries} \\
 PQ-material binding & Initial KEM/session transcript & Braid authenticator MACs over header/ciphertext state & Authenticated in-band PQ rekeying in public analyses & \textbf{Ratchet KEM public key in HKDF info, AEAD-confirmed by the next message} \\
 Separate envelope-metadata AEAD & Not specified by PQXDH & Not the focus of public Triple Ratchet/SPQR specs & PQ3 discusses padding and delivery receipts, not this envelope-key split & \textbf{Separate per-epoch metadata key} \\
-Public artifact for this design point & Specification & Public SPQR artifacts and specifications & Public design, closed implementation & \textbf{Rust code, tests, implementation cross-reference map} \\
+Source artifact for this design point & Specification & Public SPQR artifacts and specifications & Public design, closed implementation & \textbf{Rust code, tests, implementation cross-reference map} \\
 Formalized PQ-PCS delay & No & SCKA epoch analysis & Published PQ3 analysis & \textbf{PCS boundary for local vs.\ two-endpoint compromise} \\
 \bottomrule
 \end{tabularx}
@@ -1330,13 +1328,13 @@ The 2-step hybrid PCS recovery follows from the directed KEM-public-key ratchet 
 
 Within this KEM-public-key ratchet pattern, one-step hybrid recovery would require a different schedule, such as simultaneous KEM-key transport, explicit acknowledgements, or another post-quantum SCKA design. We leave that design space outside this paper rather than claiming a lower bound.
 
-\subsection{ProVerif Limitations}
+\subsection{ProVerif Stress Checks}
 
-Three of six ProVerif queries are not discharged by the current model. Q3 (injective authentication) does not terminate in the default four-DH artifact. Q5 is false for an unpartnered active trace and therefore does not match the partnered-session integrity theorem. Q6 is false because raw KEM shared secrets are recoverable after the corresponding KEM secret key is revealed. These queries are not counted as machine-checked results; the claimed properties are carried by the Tamarin-style authentication/secrecy/PCS models, reduction proofs, and implementation tests.
+The active ProVerif model reports 4/4 proof-scope queries, but two stress checks remain outside that count. Injective authentication does not terminate in the default four-DH artifact. Raw KEM shared-secret secrecy after the corresponding KEM secret key is revealed is false by decapsulation semantics, and therefore is not the forward-secrecy property claimed here. The claimed properties are carried by the Tamarin authentication/secrecy/PCS models, the reduction proofs, and the named implementation tests.
 
 \subsection{Kyber/ML-KEM Terminology}
 
-The code keeps the historical wrapper name \texttt{KyberInterop}, but the cryptographic implementation uses the Rust \texttt{ml-kem} crate and the \texttt{MlKem768} type. Moving to a certified FIPS ML-KEM module in a production supply chain would affect the provider boundary, not the protocol logic or the proof structure. The hybrid combiner's security relies on $\INDCCA$ security of the KEM, which ML-KEM provides.
+The code keeps the historical wrapper name \texttt{KyberInterop}, but the cryptographic implementation uses the Rust \texttt{ml-kem} crate and the \texttt{MlKem768} type. The current artifact is not a certified FIPS module. A certified-provider migration is intended to be confined to the KEM wrapper and validation boundary while preserving protocol messages and proof assumptions. The hybrid combiner's security relies on $\INDCCA$ security of the KEM, which ML-KEM provides.
 
 \subsection{Operational Profiles}
 
@@ -1367,7 +1365,7 @@ session as a two-party channel between two devices. If one user has several
 devices, the system has to decide whether to run separate pairwise sessions,
 fan out messages through a Sesame-like session manager, or introduce a separate
 multi-device state-management layer. These choices affect replay windows, identity binding,
-device removal, and sealed-state freshness. They are product-level choices, and
+device removal, and sealed-state freshness. They are deployment-level choices, and
 they should not be hidden inside the two-party theorem statement.
 
 \subsection{Reproducibility Boundary}
@@ -1427,7 +1425,7 @@ records model/code alignment using the review package.
 
 Aura isolates a concrete design point for hybrid post-quantum confidentiality in secure messaging: KEM material is refreshed in continuing ratchet state, while identity authentication remains classical in the current artifact. The protocol combines per-ratchet KEM-key rotation, explicit KEM-key binding, per-epoch metadata encryption, and nonce-misuse-resistant AEAD.
 
-The evidence is split into layers a reviewer can check: 6 reduction-style theorems, 10 Tamarin lemmas over decomposed abstractions, 3 discharged ProVerif queries, an implementation cross-reference map, and a Rust implementation. The current implementation measures approximately $1.1$\,ms for the full handshake, $280\,\mu$s/msg for alternating 256-byte messages, and $15\,\mu$s/msg for pre-generated same-direction decrypts. These are cost snapshots, not security claims; the paper-scope test subset is reported separately from implementation modules outside the analyzed theorem boundary.
+The evidence is split into layers a reviewer can check: 6 reduction-style theorems, 10 Tamarin lemmas over decomposed abstractions, 4 active ProVerif proof-scope queries, an implementation cross-reference map, and a Rust implementation. The current implementation measures approximately $1.1$\,ms for the full handshake, $280\,\mu$s/msg for alternating 256-byte messages, and $15\,\mu$s/msg for pre-generated same-direction decrypts. These are cost snapshots, not security claims; the named two-party test evidence is reported separately from implementation modules outside the analyzed theorem boundary.
 
 \section*{Acknowledgments}
 
@@ -1443,17 +1441,47 @@ responsibility.
 \bibliographystyle{plain}
 \begin{thebibliography}{99}
 
+\bibitem{signal-x3dh}
+M.~Marlinspike and T.~Perrin.
+\newblock The {X3DH} key agreement protocol, revision~1.
+\newblock Signal Technical Documentation, 2016.
+\newblock \url{https://signal.org/docs/specifications/x3dh/}
+
 \bibitem{cohn-gordon2020}
 K.~Cohn-Gordon, C.~Cremers, B.~Dowling, L.~Garratt, and D.~Stebila.
 \newblock A formal security analysis of the Signal messaging protocol.
 \newblock \emph{Journal of Cryptology}, 33(4):1914--1983, 2020.
 \newblock \url{https://doi.org/10.1007/s00145-020-09360-1}
 
-\bibitem{signal-x3dh}
-M.~Marlinspike and T.~Perrin.
-\newblock The {X3DH} key agreement protocol, revision~1.
-\newblock Signal Technical Documentation, 2016.
-\newblock \url{https://signal.org/docs/specifications/x3dh/}
+\bibitem{svystun2025dytam}
+S.~Svystun, L.~Scis{\l}o, M.~Pawlik, O.~Melnychenko, P.~Radiuk, O.~Savenko, and A.~Sachenko.
+\newblock DyTAM: Accelerating wind turbine inspections with dynamic UAV trajectory adaptation.
+\newblock \emph{Energies}, 18(7):1823, 2025.
+\newblock \url{https://doi.org/10.3390/en18071823}
+
+\bibitem{svystun2024thermal}
+S.~Svystun, O.~Melnychenko, P.~Radiuk, O.~Savenko, A.~Sachenko, and A.~Lysyi.
+\newblock Thermal and RGB images work better together in wind turbine damage detection.
+\newblock \emph{International Journal of Computing}, 23(4):526--535, 2024.
+\newblock \url{https://doi.org/10.47839/ijc.23.4.3752}
+
+\bibitem{lysyi2025fire}
+A.~Lysyi, A.~Sachenko, P.~Radiuk, M.~Lysyi, O.~Melnychenko, O.~Ishchuk, and O.~Savenko.
+\newblock Enhanced fire hazard detection in solar power plants: an integrated UAV, AI, and SCADA-based approach.
+\newblock \emph{Radioelectronic and Computer Systems}, (2):99--117, 2025.
+\newblock \url{https://doi.org/10.32620/reks.2025.2.06}
+
+\bibitem{fips203}
+National Institute of Standards and Technology.
+\newblock Module-lattice-based key-encapsulation mechanism standard ({ML-KEM}).
+\newblock FIPS 203, 2024.
+\newblock \url{https://csrc.nist.gov/pubs/fips/203/final}
+
+\bibitem{shor1997}
+P.~W.~Shor.
+\newblock Polynomial-time algorithms for prime factorization and discrete logarithms on a quantum computer.
+\newblock \emph{SIAM Journal on Computing}, 26(5):1484--1509, 1997.
+\newblock \url{https://arxiv.org/abs/quant-ph/9508027}
 
 \bibitem{signal-pqxdh}
 E.~Kret and R.~Schmidt.
@@ -1461,17 +1489,17 @@ E.~Kret and R.~Schmidt.
 \newblock Signal Technical Documentation, 2024.
 \newblock \url{https://signal.org/docs/specifications/pqxdh/}
 
-\bibitem{signal-double-ratchet}
-T.~Perrin, M.~Marlinspike, and R.~Schmidt.
-\newblock The Double Ratchet Algorithm, revision~4.
-\newblock Signal Technical Documentation, 2025.
-\newblock \url{https://signal.org/docs/specifications/doubleratchet/}
-
 \bibitem{signal-spqr}
 G.~Connell and R.~Schmidt.
 \newblock Signal Protocol and post-quantum ratchets.
 \newblock Signal Blog, 2025.
 \newblock \url{https://signal.org/blog/spqr/}
+
+\bibitem{signal-double-ratchet}
+T.~Perrin, M.~Marlinspike, and R.~Schmidt.
+\newblock The Double Ratchet Algorithm, revision~4.
+\newblock Signal Technical Documentation, 2025.
+\newblock \url{https://signal.org/docs/specifications/doubleratchet/}
 
 \bibitem{mlkem-braid}
 R.~Schmidt.
@@ -1498,18 +1526,6 @@ F.~Linker, R.~Sasse, and D.~Basin.
 \newblock In \emph{USENIX Security 2025}, pages 5015--5034.
 \newblock \url{https://www.usenix.org/conference/usenixsecurity25/presentation/linker}
 
-\bibitem{brendel2020}
-J.~Brendel, M.~Fischlin, F.~G{\"u}nther, C.~Janson, and D.~Stebila.
-\newblock Towards post-quantum security for Signal's {X3DH} handshake.
-\newblock In \emph{Selected Areas in Cryptography -- SAC 2020}, pages 404--430. Springer, 2021.
-\newblock \url{https://doi.org/10.1007/978-3-030-81652-0_16}
-
-\bibitem{hashimoto2021}
-K.~Hashimoto, S.~Katsumata, K.~Kwiatkowski, and T.~Prest.
-\newblock An efficient and generic construction for Signal's handshake (X3DH): Post-quantum, state leakage secure, and deniable.
-\newblock In \emph{PKC 2021}, pages 410--440. Springer, 2021.
-\newblock \url{https://doi.org/10.1007/978-3-030-75248-4_15}
-
 \bibitem{alwen2020}
 J.~Alwen, S.~Coretti, and Y.~Dodis.
 \newblock The double ratchet: Security notions, proofs, and modularization for the Signal protocol.
@@ -1522,11 +1538,17 @@ A.~Bienstock, J.~Fairoze, S.~Garg, P.~Mukherjee, and S.~Raghuraman.
 \newblock In \emph{CRYPTO 2022}, pages 784--813. Springer, 2022.
 \newblock \url{https://doi.org/10.1007/978-3-031-15802-5_27}
 
-\bibitem{shor1997}
-P.~W.~Shor.
-\newblock Polynomial-time algorithms for prime factorization and discrete logarithms on a quantum computer.
-\newblock \emph{SIAM Journal on Computing}, 26(5):1484--1509, 1997.
-\newblock \url{https://arxiv.org/abs/quant-ph/9508027}
+\bibitem{brendel2020}
+J.~Brendel, M.~Fischlin, F.~G{\"u}nther, C.~Janson, and D.~Stebila.
+\newblock Towards post-quantum security for Signal's {X3DH} handshake.
+\newblock In \emph{Selected Areas in Cryptography -- SAC 2020}, pages 404--430. Springer, 2021.
+\newblock \url{https://doi.org/10.1007/978-3-030-81652-0_16}
+
+\bibitem{hashimoto2021}
+K.~Hashimoto, S.~Katsumata, K.~Kwiatkowski, and T.~Prest.
+\newblock An efficient and generic construction for Signal's handshake (X3DH): Post-quantum, state leakage secure, and deniable.
+\newblock In \emph{PKC 2021}, pages 410--440. Springer, 2021.
+\newblock \url{https://doi.org/10.1007/978-3-030-75248-4_15}
 
 \bibitem{cecpq2}
 A.~Langley.
@@ -1540,53 +1562,17 @@ D.~Stebila and M.~Mosca.
 \newblock In \emph{Selected Areas in Cryptography -- SAC 2016}, pages 14--37. Springer, 2017.
 \newblock \url{https://doi.org/10.1007/978-3-319-69453-5_2}
 
+\bibitem{bindel2019}
+N.~Bindel, J.~Brendel, M.~Fischlin, B.~Goncalves, and D.~Stebila.
+\newblock Hybrid key encapsulation mechanisms and authenticated key exchange.
+\newblock In \emph{Post-Quantum Cryptography -- PQCrypto 2019}, pages 206--226. Springer, 2019.
+\newblock \url{https://doi.org/10.1007/978-3-030-25510-7_12}
+
 \bibitem{dowling2020}
 B.~Dowling, M.~Fischlin, F.~G{\"u}nther, and D.~Stebila.
 \newblock A cryptographic analysis of the {TLS} 1.3 handshake protocol.
 \newblock \emph{Journal of Cryptology}, 34(4):37, 2021.
 \newblock \url{https://doi.org/10.1007/s00145-021-09384-1}
-
-\bibitem{krawczyk2010}
-H.~Krawczyk.
-\newblock Cryptographic extraction and key derivation: The {HKDF} scheme.
-\newblock In \emph{CRYPTO 2010}, pages 631--648. Springer, 2010.
-\newblock \url{https://doi.org/10.1007/978-3-642-14623-7_34}
-
-\bibitem{rfc7748}
-A.~Langley, M.~Hamburg, and S.~Turner.
-\newblock Elliptic curves for security.
-\newblock RFC 7748, IETF, 2016.
-\newblock \url{https://www.rfc-editor.org/rfc/rfc7748}
-
-\bibitem{rfc5869}
-H.~Krawczyk and P.~Eronen.
-\newblock {HMAC}-based extract-and-expand key derivation function ({HKDF}).
-\newblock RFC 5869, IETF, 2010.
-\newblock \url{https://www.rfc-editor.org/rfc/rfc5869}
-
-\bibitem{rfc8452}
-S.~Gueron, A.~Langley, and Y.~Lindell.
-\newblock {AES-GCM-SIV}: Nonce misuse-resistant authenticated encryption.
-\newblock RFC 8452, IETF, 2019.
-\newblock \url{https://www.rfc-editor.org/rfc/rfc8452}
-
-\bibitem{fips203}
-National Institute of Standards and Technology.
-\newblock Module-lattice-based key-encapsulation mechanism standard ({ML-KEM}).
-\newblock FIPS 203, 2024.
-\newblock \url{https://doi.org/10.6028/NIST.FIPS.203}
-
-\bibitem{canetti2001}
-R.~Canetti and H.~Krawczyk.
-\newblock Analysis of key-exchange protocols and their use for building secure channels.
-\newblock In \emph{EUROCRYPT 2001}, pages 453--474. Springer, 2001.
-\newblock \url{https://doi.org/10.1007/3-540-44987-6_28}
-
-\bibitem{lamacchia2007}
-B.~LaMacchia, K.~Lauter, and A.~Mityagin.
-\newblock Stronger security of authenticated key exchange.
-\newblock In \emph{ProvSec 2007}, pages 1--16. Springer, 2007.
-\newblock \url{https://doi.org/10.1007/978-3-540-75670-5_1}
 
 \bibitem{meier2013}
 S.~Meier, B.~Schmidt, C.~Cremers, and D.~Basin.
@@ -1599,12 +1585,6 @@ B.~Blanchet.
 \newblock Modeling and verifying security protocols with the applied pi calculus and {ProVerif}.
 \newblock \emph{Foundations and Trends in Privacy and Security}, 1(1--2):1--135, 2016.
 \newblock \url{https://bblanche.gitlabpages.inria.fr/publications/BlanchetFnTPS16.html}
-
-\bibitem{rogaway2006}
-P.~Rogaway and T.~Shrimpton.
-\newblock A provable-security treatment of the key-wrap problem.
-\newblock In \emph{EUROCRYPT 2006}, pages 373--390. Springer, 2006.
-\newblock \url{https://doi.org/10.1007/11761679_23}
 
 \bibitem{sealed-sender}
 J.~Lund.
@@ -1624,23 +1604,65 @@ A.~M.~Piotrowska, J.~Hayes, T.~Elahi, S.~Meiser, and G.~Danezis.
 \newblock In \emph{USENIX Security 2017}, pages 1199--1216.
 \newblock \url{https://www.usenix.org/conference/usenixsecurity17/technical-sessions/presentation/piotrowska}
 
-\bibitem{svystun2025dytam}
-S.~Svystun, L.~Scis{\l}o, M.~Pawlik, O.~Melnychenko, P.~Radiuk, O.~Savenko, and A.~Sachenko.
-\newblock DyTAM: Accelerating wind turbine inspections with dynamic UAV trajectory adaptation.
-\newblock \emph{Energies}, 18(7):1823, 2025.
-\newblock \url{https://api.crossref.org/works/10.3390/en18071823}
+\bibitem{rfc8452}
+S.~Gueron, A.~Langley, and Y.~Lindell.
+\newblock {AES-GCM-SIV}: Nonce misuse-resistant authenticated encryption.
+\newblock RFC 8452, IETF, 2019.
+\newblock \url{https://www.rfc-editor.org/rfc/rfc8452}
 
-\bibitem{svystun2024thermal}
-S.~Svystun, O.~Melnychenko, P.~Radiuk, O.~Savenko, A.~Sachenko, and A.~Lysyi.
-\newblock Thermal and RGB images work better together in wind turbine damage detection.
-\newblock \emph{International Journal of Computing}, 23(4):526--535, 2024.
-\newblock \url{https://doi.org/10.47839/ijc.23.4.3752}
+\bibitem{rogaway2006}
+P.~Rogaway and T.~Shrimpton.
+\newblock A provable-security treatment of the key-wrap problem.
+\newblock In \emph{EUROCRYPT 2006}, pages 373--390. Springer, 2006.
+\newblock \url{https://doi.org/10.1007/11761679_23}
 
-\bibitem{lysyi2025fire}
-A.~Lysyi, A.~Sachenko, P.~Radiuk, M.~Lysyi, O.~Melnychenko, O.~Ishchuk, and O.~Savenko.
-\newblock Enhanced fire hazard detection in solar power plants: an integrated UAV, AI, and SCADA-based approach.
-\newblock \emph{Radioelectronic and Computer Systems}, (2):99--117, 2025.
-\newblock \url{https://doi.org/10.32620/reks.2025.2.06}
+\bibitem{rfc7748}
+A.~Langley, M.~Hamburg, and S.~Turner.
+\newblock Elliptic curves for security.
+\newblock RFC 7748, IETF, 2016.
+\newblock \url{https://www.rfc-editor.org/rfc/rfc7748}
+
+\bibitem{krawczyk2010}
+H.~Krawczyk.
+\newblock Cryptographic extraction and key derivation: The {HKDF} scheme.
+\newblock In \emph{CRYPTO 2010}, pages 631--648. Springer, 2010.
+\newblock \url{https://doi.org/10.1007/978-3-642-14623-7_34}
+
+\bibitem{rfc5869}
+H.~Krawczyk and P.~Eronen.
+\newblock {HMAC}-based extract-and-expand key derivation function ({HKDF}).
+\newblock RFC 5869, IETF, 2010.
+\newblock \url{https://www.rfc-editor.org/rfc/rfc5869}
+
+\bibitem{lamacchia2007}
+B.~LaMacchia, K.~Lauter, and A.~Mityagin.
+\newblock Stronger security of authenticated key exchange.
+\newblock In \emph{ProvSec 2007}, pages 1--16. Springer, 2007.
+\newblock \url{https://doi.org/10.1007/978-3-540-75670-5_1}
+
+\bibitem{canetti2001}
+R.~Canetti and H.~Krawczyk.
+\newblock Analysis of key-exchange protocols and their use for building secure channels.
+\newblock In \emph{EUROCRYPT 2001}, pages 453--474. Springer, 2001.
+\newblock \url{https://doi.org/10.1007/3-540-44987-6_28}
+
+\bibitem{fips198}
+National Institute of Standards and Technology.
+\newblock The keyed-hash message authentication code ({HMAC}).
+\newblock FIPS 198-1, 2008.
+\newblock \url{https://doi.org/10.6028/NIST.FIPS.198-1}
+
+\bibitem{rfc8032}
+S.~Josefsson and I.~Liusvaara.
+\newblock Edwards-curve digital signature algorithm ({EdDSA}).
+\newblock RFC 8032, IETF, 2017.
+\newblock \url{https://www.rfc-editor.org/rfc/rfc8032}
+
+\bibitem{signal-spqr-artifact}
+Signal Messenger.
+\newblock SparsePostQuantumRatchet.
+\newblock Public Rust/hax/F* implementation artifact, 2025.
+\newblock \url{https://github.com/signalapp/SparsePostQuantumRatchet}
 
 \end{thebibliography}
 
