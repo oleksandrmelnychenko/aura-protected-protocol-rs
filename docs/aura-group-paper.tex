@@ -121,6 +121,16 @@ separate. It reuses the same primitive discipline--\DH{}, \KEM{}, \HKDF{},
 and misuse-resistant AEAD--but its security statements concern group state,
 epoch commits, sender chains, and relay-visible envelopes.
 
+\Aura{} Group also sits above a separate password-authentication boundary.
+The companion Hybrid PQ-OPAQUE manuscript and its formal-evidence report treat
+account-bound admission and authenticated key-establishment evidence, not group
+TreeKEM security~\cite{melnychenko2026opaque,melnychenko2026opaqueformal}.
+Those works are OPAQUE-derived in the augmented-PAKE sense
+of Jarecki--Krawczyk--Xu and the IRTF specification~\cite{jarecki2018,
+ietf-opaque}. This paper uses that layer only as bootstrap context: once
+participants have authenticated identities and initial credentials, the group
+problem is epoch state, membership change, and message delivery.
+
 \MLS{} standardizes this problem space with TreeKEM-based epoch transitions
 and a group key schedule~\cite{rfc9420,treekem,treesync}. The post-quantum
 setting adds a further constraint: a group update that only refreshes
@@ -133,6 +143,16 @@ The two-party theorems do not automatically imply group security; group
 messaging needs its own tree-state and concurrency analysis. In this paper,
 \emph{artifact} means the implementation, tests, benchmarks, and design notes
 that accompany the construction.
+
+The motivating deployment class is broader than consumer chat. Operational
+teams may exchange inspection evidence, sensor-derived alerts, and incident
+decisions inside long-lived confidential groups. Melnychenko's coauthored work
+on UAV trajectory adaptation, multimodal wind-turbine inspection, and
+UAV/SCADA-linked fire detection gives representative examples of such
+coordination-heavy systems~\cite{svystun2025dytam,svystun2024thermal,
+lysyi2025fire}. The present paper does not depend on those systems; they
+explain why group membership, sender authentication, and post-quantum
+confidentiality are treated as one engineering surface.
 
 The pairwise design background is closest to Signal-style authenticated
 handshakes and ratchet analyses~\cite{signal-x3dh,signal-double-ratchet,
@@ -814,6 +834,60 @@ Per-Ratchet KEM Rotation and Symbolic Models.
 \newblock Companion manuscript, 2026.
 \newblock Local artifact source: \path{docs/aura-paper.tex}; companion PDF:
 \href{run:aura-paper.pdf}{\path{aura-paper.pdf}}.
+
+\bibitem{melnychenko2026opaque}
+O.~Melnychenko.
+\newblock Hybrid Post-Quantum Authentication from OPAQUE and ML-KEM-768:
+Construction, Formal Analysis, and a Reproducible Implementation.
+\newblock Companion manuscript, 2026.
+\newblock Local artifact source:
+\path{../aura-security-opaque-rs/docs/main_jisa.tex}; companion PDF:
+\href{run:../../aura-security-opaque-rs/docs/main_jisa.pdf}{\path{main_jisa.pdf}}.
+
+\bibitem{melnychenko2026opaqueformal}
+O.~Melnychenko.
+\newblock Formal Verification Report---Hybrid PQ-OPAQUE Protocol.
+\newblock Companion formal-evidence report, 2026.
+\newblock Local artifact source:
+\path{../aura-security-opaque-rs/formal/logs/FULL_VERIFICATION_REPORT.md}.
+
+\bibitem{jarecki2018}
+S.~Jarecki, H.~Krawczyk, and J.~Xu.
+\newblock {OPAQUE}: An asymmetric {PAKE} protocol secure against
+pre-computation attacks.
+\newblock In \emph{EUROCRYPT 2018}, pages 456--486. Springer, 2018.
+\newblock \url{https://doi.org/10.1007/978-3-319-78372-7_15}
+
+\bibitem{ietf-opaque}
+D.~Bourdrez, H.~Krawczyk, K.~Lewi, and C.~A.~Wood.
+\newblock The {OPAQUE} Augmented Password-Authenticated Key Exchange
+({aPAKE}) Protocol.
+\newblock RFC 9807, 2025.
+\newblock \url{https://www.rfc-editor.org/info/rfc9807}
+
+\bibitem{svystun2025dytam}
+S.~Svystun, L.~Scis{\l}o, M.~Pawlik, O.~Melnychenko, P.~Radiuk,
+O.~Savenko, and A.~Sachenko.
+\newblock DyTAM: Accelerating wind turbine inspections with dynamic UAV
+trajectory adaptation.
+\newblock \emph{Energies}, 18(7):1823, 2025.
+\newblock \url{https://api.crossref.org/works/10.3390/en18071823}
+
+\bibitem{svystun2024thermal}
+S.~Svystun, O.~Melnychenko, P.~Radiuk, O.~Savenko, A.~Sachenko, and
+A.~Lysyi.
+\newblock Thermal and RGB images work better together in wind turbine damage
+detection.
+\newblock \emph{International Journal of Computing}, 23(4):526--535, 2024.
+\newblock \url{https://doi.org/10.47839/ijc.23.4.3752}
+
+\bibitem{lysyi2025fire}
+A.~Lysyi, A.~Sachenko, P.~Radiuk, M.~Lysyi, O.~Melnychenko, O.~Ishchuk,
+and O.~Savenko.
+\newblock Enhanced fire hazard detection in solar power plants: an integrated
+UAV, AI, and SCADA-based approach.
+\newblock \emph{Radioelectronic and Computer Systems}, (2):99--117, 2025.
+\newblock \url{https://doi.org/10.32620/reks.2025.2.06}
 
 \bibitem{rfc9420}
 R.~Barnes, B.~Beurdouche, R.~Robert, J.~Millican, E.~Omara, and K.~Cohn-Gordon.
