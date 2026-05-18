@@ -116,7 +116,7 @@
 \begin{abstract}
 Aura is a hybrid secure-messaging research protocol that targets post-quantum confidentiality for session secrets under classical Ed25519 identity and signed-pre-key authentication. It uses X25519 and ML-KEM-768 in the initial X3DH-style handshake and again on directed ratchet steps. After a local endpoint-state compromise, classical recovery follows the first honest directed step; after a two-endpoint state compromise, recovery is tied to the next directed step that uses post-compromise peer DH and KEM material.
 
-The construction binds each new KEM public key into the HKDF transcript and separates payload encryption from metadata encryption by using an independent per-epoch metadata key. Relative to Signal \SPQR{}/Triple Ratchet and Apple \PQThree{}, Aura does not claim priority for post-quantum ratcheting or deployment maturity. Its narrower contribution is a reproducible two-party design point: eager per-direction X25519+ML-KEM ratchet transitions, HKDF-info binding of the advertised KEM public key, a rotating envelope-metadata key, and claim-to-code links in one Rust artifact.
+The construction binds each new KEM public key into the HKDF transcript and separates payload encryption from metadata encryption by using an independent per-epoch metadata key. Relative to Signal \SPQR{}/Triple Ratchet and Apple \PQThree{}, Aura does not claim priority for post-quantum ratcheting or deployment maturity. Its narrower contribution is a reproducible two-party design point: eager per-direction X25519+ML-KEM ratchet transitions, HKDF-info binding of the advertised KEM public key, a rotating envelope-metadata key, and an implementation cross-reference map in one Rust artifact.
 
 The security argument consists of six reduction-style theorems under Gap-CDH, ML-KEM IND-CCA2, dual-PRF, and MRAE assumptions. Symbolic evidence is deliberately scoped: 10 Tamarin lemmas verify a two-DH handshake abstraction and a terminal one-step ratchet abstraction, and 3 of 6 ProVerif queries discharge for the handshake/message-path model. The remaining ProVerif queries are not counted as machine-checked results. The Rust artifact implements the analyzed two-party protocol and includes deterministic vectors, reproducibility scripts, regression tests, and an implementation cross-reference map; implementation-wide line and test counts are artifact context, not separate security evidence.
 \end{abstract}
@@ -366,10 +366,14 @@ $\mathit{mac}_I \gets \HMAC(\mathit{kc}_I,\, \mathit{th})$\;
 \BlankLine
 Send $\mathit{Init} = (\mathit{ed}_I^{\mathit{pub}},\, \IK_I^{\mathit{pub}},\, \EK_I^{\mathit{pub}},\, \mathit{ct}_{\mathit{ky}},\, kpk_I,\, \sigma_I^{\mathit{bind}},\, \mathit{mac}_I,\, \mathit{opk\_id},\, N_{\max})$\;
 Store $\mathit{mac}_R^* \gets \HMAC(\mathit{kc}_R,\, \mathit{th})$ for verification\;
-Erase $\mathit{ek}_I$, copies of $\mathit{ik}_I$, all $\mathit{dh}_i$, $\mathit{cs}$, $\mathit{ss}_{\mathit{ky}}$\;
+Retain $\mathit{ss}_{\mathit{ky}}$ only in pending state for the initial post-handshake ratchet\;
+Erase $\mathit{ek}_I$, copies of $\mathit{ik}_I$, all $\mathit{dh}_i$, and $\mathit{cs}$\;
 \end{algorithm}
 
 Here $\mathsf{LP}(x)$ denotes the length-prefixed canonical encoding used by the transcript serializer.
+Throughout the pseudocode, $\HKDF(\mathit{ikm},L,\mathit{salt},\mathit{info})$
+means RFC~5869 Extract with $(\mathit{salt},\mathit{ikm})$ followed by Expand
+to $L$ bytes with the stated $\mathit{info}$ string.
 
 The responder performs the symmetric computation: it recomputes the four DH shared secrets using its own private keys, decapsulates the ML-KEM ciphertext, derives the same root key $\rk_0$, verifies $\mathit{mac}_I$, and sends $\mathit{Ack} = (\mathit{mac}_R)$. The initiator finalizes by verifying $\mathit{mac}_R$ in constant time.
 
@@ -380,7 +384,7 @@ The combiner uses the classical DH output $\mathit{cs}$ as the HKDF salt and the
 Bilateral key confirmation prevents unknown key-share (UKS) attacks~\cite{lamacchia2007}. The transcript digest $\mathit{th}$ is computed with HMAC's prefix-safe encoding structure over length-prefixed inputs; the authentication step is the later HMAC under keys $\mathit{kc}_I$ and $\mathit{kc}_R$. These confirmation keys are derived from $\rk_0$ using distinct HKDF info strings, ensuring domain separation.
 
 \paragraph{DH validation.}
-All received X25519 public keys are validated by checking against the eight small-order points of Curve25519 (points of order dividing the cofactor 8) using constant-time comparison to prevent timing side-channels. Additionally, points are verified to satisfy $\mathit{key} < p$ where $p = 2^{255} - 19$, using branchless word-by-word subtraction.
+All received X25519 public keys are validated by checking against the eight small-order points of Curve25519 (points of order dividing the cofactor 8) using constant-time comparison to avoid data-dependent timing behavior. Additionally, points are verified to satisfy $\mathit{key} < p$ where $p = 2^{255} - 19$, using branchless word-by-word subtraction.
 
 \subsection{Hybrid Double Ratchet}\label{sec:ratchet}
 
@@ -879,7 +883,7 @@ Q6 & Raw KEM-secret stress & Phase-1 KEM-SK reveal does not reveal phase-0 KEM s
 \end{table}
 
 \paragraph{Analysis of unproven queries.}
-Q3, Q5, and Q6 are not discharged by the current ProVerif model. Q3 is documented but disabled in the default artifact because prior four-DH runs did not terminate within the artifact budget. Q5 is a broad unpartnered message-integrity query; ProVerif finds an active trace in which the adversary starts its own responder session and injects its own payload, so the trace is outside the partnered-session theorem. Q6 asks for raw KEM-secret secrecy after the responder's long-term KEM secret key is revealed; that raw secret is recoverable by decapsulation and is not the claimed FS property. Authentication, partnered message integrity, and PCS are supported by the Tamarin models, reduction proofs, and implementation tests.
+Q3, Q5, and Q6 are not discharged by the current ProVerif model. Q3 is documented but disabled in the default artifact because prior four-DH runs did not terminate within the artifact budget. Q5 is a broad unpartnered message-integrity query; ProVerif finds an active trace in which the adversary starts its own responder session and injects its own payload, so the trace is outside the partnered-session theorem. Q6 asks for raw KEM-secret secrecy after the responder's long-term KEM secret key is revealed; that raw secret is recoverable by decapsulation and is not the claimed FS property. Authentication and partnered message integrity are supported by the symbolic models, reduction proofs, and implementation tests. Ratchet PCS is split: the terminal one-step abstraction is covered by Tamarin, while the two-endpoint hybrid recovery claim is reduction-only in this paper.
 
 \subsection{Complementarity of Tools}
 
@@ -944,7 +948,7 @@ Key material is protected at multiple levels:
 
   \item \textbf{Explicit wiping.} All DH shared secrets, IKM buffers, classical shared secrets, and ML-KEM shared secrets are explicitly wiped via \texttt{zeroize::Zeroize} (volatile writes with compiler barriers) immediately after use.
 
-  \item \textbf{Timestamp rounding.} Nanosecond fields in message timestamps are deliberately zeroed to prevent device fingerprinting via timing analysis.
+  \item \textbf{Timestamp rounding.} Nanosecond fields in message timestamps are deliberately zeroed to reduce device fingerprinting via timing analysis.
 \end{enumerate}
 
 \subsection{ML-KEM-768 Integration}\label{sec:kyber-impl}
@@ -1080,7 +1084,7 @@ Six property-based tests using the \texttt{proptest} framework generate random i
 
 \begin{table}[H]
 \centering
-\caption{Test-to-proof mapping: formal properties and their empirical validation.}\label{tab:test-proof-mapping}
+\caption{Test-to-proof mapping: formal properties and implementation coverage.}\label{tab:test-proof-mapping}
 \small
 \begin{tabularx}{\textwidth}{@{}p{0.28\textwidth}Y@{}}
 \toprule
@@ -1191,7 +1195,7 @@ need their own state models before the same style of claim can be made.
 % ═════════════════════════════════════════════════════════════
 \section{Comparison with Current Post-Quantum Messaging Baselines}\label{sec:comparison}
 
-For a 2026 comparison, PQXDH is no longer the upper baseline. It is a
+For a 2026 comparison, PQXDH is no longer the sole baseline. It is a
 handshake-level post-quantum upgrade, whereas Signal \SPQR{}/Triple Ratchet
 and Apple \PQThree{} move post-quantum material into the ongoing evolution of
 the session state. The table below separates where PQ entropy enters the
@@ -1217,7 +1221,7 @@ Signal PQXDH~\cite{signal-pqxdh} &
 Initial handshake &
 No renewed PQ contribution after the handshake &
 Open specification &
-Good baseline for initial harvest-now-decrypt-later protection, not for PQ-PCS in a long-lived channel. \\
+Handshake-only baseline for initial harvest-now-decrypt-later protection, not for PQ-PCS in a long-lived channel. \\
 \addlinespace
 Signal \SPQR{}/Triple Ratchet~\cite{signal-spqr,signal-double-ratchet,mlkem-braid} &
 Sparse PQ ratchet alongside the classical Double Ratchet &
@@ -1296,11 +1300,11 @@ in this paper.
 Signal-style protocols obtain identity binding through authenticated key-agreement transcripts, signed pre-keys, and associated data. Aura adds an explicit implementation-level identity binding hash $\mathit{ibh} = \SHA(\texttt{"Aura-Identity-Binding"} \concat \mathrm{sort}(\cdot))$ embedded in every AEAD additional data field. Benefits include:
 
 \begin{itemize}
-  \item Explicit identity inclusion prevents cross-session identity confusion.
+  \item Explicit identity inclusion binds against cross-session identity confusion.
   \item Lexicographic sorting gives a stable unordered peer-set binding; role
         separation comes from transcript/key-confirmation domains and
         send/receive chain assignment.
-  \item Domain separation prevents cross-protocol key reuse.
+  \item Domain separation binds against cross-protocol key reuse.
   \item The hash appears in both metadata and payload AAD, providing protection at both layers.
 \end{itemize}
 
@@ -1410,7 +1414,7 @@ records model/code alignment using the review package.
   \item \textbf{No post-quantum signatures.} Aura uses Ed25519 for identity and SPK signatures. A CRQC could forge signatures to mount impersonation attacks against the initial handshake. Moving to PQ signatures (e.g., ML-DSA/Dilithium) would require larger signatures and a deployment migration, but it is orthogonal to the ratchet argument studied here.
   \item \textbf{Trust-on-first-use.} The protocol assumes out-of-band verification of identity keys (safety numbers). Compromised key distribution is outside the threat model.
   \item \textbf{Single-device.} The current session model assumes a single device per user. Multi-device support would require session fan-out or Sesame-like session management.
-  \item \textbf{Two-party proof scope.} The reduction-style theorems and symbolic models cover the analyzed two-party session protocol. Other implementation modules require separate state models before the same claims can be made for them.
+  \item \textbf{Two-party proof scope.} The reduction-style theorems and symbolic models cover the analyzed two-party session protocol. Group messaging is treated in a separate paper and requires its own tree-state, membership, replay, and concurrency model before analogous claims can be made.
   \item \textbf{Ratchet cost.} Per-direction KEM rotation adds a 2.3~KB ratchet header and about $259\,\mu$s of ratchet work in the measured profile. Any lower-frequency ratchet profile would need its own PCS and cost statement.
   \item \textbf{Sealed-state freshness.} AEAD and state HMACs protect serialized state integrity, but rollback protection needs an external monotonic counter or equivalent freshness anchor.
 \end{itemize}
