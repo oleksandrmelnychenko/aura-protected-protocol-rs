@@ -109,8 +109,6 @@ paper_build() {
     "rm -rf '$OUT/aura-paper-build' && mkdir -p '$OUT/aura-paper-build' && cd '$ROOT/docs' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-build' aura-paper.tex >'$OUT/paper_english_pass1.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-build' aura-paper.tex >'$OUT/paper_english_pass2.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-build' aura-paper.tex && cp '$OUT/aura-paper-build/aura-paper.pdf' '$OUT/aura-paper.pdf'"
   run_shell paper_ukrainian \
     "rm -rf '$OUT/aura-paper-ua-build' && mkdir -p '$OUT/aura-paper-ua-build' && cd '$ROOT/docs' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-ua-build' aura-paper-ua.tex >'$OUT/paper_ukrainian_pass1.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-ua-build' aura-paper-ua.tex >'$OUT/paper_ukrainian_pass2.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-ua-build' aura-paper-ua.tex && cp '$OUT/aura-paper-ua-build/aura-paper-ua.pdf' '$OUT/aura-paper-ua.pdf'"
-  run_shell security_proof \
-    "rm -rf '$OUT/security-proof-build' && mkdir -p '$OUT/security-proof-build' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/security-proof-build' '$ROOT/docs/security-proof.tex' >'$OUT/security_proof_pass1.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/security-proof-build' '$ROOT/docs/security-proof.tex' >'$OUT/security_proof_pass2.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/security-proof-build' '$ROOT/docs/security-proof.tex' && cp '$OUT/security-proof-build/security-proof.pdf' '$OUT/security-proof.pdf'"
 }
 
 reference_audit() {
@@ -169,7 +167,7 @@ usage: $0 [quick|test|formal|paper|references|bench|full]
 quick  - fixed paper vectors + attack PoC tests
 test   - full Rust tests, with and without ffi
 formal - Tamarin handshake/ratchet + ProVerif
-paper  - rebuild English, Ukrainian, and companion proof PDFs
+paper  - rebuild English and Ukrainian paper PDFs
 references - verify paper bibliography/citation consistency and URL reachability
 bench  - Criterion benchmark suite
 full   - test + formal + paper + references + bench

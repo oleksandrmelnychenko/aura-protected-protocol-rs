@@ -27,21 +27,6 @@ extract_urls() {
 
 echo "==> bibliography consistency"
 
-echo "==> local companion references"
-local_failures=0
-for local_ref in "$ROOT/docs/security-proof.tex"; do
-  if [[ -f "$local_ref" ]]; then
-    printf 'local OK %s\n' "${local_ref#$ROOT/}"
-  else
-    printf 'local MISSING %s\n' "${local_ref#$ROOT/}" >&2
-    local_failures=$((local_failures + 1))
-  fi
-done
-if (( local_failures > 0 )); then
-  echo "reference audit failed: $local_failures local companion reference(s) missing" >&2
-  exit 1
-fi
-
 for file in "${FILES[@]}"; do
   name="${file#$ROOT/}"
   safe_name="${name//\//_}"
