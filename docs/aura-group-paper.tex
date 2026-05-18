@@ -111,21 +111,32 @@ ratchet. A two-party channel can update state along a single pairwise
 timeline. A group channel must update membership, distribute fresh secrets to
 the current roster, exclude removed members, preserve sender authentication,
 and keep application messages inexpensive between membership changes.
-\MLS{} standardizes this problem space with TreeKEM-based epoch transitions
-and a group key schedule~\cite{rfc9420}. The post-quantum setting adds a
-further constraint: a group update that only refreshes classical DH material
-does not address recorded traffic against a future cryptographically relevant
-quantum computer.
 
-The companion \Aura{} foundation paper studies the two-party handshake and
-ratchet boundary. This paper is deliberately separate. The group construction
-reuses the same primitive discipline--\DH{}, \KEM{}, \HKDF{}, and misuse-
-resistant AEAD--but its security statements concern group state, epoch commits,
-sender chains, and relay-visible envelopes. The two-party theorems do not
-automatically imply group security; group messaging needs its own tree-state
-and concurrency analysis. In this paper, \emph{artifact} means the
-implementation, tests, benchmarks, and design notes that accompany the
-construction.
+This paper is the group-messaging companion to Melnychenko's \Aura{}
+foundation manuscript~\cite{melnychenko2026aura}, which studies the two-party
+handshake and ratchet boundary. The group construction is deliberately
+separate. It reuses the same primitive discipline--\DH{}, \KEM{}, \HKDF{},
+and misuse-resistant AEAD--but its security statements concern group state,
+epoch commits, sender chains, and relay-visible envelopes.
+
+\MLS{} standardizes this problem space with TreeKEM-based epoch transitions
+and a group key schedule~\cite{rfc9420,treekem,treesync}. The post-quantum
+setting adds a further constraint: a group update that only refreshes
+classical DH material does not address recorded traffic against a future
+cryptographically relevant quantum computer. The post-quantum terminology in
+this paper follows the NIST standardization line and ML-KEM specification
+used by current hybrid deployments~\cite{nist-pqc,fips203}.
+
+The two-party theorems do not automatically imply group security; group
+messaging needs its own tree-state and concurrency analysis. In this paper,
+\emph{artifact} means the implementation, tests, benchmarks, and design notes
+that accompany the construction.
+
+The pairwise design background is closest to Signal-style authenticated
+handshakes and ratchet analyses~\cite{signal-x3dh,signal-double-ratchet,
+cohn-gordon2020,alwen2020}. \Aura{} Group uses that lineage only as a design
+discipline: its claims are about tree epochs, membership changes, sender
+chains, and policy-bound group context.
 
 \paragraph{Scientific novelty.}
 The scientific novelty of \Aura{} Group is the design and implementation
@@ -198,7 +209,8 @@ message layer encrypts application payloads under per-sender chains while
 encrypting sender metadata under the epoch metadata key.
 
 The tree is left-balanced and stores both \DH{} and \KEM{} public material at
-leaves and internal nodes. A member's key package binds identity \EdDSA{},
+leaves and internal nodes~\cite{rfc7748,fips203}. A member's key package binds
+identity \EdDSA{},
 identity \DH{}, identity \KEM{}, leaf \DH{}, leaf \KEM{}, and credential bytes
 under an \EdDSA{} signature. This separates long-term identity from epoch
 update material while giving recipients a signed object for membership
@@ -208,8 +220,8 @@ admission.
 \centering
 \begin{tikzpicture}[
   font=\small,
-  node distance=1.1cm and 1.5cm,
-  block/.style={draw,rounded corners=2pt,align=center,minimum width=3.3cm,minimum height=0.85cm,fill=blue!5},
+  node distance=1.1cm and 2.25cm,
+  block/.style={draw,rounded corners=2pt,align=center,minimum width=3.15cm,minimum height=0.85cm,fill=blue!5},
   smallblock/.style={draw,rounded corners=2pt,align=center,minimum width=2.7cm,minimum height=0.78cm,fill=green!5},
   arrow/.style={-Latex,thick}
 ]
@@ -221,11 +233,11 @@ admission.
 \node[smallblock,left=of sender] (msg) {Application\\messages};
 
 \draw[arrow] (tree) -- (commit);
-\draw[arrow] (commit) -- node[above]{\DH{}+\KEM{}} (ctx);
+\draw[arrow] (commit) -- node[midway,above,font=\scriptsize,fill=white,inner sep=1pt]{hybrid path keys} (ctx);
 \draw[arrow] (ctx) -- (epoch);
 \draw[arrow] (epoch) -- (sender);
 \draw[arrow] (sender) -- (msg);
-\draw[arrow] (commit.south) |- node[pos=0.25,left]{commit secret} (epoch.west);
+\draw[arrow] (commit.south) |- node[pos=0.25,left,font=\scriptsize,fill=white,inner sep=1pt]{commit secret} (epoch.west);
 \end{tikzpicture}
 \caption{Epoch transition and message-key flow. A commit updates the tree,
 derives a policy-bound context, and refreshes sender chains for the new epoch.}
@@ -259,6 +271,62 @@ Application message & Encrypted sender data, encrypted payload, nonces, signatur
 \end{tabularx}
 \end{table}
 
+\subsection{Tree Path Geometry}
+
+The construction follows the TreeKEM intuition that a member refreshes the
+nodes on its direct path and encrypts the corresponding path secrets to the
+co-path resolution. \Cref{fig:path-geometry} shows the case of leaf $2$ in an
+eight-member tree. The shaded path is recomputed by the committer; the marked
+co-path nodes are sufficient recipients for the encrypted path secrets.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  leaf/.style={draw,circle,minimum size=0.63cm,inner sep=0pt,fill=gray!8},
+  commit/.style={draw,circle,minimum size=0.68cm,inner sep=0pt,fill=blue!14,thick},
+  inode/.style={draw,circle,minimum size=0.58cm,inner sep=0pt,fill=gray!5},
+  pathnode/.style={draw,circle,minimum size=0.64cm,inner sep=0pt,fill=blue!14,thick},
+  copath/.style={draw,circle,minimum size=0.64cm,inner sep=0pt,fill=orange!16,thick},
+  edge/.style={thick,gray!65},
+  arrow/.style={-Latex,thick,orange!80!black}
+]
+\foreach \i in {0,...,7} {
+  \node[leaf] (l\i) at (1.0*\i,0) {$\i$};
+}
+\node[inode] (n01) at (0.5,0.9) {};
+\node[pathnode] (n23) at (2.5,0.9) {};
+\node[inode] (n45) at (4.5,0.9) {};
+\node[inode] (n67) at (6.5,0.9) {};
+\node[pathnode] (n03) at (1.5,1.85) {};
+\node[inode] (n47) at (5.5,1.85) {};
+\node[pathnode] (n07) at (3.5,2.85) {};
+
+\draw[edge] (l0) -- (n01) -- (l1);
+\draw[edge] (l2) -- (n23) -- (l3);
+\draw[edge] (l4) -- (n45) -- (l5);
+\draw[edge] (l6) -- (n67) -- (l7);
+\draw[edge] (n01) -- (n03) -- (n23);
+\draw[edge] (n45) -- (n47) -- (n67);
+\draw[edge] (n03) -- (n07) -- (n47);
+
+\node[commit] at (l2) {$2$};
+\node[copath] at (l3) {$3$};
+\node[copath] at (n01) {};
+\node[copath] at (n47) {};
+
+\draw[arrow,bend left=12] (n23) to node[right,font=\scriptsize,fill=white,inner sep=1pt]{wrap} (l3);
+\draw[arrow,bend right=12] (n03) to node[left,font=\scriptsize,fill=white,inner sep=1pt]{wrap} (n01);
+\draw[arrow,bend left=12] (n07) to node[right,font=\scriptsize,fill=white,inner sep=1pt]{wrap} (n47);
+
+\node[align=left,font=\scriptsize,anchor=west,fill=white,inner sep=2pt] at (7.45,2.55)
+  {blue: refreshed direct path\\orange: co-path resolution\\wrap: \DH{}+\KEM{} path secret};
+\end{tikzpicture}
+\caption{Hybrid TreeKEM path geometry for a commit from leaf $2$. Updated path
+secrets are wrapped to the co-path resolution with a hybrid \DH{}+\KEM{} key.}
+\label{fig:path-geometry}
+\end{figure}
+
 \subsection{Hybrid Update Path}
 
 For a commit at epoch $e$, the committer samples a fresh path secret and
@@ -279,7 +347,9 @@ The corresponding recipient decapsulates $c_{\KEM}$, computes the matching
 The node index is associated data, so a wrapped path secret cannot be moved to
 another tree position without detection. Parent hashes are verified along the
 updated path so that an adversary cannot splice a valid node into an
-inconsistent tree transcript.
+inconsistent tree transcript. HKDF and the AEAD interface follow the standard
+extract-then-expand and nonce-misuse-resistant AEAD references~\cite{rfc5869,
+rfc8452}.
 
 \subsection{Policy-Bound Epoch Context}
 
@@ -395,10 +465,44 @@ For a frankable message the sender samples a franking key $fk$ and publishes:
 The tag is visible in the application message, while $fk$ is inside the
 end-to-end encrypted payload. A recipient who reports a message can disclose
 $(fk,\mathit{content})$ for that message only. The relay cannot verify or read
-unreported messages because it does not know $fk$.
+unreported messages because it does not know $fk$; this follows the message
+franking goal of selective accountable disclosure~\cite{franking}.
 
-Sealed content places an encrypted inner payload behind a visible hint. The
-seal key is derived from the message key, and the recipient obtains it only
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  role/.style={draw,rounded corners=2pt,minimum width=2.45cm,minimum height=0.72cm,align=center,fill=gray!7},
+  note/.style={draw,rounded corners=2pt,minimum width=2.8cm,minimum height=0.66cm,align=center,fill=blue!5,font=\scriptsize},
+  arrow/.style={-Latex,thick},
+  weak/.style={-Latex,thick,dashed,gray!75}
+]
+\node[role] (sender) at (0,0) {Sender};
+\node[role] (relay) at (3.25,0) {Relay};
+\node[role] (receiver) at (6.5,0) {Receiver};
+\node[role] (moderator) at (9.75,0) {Moderator};
+
+\node[note] (seal) at (0,-1.15) {$fk$ inside\\E2E payload};
+\node[note] (opaque) at (3.25,-1.15) {sees ciphertext\\and tag only};
+\node[note] (open) at (6.5,-1.15) {may disclose\\$(fk,\mathit{content})$};
+\node[note] (verify) at (9.75,-1.15) {checks one\\reported message};
+
+\draw[arrow] (sender) -- node[above,font=\scriptsize] {$C,\mathit{tag}$} (relay);
+\draw[arrow] (relay) -- node[above,font=\scriptsize] {$C,\mathit{tag}$} (receiver);
+\draw[weak] (receiver) -- node[above,font=\scriptsize,black,fill=white,inner sep=1pt] {optional report} (moderator);
+\draw[arrow] (seal) -- (sender);
+\draw[arrow] (relay) -- (opaque);
+\draw[arrow] (receiver) -- (open);
+\draw[arrow] (moderator) -- (verify);
+\end{tikzpicture}
+\caption{Franking disclosure path. The relay stores an opaque commitment, while
+a recipient can later reveal exactly one message to a moderator.}
+\label{fig:franking-flow}
+\end{figure}
+
+Sealed content places an encrypted inner payload behind a visible hint, in the
+same relay-blind spirit as sealed-sender metadata minimization~\cite{sealed-sender}.
+The seal key is derived from the message key, and the recipient obtains it only
 after group decryption. Disappearing messages carry a send timestamp and TTL;
 decryption rejects expired messages and timestamps too far in the future.
 
@@ -557,7 +661,8 @@ Relay authority & Delivery service is not a group-secret holder. & Service role 
   \item \textbf{No full group proof yet.} The paper gives construction-level
   claims and implementation evidence. A Tamarin, ProVerif, or game-based group
   proof should model tree state, membership concurrency, external joins, and
-  replay windows.
+  replay windows, following the level of precision expected in formal MLS
+  analyses~\cite{treesync}.
 
   \item \textbf{Relay validation is structural.} The relay can reject malformed
   or inconsistent envelopes, but it cannot validate TreeKEM secrets or act as
@@ -589,35 +694,43 @@ responsibility.
 
 \begin{thebibliography}{99}
 
+\bibitem{melnychenko2026aura}
+O.~Melnychenko.
+\newblock Aura: Hybrid Post-Quantum Confidentiality for Stateful Messaging with
+Per-Ratchet KEM Rotation and Symbolic Models.
+\newblock Companion manuscript, 2026.
+\newblock Local artifact source: \path{docs/aura-paper.tex}; companion PDF:
+\href{run:aura-paper.pdf}{\path{aura-paper.pdf}}.
+
 \bibitem{rfc9420}
 R.~Barnes, B.~Beurdouche, R.~Robert, J.~Millican, E.~Omara, and K.~Cohn-Gordon.
 \newblock The Messaging Layer Security (MLS) Protocol.
 \newblock RFC 9420, 2023.
 \newblock \url{https://www.rfc-editor.org/rfc/rfc9420}
 
+\bibitem{treekem}
+K.~Bhargavan, R.~Barnes, and E.~Rescorla.
+\newblock TreeKEM: Asynchronous Decentralized Key Management for Large Dynamic
+Groups.
+\newblock Protocol proposal for Messaging Layer Security, 2018.
+\newblock \url{https://mailarchive.ietf.org/arch/msg/mls/v1CY0jFAOVOHokB4DtNqS__tX1o/4/}
+
+\bibitem{treesync}
+T.~Wallez, J.~Protzenko, B.~Beurdouche, and K.~Bhargavan.
+\newblock TreeSync: Authenticated Group Management for Messaging Layer Security.
+\newblock USENIX Security Symposium, 2023.
+\newblock \url{https://www.usenix.org/conference/usenixsecurity23/presentation/wallez}
+
+\bibitem{nist-pqc}
+National Institute of Standards and Technology.
+\newblock Post-Quantum Cryptography Standardization.
+\newblock \url{https://csrc.nist.gov/projects/post-quantum-cryptography}
+
 \bibitem{fips203}
 National Institute of Standards and Technology.
 \newblock Module-Lattice-Based Key-Encapsulation Mechanism Standard (ML-KEM).
 \newblock FIPS 203, 2024.
 \newblock \url{https://doi.org/10.6028/NIST.FIPS.203}
-
-\bibitem{rfc7748}
-A.~Langley, M.~Hamburg, and S.~Turner.
-\newblock Elliptic Curves for Security.
-\newblock RFC 7748, 2016.
-\newblock \url{https://www.rfc-editor.org/rfc/rfc7748}
-
-\bibitem{rfc5869}
-H.~Krawczyk and P.~Eronen.
-\newblock HMAC-based Extract-and-Expand Key Derivation Function (HKDF).
-\newblock RFC 5869, 2010.
-\newblock \url{https://www.rfc-editor.org/rfc/rfc5869}
-
-\bibitem{rfc8452}
-A.~Gueron, A.~Langley, and Y.~Lindell.
-\newblock AES-GCM-SIV: Nonce Misuse-Resistant Authenticated Encryption.
-\newblock RFC 8452, 2019.
-\newblock \url{https://www.rfc-editor.org/rfc/rfc8452}
 
 \bibitem{signal-x3dh}
 M.~Marlinspike and T.~Perrin.
@@ -639,9 +752,28 @@ K.~Cohn-Gordon, C.~Cremers, B.~Dowling, L.~Garratt, and D.~Stebila.
 
 \bibitem{alwen2020}
 J.~Alwen, S.~Coretti, Y.~Dodis, and Y.~Tselekounis.
-\newblock The Double Ratchet: Security notions, proofs, and modularization for the Signal protocol.
+\newblock The Double Ratchet: Security notions, proofs, and modularization for
+the Signal protocol.
 \newblock \emph{Advances in Cryptology -- EUROCRYPT 2019}.
 \newblock \url{https://doi.org/10.1007/978-3-030-17653-2_5}
+
+\bibitem{rfc7748}
+A.~Langley, M.~Hamburg, and S.~Turner.
+\newblock Elliptic Curves for Security.
+\newblock RFC 7748, 2016.
+\newblock \url{https://www.rfc-editor.org/rfc/rfc7748}
+
+\bibitem{rfc5869}
+H.~Krawczyk and P.~Eronen.
+\newblock HMAC-based Extract-and-Expand Key Derivation Function (HKDF).
+\newblock RFC 5869, 2010.
+\newblock \url{https://www.rfc-editor.org/rfc/rfc5869}
+
+\bibitem{rfc8452}
+A.~Gueron, A.~Langley, and Y.~Lindell.
+\newblock AES-GCM-SIV: Nonce Misuse-Resistant Authenticated Encryption.
+\newblock RFC 8452, 2019.
+\newblock \url{https://www.rfc-editor.org/rfc/rfc8452}
 
 \bibitem{franking}
 P.~Grubbs, J.~Lu, and T.~Ristenpart.
@@ -654,11 +786,6 @@ Signal.
 \newblock Technology preview: Sealed Sender for Signal.
 \newblock Signal Blog, 2018.
 \newblock \url{https://signal.org/blog/sealed-sender/}
-
-\bibitem{nist-pqc}
-National Institute of Standards and Technology.
-\newblock Post-Quantum Cryptography Standardization.
-\newblock \url{https://csrc.nist.gov/projects/post-quantum-cryptography}
 
 \end{thebibliography}
 
