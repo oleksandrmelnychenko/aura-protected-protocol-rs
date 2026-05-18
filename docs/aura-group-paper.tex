@@ -39,6 +39,8 @@
 \newcommand{\SHA}{\textsf{SHA-256}}
 \newcommand{\AEAD}{\textsf{AES-256-GCM-SIV}}
 \newcommand{\BLAKE}{\textsf{BLAKE2b}}
+\newcommand{\ProVerif}{\textsf{ProVerif}}
+\newcommand{\Tamarin}{\textsf{Tamarin}}
 \newcommand{\EdDSA}{\textsf{Ed25519}}
 \renewcommand{\DH}{\textsf{X25519}}
 \newcommand{\KEM}{\textsf{ML-KEM-768}}
@@ -89,13 +91,13 @@ then uses per-member sender chains, encrypted sender data, replay windows,
 sealed content, expiring content, and franking commitments without giving the
 relay access to group plaintext or group secrets.
 
-This paper gives the construction, implementation evidence, and a scoped
-security argument. The claims are intentionally narrower than a full MLS
-proof: the implementation supports membership-change forward secrecy,
-epoch-level post-compromise recovery through hybrid update paths, policy
-consensus through confirmation MACs, and message-level replay and franking
-checks. A complete symbolic or game-based proof for concurrent group sessions
-remains future work.
+This paper gives the construction, a scoped symbolic model, implementation
+evidence, and a conservative security argument. The claims are intentionally
+narrower than a full MLS proof: the design supports membership-change forward
+secrecy, epoch-level post-compromise recovery through hybrid update paths,
+policy consensus through confirmation MACs, and message-level replay and
+franking checks. A complete symbolic or game-based proof for concurrent group
+sessions remains future work.
 \end{abstract}
 
 \smallskip
@@ -139,32 +141,41 @@ discipline: its claims are about tree epochs, membership changes, sender
 chains, and policy-bound group context.
 
 \paragraph{Scientific novelty.}
-The scientific novelty of \Aura{} Group is the design and implementation
-validation of a policy-bound hybrid TreeKEM construction for group messaging.
-The main points are:
+The scientific novelty of \Aura{} Group is a policy-bound hybrid TreeKEM
+construction in which post-quantum path refresh, policy consensus, sender-key
+economy, and accountable encrypted message semantics are specified as one
+auditable protocol surface. The main points are:
 
 \begin{enumerate}
-  \item \textbf{Hybrid post-quantum update path.} Each epoch-changing update
+  \item \textbf{N1: hybrid post-quantum update path.} Each epoch-changing update
   refreshes TreeKEM path material with \DH{} and \KEM{} keys, rather than
-  limiting post-quantum material to group creation.
+  limiting post-quantum material to group creation or to pairwise setup.
 
-  \item \textbf{Policy-bound group context.} The group context hash includes
-  the serialized security policy. A policy disagreement changes epoch keys and
-  confirmation MACs, so policy becomes part of cryptographic consensus.
+  \item \textbf{N2: policy-bound group context.} The group context hash
+  includes the serialized security policy. A policy disagreement changes epoch
+  keys and confirmation MACs, so policy becomes part of cryptographic
+  consensus instead of remaining mutable application metadata.
 
-  \item \textbf{Shielded epoch profile.} \Shield{} is specified as a
+  \item \textbf{N3: shielded epoch profile.} \Shield{} is specified as a
   cryptographic policy profile: enhanced subkey derivation, mandatory
   franking, external-join blocking, bounded skipped keys, and bounded
   sender-key lifetime.
 
-  \item \textbf{Efficient message layer inside an epoch.} Per-member sender
+  \item \textbf{N4: efficient message layer inside an epoch.} Per-member sender
   chains provide low-cost application messages between TreeKEM commits, while
   encrypted sender data and replay windows preserve epoch binding and duplicate
   rejection.
 
-  \item \textbf{Accountable encrypted semantics.} Franking, sealed content,
+  \item \textbf{N5: accountable encrypted semantics.} Franking, sealed content,
   and disappearing messages are integrated as message semantics over the group
   key schedule without exposing plaintext to the relay.
+
+  \item \textbf{N6: scoped machine-checkable core.} A dedicated \ProVerif{}
+  model checks six core symbolic obligations for one accepted group epoch:
+  hybrid path secrecy, previous-init contribution secrecy,
+  application-message secrecy, commit correspondence, message correspondence,
+  and franking correspondence. The model is intentionally scoped and does not
+  replace a full concurrent group proof.
 \end{enumerate}
 
 \section{Threat Model and Scope}
@@ -178,10 +189,11 @@ membership and epoch state are client-side decisions.
 The paper studies a single-device group model. Identity authentication uses
 Ed25519 signatures over key packages and commits. This is classical
 authentication; a transition to post-quantum signatures is orthogonal to the
-TreeKEM and policy-binding mechanisms. The current evidence is implementation
-evidence plus a protocol argument. A full theorem for asynchronous concurrent
-groups, including delivery schedules and all interleavings of Add, Remove,
-Update, PSK, and ReInit proposals, is not claimed here.
+TreeKEM and policy-binding mechanisms. The current evidence combines a scoped
+\ProVerif{} model, implementation evidence, and a protocol argument. A full
+theorem for asynchronous concurrent groups, including delivery schedules and
+all interleavings of Add, Remove, Update, PSK, and ReInit proposals, is not
+claimed here.
 
 \begin{table}[H]
 \centering
@@ -337,11 +349,15 @@ the path secret is wrapped under a hybrid key:
   x_{\mathsf{eph}}, X_{\mathsf{eph}} &\gets \DH.\KeyGen(), \\
   z_{\DH} &= \DH(x_{\mathsf{eph}}, X_R), \\
   (c_{\KEM}, z_{\KEM}) &\gets \KEM.\Encaps(pk_R), \\
-  s_{\mathsf{path}} &= \textsf{``Aura-Group-Hybrid''}\concat z_{\DH}, \\
-  i_{\mathsf{path}} &= \textsf{``PathSecret''}, \\
-  k_{\mathsf{path}} &= \HKDF(z_{\KEM};s_{\mathsf{path}},i_{\mathsf{path}}), \\
+  s_{\mathsf{path}} &= \textsf{``Aura-PQ-Group-Hybrid::''}\concat z_{\DH}, \\
+  i_{\mathsf{path}} &= \textsf{``Aura-Group-HybridPath''}, \\
+  k_{\mathsf{path}} &= \HKDF(z_{\KEM},s_{\mathsf{path}},i_{\mathsf{path}}), \\
   C_{\mathsf{path}} &= \AEAD.\Enc(k_{\mathsf{path}},n,\mathit{pathSecret},\mathit{nodeIndex}).
 \end{align*}
+Here $\HKDF(x,s,i)$ denotes HKDF-SHA256 with input keying material $x$, salt
+$s$, and domain-separation information $i$. This matches the construction's
+hybrid path wrapper: the \KEM{} shared secret is the input material, and the
+\DH{} output is carried in the salt with the path-domain label.
 The corresponding recipient decapsulates $c_{\KEM}$, computes the matching
 \DH{} value, reconstructs $k_{\mathsf{path}}$, and decrypts the path secret.
 The node index is associated data, so a wrapped path secret cannot be moved to
@@ -600,14 +616,48 @@ sender signature, checks the replay window, obtains the sender-chain message
 key, and only then marks the generation as seen. Modified replays fail at
 signature, AEAD, franking, or replay checks depending on the mutation.
 
+\section{Scoped Symbolic Model}
+
+The construction is accompanied by a \ProVerif{} model
+(\path{formal/proverif/aura_group.pv}) for the core group epoch and message
+path~\cite{blanchet2016}. The model covers one accepted hybrid update path and
+one application message inside the resulting epoch. It abstracts away full
+asynchronous group scheduling, but it checks the part where policy-bound epoch
+agreement, message secrecy, and franking accountability meet.
+
+\begin{table}[H]
+\centering
+\caption{\ProVerif{} group model: 6/6 scoped queries discharged.}\label{tab:group-proverif}
+\small
+\begin{tabularx}{\textwidth}{@{}p{0.30\textwidth}p{0.16\textwidth}Y@{}}
+\toprule
+Query & Result & Meaning \\
+\midrule
+Path-secret secrecy & true & The fresh TreeKEM path secret is not learned from the hybrid path wrapper. \\
+Previous-init secrecy & true & The previous init-secret contribution remains hidden in the accepted transition. \\
+Application-message secrecy & true & The in-epoch challenge payload is not learned by the network adversary. \\
+Commit correspondence & true & An accepted commit corresponds to an honest policy-bound commit event. \\
+Message correspondence & true & An accepted challenge message corresponds to an honest send under the same epoch key. \\
+Franking correspondence & true & A verified franking disclosure corresponds to an issued franking tag. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The result should be read as scoped symbolic evidence, not as a complete group
+security theorem. A full proof still needs tree-state concurrency, proposal
+interleavings, delivery schedules, and multi-device state. The present model is
+useful because it checks that the key claims made in \cref{eq:gch,eq:epoch-keys}
+and the message/franking path are not merely prose-level assertions.
+
 \section{Implementation Evidence}
 
 The implementation has an executable group API for creation, add, remove,
 update, external join, encrypted application messages, sealed messages,
 disappearing messages, franking, reactions, edits, deletes, state sealing, and
 relay validation. The evidence used in this paper is summarized in
-\cref{tab:evidence}. Test names are part of the artifact surface, not proof
-theorems.
+\cref{tab:evidence}. Named tests and benchmarks are part of the artifact
+surface; they support engineering review but do not replace the scoped
+symbolic model or a future full group proof.
 
 \begin{table}[H]
 \centering
@@ -623,6 +673,7 @@ External join & Basic join, stale/expired/tampered authorization rejection, wron
 Message layer & Replay rejection, ciphertext bit-flip rejection, sender-signature tampering rejection. & Application messages are bound to epoch, sender, and generation. \\
 Message semantics & Sealed roundtrip, wrong-key reveal failure, disappearing TTL rejection, frankable verification and tamper rejection. & Higher-level semantics are enforced after cryptographic decrypt. \\
 Sealed state & Roundtrip, wrong key, wrong identity secret, nonce-size, wrapper-version, bit-flip, and rollback checks. & Local state persistence has integrity and external freshness requirements. \\
+Benchmarks & Group create, add member, encrypt/decrypt, update, and sealed-state profiles. & Cost measurements are review context, not security assumptions. \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -658,11 +709,12 @@ Relay authority & Delivery service is not a group-secret holder. & Service role 
   \item \textbf{Single-device model.} Multi-device fan-out, per-device
   membership, and device churn need an explicit state model.
 
-  \item \textbf{No full group proof yet.} The paper gives construction-level
-  claims and implementation evidence. A Tamarin, ProVerif, or game-based group
-  proof should model tree state, membership concurrency, external joins, and
-  replay windows, following the level of precision expected in formal MLS
-  analyses~\cite{treesync}.
+  \item \textbf{No full group proof yet.} The paper includes a scoped
+  \ProVerif{} model for one accepted epoch transition and one application
+  message. A full \Tamarin{}, \ProVerif{}, or game-based group proof should
+  still model tree state, membership concurrency, external joins, and replay
+  windows, following the level of precision expected in formal MLS
+  analyses~\cite{treesync,meier2013}.
 
   \item \textbf{Relay validation is structural.} The relay can reject malformed
   or inconsistent envelopes, but it cannot validate TreeKEM secrets or act as
@@ -681,9 +733,9 @@ per-sender chains, encrypted sender data, and accountable message semantics
 are designed as one protocol surface. The strongest contribution is the
 policy-bound hybrid epoch: the group policy is not a side channel or a UI
 preference, but an input to the epoch keys themselves. The current artifact is
-ready for engineering evaluation and for a separate formal group-security
-model; the latter is the main remaining step before stronger proof-level
-claims should be made.
+ready for engineering evaluation and includes a scoped \ProVerif{} model for
+the core epoch/message path. The main remaining step before stronger
+proof-level claims is a full concurrent group-security model.
 
 \section*{Acknowledgments}
 
@@ -786,6 +838,20 @@ Signal.
 \newblock Technology preview: Sealed Sender for Signal.
 \newblock Signal Blog, 2018.
 \newblock \url{https://signal.org/blog/sealed-sender/}
+
+\bibitem{blanchet2016}
+B.~Blanchet.
+\newblock Modeling and verifying security protocols with the applied pi calculus
+and {ProVerif}.
+\newblock \emph{Foundations and Trends in Privacy and Security},
+1(1--2):1--135, 2016.
+\newblock \url{https://bblanche.gitlabpages.inria.fr/publications/BlanchetFnTPS16.html}
+
+\bibitem{meier2013}
+S.~Meier, B.~Schmidt, C.~Cremers, and D.~Basin.
+\newblock The {TAMARIN} prover for the symbolic analysis of security protocols.
+\newblock In \emph{CAV 2013}, pages 696--701. Springer, 2013.
+\newblock \url{https://doi.org/10.1007/978-3-642-39799-8_48}
 
 \end{thebibliography}
 

@@ -41,6 +41,22 @@ reveal is false by KEM decapsulation semantics. Hybrid-root forward secrecy is
 covered by the reduction proof and Tamarin abstraction rather than by that raw
 secret query.
 
+### ProVerif — Group Scoped Model (6/6 discharged)
+
+| Query | Result | Notes |
+|-------|--------|-------|
+| `path_secret` secrecy | **true** | Fresh TreeKEM path secret is not learned from the hybrid path wrapper |
+| `prev_init_secret` secrecy | **true** | Previous init-secret contribution remains secret in the scoped epoch transition |
+| `app_secret` secrecy | **true** | In-epoch application challenge remains confidential |
+| `CommitAccepted => CommitCreated` | **true** | Accepted commit matches an honest policy-bound commit event |
+| `MessageAccepted => MessageSent` | **true** | Accepted challenge message matches an honest send under the same epoch key |
+| `FrankingVerified => FrankingIssued` | **true** | Verified disclosure corresponds to an issued franking tag |
+
+The group model is deliberately scoped to one accepted epoch transition and one
+application message. It is not a full asynchronous MLS proof: proposal
+concurrency, arbitrary tree schedules, delivery-service interleavings, and
+multi-device state remain separate proof work.
+
 ## Models
 
 | File | Tool | What it verifies |
@@ -49,6 +65,7 @@ secret query.
 | `tamarin/aura_ratchet.spthy` | Tamarin | Hybrid ratchet: PCS, key agreement, secrecy |
 | `tamarin/aura.spthy` | Tamarin | Full combined model (reference only — non-terminating due to DH complexity) |
 | `proverif/aura.pv` | ProVerif | Handshake KEM-secret secrecy, non-injective authentication, message secrecy, honest-message delivery integrity; injective-auth/raw-KEM stress limits documented |
+| `proverif/aura_group.pv` | ProVerif | Scoped group epoch/message model: hybrid path wrapping, policy-bound confirmation, message integrity, and franking accountability |
 
 ## Design Decisions
 
@@ -122,6 +139,9 @@ make ratchet
 
 # ProVerif (4/4 proof-scope queries discharged; stress obligations documented)
 make proverif
+
+# Group ProVerif (6/6 scoped queries discharged)
+make proverif-group
 ```
 
 ## Security Properties
@@ -141,6 +161,13 @@ make proverif
 - **Ratchet key secrecy** — Ratchet key secret absent any compromise
 - **Key agreement** — Both parties derive same ratchet root key
 - **Ratchet exists** — Reachability / sanity check
+
+### Group Scoped Properties
+
+- **Hybrid path secrecy** — Fresh path material remains hidden under the hybrid X25519 + ML-KEM wrapper
+- **Policy-bound commit authentication** — Accepted commits correspond to matching honest policy-bound commit events
+- **Message integrity** — Accepted in-epoch challenge messages correspond to honest sends under the same epoch key
+- **Franking accountability** — A verified franking disclosure corresponds to an issued franking tag
 
 ## References
 

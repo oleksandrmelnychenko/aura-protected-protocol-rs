@@ -1,0 +1,174 @@
+(* ============================================================================
+ * Aura Group -- ProVerif scoped symbolic model
+ *
+ * This model checks a single accepted group epoch transition and one
+ * application message inside that epoch. It is intentionally narrower than a
+ * full asynchronous MLS-style proof: it does not model arbitrary tree
+ * concurrency, proposal queues, delivery-service scheduling, or multi-device
+ * state. Its purpose is to machine-check the core symbolic shape used by the
+ * group paper:
+ *   - hybrid X25519 + ML-KEM path-secret wrapping,
+ *   - policy-bound epoch context and confirmation MAC,
+ *   - encrypted sender/application message path,
+ *   - franking accountability for a disclosed message.
+ * ========================================================================== *)
+
+(* ---------------------------------------------------------------------------
+   Types and channels
+   --------------------------------------------------------------------------- *)
+
+type skey.
+type pkey.
+type kem_skey.
+type kem_pkey.
+type kem_ct.
+type key.
+type nonce_t.
+type tag.
+
+free c: channel.
+
+const group_id: bitstring.
+const epoch_1: bitstring.
+const tree_hash_1: bitstring.
+const policy_shield: bitstring.
+const node_index_1: bitstring.
+
+const path_info: bitstring.
+const epoch_info: bitstring.
+const msg_info: bitstring.
+const frank_info: bitstring.
+
+(* ---------------------------------------------------------------------------
+   Cryptographic abstractions
+   --------------------------------------------------------------------------- *)
+
+fun x25519_pk(skey): pkey.
+fun x25519_dh(skey, pkey): bitstring.
+equation forall a: skey, b: skey;
+    x25519_dh(a, x25519_pk(b)) = x25519_dh(b, x25519_pk(a)).
+
+fun kem_pk(kem_skey): kem_pkey.
+fun kem_encaps(bitstring, kem_pkey): kem_ct.
+reduc forall ss: bitstring, sk: kem_skey;
+    kem_decaps(kem_encaps(ss, kem_pk(sk)), sk) = ss.
+
+fun hkdf(bitstring, bitstring, bitstring): key.
+fun key_to_bits(key): bitstring [data, typeConverter].
+
+fun group_context(bitstring, bitstring, bitstring, bitstring): bitstring.
+fun hmac(key, bitstring): tag.
+
+fun aead_enc(key, bitstring, bitstring): bitstring.
+reduc forall k: key, pt: bitstring, ad: bitstring;
+    aead_dec(k, aead_enc(k, pt, ad), ad) = pt.
+
+(* ---------------------------------------------------------------------------
+   Events and queries
+   --------------------------------------------------------------------------- *)
+
+event CommitCreated(pkey, key, bitstring).
+event CommitAccepted(pkey, key, bitstring).
+event MessageSent(pkey, pkey, key, bitstring).
+event MessageAccepted(pkey, pkey, key, bitstring).
+event FrankingIssued(bitstring, tag).
+event FrankingVerified(bitstring, tag).
+
+(* Q1: the fresh path secret is not learned from the hybrid wrapping. *)
+query attacker(new path_secret) phase 0.
+
+(* Q2: the previous init-secret contribution remains secret. *)
+query attacker(new prev_init_secret) phase 0.
+
+(* Q3: the in-epoch application challenge remains secret. *)
+query attacker(new app_secret) phase 0.
+
+(* Q4: accepting a commit implies a matching honest commit creation under the
+ * same recipient, epoch key, and policy-bound context. *)
+query member: pkey, k: key, ctx: bitstring;
+    event(CommitAccepted(member, k, ctx))
+    ==> event(CommitCreated(member, k, ctx)).
+
+(* Q5: accepting the challenge message implies a matching honest send under
+ * the same epoch key and endpoints. *)
+query sender: pkey, receiver: pkey, k: key, msg: bitstring;
+    event(MessageAccepted(receiver, sender, k, msg))
+    ==> event(MessageSent(sender, receiver, k, msg)).
+
+(* Q6: a verified franking disclosure corresponds to an issued franking tag. *)
+query msg: bitstring, t: tag;
+    event(FrankingVerified(msg, t))
+    ==> event(FrankingIssued(msg, t)).
+
+(* ---------------------------------------------------------------------------
+   Honest scoped execution
+   --------------------------------------------------------------------------- *)
+
+let GroupEpoch =
+    new sender_sk: skey;
+    new receiver_sk: skey;
+    new receiver_kem_sk: kem_skey;
+
+    let sender_pk = x25519_pk(sender_sk) in
+    let receiver_pk = x25519_pk(receiver_sk) in
+    let receiver_kem_pk = kem_pk(receiver_kem_sk) in
+
+    (* Public membership/key-package material. *)
+    out(c, (sender_pk, receiver_pk, receiver_kem_pk, group_id, epoch_1));
+
+    (* Committer creates a hybrid-wrapped path secret for the receiver. *)
+    new eph_sk: skey;
+    let eph_pk = x25519_pk(eph_sk) in
+    new path_secret: bitstring;
+    new prev_init_secret: bitstring;
+    new kem_ss: bitstring;
+
+    let dh_ss = x25519_dh(eph_sk, receiver_pk) in
+    let kem_ciphertext = kem_encaps(kem_ss, receiver_kem_pk) in
+    let path_key = hkdf(kem_ss, dh_ss, path_info) in
+    let path_ciphertext = aead_enc(path_key, path_secret, node_index_1) in
+
+    let ctx = group_context(group_id, epoch_1, tree_hash_1, policy_shield) in
+    let epoch_key = hkdf((prev_init_secret, path_secret), ctx, epoch_info) in
+    let confirm = hmac(epoch_key, ctx) in
+    event CommitCreated(receiver_pk, epoch_key, ctx);
+
+    out(c, (eph_pk, kem_ciphertext, path_ciphertext, node_index_1,
+            tree_hash_1, policy_shield, confirm));
+
+    (* Receiver accepts only if the policy-bound confirmation MAC matches. *)
+    in(c, (eph_pk_in: pkey, kem_ct_in: kem_ct, path_ct_in: bitstring,
+           node_index_in: bitstring, tree_hash_in: bitstring,
+           policy_in: bitstring, confirm_in: tag));
+
+    let dh_recv = x25519_dh(receiver_sk, eph_pk_in) in
+    let kem_recv = kem_decaps(kem_ct_in, receiver_kem_sk) in
+    let path_key_recv = hkdf(kem_recv, dh_recv, path_info) in
+    let path_secret_recv = aead_dec(path_key_recv, path_ct_in, node_index_in) in
+    let ctx_recv = group_context(group_id, epoch_1, tree_hash_in, policy_in) in
+    let epoch_key_recv = hkdf((prev_init_secret, path_secret_recv), ctx_recv, epoch_info) in
+    if hmac(epoch_key_recv, ctx_recv) = confirm_in then
+    event CommitAccepted(receiver_pk, epoch_key_recv, ctx_recv);
+
+    (* One in-epoch challenge message under the accepted epoch key. *)
+    new app_secret: bitstring;
+    new franking_key: key;
+    let msg_ad = (group_id, epoch_1, sender_pk, receiver_pk) in
+    let msg_key = hkdf(key_to_bits(epoch_key), msg_ad, msg_info) in
+    let frank_tag = hmac(franking_key, (frank_info, app_secret)) in
+    event FrankingIssued(app_secret, frank_tag);
+    let app_ct = aead_enc(msg_key, (app_secret, franking_key, frank_tag), msg_ad) in
+    event MessageSent(sender_pk, receiver_pk, epoch_key, app_secret);
+    out(c, (app_ct, msg_ad));
+
+    in(c, (app_ct_in: bitstring, msg_ad_in: bitstring));
+    let msg_key_recv = hkdf(key_to_bits(epoch_key_recv), msg_ad_in, msg_info) in
+    let (=app_secret, frank_key_recv: key, frank_tag_recv: tag) =
+        aead_dec(msg_key_recv, app_ct_in, msg_ad_in) in
+    if msg_ad_in = msg_ad then
+    event MessageAccepted(receiver_pk, sender_pk, epoch_key_recv, app_secret);
+    if hmac(frank_key_recv, (frank_info, app_secret)) = frank_tag_recv then
+    event FrankingVerified(app_secret, frank_tag_recv).
+
+process
+    GroupEpoch
