@@ -1,7 +1,7 @@
-% !TEX program = pdflatex
-\documentclass[11pt,a4paper]{article}
+% !TEX program = tectonic
+\documentclass[preprint,12pt]{elsarticle}
+\biboptions{numbers}
 
-\usepackage[margin=2.05cm]{geometry}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage{lmodern}
@@ -13,6 +13,7 @@
 \usepackage{xcolor}
 \usepackage{graphicx}
 \usepackage{float}
+\usepackage{placeins}
 \usepackage{caption}
 \usepackage{subcaption}
 \usepackage{tikz}
@@ -21,7 +22,27 @@
 \usepackage[capitalise,noabbrev]{cleveref}
 
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 \setlength{\emergencystretch}{3em}
+\hfuzz=20pt
+\hbadness=10000
+\vbadness=10000
+\raggedbottom
+\setlength{\textfloatsep}{7pt plus 1pt minus 2pt}
+\setlength{\floatsep}{6pt plus 1pt minus 1pt}
+\setlength{\intextsep}{7pt plus 1pt minus 1pt}
+\setcounter{topnumber}{5}
+\setcounter{bottomnumber}{4}
+\setcounter{totalnumber}{8}
+\renewcommand{\topfraction}{0.95}
+\renewcommand{\bottomfraction}{0.85}
+\renewcommand{\textfraction}{0.05}
+\renewcommand{\floatpagefraction}{0.75}
+\makeatletter
+\setlength{\@fptop}{0pt}
+\setlength{\@fpsep}{8pt plus 1fil}
+\setlength{\@fpbot}{0pt plus 1fil}
+\makeatother
 
 \newtheorem{theorem}{Theorem}[section]
 \newtheorem{lemma}[theorem]{Lemma}
@@ -59,17 +80,17 @@
 \newcommand{\policy}{\mathit{policy}}
 \newcommand{\treehash}{\mathit{treeHash}}
 
-\title{\textbf{Aura Group: Policy-Bound Hybrid TreeKEM for Post-Quantum Group Messaging}}
-
-\author{%
-  Oleksandr Melnychenko\\
-  \texttt{oleksandr@aura.io}
-}
-
-\date{\today}
-
 \begin{document}
-\maketitle
+
+\begin{frontmatter}
+
+\title{Aura Group: Policy-Bound Hybrid TreeKEM for Post-Quantum Group Messaging}
+
+\author[aff1]{Oleksandr Melnychenko}
+
+\address[aff1]{Khmelnytskyi National University, Khmelnytskyi, Ukraine}
+
+\journal{Journal of Information Security and Applications}
 
 \begin{abstract}
 \Aura{} Group is a group-messaging construction that extends the two-party
@@ -100,11 +121,11 @@ franking checks. A complete symbolic or game-based proof for concurrent group
 sessions remains future work.
 \end{abstract}
 
-\smallskip
-\noindent\textbf{Keywords:} group messaging, TreeKEM, MLS, post-quantum cryptography, ML-KEM, sender keys, message franking, replay protection.
+\begin{keyword}
+group messaging \sep TreeKEM \sep MLS \sep post-quantum cryptography \sep ML-KEM \sep sender keys \sep message franking \sep replay protection
+\end{keyword}
 
-\tableofcontents
-\newpage
+\end{frontmatter}
 
 \section{Introduction}
 
@@ -215,7 +236,7 @@ theorem for asynchronous concurrent groups, including delivery schedules and
 all interleavings of Add, Remove, Update, PSK, and ReInit proposals, is not
 claimed here.
 
-\begin{table}[H]
+\begin{table}[tbp]
 \centering
 \caption{Claim boundary for the group paper.}\label{tab:scope}
 \small
@@ -248,8 +269,9 @@ under an \EdDSA{} signature. This separates long-term identity from epoch
 update material while giving recipients a signed object for membership
 admission.
 
-\begin{figure}[H]
+\begin{figure}[tbp]
 \centering
+\resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
   font=\small,
   node distance=1.1cm and 2.25cm,
@@ -270,7 +292,8 @@ admission.
 \draw[arrow] (epoch) -- (sender);
 \draw[arrow] (sender) -- (msg);
 \draw[arrow] (commit.south) |- node[pos=0.25,left,font=\scriptsize,fill=white,inner sep=1pt]{commit secret} (epoch.west);
-\end{tikzpicture}
+\end{tikzpicture}%
+}
 \caption{Epoch transition and message-key flow. A commit updates the tree,
 derives a policy-bound context, and refreshes sender chains for the new epoch.}
 \label{fig:epoch-flow}
@@ -286,7 +309,7 @@ confirmation MAC. The design therefore keeps admission state explicit: a
 member joins after decrypting Welcome and accepting the resulting epoch state,
 not because the relay appended an identity to a roster.
 
-\begin{figure}[H]
+\begin{figure}[tbp]
 \centering
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
@@ -316,7 +339,7 @@ not because the relay appended an identity to a roster.
 \caption{Welcome/admission boundary. A new member becomes authoritative only after reconstructing the tree, parsing the policy, deriving the epoch keys, and verifying the confirmation MAC.}\label{fig:welcome-admission}
 \end{figure}
 
-\begin{table}[H]
+\begin{table}[tbp]
 \centering
 \caption{Group-state objects and their role.}\label{tab:objects}
 \small
@@ -341,7 +364,7 @@ co-path resolution. \Cref{fig:path-geometry} shows the case of leaf $2$ in an
 eight-member tree. The shaded path is recomputed by the committer; the marked
 co-path nodes are sufficient recipients for the encrypted path secrets.
 
-\begin{figure}[H]
+\begin{figure}[tbp]
 \centering
 \begin{tikzpicture}[
   font=\small,
@@ -402,7 +425,9 @@ the path secret is wrapped under a hybrid key:
   s_{\mathsf{path}} &= \textsf{``Aura-PQ-Group-Hybrid::''}\concat z_{\DH}, \\
   i_{\mathsf{path}} &= \textsf{``Aura-Group-HybridPath''}, \\
   k_{\mathsf{path}} &= \HKDF(z_{\KEM},s_{\mathsf{path}},i_{\mathsf{path}}), \\
-  C_{\mathsf{path}} &= \AEAD.\Enc(k_{\mathsf{path}},n,\mathit{pathSecret},\mathit{nodeIndex}).
+  C_{\mathsf{path}}
+    &= \AEAD.\Enc(k_{\mathsf{path}},n,\mathit{pathSecret},\\
+  &\hspace{6.2em}\mathit{nodeIndex}).
 \end{align*}
 Here $\HKDF(x,s,i)$ denotes HKDF-SHA256 with input keying material $x$, salt
 $s$, and domain-separation information $i$. This matches the construction's
@@ -441,8 +466,10 @@ The epoch keys are then derived as:
   \epochsec_e &=
   \HKDF\text{-}\mathrm{Expand}(j_e,\;
     \textsf{``Aura-Group-EpochSecret''}\concat \gch_e),\\
-  (k^{\mathsf{meta}}_e,k^{\mathsf{welcome}}_e,k^{\mathsf{confirm}}_e,\initsec_e)
-  &\gets \mathrm{Subkeys}(\epochsec_e).
+  \mathbf{k}_e &\gets \mathrm{Subkeys}(\epochsec_e),\\
+  \mathbf{k}_e &:=
+  (k^{\mathsf{meta}}_e,k^{\mathsf{welcome}}_e,
+   k^{\mathsf{confirm}}_e,\initsec_e).
   \label{eq:epoch-keys}
 \end{align}
 The confirmation MAC is:
@@ -466,7 +493,7 @@ The goal is not to replace the security assumption of HKDF, but to make the
 \Shield{} profile an explicit, checkable domain-separated key schedule rather
 than a set of advisory application flags.
 
-\begin{figure}[H]
+\begin{figure}[tbp]
 \centering
 \begin{tikzpicture}[
   font=\small,
@@ -534,7 +561,7 @@ $(fk,\mathit{content})$ for that message only. The relay cannot verify or read
 unreported messages because it does not know $fk$; this follows the message
 franking goal of selective accountable disclosure~\cite{franking}.
 
-\begin{figure}[H]
+\begin{figure}[tbp]
 \centering
 \begin{tikzpicture}[
   font=\small,
@@ -572,7 +599,7 @@ The seal key is derived from the message key, and the recipient obtains it only
 after group decryption. Disappearing messages carry a send timestamp and TTL;
 decryption rejects expired messages and timestamps too far in the future.
 
-\begin{figure}[H]
+\begin{figure}[tbp]
 \centering
 \begin{tikzpicture}[
   font=\small,
@@ -609,7 +636,7 @@ because it has no group secrets. This separation is important: relay-side
 validation is useful for abuse resistance and routing, but it is not a
 cryptographic authority.
 
-\begin{figure}[H]
+\begin{figure}[tbp]
 \centering
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
@@ -640,7 +667,7 @@ cryptographic authority.
 \caption{Relay/member authority split. Relay checks are structural and useful for routing, while cryptographic acceptance remains a member-side state transition.}\label{fig:relay-authority}
 \end{figure}
 
-\begin{table}[H]
+\begin{table}[tbp]
 \centering
 \caption{Relay-visible checks versus member-side checks.}\label{tab:relay}
 \small
@@ -706,7 +733,7 @@ one application message inside the resulting epoch. It abstracts away full
 asynchronous group scheduling, but it checks the part where policy-bound epoch
 agreement, message secrecy, and franking accountability meet.
 
-\begin{table}[H]
+\begin{table}[tbp]
 \centering
 \caption{\ProVerif{} group model: 6/6 scoped queries discharged.}\label{tab:group-proverif}
 \small
@@ -740,7 +767,7 @@ relay validation. The evidence used in this paper is summarized in
 surface; they support engineering review but do not replace the scoped
 symbolic model or a future full group proof.
 
-\begin{table}[H]
+\begin{table}[tbp]
 \centering
 \caption{Implementation evidence for the group construction.}\label{tab:evidence}
 \small
@@ -761,7 +788,7 @@ Benchmarks & Group create, add member, encrypt/decrypt, update, and sealed-state
 
 \section{Comparison}
 
-\begin{table}[H]
+\begin{table}[tbp]
 \centering
 \caption{Positioning against common group-messaging design points.}\label{tab:comparison}
 \small
@@ -806,7 +833,7 @@ Relay authority & Delivery service is not a group-secret holder. & Service role 
   explicit commit semantics and downgrade analysis.
 \end{itemize}
 
-\section{Conclusion}
+\section{Conclusion}\label{sec:conclusion}
 
 \Aura{} Group defines a compact group-messaging construction in which hybrid
 TreeKEM epoch updates, policy-bound key derivation, \Shield{} enforcement,
@@ -818,13 +845,48 @@ ready for engineering evaluation and includes a scoped \ProVerif{} model for
 the core epoch/message path. The main remaining step before stronger
 proof-level claims is a full concurrent group-security model.
 
+\section*{Data and Software Availability}
+
+The implementation, tests, formal-evidence files, benchmarks, and
+manuscript sources are maintained in the accompanying
+\href{https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs}{source repository}.
+The submission artifact should identify the exact revision used for
+review and, where required by the venue, include the same revision as a
+source bundle or DOI-backed archive.
+
+\section*{Funding}
+
+The author declares that this research received no external funding.
+
+\section*{CRediT Author Statement}
+
+Oleksandr Melnychenko: conceptualization, methodology, software,
+validation, formal analysis, investigation, writing--original draft,
+writing--review and editing, and visualization.
+
+\section*{Declaration of Competing Interest}
+
+The author declares that there are no known competing financial
+interests or personal relationships that could have appeared to
+influence the work reported in this paper.
+
 \section*{Acknowledgments}
 
-The author thanks OpenAI Codex for assistance with code/documentation
-consistency checks, LaTeX build diagnostics, and editorial review. The
-protocol design, security claims, and final text remain the author's
-responsibility.
+The author acknowledges OpenAI Codex for the limited manuscript-editing
+assistance described in the dedicated declaration below.
 
+\section*{Declaration of Generative AI and AI-assisted technologies in the writing process}
+
+OpenAI Codex was used during manuscript preparation to assist with
+English-language editing, consistency checks, and minor \LaTeX{}
+typesetting support. OpenAI Codex was not used as an authoritative
+source for technical claims, references, equations, implementation
+results, or experimental measurements. All protocol descriptions,
+equations, references, tables, implementation details, and experimental
+results were independently reviewed, verified, and approved by the
+author, who takes full responsibility for the content of the article.
+
+\bibliographystyle{elsarticle-num}
 \begin{thebibliography}{99}
 
 \bibitem{melnychenko2026aura}
