@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="460" viewBox="0 0 1120 460">
+  <defs>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2.3" flood-color="#000000" flood-opacity="0.10"/>
+    </filter>
+    <marker id="arrowDark" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M 0 0 L 14 7 L 0 14 z" fill="#25282d"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M 0 0 L 14 7 L 0 14 z" fill="#1f6f55"/>
+    </marker>
+    <style>
+      .bodyText { font-family: Georgia, 'Times New Roman', serif; fill: #111; font-size: 26px; }
+      .smallText { font-family: Georgia, 'Times New Roman', serif; fill: #111; font-size: 22px; }
+      .formula { font-family: Georgia, 'Times New Roman', serif; fill: #111; font-size: 23px; font-style: italic; }
+      .formulaSmall { font-family: Georgia, 'Times New Roman', serif; fill: #111; font-size: 21px; font-style: italic; }
+      .box { stroke-width: 2.1; stroke-dasharray: 8 6; rx: 10; ry: 10; filter: url(#softShadow); }
+      .mainArrow { fill: none; stroke: #25282d; stroke-width: 2.7; stroke-linecap: square; stroke-linejoin: miter; marker-end: url(#arrowDark); }
+      .dashArrow { fill: none; stroke: #1f6f55; stroke-width: 2.7; stroke-linecap: round; stroke-linejoin: miter; stroke-dasharray: 8 8; marker-end: url(#arrowGreen); }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1120" height="460" fill="#ffffff"/>
+  <rect x="20" y="20" width="1080" height="420" rx="20" ry="20" fill="none" stroke="#a9a9a9" stroke-width="2" stroke-dasharray="10 7"/>
+
+  <!-- boxes -->
+  <rect class="box" x="75" y="75" width="260" height="88" fill="#f3f5ff" stroke="#4d5968"/>
+  <rect class="box" x="400" y="45" width="270" height="140" fill="#ecfbef" stroke="#1f6f55"/>
+  <rect class="box" x="740" y="75" width="310" height="88" fill="#f3f5ff" stroke="#4d5968"/>
+  <rect class="box" x="405" y="245" width="250" height="80" fill="#fff1f1" stroke="#8a6666"/>
+  <rect class="box" x="740" y="220" width="290" height="170" fill="#fff4e8" stroke="#7b6650"/>
+
+  <!-- main flow arrows -->
+  <path class="mainArrow" d="M 335 119 H 396"/>
+  <path class="mainArrow" d="M 670 119 H 736"/>
+  <path class="mainArrow" d="M 895 163 V 216"/>
+
+  <!-- recovery arrows -->
+  <path class="dashArrow" d="M 535 185 V 241"/>
+  <path class="dashArrow" d="M 405 285 H 205 V 167"/>
+
+  <!-- left box text -->
+  <text x="205" y="107" text-anchor="middle" class="bodyText">epoch e</text>
+  <text x="205" y="143" text-anchor="middle" class="formula">rkₑ, ckₑ, mdkₑ</text>
+
+  <!-- center box text -->
+  <text x="535" y="74" text-anchor="middle" class="smallText">
+    <tspan x="535" dy="0">snapshot, then</tspan>
+    <tspan x="535" dy="30">candidate</tspan>
+    <tspan x="535" dy="30">hybrid step</tspan>
+    <tspan x="535" dy="32" font-weight="700">X25519 + ML-KEM</tspan>
+  </text>
+
+  <!-- right top text -->
+  <text x="895" y="107" text-anchor="middle" class="bodyText">commit epoch e + 1</text>
+  <text x="895" y="143" text-anchor="middle" class="formulaSmall">rkₑ₊₁, ckₑ₊₁, mdkₑ₊₁</text>
+
+  <!-- restore box text -->
+  <text x="530" y="277" text-anchor="middle" class="smallText">
+    <tspan x="530" dy="0">restore snapshot</tspan>
+    <tspan x="530" dy="28">if verification fails</tspan>
+  </text>
+
+  <!-- erase box text -->
+  <text x="885" y="249" text-anchor="middle" class="smallText">
+    <tspan x="885" dy="0">erase obsolete</tspan>
+    <tspan x="885" dy="29">secrets;</tspan>
+    <tspan x="885" dy="29">cache metadata key</tspan>
+    <tspan x="885" dy="29">for delayed</tspan>
+    <tspan x="885" dy="29">epoch e traffic</tspan>
+  </text>
+</svg>

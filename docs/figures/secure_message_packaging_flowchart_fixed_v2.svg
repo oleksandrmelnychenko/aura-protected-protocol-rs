@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="760" viewBox="0 0 1800 760">
+  <defs>
+    <!-- Fixed-size arrowhead: userSpaceOnUse prevents oversized markers when SVG is scaled/imported. -->
+    <marker id="arrowBlack" markerWidth="13" markerHeight="13" refX="12" refY="6.5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M 0 0 L 13 6.5 L 0 13 z" fill="#111111"/>
+    </marker>
+    <style>
+      .bg { fill: #ffffff; }
+      .outer-frame { fill: none; stroke: #111111; stroke-width: 3; stroke-dasharray: 14 11; stroke-linecap: round; }
+      .box { stroke: #222222; stroke-width: 2.4; rx: 10; ry: 10; }
+      .top { fill: #fbfbfb; }
+      .meta { fill: #f2f2ff; }
+      .payload { fill: #edf8ee; }
+      .side { fill: #fbfbfb; }
+      .arrow { fill: none; stroke: #111111; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrowBlack); }
+      .serif { font-family: 'Times New Roman', 'Liberation Serif', 'DejaVu Serif', serif; fill: #111111; }
+      .topText { font-size: 30px; }
+      .mainText { font-size: 30px; }
+      .payloadText { font-size: 33px; }
+      .formula { font-size: 27px; font-style: italic; }
+      .label { font-size: 25px; }
+      .center { text-anchor: middle; dominant-baseline: middle; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1800" height="760"/>
+  <rect class="outer-frame" x="38" y="38" width="1724" height="684" rx="20" ry="20"/>
+
+  <!-- Top / metadata / payload boxes -->
+  <rect class="box top" x="260" y="76" width="1280" height="82" rx="10" ry="10"/>
+  <rect class="box meta" x="340" y="262" width="1140" height="98" rx="10" ry="10"/>
+  <rect class="box payload" x="520" y="500" width="860" height="88" rx="10" ry="10"/>
+
+  <!-- Side boxes -->
+  <rect class="box side" x="70" y="255" width="230" height="112" rx="10" ry="10"/>
+  <rect class="box side" x="1530" y="252" width="230" height="118" rx="10" ry="10"/>
+  <rect class="box side" x="170" y="493" width="280" height="112" rx="10" ry="10"/>
+  <rect class="box side" x="1430" y="490" width="250" height="118" rx="10" ry="10"/>
+
+  <!-- Clean arrows: endpoints stop at box borders; arrowheads are fixed and small. -->
+  <path class="arrow" d="M 900 158 V 250"/>
+  <path class="arrow" d="M 900 360 V 488"/>
+  <path class="arrow" d="M 300 311 H 330"/>
+  <path class="arrow" d="M 1530 311 H 1492"/>
+  <path class="arrow" d="M 450 549 H 508"/>
+  <path class="arrow" d="M 1430 549 H 1392"/>
+
+  <!-- Text -->
+  <text class="serif topText center" x="900" y="117">Visible envelope: version, epoch, header nonce, optional ratchet public material</text>
+  <text class="serif mainText center" x="910" y="311">Encrypted metadata: message index, envelope type, correlation id, payload nonce</text>
+  <text class="serif payloadText center" x="950" y="544">Encrypted payload: padded application plaintext</text>
+
+  <!-- Left metadata AAD -->
+  <text class="serif formula center" x="185" y="292">sid, ibh, e, v</text>
+  <text class="serif label center" x="185" y="333">as AAD</text>
+
+  <!-- Right metadata key: mdk_e^send -->
+  <text class="serif formula center" x="1645" y="291">mdk</text>
+  <text class="serif formula center" x="1683" y="277" font-size="18">send</text>
+  <text class="serif formula center" x="1673" y="318" font-size="18">e</text>
+  <text class="serif label center" x="1645" y="344">metadata key</text>
+
+  <!-- Left payload AAD -->
+  <text class="serif formula center" x="310" y="531">sid, ibh, e, n, v</text>
+  <text class="serif label center" x="310" y="572">as AAD</text>
+
+  <!-- Right payload key: mk_e,n -->
+  <text class="serif formula center" x="1555" y="529">mk</text>
+  <text class="serif formula center" x="1588" y="557" font-size="18">e,n</text>
+  <text class="serif label center" x="1555" y="583">message key</text>
+</svg>

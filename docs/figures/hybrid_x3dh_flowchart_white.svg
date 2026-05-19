@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="560" viewBox="0 0 1920 560">
+  <defs>
+    <linearGradient id="mainFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbfcff"/>
+      <stop offset="1" stop-color="#f2f5fb"/>
+    </linearGradient>
+    <linearGradient id="noteFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbfffd"/>
+      <stop offset="1" stop-color="#edf7f0"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M 2 2 L 12 7 L 2 12" fill="none" stroke="#2f3742" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <style><![CDATA[
+    .bg { fill:#ffffff; }
+    .panel { fill:#ffffff; stroke:#6b7280; stroke-width:2.2; stroke-dasharray:10 9; stroke-linecap:round; }
+    .mainBox { fill:url(#mainFill); stroke:#2f3742; stroke-width:2.4; }
+    .noteBox { fill:url(#noteFill); stroke:#2f6f4f; stroke-width:2.2; }
+    .txt { font-family: Georgia, 'Times New Roman', serif; fill:#111827; font-size:33px; text-anchor:middle; dominant-baseline:middle; }
+    .small { font-size:25px; }
+    .math { font-style:italic; }
+    .flow { fill:none; stroke:#2f3742; stroke-width:3.2; stroke-linecap:round; stroke-linejoin:round; marker-end:url(#arrow); }
+    .support { fill:none; stroke:#4b5563; stroke-width:2.7; stroke-dasharray:5 8; stroke-linecap:round; marker-end:url(#arrow); }
+  ]]></style>
+
+  <rect class="bg" width="1920" height="560"/>
+  <rect class="panel" x="44" y="52" width="1832" height="426" rx="24"/>
+
+  <g id="main-flow">
+    <rect class="mainBox" x="82" y="142" width="292" height="124" rx="8"/>
+    <rect class="mainBox" x="444" y="142" width="292" height="124" rx="8"/>
+    <rect class="mainBox" x="806" y="142" width="292" height="124" rx="8"/>
+    <rect class="mainBox" x="1168" y="142" width="324" height="124" rx="8"/>
+    <rect class="mainBox" x="1560" y="142" width="292" height="124" rx="8"/>
+
+    <text class="txt" x="228" y="184">
+      <tspan x="228" dy="0">Authenticated</tspan>
+      <tspan x="228" dy="43">pre-key bundle</tspan>
+    </text>
+
+    <text class="txt" x="590" y="184">
+      <tspan x="590" dy="0">Hybrid X3DH</tspan>
+      <tspan x="590" dy="43">4 DH + 1 KEM</tspan>
+    </text>
+
+    <text class="txt" x="952" y="180">
+      <tspan x="952" dy="0">Root state</tspan>
+      <tspan class="math" x="952" dy="45">rk0, mdk0, sid</tspan>
+    </text>
+
+    <text class="txt" x="1330" y="184">
+      <tspan x="1330" dy="0">Directed hybrid</tspan>
+      <tspan x="1330" dy="43">Double Ratchet</tspan>
+    </text>
+
+    <text class="txt" x="1706" y="184">
+      <tspan x="1706" dy="0">Two-layer</tspan>
+      <tspan x="1706" dy="43">message envelope</tspan>
+    </text>
+  </g>
+
+  <g id="support-notes">
+    <rect class="noteBox" x="444" y="344" width="292" height="86" rx="8"/>
+    <text class="txt small" x="590" y="378">
+      <tspan x="590" dy="0">HMAC transcript</tspan>
+      <tspan x="590" dy="34">key confirmation</tspan>
+    </text>
+
+    <rect class="noteBox" x="1168" y="344" width="324" height="86" rx="8"/>
+    <text class="txt small" x="1330" y="378">
+      <tspan x="1330" dy="0">per-direction</tspan>
+      <tspan x="1330" dy="34">DH + ML-KEM</tspan>
+    </text>
+
+    <rect class="noteBox" x="1560" y="344" width="292" height="86" rx="8"/>
+    <text class="txt small" x="1706" y="378">
+      <tspan x="1706" dy="0">payload key</tspan>
+      <tspan x="1706" dy="34">metadata key</tspan>
+    </text>
+  </g>
+
+  <line class="flow" x1="374" y1="204" x2="432" y2="204"/>
+  <line class="flow" x1="736" y1="204" x2="794" y2="204"/>
+  <line class="flow" x1="1098" y1="204" x2="1156" y2="204"/>
+  <line class="flow" x1="1492" y1="204" x2="1548" y2="204"/>
+
+  <line class="support" x1="590" y1="344" x2="590" y2="278"/>
+  <line class="support" x1="1330" y1="344" x2="1330" y2="278"/>
+  <line class="support" x1="1706" y1="344" x2="1706" y2="278"/>
+</svg>

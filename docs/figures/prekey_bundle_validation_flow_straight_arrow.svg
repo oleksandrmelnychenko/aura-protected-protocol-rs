@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="560" viewBox="0 0 1600 560">
+  <defs>
+    <marker id="arrowDark" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#202020"/>
+    </marker>
+    <marker id="arrowGray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4d5257"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f6f55"/>
+    </marker>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#235e9f"/>
+    </marker>
+    <style><![CDATA[
+      .bg { fill: #ffffff; }
+      .outer { fill: none; stroke: #111; stroke-width: 3.2; stroke-dasharray: 13 12; stroke-linecap: round; }
+      .box { stroke: #23272b; stroke-width: 2.2; stroke-dasharray: 8 7; fill: #fbfbf9; }
+      .top { fill: #f1f3ff; }
+      .green { fill: #effaf0; stroke: #1f6f55; }
+      .peach { fill: #fff4e7; stroke: #5b5045; }
+      .gray { fill: #f8f8f6; stroke: #4d5257; }
+      .txt { font-family: Georgia, 'Times New Roman', serif; fill: #111; font-size: 36px; }
+      .small { font-size: 25px; }
+      .formula { font-family: Georgia, 'Times New Roman', serif; font-style: italic; }
+      .arrow { fill: none; stroke: #202020; stroke-width: 3; stroke-dasharray: 7 7; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrowDark); }
+      .arrowGray { fill: none; stroke: #4d5257; stroke-width: 3; stroke-dasharray: 7 7; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrowGray); }
+      .arrowGreen { fill: none; stroke: #1f6f55; stroke-width: 3; stroke-dasharray: 7 7; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrowGreen); }
+      .arrowBlue { fill: none; stroke: #235e9f; stroke-width: 3; stroke-dasharray: 7 7; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrowBlue); }
+    ]]></style>
+  </defs>
+
+  <rect class="bg" width="1600" height="560"/>
+  <rect class="outer" x="28" y="26" width="1544" height="508" rx="18"/>
+
+  <!-- Top row -->
+  <rect class="box top" x="70" y="62" width="250" height="86" rx="8"/>
+  <text class="txt" text-anchor="middle" x="195" y="96">
+    <tspan x="195" dy="0">Ed25519</tspan>
+    <tspan x="195" dy="38">identity</tspan>
+  </text>
+
+  <rect class="box top" x="370" y="62" width="250" height="86" rx="8"/>
+  <text class="txt" text-anchor="middle" x="495" y="96">
+    <tspan x="495" dy="0">X25519</tspan>
+    <tspan x="495" dy="38">identity</tspan>
+  </text>
+
+  <rect class="box top" x="670" y="62" width="250" height="86" rx="8"/>
+  <text class="txt" text-anchor="middle" x="795" y="96">
+    <tspan x="795" dy="0">signed</tspan>
+    <tspan x="795" dy="38">pre-key</tspan>
+  </text>
+
+  <rect class="box top" x="970" y="62" width="270" height="86" rx="8"/>
+  <text class="txt" text-anchor="middle" x="1105" y="96">
+    <tspan x="1105" dy="0">one-time</tspan>
+    <tspan x="1105" dy="38">pre-key set</tspan>
+  </text>
+
+  <rect class="box peach" x="1290" y="62" width="250" height="86" rx="8"/>
+  <text class="txt" text-anchor="middle" x="1415" y="96" font-weight="700">
+    <tspan x="1415" dy="0">ML-KEM</tspan>
+    <tspan x="1415" dy="38">public key</tspan>
+  </text>
+
+  <!-- Middle row -->
+  <rect class="box green" x="190" y="220" width="310" height="94" rx="8"/>
+  <text class="txt" text-anchor="middle" x="345" y="257">
+    <tspan class="formula">σ</tspan><tspan baseline-shift="sub" font-size="60%" font-style="italic">IKX</tspan>
+    <tspan x="345" dy="40">identity binding</tspan>
+  </text>
+
+  <rect class="box green" x="650" y="220" width="310" height="94" rx="8"/>
+  <text class="txt" text-anchor="middle" x="805" y="257">
+    <tspan class="formula">σ</tspan><tspan baseline-shift="sub" font-size="60%" font-style="italic">SPK</tspan>
+    <tspan x="805" dy="40">pre-key signature</tspan>
+  </text>
+
+  <rect class="box gray" x="1220" y="220" width="300" height="94" rx="8"/>
+  <text class="txt small" text-anchor="middle" x="1370" y="258">
+    <tspan x="1370" dy="0">shape validation</tspan>
+    <tspan x="1370" dy="32">transcript binding</tspan>
+  </text>
+
+  <!-- Bottom transcript bundle -->
+  <rect class="box gray" x="560" y="406" width="600" height="96" rx="8"/>
+  <text class="txt small" text-anchor="middle" x="860" y="444">
+    <tspan x="860" dy="0">canonical length-prefixed </tspan>
+    <tspan font-style="italic" dx="8">Bundle</tspan><tspan baseline-shift="sub" font-size="65%" font-style="italic">R</tspan>
+    <tspan x="860" dy="34">feeds handshake transcript</tspan>
+  </text>
+
+  <!-- Arrows into signature/binding boxes -->
+  <path class="arrowBlue" d="M 195 148 L 195 185 L 260 185 L 260 220"/>
+  <path class="arrowBlue" d="M 495 148 L 495 185 L 430 185 L 430 220"/>
+
+  <path class="arrowGreen" d="M 195 148 L 195 176 L 720 176 L 720 220"/>
+  <path class="arrowGreen" d="M 795 148 L 795 220"/>
+
+  <path class="arrowGray" d="M 1105 148 L 1105 406"/>
+  <path class="arrowGray" d="M 1415 148 L 1415 220"/>
+
+  <!-- Middle outputs into Bundle_R -->
+  <path class="arrowGreen" d="M 345 314 L 432 370 L 560 438"/>
+  <path class="arrowGreen" d="M 805 314 L 805 406"/>
+  <path class="arrowGray" d="M 1410 314 L 1410 454 L 1160 454"/>
+</svg>

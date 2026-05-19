@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="580" viewBox="0 0 1500 580" role="img" aria-label="Directed hybrid ratchet HKDF step diagram">
+  <defs>
+    <marker id="arrow-dark" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f252b"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f6f56"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#184f8a"/>
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b66a12"/>
+    </marker>
+    <style><![CDATA[
+      .bg { fill: #ffffff; }
+      .outer { fill: none; stroke: #111; stroke-width: 3.2; stroke-dasharray: 12 12; stroke-linecap: round; }
+      .box { stroke-width: 2.2; stroke-dasharray: 8 7; rx: 9; ry: 9; }
+      .smallbox { stroke-width: 2.0; stroke-dasharray: 8 7; rx: 8; ry: 8; }
+      .graybox { fill: #fbfbfa; stroke: #33383d; }
+      .bluebox { fill: #f3f5ff; stroke: #26365c; }
+      .greenbox { fill: #eefcf0; stroke: #1f6f56; }
+      .tanbox { fill: #fff6eb; stroke: #8a5b28; }
+      .line { fill: none; stroke: #1f252b; stroke-width: 3.0; stroke-dasharray: 8 7; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow-dark); }
+      .line-blue { fill: none; stroke: #184f8a; stroke-width: 3.0; stroke-dasharray: 8 7; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow-blue); }
+      .line-orange { fill: none; stroke: #b66a12; stroke-width: 3.0; stroke-dasharray: 8 7; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow-orange); }
+      .line-green { fill: none; stroke: #1f6f56; stroke-width: 3.0; stroke-dasharray: 8 7; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow-green); }
+      .junction { fill: #1f252b; stroke: #fff; stroke-width: 2; }
+      text { font-family: "Times New Roman", Georgia, serif; fill: #101010; }
+      .label { font-size: 30px; }
+      .small { font-size: 26px; }
+      .main { font-size: 31px; font-weight: 700; }
+      .formula { font-size: 27px; font-style: italic; }
+      .sub { font-size: 18px; baseline-shift: sub; }
+      .sup { font-size: 17px; baseline-shift: super; }
+      .micro { font-size: 16px; }
+    ]]></style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1500" height="580"/>
+  <rect class="outer" x="32" y="34" width="1436" height="512" rx="24" ry="24"/>
+
+  <!-- Input and processing boxes -->
+  <rect class="smallbox graybox" x="130" y="105" width="270" height="86"/>
+  <rect class="smallbox bluebox" x="70" y="242" width="380" height="62"/>
+  <rect class="smallbox tanbox" x="62" y="362" width="470" height="66"/>
+
+  <rect class="box bluebox" x="545" y="228" width="445" height="92"/>
+  <rect class="box greenbox" x="1105" y="205" width="240" height="115"/>
+  <rect class="box tanbox" x="1090" y="375" width="300" height="82"/>
+
+  <!-- Arrows into HKDF and outputs -->
+  <path class="line" d="M 400 148 H 770 V 228"/>
+  <path class="line-blue" d="M 450 273 H 545"/>
+  <path class="line-orange" d="M 532 395 H 770 V 320"/>
+  <path class="line-green" d="M 990 274 H 1105"/>
+  <path class="line" d="M 770 395 H 1090"/>
+
+  <circle class="junction" cx="770" cy="395" r="5.5"/>
+  <circle class="junction" cx="770" cy="320" r="4.8"/>
+
+  <!-- Top-left salt text -->
+  <text x="265" y="139" text-anchor="middle" class="formula">
+    <tspan>rk</tspan><tspan class="sub">e</tspan>
+  </text>
+  <text x="265" y="172" text-anchor="middle" class="small">HKDF salt</text>
+
+  <!-- X25519 input -->
+  <text x="260" y="282" text-anchor="middle" class="small">
+    <tspan>X25519(</tspan><tspan font-style="italic">d</tspan><tspan class="sub">e+1</tspan><tspan>, </tspan><tspan font-style="italic">D</tspan><tspan class="sub">peer</tspan><tspan>)</tspan>
+  </text>
+
+  <!-- ML-KEM input -->
+  <text x="297" y="404" text-anchor="middle" class="small">
+    <tspan>ML-KEM-768.Encaps(</tspan><tspan font-style="italic">kpk</tspan><tspan class="sub">peer</tspan><tspan>)</tspan>
+  </text>
+
+  <!-- HKDF center -->
+  <text x="767" y="265" text-anchor="middle" class="main">HKDF</text>
+  <text x="767" y="303" text-anchor="middle" class="small">
+    <tspan font-style="italic">info</tspan><tspan> = “Aura-Hybrid-Ratchet” || </tspan><tspan font-style="italic">kpk</tspan><tspan class="sub">e+1</tspan>
+  </text>
+
+  <!-- Output keys -->
+  <text x="1225" y="236" text-anchor="middle" class="formula">
+    <tspan>rk</tspan><tspan class="sub">e+1</tspan>
+  </text>
+  <text x="1225" y="273" text-anchor="middle" class="formula">
+    <tspan>ck</tspan><tspan class="sub">e+1</tspan>
+  </text>
+  <text x="1225" y="305" text-anchor="middle" class="formula">
+    <tspan>mdk</tspan><tspan class="sup">send</tspan><tspan class="sub">e+1</tspan>
+  </text>
+
+  <!-- Ratchet header -->
+  <text x="1240" y="407" text-anchor="middle" class="small" font-weight="700">ratchet header</text>
+  <text x="1240" y="441" text-anchor="middle" class="small">
+    <tspan font-style="italic">D</tspan><tspan class="sub">e+1</tspan><tspan>, </tspan><tspan font-style="italic">ct</tspan><tspan class="sub">e+1</tspan><tspan>, </tspan><tspan font-style="italic">kpk</tspan><tspan class="sub">e+1</tspan>
+  </text>
+
+</svg>
