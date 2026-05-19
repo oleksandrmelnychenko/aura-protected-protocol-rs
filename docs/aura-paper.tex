@@ -1,8 +1,6 @@
-% !TEX program = pdflatex
-\documentclass[11pt,a4paper]{article}
-
-% ─── Geometry ────────────────────────────────────────────────
-\usepackage[margin=2.05cm]{geometry}
+% !TEX program = tectonic
+\documentclass[preprint,12pt]{elsarticle}
+\biboptions{numbers}
 
 % ─── Encoding & fonts ───────────────────────────────────────
 \usepackage[T1]{fontenc}
@@ -20,6 +18,7 @@
 \usepackage{xcolor}
 \usepackage{graphicx}
 \usepackage{float}
+\usepackage{placeins}
 \usepackage{caption}
 \usepackage{subcaption}
 \usepackage{tikz}
@@ -27,6 +26,25 @@
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 \setlength{\emergencystretch}{3em}
+\hfuzz=20pt
+\hbadness=10000
+\vbadness=10000
+\raggedbottom
+\setlength{\textfloatsep}{7pt plus 1pt minus 2pt}
+\setlength{\floatsep}{6pt plus 1pt minus 1pt}
+\setlength{\intextsep}{7pt plus 1pt minus 1pt}
+\setcounter{topnumber}{5}
+\setcounter{bottomnumber}{4}
+\setcounter{totalnumber}{8}
+\renewcommand{\topfraction}{0.95}
+\renewcommand{\bottomfraction}{0.85}
+\renewcommand{\textfraction}{0.05}
+\renewcommand{\floatpagefraction}{0.75}
+\makeatletter
+\setlength{\@fptop}{0pt}
+\setlength{\@fpsep}{8pt plus 1fil}
+\setlength{\@fpbot}{0pt plus 1fil}
+\makeatother
 
 % ─── Algorithms ──────────────────────────────────────────────
 \usepackage[ruled,linesnumbered,noend]{algorithm2e}
@@ -99,19 +117,20 @@
 \newcommand{\SPQR}{\textsf{SPQR}}
 \newcommand{\PQThree}{\textsf{PQ3}}
 
-% ─── Title ───────────────────────────────────────────────────
-\title{\textbf{Aura: Hybrid Post-Quantum Confidentiality for Stateful Messaging\\with Per-Ratchet KEM Rotation and Symbolic Models}}
-
-\author{%
-  Oleksandr Melnychenko\\
-  \texttt{oleksandr@aura.io}
-}
-
-\date{\today}
+\date{}
 
 % ═════════════════════════════════════════════════════════════
 \begin{document}
-\maketitle
+
+\begin{frontmatter}
+
+\title{Aura: Hybrid Post-Quantum Confidentiality for Stateful Messaging with Per-Ratchet KEM Rotation and Symbolic Models}
+
+\author[aff1]{Oleksandr Melnychenko}
+
+\address[aff1]{Khmelnytskyi National University, Khmelnytskyi, Ukraine}
+
+\journal{Journal of Information Security and Applications}
 
 % ─────────────────────────────────────────────────────────────
 % ABSTRACT
@@ -124,11 +143,11 @@ The construction binds each new KEM public key into the HKDF transcript and sepa
 The security argument consists of six reduction-style theorems under Gap-CDH, ML-KEM IND-CCA2, dual-PRF, and MRAE assumptions. Symbolic evidence is deliberately scoped: 10 Tamarin lemmas verify a two-DH handshake abstraction and a terminal one-step ratchet abstraction, and the active ProVerif model discharges 4 proof-scope queries for the handshake/message path. Injective authentication and raw KEM-secret secrecy after KEM-SK disclosure are documented as stress obligations rather than counted as machine-checked claims. The Rust artifact implements the analyzed two-party protocol and includes deterministic vectors, reproducibility scripts, regression tests, and an implementation cross-reference map; implementation-wide line and test counts are artifact context, not separate security evidence.
 \end{abstract}
 
-\smallskip
-\noindent\textbf{Keywords:} Post-quantum cryptography, secure messaging, double ratchet, hybrid key exchange, ML-KEM, formal verification, Tamarin, ProVerif.
+\begin{keyword}
+post-quantum cryptography \sep secure messaging \sep double ratchet \sep hybrid key exchange \sep ML-KEM \sep formal verification \sep Tamarin \sep ProVerif
+\end{keyword}
 
-\tableofcontents
-\newpage
+\end{frontmatter}
 
 % ═════════════════════════════════════════════════════════════
 % 1. INTRODUCTION
@@ -219,7 +238,7 @@ We write $\secpar$ for the security parameter. A function $f(\secpar)$ is \emph{
 \centering
 \caption{Protocol-specific notation.}\label{tab:notation}
 \small
-\begin{tabular}{@{}ll@{}}
+\begin{tabularx}{\textwidth}{@{}L{2.4cm}X@{}}
 \toprule
 Symbol & Meaning \\
 \midrule
@@ -237,15 +256,17 @@ $q_s$ & Number of sessions \\
 $q_m$ & Total encrypted message attempts across all sessions \\
 $N_{\max}$ & Negotiated per-chain limit; API default 1{,}000, protocol cap 10{,}000 \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 \subsection{Cryptographic Primitives}
 
 \begin{definition}[Diffie--Hellman on X25519]\label{def:dh}
-The proof uses an idealized prime-order X25519 abstraction of order
-$q = 2^{252} + 27742317777372353535851937790883648493$. Curve25519 has
-cofactor 8; the implementation follows RFC~7748 clamping and rejects malformed
+The proof uses an idealized prime-order X25519 abstraction with
+\[
+  q = 2^{252} + 27742317777372353535851937790883648493 .
+\]
+Curve25519 has cofactor 8; the implementation follows RFC~7748 clamping and rejects malformed
 field encodings, small-order inputs, and all-zero shared secrets where
 applicable. Cofactor and twist subtleties are not modeled beyond this
 abstraction. The X25519 function~\cite{rfc7748} computes scalar multiplication
@@ -331,10 +352,13 @@ Aura consists of two phases: a \emph{hybrid X3DH handshake} (\cref{sec:handshake
 
 Each party $R$ publishes a pre-key bundle:
 \begin{equation}\label{eq:prekey-bundle}
-  \mathit{Bundle}_R = \bigl(v,\; ed_R^{\mathit{pub}},\; \IK_R^{\mathit{pub}},\;
-  \mathit{spk\_id},\; \SPK_R^{\mathit{pub}},\;
-  \sigma_{\SPK},\; \{(\mathit{opk\_id}_j,\OPK_{R,j}^{\mathit{pub}})\}_j,\;
-  kpk_R,\; \sigma_{\mathit{IKX}}\bigr),
+  \begin{aligned}
+  \mathit{Bundle}_R = \bigl(&v,\; ed_R^{\mathit{pub}},\;
+  \IK_R^{\mathit{pub}},\; \mathit{spk\_id},\;
+  \SPK_R^{\mathit{pub}},\; \sigma_{\SPK},\\
+  &\{(\mathit{opk\_id}_j,\OPK_{R,j}^{\mathit{pub}})\}_j,\;
+  kpk_R,\; \sigma_{\mathit{IKX}}\bigr).
+  \end{aligned}
 \end{equation}
 where $\sigma_{\mathit{IKX}}=\textsf{Ed25519.Sign}(ed_R^{\mathit{sk}},\IK_R^{\mathit{pub}})$ binds the X25519 identity key to the Ed25519 identity key, $\sigma_{\SPK}=\textsf{Ed25519.Sign}(ed_R^{\mathit{sk}},\SPK_R^{\mathit{pub}})$ signs the medium-term pre-key, $\{\OPK_{R,j}\}$ is a set of one-time pre-keys, and $kpk_R$ is the ML-KEM public key. The KEM public key is validated and transcript-bound by key confirmation; it is not a separate Ed25519-signed object in the current artifact.
 
@@ -371,7 +395,7 @@ The handshake extends Signal's X3DH with an ML-KEM-768 encapsulation and bilater
 \caption{Hybrid X3DH handshake messages and root-key inputs. The KEM public key is validated and transcript-bound by key confirmation; it is not a separate per-session signature.}\label{fig:handshake-flow}
 \end{figure}
 
-\begin{algorithm}[H]
+\begin{algorithm}[tbp]
 \caption{Initiator X3DH computation.}\label{alg:initiator}
 \DontPrintSemicolon
 \KwIn{Initiator identity $(\IK_I, \EK_I)$; responder bundle $\mathit{Bundle}_R$}
@@ -448,7 +472,7 @@ The old chain key $\ck_e^{(n)}$ is securely erased after derivation, providing p
 
 \subsubsection{Asymmetric Hybrid Ratchet}
 
-\begin{algorithm}[H]
+\begin{algorithm}[tbp]
 \caption{Send-side hybrid ratchet (epoch $e \to e+1$).}\label{alg:send-ratchet}
 \DontPrintSemicolon
 \KwIn{Current root key $\rk_e$, peer's DH public key $D_{\mathit{peer}}$, peer's ML-KEM public key $kpk_{\mathit{peer}}$}
@@ -593,7 +617,13 @@ remaining budget falls to 10\% or below.
 \paragraph{Identity binding hash.}
 Every AEAD additional-data construction includes an identity binding hash:
 \begin{equation}\label{eq:identity-binding}
-  \mathit{ibh} = \SHA(\texttt{"Aura-Identity-Binding"} \concat \mathrm{sort}(\mathit{ed}^{\mathit{pub}}_I, \mathit{ed}^{\mathit{pub}}_R) \concat \mathrm{sort}(\IK^{\mathit{pub}}_I, \IK^{\mathit{pub}}_R)),
+  \begin{aligned}
+  \mathit{ibh} = \SHA(&\texttt{"Aura-Identity-Binding"} \concat
+  \mathrm{sort}(\mathit{ed}^{\mathit{pub}}_I,
+    \mathit{ed}^{\mathit{pub}}_R)\\
+  &\concat
+  \mathrm{sort}(\IK^{\mathit{pub}}_I,\IK^{\mathit{pub}}_R)).
+  \end{aligned}
 \end{equation}
 where both Ed25519 and X25519 public key pairs are lexicographically sorted before concatenation. This binds AEAD data to the unordered pair of identities. Role separation is provided by the handshake transcript, key-confirmation direction labels, and initiator/responder chain-key assignment.
 
@@ -688,17 +718,22 @@ This section states six security theorems for the Aura protocol. The paper keeps
 \begin{theorem}[Hybrid Root-Key Pseudorandomness]\label{thm:hybrid-combiner}
 If $\KEM$ is $\INDCCA$ secure \textbf{or} $\DH$ satisfies $\GapCDH$ in the $\ROM$, then the Aura hybrid combiner
 \begin{equation}\label{eq:combiner-root}
-  \rk_0 = \HKDF(\mathit{ss}_{\mathit{ky}},\, 32,\, \mathit{cs},\, \texttt{"Aura-Hybrid-X3DH"})
+  \rk_0 =
+  \HKDF(\mathit{ss}_{\mathit{ky}},\, 32,\,
+  \mathit{cs},\, \texttt{"Aura-Hybrid-X3DH"})
 \end{equation}
 outputs a pseudorandom root key. Concretely:
 \begin{equation}\label{eq:combiner-bound}
+  \begin{aligned}
   \adv^{\mathsf{rk}}_{\mathrm{Hybrid}}(\advA)
-  \leq
+  &\leq
   \min\!\left\{
     \adv^{\INDCCA}_{\KEM}(\advB_1),
     4 \cdot \adv^{\GapCDH}_{\DH}(\advB_2)
   \right\}
-  + \adv^{\dualPRF}_{\HKDF}(\advB_3) + \frac{q_H}{2^{256}},
+  \\
+  &\quad + \adv^{\dualPRF}_{\HKDF}(\advB_3) + \frac{q_H}{2^{256}}.
+  \end{aligned}
 \end{equation}
 where $q_H$ is the number of random oracle queries and the factor 4 arises from the four DH key pairs in the classical X3DH component.
 \end{theorem}
@@ -853,7 +888,13 @@ in \cref{thm:pcs}.
 \begin{theorem}[Message Security]\label{thm:msg-security}
 For fresh partnered sessions under non-adversary-established root keys, and under $\MRAE$ security of $\AEAD$ and $\PRF$ security of the chain KDF, each message key $\mk_{e,n}$ is indistinguishable from random and each ciphertext provides $\INDCPA$ + $\INTCTXT$ security over $q_m$ total encrypted message attempts:
 \begin{equation}\label{eq:msg-security-bound}
-  \adv^{\mathrm{Conf}}_{\mathrm{AURA}}(\advA) \leq \adv^{\eCK}_{\mathrm{AURA}}(\advB_0) + q_m \cdot \adv^{\PRF}_{\mathrm{chain}}(\advB_1) + q_m \cdot \adv^{\MRAE}_{\AEAD}(\advB_2) + \frac{q_m^2}{2^{96}}.
+  \begin{aligned}
+  \adv^{\mathrm{Conf}}_{\mathrm{AURA}}(\advA)
+  &\leq \adv^{\eCK}_{\mathrm{AURA}}(\advB_0)
+  + q_m \cdot \adv^{\PRF}_{\mathrm{chain}}(\advB_1)\\
+  &\quad + q_m \cdot \adv^{\MRAE}_{\AEAD}(\advB_2)
+  + \frac{q_m^2}{2^{96}}.
+  \end{aligned}
 \end{equation}
 \end{theorem}
 
@@ -884,7 +925,7 @@ Exact replays are caught by the nonce cache while the entry is retained. If the 
 \centering
 \caption{Concrete security levels of Aura components.}\label{tab:bounds}
 \small
-\begin{tabular}{@{}llc@{}}
+\begin{tabularx}{\textwidth}{@{}L{0.31\textwidth}L{0.43\textwidth}L{0.17\textwidth}@{}}
 \toprule
 Component / Assumption & Standard & Security (bits) \\
 \midrule
@@ -902,7 +943,7 @@ PCS, classical (\cref{eq:pcs-classical-bound}) & $\GapCDH$, 1 step & \textbf{128
 PCS, hybrid (\cref{eq:pcs-hybrid-bound}) & $\GapCDH$ + ML-KEM, 2 steps & \textbf{128} \\
 Message security (\cref{thm:msg-security}) & $\PRF$ + $\MRAE$ & \textbf{128} \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 The dominant security loss arises from the session-guessing factor $q_s$ in \cref{thm:ake}. For $q_s \leq 2^{30}$, the classical 128-bit target leaves a 98-bit concrete bound in the AKE reduction. ML-KEM-768 is treated as a NIST category-3 KEM; any Core-SVP bit estimate should be read as estimator-dependent rather than as a protocol constant. The FS and PCS bounds in \cref{thm:fs,thm:pcs} do not add a separate session-guessing factor.
@@ -1040,7 +1081,7 @@ The Aura protocol is implemented in Rust (edition 2021, MSRV 1.86). The current 
 \begin{table}[H]
 \centering
 \caption{Implementation modules.}\label{tab:modules}
-\small
+\scriptsize
 \begin{tabularx}{\textwidth}{@{}p{0.14\textwidth}p{0.19\textwidth}Y@{}}
 \toprule
 Module & Path & Responsibility \\
@@ -1347,7 +1388,9 @@ supports the design.
 \caption{Positioning of Aura against current post-quantum messaging
 baselines.}\label{tab:sota-comparison}
 \scriptsize
-\begin{tabularx}{\textwidth}{@{}L{0.16\textwidth}L{0.19\textwidth}L{0.18\textwidth}L{0.17\textwidth}Y@{}}
+\setlength{\tabcolsep}{3pt}
+\resizebox{\textwidth}{!}{%
+\begin{tabularx}{1.03\textwidth}{@{}L{0.16\textwidth}L{0.19\textwidth}L{0.18\textwidth}L{0.17\textwidth}Y@{}}
 \toprule
 Protocol & Where PQ material is used & PCS after compromise & Public evidence & Implication for Aura \\
 \midrule
@@ -1382,13 +1425,14 @@ Rust research artifact, six theorems, Tamarin/ProVerif, implementation cross-ref
 Narrow contribution: explicit KEM-key binding, per-epoch metadata encryption, and implementation-level invariants in one Rust codebase. \\
 \bottomrule
 \end{tabularx}
+}
 \end{table}
 
 \begin{table}[H]
 \centering
 \caption{Compact comparison against nearest post-quantum messaging baselines.}
 \label{tab:comparison}
-\small
+\scriptsize
 \begin{tabularx}{\textwidth}{@{}L{0.22\textwidth}YYYY@{}}
 \toprule
 Feature & PQXDH & \SPQR{} & \PQThree{} & \textbf{Aura} \\
@@ -1569,18 +1613,52 @@ Aura isolates a concrete design point for hybrid post-quantum confidentiality in
 
 The evidence is split into layers a reviewer can check: 6 reduction-style theorems, 10 Tamarin lemmas over decomposed abstractions, 4 active ProVerif proof-scope queries, an implementation cross-reference map, and a Rust implementation. The current implementation measures approximately $1.1$\,ms for the full handshake, $280\,\mu$s/msg for alternating 256-byte messages, and $15\,\mu$s/msg for pre-generated same-direction decrypts. These are cost snapshots, not security claims; the named two-party test evidence is reported separately from implementation modules outside the analyzed theorem boundary.
 
+\section*{Data and Software Availability}
+
+The implementation, tests, reproducibility scripts, and manuscript
+sources are maintained in the accompanying source repository:
+\url{https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs}.
+The submission artifact should identify the exact revision used for
+review and, where required by the venue, include the same revision as a
+source bundle or DOI-backed archive.
+
+\section*{Funding}
+
+The author declares that this research received no external funding.
+
+\section*{CRediT Author Statement}
+
+Oleksandr Melnychenko: conceptualization, methodology, software,
+validation, formal analysis, investigation, writing--original draft,
+writing--review and editing, and visualization.
+
+\section*{Declaration of Competing Interest}
+
+The author declares that there are no known competing financial
+interests or personal relationships that could have appeared to
+influence the work reported in this paper.
+
 \section*{Acknowledgments}
 
-The author thanks OpenAI Codex for assistance with code/documentation
-consistency checks, LaTeX build diagnostics, and editorial review. The
-protocol design, security claims, and final text remain the author's
-responsibility.
+The author acknowledges OpenAI Codex for the limited manuscript-editing
+assistance described in the dedicated declaration below.
+
+\section*{Declaration of Generative AI and AI-assisted technologies in the writing process}
+
+OpenAI Codex was used during manuscript preparation to assist with
+English-language editing, consistency checks, and minor \LaTeX{}
+typesetting support. OpenAI Codex was not used as an authoritative
+source for technical claims, references, equations, implementation
+results, or experimental measurements. All protocol descriptions,
+equations, references, tables, implementation details, and experimental
+results were independently reviewed, verified, and approved by the
+author, who takes full responsibility for the content of the article.
 
 
 % ═════════════════════════════════════════════════════════════
 % REFERENCES
 % ═════════════════════════════════════════════════════════════
-\bibliographystyle{plain}
+\bibliographystyle{elsarticle-num}
 \begin{thebibliography}{99}
 
 \bibitem{signal-x3dh}
@@ -1807,136 +1885,5 @@ Signal Messenger.
 \newblock \url{https://github.com/signalapp/SparsePostQuantumRatchet}
 
 \end{thebibliography}
-
-% ═════════════════════════════════════════════════════════════
-% APPENDIX
-% ═════════════════════════════════════════════════════════════
-\appendix
-
-\section{Protocol Constants}\label{app:constants}
-
-\begin{table}[H]
-\centering
-\caption{Selected two-party session constants.}\label{tab:constants}
-\small
-\begin{tabular}{@{}llr@{}}
-\toprule
-Constant & Purpose & Value \\
-\midrule
-\texttt{PROTOCOL\_VERSION} & Wire format version & 1 \\
-\texttt{ROOT\_KEY\_BYTES} & Root key size & 32 \\
-\texttt{CHAIN\_KEY\_BYTES} & Chain key size & 32 \\
-\texttt{MESSAGE\_KEY\_BYTES} & Message key size & 32 \\
-\texttt{METADATA\_KEY\_BYTES} & Metadata key size & 32 \\
-\texttt{SESSION\_ID\_BYTES} & Session identifier size & 16 \\
-\texttt{AES\_KEY\_BYTES} & AEAD key size & 32 \\
-\texttt{AES\_GCM\_NONCE\_BYTES} & AEAD nonce size & 12 \\
-\texttt{AES\_GCM\_TAG\_BYTES} & AEAD tag size & 16 \\
-\texttt{MAX\_MESSAGES\_PER\_CHAIN} & Chain exhaustion threshold & 10{,}000 \\
-\texttt{MAX\_SKIPPED\_MESSAGE\_KEYS} & Out-of-order cache limit & 1{,}000 \\
-\texttt{MAX\_SEEN\_NONCES} & Replay nonce cache size & 2{,}048 \\
-\texttt{MAX\_CACHED\_METADATA\_KEYS} & Metadata key cache limit & 100 \\
-\texttt{MAX\_METADATA\_KEY\_EPOCH\_AGE} & Metadata key age limit & 32 \\
-\texttt{KYBER\_PUBLIC\_KEY\_BYTES} & ML-KEM public key & 1{,}184 \\
-\texttt{KYBER\_SECRET\_KEY\_BYTES} & ML-KEM secret key & 2{,}400 \\
-\texttt{KYBER\_CIPHERTEXT\_BYTES} & ML-KEM ciphertext & 1{,}088 \\
-\texttt{KYBER\_SHARED\_SECRET\_BYTES} & ML-KEM shared secret & 32 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Delayed old-epoch metadata decryptability is bounded by both
-\texttt{MAX\_CACHED\_METADATA\_KEYS} and
-\texttt{MAX\_METADATA\_KEY\_EPOCH\_AGE}; the implementation evicts by count and
-by epoch age.
-
-\section{HKDF Domain Separation Strings}\label{app:info-strings}
-
-The core two-party proof uses the X3DH, hybrid-ratchet, chain, message,
-metadata, key-confirmation, transcript, and identity-binding labels below.
-The table also records adjacent implementation constants such as fallback and
-OPAQUE-derived labels so reviewers can compare the paper with the source artifact
-without treating every row as an active proof assumption.
-
-\begin{table}[H]
-\centering
-\caption{Domain labels and adjacent implementation constants referenced by the paper artifact.}\label{tab:info-strings}
-\small
-\begin{tabular}{@{}ll@{}}
-\toprule
-Info String & Context \\
-\midrule
-\texttt{"Aura-X3DH"} & Classical X3DH key derivation \\
-\texttt{"Aura-Hybrid-X3DH"} & Hybrid combiner in handshake \\
-\texttt{"Aura-Hybrid-Ratchet"} & Hybrid ratchet step (augmented with $kpk$) \\
-\texttt{"Aura-DH-Ratchet"} & Classical-only DH ratchet (fallback) \\
-\texttt{"Aura-ChainInit"} & Initial send/recv chain key split \\
-\texttt{"Aura-Chain"} & Symmetric chain key advance \\
-\texttt{"Aura-Msg"} & Message key derivation from chain \\
-\texttt{"Aura-SessionId"} & Session identifier derivation \\
-\texttt{"Aura-MetadataKey"} & Metadata encryption key \\
-\texttt{"Aura-OPAQUE-Root"} & OPAQUE-to-session root derivation \\
-\texttt{"Aura-State-HMAC"} & State integrity HMAC key \\
-\texttt{"Aura-KeyConfirm-I"} & Initiator key confirmation \\
-\texttt{"Aura-KeyConfirm-R"} & Responder key confirmation \\
-\texttt{"Aura-Handshake-Transcript"} & Transcript hash \\
-\texttt{"Aura-Identity-Binding"} & Identity binding hash \\
-\texttt{"Aura-Handshake-Init-Identity-Binding"} & Initiator identity binding signature \\
-\texttt{"Aura-PQ-Hybrid::"} & Hybrid KEM combiner salt prefix \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\section{Wire Format}\label{app:wire-format}
-
-All messages are serialized using Protocol Buffers v3 (\texttt{prost} crate). The primary wire-format messages are:
-
-\paragraph{Pre-Key Bundle.}
-\begin{lstlisting}
-message PreKeyBundle {
-  uint32 version = 1;
-  bytes  identity_ed25519_public = 2;
-  bytes  identity_x25519_public = 3;
-  uint32 signed_pre_key_id = 4;
-  bytes  signed_pre_key_public = 5;
-  bytes  signed_pre_key_signature = 6;
-  repeated OneTimePreKey one_time_pre_keys = 7;
-  bytes  kyber_public = 8;
-  bytes  identity_x25519_signature = 9;
-}
-\end{lstlisting}
-
-\paragraph{Handshake Init.}
-\begin{lstlisting}
-message HandshakeInit {
-  uint32 version = 1;
-  bytes  initiator_identity_ed25519_public = 2; // 32 bytes
-  bytes  initiator_identity_x25519_public = 3;  // 32 bytes
-  bytes  initiator_ephemeral_x25519_public = 4; // 32 bytes
-  optional uint32 one_time_pre_key_id = 5;
-  bytes  kyber_ciphertext = 6;        // 1088 bytes
-  bytes  key_confirmation_mac = 7;    // 32 bytes
-  bytes  initiator_kyber_public = 8;  // 1184 bytes
-  uint32 max_messages_per_chain = 9;
-  bytes  initiator_identity_binding_signature = 10; // 64 bytes
-}
-\end{lstlisting}
-
-\paragraph{Secure Envelope.}
-\begin{lstlisting}
-message SecureEnvelope {
-  uint32 version = 1;
-  bytes  encrypted_metadata = 2; // AEAD(mdk, metadata)
-  bytes  encrypted_payload = 3;  // AEAD(mk, plaintext)
-  bytes  header_nonce = 4;       // 12 bytes
-  uint64 ratchet_epoch = 5;
-  // Present only on ratchet steps:
-  bytes  dh_public_key = 6;      // 32 bytes
-  bytes  kyber_ciphertext = 7;   // 1088 bytes
-  Timestamp sent_at = 8;         // nanoseconds zeroed
-  bytes  new_kyber_public = 9;   // 1184 bytes
-  uint64 previous_chain_length = 10;
-}
-\end{lstlisting}
 
 \end{document}
