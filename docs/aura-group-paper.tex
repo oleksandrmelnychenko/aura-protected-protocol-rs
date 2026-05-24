@@ -4,9 +4,12 @@
 
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
-\usepackage{lmodern}
 \usepackage{microtype}
 \usepackage{amsmath,amssymb,amsthm}
+\usepackage{newtxtext}
+\usepackage{newtxmath}
+\renewcommand{\sfdefault}{\rmdefault}
+\renewcommand{\ttdefault}{\rmdefault}
 \usepackage{booktabs}
 \usepackage{tabularx}
 \usepackage{array}
@@ -16,21 +19,31 @@
 \usepackage{placeins}
 \usepackage{caption}
 \usepackage{subcaption}
+\captionsetup[figure]{name=Figure,labelsep=colon}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning,fit,calc,shapes.geometric}
+\usepackage[ruled,linesnumbered,noend]{algorithm2e}
+\SetAlgorithmName{Algorithm}{Algorithm}{List of Algorithms}
+\SetAlgoCaptionSeparator{:}
+\SetKwComment{Comment}{$\triangleright$~}{}
 \usepackage[colorlinks,citecolor=blue!70!black,linkcolor=blue!70!black,urlcolor=blue!50!black]{hyperref}
+\urlstyle{same}
 \usepackage[capitalise,noabbrev]{cleveref}
+\crefname{figure}{Figure}{Figures}
+\Crefname{figure}{Figure}{Figures}
 
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 \setlength{\emergencystretch}{3em}
 \hfuzz=20pt
+\vfuzz=20pt
 \hbadness=10000
 \vbadness=10000
 \raggedbottom
 \setlength{\textfloatsep}{7pt plus 1pt minus 2pt}
 \setlength{\floatsep}{6pt plus 1pt minus 1pt}
 \setlength{\intextsep}{7pt plus 1pt minus 1pt}
+\setlength{\bibsep}{1pt plus 0.2ex}
 \setcounter{topnumber}{5}
 \setcounter{bottomnumber}{4}
 \setcounter{totalnumber}{8}
@@ -51,31 +64,34 @@
 \newtheorem{definition}[theorem]{Definition}
 \newtheorem{remark}[theorem]{Remark}
 
+\newcommand{\tech}[1]{\textnormal{#1}}
+\newcommand{\domain}[1]{\textnormal{``#1''}}
+\renewcommand{\mathsf}[1]{\mathrm{#1}}
 \newcommand{\Aura}{\textsc{Aura}}
-\newcommand{\MLS}{\textsf{MLS}}
-\newcommand{\TreeKEM}{\textsf{TreeKEM}}
-\newcommand{\Shield}{\textsf{Shield}}
-\newcommand{\HKDF}{\textsf{HKDF}}
-\newcommand{\HMAC}{\textsf{HMAC}}
-\newcommand{\SHA}{\textsf{SHA-256}}
-\newcommand{\AEAD}{\textsf{AES-256-GCM-SIV}}
-\newcommand{\BLAKE}{\textsf{BLAKE2b}}
-\newcommand{\ProVerif}{\textsf{ProVerif}}
-\newcommand{\Tamarin}{\textsf{Tamarin}}
-\newcommand{\EdDSA}{\textsf{Ed25519}}
-\renewcommand{\DH}{\textsf{X25519}}
-\newcommand{\KEM}{\textsf{ML-KEM-768}}
-\newcommand{\Enc}{\textsf{Enc}}
-\newcommand{\Dec}{\textsf{Dec}}
-\newcommand{\KeyGen}{\textsf{KeyGen}}
-\newcommand{\Encaps}{\textsf{Encaps}}
-\newcommand{\Decaps}{\textsf{Decaps}}
+\newcommand{\MLS}{\tech{MLS}}
+\newcommand{\TreeKEM}{\tech{TreeKEM}}
+\newcommand{\Shield}{\tech{Shield}}
+\newcommand{\HKDF}{\tech{HKDF}}
+\newcommand{\HMAC}{\tech{HMAC}}
+\newcommand{\SHA}{\tech{SHA-256}}
+\newcommand{\AEAD}{\tech{AES-256-GCM-SIV}}
+\newcommand{\BLAKE}{\tech{BLAKE2b}}
+\newcommand{\ProVerif}{\tech{ProVerif}}
+\newcommand{\Tamarin}{\tech{Tamarin}}
+\newcommand{\EdDSA}{\tech{Ed25519}}
+\renewcommand{\DH}{\tech{X25519}}
+\newcommand{\KEM}{\tech{ML-KEM-768}}
+\newcommand{\Enc}{\tech{Enc}}
+\newcommand{\Dec}{\tech{Dec}}
+\newcommand{\KeyGen}{\tech{KeyGen}}
+\newcommand{\Encaps}{\tech{Encaps}}
+\newcommand{\Decaps}{\tech{Decaps}}
 \newcommand{\concat}{\,\|\,}
 \newcommand{\gid}{\mathit{gid}}
 \newcommand{\epoch}{\mathit{epoch}}
 \newcommand{\gch}{\mathit{gch}}
-\newcommand{\initsec}{\mathit{init}}
-\newcommand{\commitsec}{\mathit{commit}}
+\newcommand{\initsec}{\mathit{initSecret}}
+\newcommand{\commitsec}{\mathit{commitSecret}}
 \newcommand{\epochsec}{\mathit{epochSecret}}
 \newcommand{\policy}{\mathit{policy}}
 \newcommand{\treehash}{\mathit{treeHash}}
@@ -86,167 +102,299 @@
 
 \title{Aura Group: Policy-Bound Hybrid TreeKEM for Post-Quantum Group Messaging}
 
-\author[aff1]{Oleksandr Melnychenko}
+\author{Oleksandr Melnychenko}
 
-\address[aff1]{Khmelnytskyi National University, Khmelnytskyi, Ukraine}
+\address{Khmelnytskyi National University, Khmelnytskyi, Ukraine}
 
 \journal{Journal of Information Security and Applications}
 
 \begin{abstract}
-\Aura{} Group is a group-messaging construction that extends the two-party
-\Aura{} design discipline to an MLS-inspired setting. Its group state is
-advanced by \TreeKEM{}-style commits whose update path carries both \DH{}
-and \KEM{} public keys. Path secrets are encrypted to co-path resolutions with
-a hybrid \DH{}+\KEM{} wrapping key, and every accepted commit derives a new
-epoch secret from the previous init secret, the fresh commit secret, and a
-context hash that includes the group identifier, epoch number, tree hash, and
-serialized security policy.
+\Aura{} Group is an MLS-inspired, non-wire-compatible group-messaging profile
+for dynamic post-quantum confidential groups. The protocol advances accepted
+group epochs with \TreeKEM{}-style Commit messages whose update paths carry
+both \DH{} and \KEM{} public keys. Path secrets are encrypted to co-path
+resolutions with a hybrid \DH{}+\KEM{} wrapping key, and every accepted Commit
+derives a new group-epoch secret from the previous init secret, the fresh
+commit secret, and a context hash over the group identifier, epoch number,
+tree hash, and serialized security policy.
 
-The central contribution is not the isolated use of TreeKEM or ML-KEM. It is
-the combination of hybrid update paths with a policy-bound epoch context:
-security policy is treated as cryptographic input, not as application metadata.
-The \Shield{} profile fixes a stricter policy for high-risk groups by enabling
-an enhanced key schedule, requiring message franking, blocking external joins,
-and bounding sender-key lifetime and skipped-key storage. The message layer
-then uses per-member sender chains, encrypted sender data, replay windows,
-sealed content, expiring content, and franking commitments without giving the
-relay access to group plaintext or group secrets.
+The contribution is the combination of hybrid TreeKEM update-path wrapping,
+policy-bound epoch derivation, and epoch-bound sender-chain message semantics
+in one compact state machine. The serialized application security policy is
+included in the epoch context, key schedule, and confirmation MAC inputs, so a
+policy disagreement changes the accepted epoch state. The \Shield{} profile
+then fixes stricter default processing rules: external joins are blocked,
+franking is mandatory, sender-key lifetime and skipped-key storage are bounded,
+and a profile-specific key schedule is selected through explicit domain
+separation. Message traffic inside an accepted epoch uses per-member sender
+chains, encrypted sender data, replay windows, sealed content, expiring
+content, and franking commitments without giving the relay access to group
+plaintext or group secrets.
 
-This paper gives the construction, a scoped symbolic model, implementation
-evidence, and a conservative security argument. The claims are intentionally
-narrower than a full MLS proof: the design supports membership-change forward
-secrecy, epoch-level post-compromise recovery through hybrid update paths,
-policy consensus through confirmation MACs, and message-level replay and
-franking checks. A complete symbolic or game-based proof for concurrent group
-sessions remains future work.
+The security account targets membership-change forward secrecy,
+post-compromise recovery at group-epoch boundaries, policy consensus through
+confirmation MACs, and message-level replay and franking checks. Evidence is
+split between a scoped \ProVerif{} model for one accepted hybrid group epoch
+and reference-implementation validation for parsing, persistence, replay, and
+negative-state behavior. Full asynchronous group security, multi-device
+state, and arbitrary proposal interleavings are left to a separate
+tree-concurrency model.
 \end{abstract}
 
 \begin{keyword}
-group messaging \sep TreeKEM \sep MLS \sep post-quantum cryptography \sep ML-KEM \sep sender keys \sep message franking \sep replay protection
+secure group messaging \sep TreeKEM \sep ML-KEM \sep message franking
 \end{keyword}
 
 \end{frontmatter}
 
 \section{Introduction}
 
-End-to-end encrypted group messaging has a different shape from a two-party
-ratchet. A two-party channel can update state along a single pairwise
-timeline. A group channel must update membership, distribute fresh secrets to
-the current roster, exclude removed members, preserve sender authentication,
-and keep application messages inexpensive between membership changes.
+End-to-end encrypted group messaging protects a moving collective state, not
+only a sequence of pairwise messages. The central object is an accepted
+\emph{group epoch}: a membership interval in which the roster, ratchet-tree
+hash, security policy, and application-secret schedule are fixed for all
+honest members. When membership changes, the protocol must move the group into
+a new epoch, deliver fresh secrets only to the new roster, prevent removed
+members from following future traffic, and keep ordinary application messages
+efficient between such state transitions.
 
-This paper is the group-messaging companion to Melnychenko's \Aura{}
-foundation manuscript~\cite{melnychenko2026aura}, which studies the two-party
-handshake and ratchet boundary. The group construction is deliberately
-separate. It reuses the same primitive discipline--\DH{}, \KEM{}, \HKDF{},
-and misuse-resistant AEAD--but its security statements concern group state,
-epoch commits, sender chains, and relay-visible envelopes.
+\Aura{} Group is the group-messaging protocol for \Aura{} Messenger. The
+target setting includes ordinary private conversations, but also long-lived
+operational groups in which messages can carry inspection evidence, sensor
+alerts, incident decisions, or other records whose confidentiality matters
+after the immediate exchange has ended. In that setting, payload encryption
+alone is not the full security question. A relay must not become an authority
+over membership or content; a removed member must not learn later traffic; a
+re-added member must not recover messages from the absence interval; and
+stored ciphertext should remain protected against future post-quantum
+adversaries. This is the common threat shape behind coordinated operational
+communication: membership changes, evidence reporting, delayed review, and
+untrusted relay delivery occur in the same channel. Prior work on UAV
+trajectory adaptation, multimodal wind-turbine inspection, and
+UAV/SCADA-linked fire detection gives examples of domains with this
+coordination pattern~\cite{svystun2025dytam,svystun2024thermal,lysyi2025fire}.
+Those applications are not protocol assumptions. They make concrete the
+broader requirement: membership, sender authentication, policy consensus, and
+post-quantum confidentiality must be treated as one cryptographic surface.
 
-\Aura{} Group also sits above a separate password-authentication boundary.
-The companion Hybrid PQ-OPAQUE manuscript and its formal-evidence report treat
-account-bound admission and authenticated key-establishment evidence, not group
-TreeKEM security~\cite{melnychenko2026opaque,melnychenko2026opaqueformal}.
-Those works are OPAQUE-derived in the augmented-PAKE sense
-of Jarecki--Krawczyk--Xu and the IRTF specification~\cite{jarecki2018,
-ietf-opaque}. This paper uses that layer only as bootstrap context: once
-participants have authenticated identities and initial credentials, the group
-problem is epoch state, membership change, and message delivery.
+\MLS{} and \TreeKEM{} provide the closest standard vocabulary for this surface.
+An MLS-style Commit changes the authenticated group state, refreshes a path in
+the ratchet tree, distributes path secrets to co-path resolutions, and installs
+the next epoch after client-side verification~\cite{rfc9420,treekem,treesync}.
+The post-quantum migration problem is sharper in this setting than in a
+pairwise handshake. A group update that only refreshes classical DH material
+leaves the epoch transition dependent on assumptions that may not protect
+archived ciphertext against a future cryptographically relevant quantum
+computer. The terminology and parameter choices follow the NIST post-quantum
+standardization line and the ML-KEM specification used by current hybrid
+deployments~\cite{nist-pqc,fips203}.
 
-\MLS{} standardizes this problem space with TreeKEM-based epoch transitions
-and a group key schedule~\cite{rfc9420,treekem,treesync}. The post-quantum
-setting adds a further constraint: a group update that only refreshes
-classical DH material does not address recorded traffic against a future
-cryptographically relevant quantum computer. The post-quantum terminology in
-this paper follows the NIST standardization line and ML-KEM specification
-used by current hybrid deployments~\cite{nist-pqc,fips203}.
+\Aura{} Group adopts the TreeKEM state-transition discipline but defines a
+compact hybrid protocol profile rather than an MLS wire-compatible extension.
+The technical question is specific: what changes when ML-KEM material is
+carried in TreeKEM update-path wrapping, and when serialized application
+security policy is included in the epoch context, key schedule, and
+confirmation input? Each hybrid update path carries both \DH{} and \KEM{}
+material, and the accepted group context binds the group identifier, epoch
+number, ratchet-tree hash, and serialized security policy. The post-quantum
+contribution is therefore part of the membership-changing tree update itself,
+not only an admission mechanism or a group-creation extension. Policy is also
+made cryptographic: a disagreement about \Shield{}, external joins, franking,
+sender-key lifetime, or skipped-key storage changes the derived epoch state
+instead of remaining an application-level preference.
 
-The two-party theorems do not automatically imply group security; group
-messaging needs its own tree-state and concurrency analysis. In this paper,
-\emph{artifact} means the implementation, tests, benchmarks, and design notes
-that accompany the construction.
+The security account has a defined proof boundary. The specification and
+mechanized model focus on one accepted group epoch and on the transition
+mechanisms that lead into it. The accompanying implementation evidence checks
+parsing, persistence, replay handling, state rejection, and message semantics.
+A full concurrent-group theorem would require a separate tree-concurrency
+model covering all interleavings of Add, Remove, Update, PSK, and ReInit
+proposals.
 
-The motivating deployment class is broader than consumer chat. Operational
-teams may exchange inspection evidence, sensor-derived alerts, and incident
-decisions inside long-lived confidential groups. Melnychenko's coauthored work
-on UAV trajectory adaptation, multimodal wind-turbine inspection, and
-UAV/SCADA-linked fire detection gives representative examples of such
-coordination-heavy systems~\cite{svystun2025dytam,svystun2024thermal,
-lysyi2025fire}. The present paper does not depend on those systems; they
-explain why group membership, sender authentication, and post-quantum
-confidentiality are treated as one engineering surface.
-
-The pairwise design background is closest to Signal-style authenticated
-handshakes and ratchet analyses~\cite{signal-x3dh,signal-double-ratchet,
-cohn-gordon2020,alwen2020}. \Aura{} Group uses that lineage only as a design
-discipline: its claims are about tree epochs, membership changes, sender
-chains, and policy-bound group context.
-
-\paragraph{Scientific novelty.}
-The scientific novelty of \Aura{} Group is a policy-bound hybrid TreeKEM
-construction in which post-quantum path refresh, policy consensus, sender-key
-economy, and accountable encrypted message semantics are specified as one
-auditable protocol surface. The main points are:
+\paragraph{Contribution and novelty}
+\Aura{} Group contributes a policy-bound hybrid \TreeKEM{} profile in which
+post-quantum path refresh, policy consensus, sender-key economy, and
+epoch-bound message-layer hooks are specified as one group state machine. The
+contributions are as follows.
 
 \begin{enumerate}
-  \item \textbf{N1: hybrid post-quantum update path.} Each epoch-changing update
-  refreshes TreeKEM path material with \DH{} and \KEM{} keys, rather than
-  limiting post-quantum material to group creation or to pairwise setup.
+  \item \textbf{Hybrid TreeKEM update paths.} Every epoch transition can
+  refresh path material with both \DH{} and \KEM{} contributions. The new path
+  secrets are delivered to co-path resolutions through hybrid wrapping keys,
+  so post-quantum material participates in ordinary membership-changing
+  updates.
 
-  \item \textbf{N2: policy-bound group context.} The group context hash
-  includes the serialized security policy. A policy disagreement changes epoch
-  keys and confirmation MACs, so policy becomes part of cryptographic
-  consensus instead of remaining mutable application metadata.
+  \item \textbf{Policy-bound group context.} The serialized security policy is
+  hashed into the group context used for key derivation and confirmation.
+  Silent disagreement about \Shield{}, external joins, franking, sender-key
+  lifetime, or skipped-key limits therefore changes the epoch keys rather than
+  producing an apparently valid downgrade.
 
-  \item \textbf{N3: shielded epoch profile.} \Shield{} is specified as a
-  cryptographic policy profile: enhanced subkey derivation, mandatory
-  franking, external-join blocking, bounded skipped keys, and bounded
-  sender-key lifetime.
+  \item \textbf{Cryptographic Shield profile.} \Shield{} is defined as a
+  protocol profile rather than an advisory product mode. It selects
+  profile-specific subkey labels, mandatory franking, external-join blocking,
+  bounded skipped-key storage, and bounded sender-key lifetime as inputs to
+  the accepted epoch state.
 
-  \item \textbf{N4: efficient message layer inside an epoch.} Per-member sender
-  chains provide low-cost application messages between TreeKEM commits, while
-  encrypted sender data and replay windows preserve epoch binding and duplicate
-  rejection.
+  \item \textbf{Sender-chain traffic inside an accepted group epoch.}
+  Per-member sender chains provide low-cost application messages between
+  TreeKEM Commit messages, while encrypted sender data, replay windows, and
+  epoch binding prevent duplicate or cross-interval acceptance.
 
-  \item \textbf{N5: accountable encrypted semantics.} Franking, sealed content,
-  and disappearing messages are integrated as message semantics over the group
-  key schedule without exposing plaintext to the relay.
+  \item \textbf{Epoch-bound message-layer hooks.} Franking, sealed content,
+  and disappearing-message checks are bound to the accepted epoch and policy.
+  They are not independent security claims; they specify where higher-level
+  message semantics are checked after cryptographic decryption. The relay
+  observes only structural metadata and opaque commitments.
 
-  \item \textbf{N6: scoped machine-checkable core.} A dedicated \ProVerif{}
-  model checks six core symbolic obligations for one accepted group epoch:
-  hybrid path secrecy, previous-init contribution secrecy,
-  application-message secrecy, commit correspondence, message correspondence,
-  and franking correspondence. The model is intentionally scoped and does not
-  replace a full concurrent group proof.
+  \item \textbf{Scoped mechanized evidence.} A dedicated \ProVerif{} model
+  checks six obligations for one accepted group epoch: hybrid path secrecy,
+  previous-init contribution secrecy, application-message secrecy, Commit
+  correspondence, message correspondence, and franking correspondence. The
+  scope is stated explicitly, so symbolic evidence is not confused with a full
+  proof for arbitrary concurrent group schedules.
 \end{enumerate}
 
-\section{Threat Model and Scope}
+\section{Related Work and Design Position}\label{sec:related}
+
+\subsection{MLS and TreeKEM}
+
+\MLS{} is the closest standard reference point for the group-state problem.
+It separates group membership, group-epoch transitions, authenticated group context,
+and application-secret derivation into a protocol whose main state transition
+is a TreeKEM Commit message~\cite{rfc9420}. Here, a \emph{Commit}
+means the MLS/TreeKEM protocol message that applies authenticated Add, Remove,
+Update, PSK, or ReInit proposals and installs the next group epoch after
+client-side verification. It is a group-state transition message, not an
+implementation or repository action. The TreeKEM line of work gives the
+asynchronous tree structure that makes large dynamic groups practical: a
+member does not need to establish a fresh pairwise secret with every other
+member for every update, because refreshed path secrets can be encrypted to
+co-path resolutions~\cite{treekem}. TreeSync then sharpens the engineering
+problem by treating authenticated tree synchronization as a first-class
+security boundary rather than a mere serialization detail~\cite{treesync}.
+
+\Aura{} Group follows this MLS/TreeKEM shape while defining its own protocol
+profile rather than an RFC~9420 wire-compatible variant. The design isolates a
+technical question central to Aura Messenger's group architecture: how do
+hybrid classical/post-quantum update paths and policy-bound group-epoch
+derivation affect group-state evolution? This restriction keeps the analyzed
+cryptographic interface tractable while preserving the group-specific problems
+that do not appear in a two-party ratchet.
+
+\subsection{Sender-Key Messaging and Message Semantics}
+
+Many deployed group messengers use sender-key style techniques for efficient
+traffic within a group epoch. A sender key avoids running a full group key update for
+every application message, but it shifts attention to per-sender counters,
+replay windows, skipped-key storage, sender authentication, and group-epoch
+separation. \Aura{} Group adopts this efficiency pattern within a group epoch, but
+does not treat it as an independent protocol. Sender chains are derived from
+the accepted group-epoch state, and encrypted sender data is tied to the same
+metadata key that comes from the policy-bound key schedule.
+
+The message-semantics layer is similarly integrated. Message franking provides
+selective accountable disclosure without giving the relay plaintext access to
+ordinary traffic~\cite{franking}. Sealed content follows the same design
+instinct as sealed-sender metadata minimization: expose only what routing and
+delivery need, and keep content-level secrets inside end-to-end encrypted
+payloads~\cite{sealed-sender}. In \Aura{} Group these mechanisms are not
+treated as product features attached after encryption. They are explicit
+application-frame semantics whose tags, timestamps, and references are checked
+at the cryptographic processing boundary.
+
+\subsection{Post-Quantum Migration Boundary}
+
+The post-quantum migration pressure is different for pairwise handshakes and
+group-epoch intervals. A pairwise protocol can add a KEM encapsulation to the initial
+setup or to directed ratchet steps. A group protocol must decide how KEM
+material enters a tree update, how the corresponding ciphertexts are addressed
+to a co-path resolution, and how the accepted group-epoch interval records that policy and
+tree state agreed. \Aura{} Group therefore moves ML-KEM material into the
+TreeKEM update path rather than limiting it to account admission or group
+creation.
+
+The design remains conservative about authentication. Ed25519 is used for key
+packages, Commit messages, and message signatures. That is a classical authentication
+boundary and is stated as a limitation rather than hidden behind the
+confidentiality claims. The contribution here is hybrid
+group-epoch confidentiality and policy agreement for group state; replacing Ed25519
+with a post-quantum signature scheme is a separate design and deployment
+decision.
+
+\subsection{Two-Party Aura Protocol and Account Admission}
+
+The two-party \Aura{} Protocol manuscript studies a pairwise handshake and
+directed ratchet boundary~\cite{melnychenko2026aura}. The Hybrid PQ-OPAQUE
+manuscript and its formal-evidence report study password-authenticated account
+admission in the augmented-PAKE tradition of Jarecki--Krawczyk--Xu and the
+IRTF OPAQUE specification~\cite{melnychenko2026opaque,
+melnychenko2026opaqueformal,jarecki2018,ietf-opaque}. \Aura{} Group uses those
+layers as surrounding protocol context, not as substitutes for group-security
+analysis. After credentials and identities are authenticated, the group
+protocol must still define accepted tree state, epoch transitions,
+sender-chain traffic, replay control, and relay-visible encrypted envelopes.
+
+\section{Threat Model and Scope}\label{sec:threat}
 
 The adversary controls the network, reorders and replays messages, corrupts
-old serialized state, tampers with commits and application ciphertexts, and may
+old serialized state, tampers with Commit messages and application ciphertexts, and may
 learn secrets of removed members. The relay is not trusted with plaintext or
 group secrets. It may validate structure and route messages, but authoritative
-membership and epoch state are client-side decisions.
+membership and accepted group-epoch state are client-side decisions.
 
-The paper studies a single-device group model. Identity authentication uses
-Ed25519 signatures over key packages and commits. This is classical
-authentication; a transition to post-quantum signatures is orthogonal to the
-TreeKEM and policy-binding mechanisms. The current evidence combines a scoped
-\ProVerif{} model, implementation evidence, and a protocol argument. A full
-theorem for asynchronous concurrent groups, including delivery schedules and
-all interleavings of Add, Remove, Update, PSK, and ReInit proposals, is not
-claimed here.
+The model is single-device. Identity authentication uses Ed25519 signatures
+over key packages and Commit messages. This is classical authentication; a
+transition to post-quantum signatures is orthogonal to the TreeKEM and
+policy-binding mechanisms. The security account combines a scoped \ProVerif{}
+model, reference-implementation evidence, and a protocol argument. Complete
+theorems for asynchronous concurrent groups, including delivery schedules and
+all interleavings of Add, Remove, Update, PSK, and ReInit proposals, are
+outside this model.
+
+The adversary may be adaptive at the level of endpoint state snapshots. A
+snapshot can reveal stored group-epoch secrets, sender-chain state, replay-window
+state, pending proposals, and serialized group state that was not sealed or
+has already been restored. The model still assumes correct local cryptographic
+erasure after successful group-epoch processing: a member that keeps obsolete path
+secrets, group-epoch secrets, or message keys indefinitely has stepped outside the
+claim boundary. This is the same practical boundary that appears in pairwise
+ratchet protocols, but group messaging makes the state surface larger because
+there are per-sender chains and tree nodes in addition to a single pairwise
+root key.
+
+The relay is fully adversarial for confidentiality and membership authority.
+It may drop a Commit message, delay a Welcome, replay an old message, route one member
+through stale public state, or present different clients with different
+delivery schedules. Clients therefore accept only local state transitions that
+verify the relevant signatures, tree hashes, policy bytes, confirmation MACs,
+and replay windows. The relay can still perform useful structural checks,
+including size limits and sender binding checks, but those checks are not a
+substitute for client-side cryptographic acceptance.
+
+\subsection{Security Goals}
+
+The construction is organized around five goals. First, accepted group-epoch secrets
+are intended to be pseudorandom to an adversary that did not learn both the
+surviving hybrid path material and the previous init contribution. Second, an
+honest post-compromise update creates a recovery boundary at the next accepted
+group epoch, provided at least one hybrid component remains unbroken and old secrets
+are erased. Third, removed or not-yet-added members are excluded from messages
+outside their membership interval. Fourth, members that disagree on policy fail
+to share a group epoch silently. Fifth, application messages reject replay and expose
+only selective franking disclosures to a moderator.
 
 \begin{table}[tbp]
 \centering
 \caption{Claim boundary for the group paper.}\label{tab:scope}
-\small
+\footnotesize
 \begin{tabularx}{\textwidth}{@{}p{0.29\textwidth}YY@{}}
 \toprule
-Topic & Claimed in this paper & Not claimed in this paper \\
+Topic & Claimed here & Not claimed here \\
 \midrule
-Epoch secrecy & Fresh epoch keys after accepted hybrid TreeKEM commits, subject to at least one unbroken component and honest erasure. & A full universal-composability proof for all concurrent group schedules. \\
-Post-compromise recovery & Recovery at epoch boundaries when an honest update path introduces fresh \DH{} and \KEM{} material after compromise. & Recovery without a later honest epoch update. \\
-Policy enforcement & Policy bytes are hashed into the group context and affect epoch keys and confirmation MACs. & Server-side policy authority or mutable policy negotiation. \\
+Group-epoch secrecy & Fresh group-epoch keys after accepted hybrid TreeKEM Commit messages, subject to at least one unbroken component and honest erasure. & Universal-composability proof for all concurrent group schedules. \\
+Post-compromise recovery & Recovery at group-epoch boundaries when an honest update path introduces fresh \DH{} and \KEM{} material after compromise. & Recovery without a later honest group-epoch update. \\
+Policy enforcement & Policy bytes are hashed into the group context and affect group-epoch keys and confirmation MACs. & Server-side policy authority or mutable policy negotiation. \\
 Relay role & Relay-blind structural validation and routing. & Relay knowledge of plaintext, group secrets, or authoritative membership state. \\
 Application semantics & Franking, sealed content, and expiration are enforced at message processing boundaries. & Legal moderation semantics beyond cryptographic verification of a disclosed message. \\
 \bottomrule
@@ -255,61 +403,64 @@ Application semantics & Franking, sealed content, and expiration are enforced at
 
 \section{Construction Overview}
 
-\Aura{} Group has three layers. The epoch layer maintains a ratchet tree and
-advances it with commits. The key-schedule layer derives epoch secrets,
+\Aura{} Group has three layers. The group-epoch layer maintains a ratchet tree and
+advances it with Commit messages. The key-schedule layer derives group-epoch secrets,
 metadata keys, welcome keys, confirmation keys, and sender-key bases. The
 message layer encrypts application payloads under per-sender chains while
-encrypting sender metadata under the epoch metadata key.
+encrypting sender metadata under the group-epoch metadata key.
 
 The tree is left-balanced and stores both \DH{} and \KEM{} public material at
 leaves and internal nodes~\cite{rfc7748,fips203}. A member's key package binds
 identity \EdDSA{},
 identity \DH{}, identity \KEM{}, leaf \DH{}, leaf \KEM{}, and credential bytes
-under an \EdDSA{} signature. This separates long-term identity from epoch
+under an \EdDSA{} signature. This separates long-term identity from group-epoch
 update material while giving recipients a signed object for membership
 admission.
 
-\begin{figure}[tbp]
+\begin{figure}[H]
 \centering
-\resizebox{\textwidth}{!}{%
+\resizebox{0.985\textwidth}{!}{%
 \begin{tikzpicture}[
   font=\small,
-  node distance=1.1cm and 2.25cm,
-  block/.style={draw,rounded corners=2pt,align=center,minimum width=3.15cm,minimum height=0.85cm,fill=blue!5},
-  smallblock/.style={draw,rounded corners=2pt,align=center,minimum width=2.7cm,minimum height=0.78cm,fill=green!5},
+  node distance=0.75cm,
+  block/.style={draw,rounded corners=2pt,align=center,minimum width=2.75cm,
+    minimum height=0.86cm,fill=blue!5},
+  smallblock/.style={draw,rounded corners=2pt,align=center,minimum width=2.45cm,
+    minimum height=0.78cm,fill=green!6},
   arrow/.style={-Latex,thick}
 ]
-\node[block] (tree) {Ratchet tree\\leaf and path keys};
-\node[block,right=of tree] (commit) {Hybrid TreeKEM\\UpdatePath};
-\node[block,right=of commit] (ctx) {Policy-bound\\group context};
-\node[block,below=of ctx] (epoch) {Epoch keys\\metadata, welcome, confirm};
-\node[smallblock,left=of epoch] (sender) {Sender chains\\per leaf};
-\node[smallblock,left=of sender] (msg) {Application\\messages};
+\node[block] (tree) at (0,0) {Ratchet tree\\leaf and path keys};
+\node[block] (commit) at (3.55,0) {Hybrid TreeKEM\\UpdatePath};
+\node[block] (ctx) at (7.1,0) {Policy-bound\\group context};
+\node[block] (epoch) at (11.05,0) {Group-epoch keys\\metadata, welcome, confirm};
+\node[smallblock] (sender) at (11.05,-1.55) {Sender chains\\per leaf};
+\node[smallblock] (msg) at (14.4,-1.55) {Application\\messages};
 
 \draw[arrow] (tree) -- (commit);
-\draw[arrow] (commit) -- node[midway,above,font=\scriptsize,fill=white,inner sep=1pt]{hybrid path keys} (ctx);
+\draw[arrow] (commit) -- (ctx);
 \draw[arrow] (ctx) -- (epoch);
-\draw[arrow] (epoch) -- (sender);
+\draw[arrow] (epoch.south) -- (sender.north);
 \draw[arrow] (sender) -- (msg);
-\draw[arrow] (commit.south) |- node[pos=0.25,left,font=\scriptsize,fill=white,inner sep=1pt]{commit secret} (epoch.west);
 \end{tikzpicture}%
 }
-\caption{Epoch transition and message-key flow. A commit updates the tree,
-derives a policy-bound context, and refreshes sender chains for the new epoch.}
+\caption{Group-epoch transition and message-key flow. A Commit message updates the tree,
+derives a policy-bound context, and refreshes sender chains for the new
+membership interval.}
 \label{fig:epoch-flow}
 \end{figure}
+\FloatBarrier
 
 \subsection{Key Packages and Welcome}
 
-Adding a member produces a signed key package, a commit, and a Welcome message.
+Adding a member produces a signed key package, an Add Commit message, and a Welcome message.
 The Welcome encrypts the joiner secret for the added member and carries enough
 public group information for the recipient to reconstruct the tree, verify the
-tree hash, parse the serialized policy, derive epoch keys, and check the
+tree hash, parse the serialized policy, derive group-epoch keys, and check the
 confirmation MAC. The design therefore keeps admission state explicit: a
-member joins after decrypting Welcome and accepting the resulting epoch state,
+member joins after decrypting Welcome and accepting the resulting group-epoch state,
 not because the relay appended an identity to a roster.
 
-\begin{figure}[tbp]
+\begin{figure}[H]
 \centering
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
@@ -320,9 +471,9 @@ not because the relay appended an identity to a roster.
   node distance=0.62cm and 0.74cm
 ]
 \node[joinstep] (kp) {Joiner\\signed KeyPackage};
-\node[joinstep,right=of kp] (commit) {Member creates\\Add commit};
+\node[joinstep,right=of kp] (commit) {Member creates\\Add Commit};
 \node[joinstep,right=of commit] (welcome) {Welcome encrypts\\joiner secret};
-\node[joinstep,right=of welcome] (rebuild) {Joiner rebuilds\\tree and epoch};
+\node[joinstep,right=of welcome] (rebuild) {Joiner rebuilds\\tree and group epoch};
 \node[joinstep,right=of rebuild] (accept) {Accepted\\group state};
 
 \node[check,below=of rebuild] (verify) {verify tree hash\\policy bytes\\confirmation MAC};
@@ -336,22 +487,22 @@ not because the relay appended an identity to a roster.
 \draw[arrow] (verify) -- (rebuild);
 \end{tikzpicture}%
 }
-\caption{Welcome/admission boundary. A new member becomes authoritative only after reconstructing the tree, parsing the policy, deriving the epoch keys, and verifying the confirmation MAC.}\label{fig:welcome-admission}
+\caption{Welcome/admission boundary. A new member becomes authoritative only after reconstructing the tree, parsing the policy, deriving the group-epoch keys, and verifying the confirmation MAC.}\label{fig:welcome-admission}
 \end{figure}
 
-\begin{table}[tbp]
+\begin{table}[H]
 \centering
 \caption{Group-state objects and their role.}\label{tab:objects}
-\small
+\footnotesize
 \begin{tabularx}{\textwidth}{@{}p{0.24\textwidth}YY@{}}
 \toprule
 Object & Contents & Role in the construction \\
 \midrule
 Key package & Identity keys, leaf update keys, credential, signature. & Authenticated input for adding a member to the tree. \\
-UpdatePath & Leaf public keys, path node public keys, encrypted path secrets, parent hashes. & Refreshes epoch tree material for current members. \\
-Group context hash & Group identifier, epoch, tree hash, serialized policy. & Binds key derivation to tree state and security policy. \\
-Welcome & Encrypted joiner secret and public group information. & Allows a newly added member to reconstruct and verify epoch state. \\
-Application message & Encrypted sender data, encrypted payload, nonces, signature, optional franking tag. & Carries in-epoch traffic under sender-chain keys. \\
+UpdatePath & Leaf public keys, path node public keys, encrypted path secrets, parent hashes. & Refreshes group-epoch tree material for current members. \\
+Group context hash & Group identifier, group-epoch number, tree hash, serialized policy. & Binds key derivation to tree state and security policy. \\
+Welcome & Encrypted joiner secret and public group information. & Allows a newly added member to reconstruct and verify group-epoch state. \\
+Application message & Encrypted sender data, encrypted payload, nonces, signature, optional franking tag. & Carries traffic within a group epoch under sender-chain keys. \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -362,30 +513,42 @@ The construction follows the TreeKEM intuition that a member refreshes the
 nodes on its direct path and encrypts the corresponding path secrets to the
 co-path resolution. \Cref{fig:path-geometry} shows the case of leaf $2$ in an
 eight-member tree. The shaded path is recomputed by the committer; the marked
-co-path nodes are sufficient recipients for the encrypted path secrets.
+co-path nodes are sufficient recipients for the encrypted path secrets. The
+figure also shows the operational effect of the Commit: fresh path entropy is
+expanded along the direct path, wrapped to the co-path resolution, and then
+used as the commit secret for the next group epoch.
 
-\begin{figure}[tbp]
+\begin{figure}[!tbp]
 \centering
+\makebox[\textwidth][c]{%
+\resizebox{1.08\textwidth}{!}{%
 \begin{tikzpicture}[
   font=\small,
-  leaf/.style={draw,circle,minimum size=0.63cm,inner sep=0pt,fill=gray!8},
-  commit/.style={draw,circle,minimum size=0.68cm,inner sep=0pt,fill=blue!14,thick},
-  inode/.style={draw,circle,minimum size=0.58cm,inner sep=0pt,fill=gray!5},
-  pathnode/.style={draw,circle,minimum size=0.64cm,inner sep=0pt,fill=blue!14,thick},
-  copath/.style={draw,circle,minimum size=0.64cm,inner sep=0pt,fill=orange!16,thick},
-  edge/.style={thick,gray!65},
-  arrow/.style={-Latex,thick,orange!80!black}
+  leaf/.style={draw,circle,minimum size=1.00cm,inner sep=1.2pt,fill=gray!8},
+  actor/.style={draw,circle,minimum size=1.18cm,inner sep=1.2pt,fill=blue!18,thick},
+  inode/.style={draw,circle,minimum size=0.94cm,inner sep=1pt,fill=gray!5},
+  pathnode/.style={draw,circle,minimum size=1.18cm,inner sep=1.2pt,fill=blue!16,thick,font=\footnotesize},
+  copath/.style={draw,circle,minimum size=1.18cm,inner sep=1.2pt,fill=orange!18,thick,font=\footnotesize},
+  edge/.style={thick,gray!58},
+  pathedge/.style={line width=1.7pt,blue!68!black},
+  wrap/.style={-Latex,thick,orange!85!black},
+  flow/.style={draw,rounded corners=2pt,align=center,
+    inner sep=4.5pt,font=\scriptsize,text width=2.28cm,minimum height=0.92cm},
+  flowarrow/.style={-Latex,thick,blue!60!black},
+  weakflow/.style={-Latex,thick,dashed,blue!60!black},
+  legend/.style={font=\scriptsize,align=left}
 ]
-\foreach \i in {0,...,7} {
-  \node[leaf] (l\i) at (1.0*\i,0) {$\i$};
+
+\foreach \i in {0,1,2,3,4,5,6,7} {
+  \coordinate (l\i) at (1.55*\i,0);
 }
-\node[inode] (n01) at (0.5,0.9) {};
-\node[pathnode] (n23) at (2.5,0.9) {};
-\node[inode] (n45) at (4.5,0.9) {};
-\node[inode] (n67) at (6.5,0.9) {};
-\node[pathnode] (n03) at (1.5,1.85) {};
-\node[inode] (n47) at (5.5,1.85) {};
-\node[pathnode] (n07) at (3.5,2.85) {};
+\coordinate (n01) at (0.775,1.18);
+\coordinate (n23) at (3.875,1.18);
+\coordinate (n45) at (6.975,1.18);
+\coordinate (n67) at (10.075,1.18);
+\coordinate (n03) at (2.325,2.58);
+\coordinate (n47) at (8.525,2.58);
+\coordinate (n07) at (5.425,4.10);
 
 \draw[edge] (l0) -- (n01) -- (l1);
 \draw[edge] (l2) -- (n23) -- (l3);
@@ -395,103 +558,276 @@ co-path nodes are sufficient recipients for the encrypted path secrets.
 \draw[edge] (n45) -- (n47) -- (n67);
 \draw[edge] (n03) -- (n07) -- (n47);
 
-\node[commit] at (l2) {$2$};
-\node[copath] at (l3) {$3$};
-\node[copath] at (n01) {};
-\node[copath] at (n47) {};
+\draw[pathedge] (l2) -- (n23) -- (n03) -- (n07);
 
-\draw[arrow,bend left=12] (n23) to node[right,font=\scriptsize,fill=white,inner sep=1pt]{wrap} (l3);
-\draw[arrow,bend right=12] (n03) to node[left,font=\scriptsize,fill=white,inner sep=1pt]{wrap} (n01);
-\draw[arrow,bend left=12] (n07) to node[right,font=\scriptsize,fill=white,inner sep=1pt]{wrap} (n47);
+\foreach \i in {0,1,4,5,6,7} {
+  \node[leaf] at (l\i) {$\i$};
+}
+\node[actor] (committerLeaf) at (l2) {$2$};
+\node[copath] (cp3) at (l3) {$3$};
+\node[copath] (cpr1) at (n01) {$r_1$};
+\node[inode] at (n45) {};
+\node[inode] at (n67) {};
+\node[copath] (cpr2) at (n47) {$r_2$};
+\node[pathnode] (path0) at (n23) {$p_0$};
+\node[pathnode] (path1) at (n03) {$p_1$};
+\node[pathnode] (path2) at (n07) {$p_2$};
 
-\node[align=left,font=\scriptsize,anchor=west,fill=white,inner sep=2pt] at (7.45,2.55)
-  {blue: refreshed direct path\\orange: co-path resolution\\wrap: \DH{}+\KEM{} path secret};
-\end{tikzpicture}
-\caption{Hybrid TreeKEM path geometry for a commit from leaf $2$. Updated path
-secrets are wrapped to the co-path resolution with a hybrid \DH{}+\KEM{} key.}
+\node[font=\scriptsize,blue!70!black,align=center,fill=white,inner sep=1.2pt] at (2.98,-1.18)
+  {committer\\leaf};
+\node[font=\scriptsize,blue!70!black,align=center,fill=white,inner sep=1.2pt] at (5.42,5.32)
+  {refreshed\\direct path};
+
+\draw[wrap,bend left=24] (path0.east) to node[pos=0.35,right,font=\scriptsize,fill=white,inner sep=1.2pt]
+  {$C_{\mathsf{path},0}$} (cp3.north west);
+\draw[wrap,bend right=22] (path1.west) to node[pos=0.38,left,font=\scriptsize,fill=white,inner sep=1.2pt]
+  {$C_{\mathsf{path},1}$} (cpr1.north east);
+\draw[wrap,bend left=22] (path2.east) to node[pos=0.38,above,font=\scriptsize,fill=white,inner sep=1.2pt]
+  {$C_{\mathsf{path},2}$} (cpr2.north west);
+
+\node[legend,anchor=north west] at (8.70,4.87)
+  {blue path: refreshed secrets\\orange nodes: co-path recipients\\orange arrows: hybrid-wrapped path secrets};
+
+\node[flow,fill=blue!6] (seed) at (1.48,-2.42)
+  {\textbf{1. Fresh entropy}\\sample path seed};
+\node[flow,fill=blue!6,right=0.42cm of seed] (derive)
+  {\textbf{2. Path derivation}\\derive $p_0,p_1,p_2$};
+\node[flow,fill=orange!8,right=0.42cm of derive] (wraps)
+  {\textbf{3. Hybrid wrapping}\\to $\{3,r_1,r_2\}$};
+\node[flow,fill=green!7,right=0.42cm of wraps] (keys)
+  {\textbf{4. Epoch keys}\\$\commitsec_{e+1}$ drives\\$e+1$ keys};
+
+\draw[weakflow] (committerLeaf.south west) -- node[pos=0.40,left,font=\scriptsize,fill=white,inner sep=1.2pt]
+  {Commit operation} (seed.north);
+\draw[flowarrow] (seed) -- (derive);
+\draw[flowarrow] (derive) -- (wraps);
+\draw[flowarrow] (wraps) -- (keys);
+\end{tikzpicture}%
+}%
+}
+\caption{Core Hybrid TreeKEM UpdatePath and group-epoch effect for a Commit from
+leaf $2$. The committer refreshes its direct path, encrypts the new path
+secrets to the co-path resolution, and feeds the recovered commit secret into
+the next group-epoch key schedule.}
 \label{fig:path-geometry}
 \end{figure}
 
 \subsection{Hybrid Update Path}
 
-For a commit at epoch $e$, the committer samples a fresh path secret and
+For a Commit at group epoch $e$, the committer samples a fresh path secret and
 derives node secrets along its direct path. Each updated node receives a fresh
-\DH{} keypair and a fresh \KEM{} keypair. For every recipient resolution node,
-the path secret is wrapped under a hybrid key:
-\begin{align*}
-  x_{\mathsf{eph}}, X_{\mathsf{eph}} &\gets \DH.\KeyGen(), \\
-  z_{\DH} &= \DH(x_{\mathsf{eph}}, X_R), \\
-  (c_{\KEM}, z_{\KEM}) &\gets \KEM.\Encaps(pk_R), \\
-  s_{\mathsf{path}} &= \textsf{``Aura-PQ-Group-Hybrid::''}\concat z_{\DH}, \\
-  i_{\mathsf{path}} &= \textsf{``Aura-Group-HybridPath''}, \\
-  k_{\mathsf{path}} &= \HKDF(z_{\KEM},s_{\mathsf{path}},i_{\mathsf{path}}), \\
-  C_{\mathsf{path}}
-    &= \AEAD.\Enc(k_{\mathsf{path}},n,\mathit{pathSecret},\\
-  &\hspace{6.2em}\mathit{nodeIndex}).
-\end{align*}
-Here $\HKDF(x,s,i)$ denotes HKDF-SHA256 with input keying material $x$, salt
-$s$, and domain-separation information $i$. This matches the construction's
-hybrid path wrapper: the \KEM{} shared secret is the input material, and the
-\DH{} output is carried in the salt with the path-domain label.
+\DH{} keypair and a fresh \KEM{} keypair. In this profile, Add, Remove, and
+Update transitions that refresh tree secrets carry an UpdatePath; PSK and
+ReInit transitions still advance the epoch state but are not counted in the
+one-step hybrid path-secrecy argument unless they also carry fresh path
+material. A co-path resolution is the TreeKEM recipient set covering sibling
+subtrees that need the refreshed path secret in order to reconstruct the new
+tree state. For every recipient resolution node $R$, the path secret is wrapped
+under a hybrid key:
+\begingroup
+\footnotesize
+\begin{equation*}
+\begin{aligned}
+  (x_{\mathsf{eph}},X_{\mathsf{eph}})&\gets \DH.\KeyGen(),\\
+  z_{\DH}&=\DH(x_{\mathsf{eph}},X_R),\\
+  (c_{\KEM},z_{\KEM})&\gets \KEM.\Encaps(pk_R),\\
+  s_{\mathsf{path}}&=\domain{Aura-PQ-Group-Hybrid}\concat z_{\DH},\\
+  i_{\mathsf{path}}&=\domain{Aura-Group-HybridPath},\\
+  k_{\mathsf{path}}&=\HKDF(z_{\KEM},32,s_{\mathsf{path}},i_{\mathsf{path}}),\\
+  \mathsf{aad}_{\mathsf{path}}&=\gid\concat e\concat \mathit{nodeIndex}
+    \concat X_{\mathsf{eph}}\concat c_{\KEM},\\
+  C_{\mathsf{path}}&=\AEAD.\Enc(k_{\mathsf{path}},n_{\mathsf{path}},
+    \mathit{pathSecret},\mathsf{aad}_{\mathsf{path}}).
+\end{aligned}
+\end{equation*}
+\endgroup
+Here $\HKDF(x,L,s,i)$ denotes HKDF-SHA256 with input keying material $x$,
+output length $L$, salt $s$, and domain-separation information $i$. This
+matches the construction's hybrid path wrapper: the \KEM{} shared secret is
+the input material, and the \DH{} output is carried in the salt with the
+path-domain label.
 The corresponding recipient decapsulates $c_{\KEM}$, computes the matching
 \DH{} value, reconstructs $k_{\mathsf{path}}$, and decrypts the path secret.
-The node index is associated data, so a wrapped path secret cannot be moved to
-another tree position without detection. Parent hashes are verified along the
-updated path so that an adversary cannot splice a valid node into an
-inconsistent tree transcript. HKDF and the AEAD interface follow the standard
-extract-then-expand and nonce-misuse-resistant AEAD references~\cite{rfc5869,
-rfc8452}.
+The group identifier, group-epoch number, node index, ephemeral \DH{} public key, and \KEM{}
+ciphertext are associated data, so a wrapped path secret cannot be moved to a
+different group, group-epoch interval, tree position, or hybrid wrapper without detection.
+Parent hashes are verified along the updated path so that an adversary cannot
+splice a valid node into an inconsistent tree transcript. HKDF and the AEAD
+interface follow the standard extract-then-expand and nonce-misuse-resistant
+AEAD references~\cite{rfc5869,rfc8452}.
 
-\subsection{Policy-Bound Epoch Context}
+\subsection{Policy-Bound Group-Epoch Context}
 
-The epoch context is defined with length prefixes for variable-size fields:
+A \emph{group epoch} in \Aura{} Group is a cryptographic membership interval:
+one accepted ratchet tree, one serialized policy, one group-epoch secret, one
+metadata key, and one set of per-member sender chains. Group epoch $0$ is the
+creator-only genesis interval. Every accepted Add, Remove, Update, PSK, or
+ReInit Commit message advances the group from $e$ to $e+1$ atomically; application
+messages only consume sender-chain generations inside the current interval,
+and a rejected Commit leaves local state unchanged. The transition occurs only
+at an authenticated state boundary: the accepted TreeKEM Commit message, where
+tree hash, policy bytes, confirmation MAC, and group-epoch number agree before
+new keys are installed.
+
+The terminology is fixed as follows. The \emph{epoch number} $e$ is the
+monotonic counter carried in group messages and Commit messages. The
+\emph{group context hash} $\gch_e$ is the hash of the group identifier, epoch
+number, tree hash, and serialized policy. The \emph{epoch secret}
+$\epochsec_e$ is derived only after an accepted transition into epoch $e$. The
+\emph{accepted epoch state} is the local installed tuple consisting of the
+tree, policy, context hash, epoch keys, sender-chain bases, replay state, and
+sealed-state freshness metadata. Below, ``group epoch'' denotes the membership
+interval, and ``accepted epoch state'' denotes the installed local state.
+
+The group-epoch context is defined with length prefixes for variable-size fields:
 \begin{equation}
+\begin{aligned}
   \gch_e =
-  \SHA\!\left(
-    \ell(\gid)\concat \gid \concat
-    e \concat
-    \ell(\treehash_e)\concat \treehash_e \concat
-    \ell(\policy)\concat \policy
-  \right).
+  \SHA\!\bigl(&
+    \ell_{32}(\gid)\concat \gid \concat
+    \mathrm{le}_{64}(e)\\
+    &\concat\ell_{32}(\treehash_e)\concat \treehash_e
+    \concat\ell_{32}(\policy)\concat \policy
+  \bigr).
+\end{aligned}
   \label{eq:gch}
 \end{equation}
-The length prefixes remove concatenation ambiguity. More importantly, the
-serialized policy is inside the hash. If two members disagree on whether
+Here $\ell_{32}(x)$ is the 32-bit little-endian length of $x$, and
+$\mathrm{le}_{64}(e)$ is the 64-bit little-endian group-epoch encoding. The length
+prefixes remove concatenation ambiguity. More importantly, the serialized
+policy is inside the hash. If two members disagree on whether
 \Shield{} is enabled, or on the sender-key limits, they compute different
-$\gch_e$, different epoch keys, and different confirmation MACs.
+$\gch_e$, different group-epoch keys, and different confirmation MACs.
+For compact pseudocode, write
+$\mathsf{GroupContext}(\gid,e,\treehash,\policy)$ for the hash in
+\cref{eq:gch}.
 
-The epoch keys are then derived as:
+For an accepted transition into group epoch $e$, let $\commitsec_e$ be the
+fresh secret recovered from the accepted UpdatePath and let
+$\initsec_{e-1}$ be the chaining secret carried from the previous group epoch.
+The key schedule first combines continuity with fresh path entropy and then
+binds the result to the policy-bound group context:
+\[
+  \mathcal{A}=\{\mathsf{meta},\mathsf{welcome},\mathsf{confirm},\mathsf{init}\}.
+\]
 \begin{align}
   j_e &= \HKDF\text{-}\mathrm{Extract}(\initsec_{e-1}, \commitsec_e),\\
   \epochsec_e &=
-  \HKDF\text{-}\mathrm{Expand}(j_e,\;
-    \textsf{``Aura-Group-EpochSecret''}\concat \gch_e),\\
-  \mathbf{k}_e &\gets \mathrm{Subkeys}(\epochsec_e),\\
+  \HKDF\text{-}\mathrm{Expand}(j_e,32,\;
+    \domain{Aura-Group-EpochSecret}\concat \gch_e),\\
+  k^\alpha_e &=
+  \mathsf{KDF}^{\policy}_\alpha(\epochsec_e),
+  \qquad \alpha\in\mathcal{A},\\
   \mathbf{k}_e &:=
   (k^{\mathsf{meta}}_e,k^{\mathsf{welcome}}_e,
    k^{\mathsf{confirm}}_e,\initsec_e).
   \label{eq:epoch-keys}
 \end{align}
-The confirmation MAC is:
+Here $\mathsf{KDF}^{\policy}_\alpha$ is selected by the serialized policy.
+For the default profile,
+\[
+  \mathsf{KDF}^{\policy}_\alpha(x)=
+  \HKDF\text{-}\mathrm{Expand}(x,32,\mathsf{label}(\alpha)).
+\]
+The default label map is:
+\[
+\begin{array}{rcl}
+  \mathsf{label}(\mathsf{meta}) &=& \domain{Aura-Group-MetadataKey},\\
+  \mathsf{label}(\mathsf{welcome}) &=& \domain{Aura-Group-WelcomeKey},\\
+  \mathsf{label}(\mathsf{confirm}) &=& \domain{Aura-Group-ConfirmKey},\\
+  \mathsf{label}(\mathsf{init}) &=& \domain{Aura-Group-InitSecret}.
+\end{array}
+\]
+Write $\mathrm{Subkeys}_{\policy}(x)$ for the tuple
+$(k^{\mathsf{meta}},k^{\mathsf{welcome}},k^{\mathsf{confirm}},\initsec)$
+derived by these policy-selected KDFs.
+
+The four outputs have separate protocol roles.
+$k^{\mathsf{meta}}_e$ encrypts sender data,
+$k^{\mathsf{welcome}}_e$ protects Welcome material,
+$k^{\mathsf{confirm}}_e$ authenticates the accepted group context, and
+$\initsec_e$ is the chaining secret for the next group-epoch transition.
+The extract output $j_e$ is the group-epoch joiner secret; in Add transitions
+it is sealed to the joining member inside a Welcome. A recipient recomputes
+the group-epoch secret $\epochsec_e$ only after reconstructing the same
+$(\gid,e,\treehash_e,\policy)$ context.
+The corresponding confirmation tag is:
 \begin{equation}
   \tau_e = \HMAC(k^{\mathsf{confirm}}_e,\gch_e).
   \label{eq:confirmation}
 \end{equation}
 Thus the confirmation step checks tree state and policy state together.
 
+\subsection{Group-Epoch Installation and State Continuity}
+
+Group-epoch installation is transactional. A client first builds a candidate tree,
+candidate group context, candidate group-epoch secret, candidate subkeys, and
+candidate sender-chain bases. None of these candidate values become live state
+until the Commit signature, proposal validity, parent hashes, context binding,
+and confirmation MAC have all verified. For malformed input or a failed
+cryptographic check, the state transition is pure rejection:
+\begin{equation}
+  \mathsf{ProcessCommit}(S,\mathsf{com})=(\bot,S).
+  \label{eq:group-reject-no-state}
+\end{equation}
+For accepted Commit messages, the abstract transition is a single step
+$S_e\rightarrow S_{e+1}$, even if an implementation parses, decrypts, derives,
+persists, notifies callbacks, and erases temporary secrets in separate
+instructions. Plaintext or membership callbacks should be released only after
+the corresponding replay state, group-epoch counter, sender-chain state, and sealed
+state have reached an equivalent durable boundary:
+\begin{equation}
+  \mathsf{Accept}(S_e,\mathsf{com})=S_{e+1}
+  \quad\Longrightarrow\quad
+  \mathsf{Persist}(S_{e+1})\prec \mathsf{Expose}(\mathrm{effect}).
+  \label{eq:group-atomic-accept}
+\end{equation}
+This is not an additional cryptographic assumption; it is the state-continuity
+condition needed for the replay and membership claims to hold. A crash between
+plaintext release and replay-window persistence would
+violate the protocol state premise even if all AEAD tags and signatures were
+valid.
+
+\begin{table}[tbp]
+\centering
+\caption{Group-epoch state transitions and non-transitions.}\label{tab:epoch-lifecycle}
+\small
+\begin{tabularx}{\textwidth}{@{}p{0.22\textwidth}YY@{}}
+\toprule
+Event & Effect on group-epoch state & Security consequence \\
+\midrule
+Genesis creation & Creates group epoch $0$ from the initial tree, policy, and group context. & Establishes the first authoritative policy-bound state. \\
+Add, Remove, Update, PSK, ReInit Commit message & Advances $e$ to $e+1$ only after signature, proposal, applicable path, parent-hash, context, and confirmation checks. & Refreshes tree secrets when path material is present, resets sender-chain bases, and defines the next membership interval. \\
+Application message & Does not advance the group-epoch counter. It consumes a sender-chain generation inside the current membership interval. & Preserves low-cost traffic while keeping replay state sender-indexed and group-epoch-bound. \\
+Delayed message from a previous group epoch & May be accepted only from bounded compatibility state tagged by group epoch. & Does not reinstall an old tree or revive old Commit authority. \\
+Rejected Commit message or ciphertext & Leaves the live group epoch, tree, sender chains, replay windows, and sealed-state freshness unchanged. & Prevents malformed input from creating partial state transitions. \\
+Re-addition after removal & Requires a later Add or valid external join that creates a new membership interval. & Does not grant access to messages from the absence interval. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
 \subsection{Shield Mode}
 
-\Shield{} is a fixed stricter policy profile. Its default values are
-$1000$ messages per epoch, $4$ skipped sender keys per sender, external joins
-blocked, enhanced key schedule enabled, and mandatory franking enabled.
-Enhanced subkey derivation uses two HKDF-Expand passes with distinct labels:
+\Shield{} is a fixed stricter policy profile. Its default values are profile
+parameters rather than theorem parameters: $1000$ messages per group epoch,
+$4$ skipped sender keys per sender, external joins blocked, profile-specific
+key schedule enabled, and mandatory franking enabled. The bounds are chosen to
+limit sender-chain lifetime and skipped-key storage in high-risk groups; the
+security statements depend on enforcement of the bounds, not on the exact
+numerical constants. The \Shield{} subkey schedule uses two HKDF-Expand passes
+with distinct labels:
 \begin{align}
-  t &= \HKDF\text{-}\mathrm{Expand}(\epochsec_e,\mathit{info}\concat\textsf{pass1}),\\
-  k &= \HKDF\text{-}\mathrm{Expand}(t,\mathit{info}\concat\textsf{pass2}).
+  t_\alpha &=
+    \HKDF\text{-}\mathrm{Expand}(\epochsec_e,32,
+      \mathsf{label}(\alpha)\concat\domain{Aura-Enhanced-Pass1}),\\
+  k^\alpha_e &=
+    \HKDF\text{-}\mathrm{Expand}(t_\alpha,32,
+      \mathsf{label}(\alpha)\concat\domain{Aura-Enhanced-Pass2}).
 \end{align}
-The goal is not to replace the security assumption of HKDF, but to make the
-\Shield{} profile an explicit, checkable domain-separated key schedule rather
-than a set of advisory application flags.
+The second pass is not a claim of extra strength beyond HKDF. Its role is
+profile selection and domain separation: members that disagree on the
+\Shield{} policy compute a different key schedule and fail confirmation
+instead of silently sharing a downgraded epoch.
 
 \begin{figure}[tbp]
 \centering
@@ -503,7 +839,7 @@ than a set of advisory application flags.
 ]
 \node[box] (policy) {Serialized\\security policy};
 \node[box,right=of policy] (hash) {Group context\\hash};
-\node[box,right=of hash] (keys) {Epoch keys};
+\node[box,right=of hash] (keys) {Group-epoch keys};
 \node[box,below=of keys] (confirm) {Confirmation\\MAC};
 \node[box,below=of hash] (sender) {Sender-key\\limits};
 \node[box,below=of policy] (frank) {Mandatory\\franking};
@@ -518,28 +854,355 @@ than a set of advisory application flags.
 \draw[arrow] (sender) -- (keys);
 \end{tikzpicture}
 \caption{\Shield{} as a cryptographic policy profile. Policy bytes affect
-epoch derivation and also drive local message-processing limits.}
+group-epoch derivation and also drive local message-processing limits.}
 \label{fig:shield}
 \end{figure}
 
+\section{Protocol Operations}\label{sec:operations}
+
+This section gives state-transition pseudocode for the construction. It names
+the inputs that must be authenticated, the state fields that must be updated,
+and the checks that cause rejection. It is not a wire-format grammar; the
+operations are specified at the cryptographic acceptance boundary.
+
+\subsection{Group Creation and Admission}
+
+A group begins with a creator leaf, an initial policy, and a ratchet tree that
+contains the creator's signed leaf material. Adding a member is a group-epoch
+transition, not a roster mutation performed by the relay. The new member must
+receive a Welcome, decrypt the joiner secret, rebuild the tree, verify the
+tree hash, parse the policy, derive group-epoch keys, and check the confirmation MAC
+before it treats itself as a member.
+
+\begingroup
+\LinesNotNumbered
+\SetAlgoNoLine
+\begin{algorithm}[H]
+\caption{Create a policy-bound group and add one member.}\label{alg:create-add}
+\footnotesize
+\textbf{Inputs.}
+Creator identity $I_A$, joiner key package $KP_B$, and serialized policy $\policy$.
+
+\textbf{Outputs.}
+Updated creator state $S_A'$, Add Commit message $\mathsf{com}$, and Welcome message $\mathsf{wel}$.
+\vspace{0.25\baselineskip}
+
+\textbf{1. Create the genesis group state.}
+The creator builds the initial ratchet tree and derives the genesis context:
+\[
+\begin{aligned}
+S_A &\gets \mathrm{CreateTree}(I_A,\policy),\\
+\gid &\gets S_A.\gid,\qquad
+\treehash_0\gets \mathsf{TreeHash}(S_A.\mathrm{tree}),\\
+\gch_0 &\gets \mathsf{GroupContext}(\gid,0,\treehash_0,\policy),\\
+(\epochsec_0,\initsec_0)&\gets \mathrm{InitEpoch}(\gch_0).
+\end{aligned}
+\]
+
+\textbf{2. Validate and insert the joining leaf.}
+Reject unless $KP_B$ verifies as a signed key package. If it verifies, insert it
+into the tree and compute the hybrid update path:
+\[
+\begin{aligned}
+T_1 &\gets \mathrm{InsertLeaf}(S_A.\mathrm{tree},KP_B),\\
+(T_1,\mathsf{path},\commitsec_1)&\gets
+  \mathrm{HybridUpdatePath}(T_1,S_A.\mathrm{leaf}).
+\end{aligned}
+\]
+
+\textbf{3. Derive the next group-epoch state.}
+\[
+\begin{aligned}
+\treehash_1&\gets \mathsf{TreeHash}(T_1),\\
+\gch_1&\gets \mathsf{GroupContext}(\gid,1,\treehash_1,\policy),\\
+j_1&\gets
+  \HKDF\text{-}\mathrm{Extract}(\initsec_0,\commitsec_1),\\
+\epochsec_1&\gets
+  \HKDF\text{-}\mathrm{Expand}(j_1,32,
+  \domain{Aura-Group-EpochSecret}\concat\gch_1),\\
+\left(\begin{gathered}
+  k^{\mathsf{meta}}_1,k^{\mathsf{welcome}}_1\\
+  k^{\mathsf{confirm}}_1,\initsec_1
+\end{gathered}\right)
+  &\gets \mathrm{Subkeys}_{\policy}(\epochsec_1),\\
+\tau_1&\gets \HMAC(k^{\mathsf{confirm}}_1,\gch_1).
+\end{aligned}
+\]
+
+\textbf{4. Produce the authenticated admission messages.}
+\[
+\begin{aligned}
+\mathsf{com}&\gets
+  \mathrm{Sign}_{I_A}(\gid,0,1,\mathsf{Add}(KP_B),\mathsf{path},\gch_1,\tau_1),\\
+\mathsf{wel}&\gets
+  \mathrm{SealWelcome}_{KP_B}
+    (\gid,1,j_1,T_1,\treehash_1,\policy,\tau_1).
+\end{aligned}
+\]
+
+\textbf{5. Install the creator's accepted group epoch.}
+\[
+\begin{aligned}
+S_A'&\gets \mathrm{InstallEpoch}(S_A,T_1,1,\policy,\epochsec_1,\initsec_1),\\
+S_A'.\mathrm{senderChains}&\gets
+  \mathrm{ResetSenderChains}(\epochsec_1,S_A'.\mathrm{members}).
+\end{aligned}
+\]
+Return $(S_A',\mathsf{com},\mathsf{wel})$.
+\end{algorithm}
+\endgroup
+
+\begingroup
+\LinesNotNumbered
+\SetAlgoNoLine
+\begin{algorithm}[H]
+\caption{Process a Welcome as the joining member.}\label{alg:welcome}
+\footnotesize
+\textbf{Inputs.}
+Welcome message $\mathsf{wel}$, local joiner secret-key material, and expected identity $I_B$.
+
+\textbf{Output.}
+Accepted member state $S_B$, or rejection.
+\vspace{0.25\baselineskip}
+
+\textbf{1. Open Welcome and parse policy.}
+The joiner decrypts $\mathsf{wel}$ under its leaf credentials. It rejects if
+opening fails or if the serialized policy cannot be parsed.
+
+\textbf{2. Reconstruct the public group state.}
+From the Welcome information, the joiner rebuilds the ratchet tree $T$ and
+checks that $I_B$ has a leaf, that the roster verifies, and that
+\[
+  \mathsf{TreeHash}(T)=\mathsf{info.treeHash}.
+\]
+
+\textbf{3. Recompute the policy-bound context and subkeys.}
+\[
+\begin{aligned}
+\gch&\gets \mathsf{GroupContext}(\mathsf{info.groupId},
+  \mathsf{info.epoch},\mathsf{TreeHash}(T),\policy),\\
+\epochsec&\gets
+  \mathrm{DeriveEpochSecret}(\mathsf{info.joinerSecret},\gch),\\
+\left(\begin{gathered}
+  k^{\mathsf{meta}},k^{\mathsf{welcome}}\\
+  k^{\mathsf{confirm}},\initsec
+\end{gathered}\right)
+  &\gets \mathrm{Subkeys}_{\policy}(\epochsec).
+\end{aligned}
+\]
+
+\textbf{4. Verify confirmation and install state.}
+Reject unless
+\[
+  \HMAC(k^{\mathsf{confirm}},\gch)=\mathsf{info.confirmation}.
+\]
+On success, install the accepted group epoch and reset sender chains:
+\[
+S_B\gets \mathrm{InstallEpoch}(T,\mathsf{info.groupId},
+  \mathsf{info.epoch},\policy,\epochsec,\initsec).
+\]
+The sender-chain bases of $S_B$ are reset from $\epochsec$ for the accepted roster.
+Return $S_B$.
+\end{algorithm}
+\endgroup
+\FloatBarrier
+
+\subsection{Group-Epoch Transition Processing}
+
+An Update, Add, Remove, PSK, or ReInit proposal becomes authoritative only
+after a signed Commit message is accepted. A Commit message must identify the old group epoch,
+the new group epoch, the proposal set, the committer leaf, the update path, and the
+confirmation MAC. Members process the update path from their own position in
+the tree: they locate the first path secret encrypted to a node in their
+resolution, decrypt it with the hybrid wrapper, derive the remaining path
+nodes, verify parent hashes, and then derive the group-epoch keys.
+
+\begingroup
+\LinesNotNumbered
+\SetAlgoNoLine
+\begin{algorithm}[!tbp]
+\caption{Process a group-epoch transition Commit message.}\label{alg:process-commit}
+\footnotesize
+\textbf{Inputs.}
+Local state $S$ and signed Commit message $\mathsf{com}$.
+
+\textbf{Output.}
+New accepted state $S'$, removal notification, or rejection.
+\vspace{0.25\baselineskip}
+
+\textbf{1. Check the public transition envelope.}
+Reject unless the Commit is for $S.\gid$, advances from $S.\epoch$ to
+$S.\epoch+1$, carries the same policy bytes as $S.\policy$, has a valid
+committer signature, and contains proposals valid for the current roster.
+
+\textbf{2. Apply public tree changes.}
+Apply the public proposal effects to obtain a candidate tree $T$. If the local
+leaf is removed, erase local group-epoch secrets and return $\mathrm{Removed}$.
+
+\textbf{3. Recover and authenticate the update path.}
+From the local leaf position, decrypt or apply the first reachable path secret:
+\[
+  (T,\commitsec)\gets
+  \mathrm{DecryptOrApplyUpdatePath}(T,\mathsf{com.updatePath},S.\mathrm{leaf}).
+\]
+Reject if no path secret can be recovered or if the parent hashes do not verify
+against $\mathsf{com.committer}$.
+
+\textbf{4. Recompute the accepted group context.}
+\[
+  \gch\gets \mathsf{GroupContext}(S.\gid,S.\epoch+1,
+  \mathsf{TreeHash}(T),S.\policy).
+\]
+Reject unless $\mathsf{com.context}=\gch$.
+
+\textbf{5. Derive the new group-epoch keys.}
+\[
+\begin{aligned}
+j&\gets \HKDF\text{-}\mathrm{Extract}(S.\initsec,\commitsec),\\
+\epochsec&\gets \HKDF\text{-}\mathrm{Expand}(j,32,
+  \domain{Aura-Group-EpochSecret}\concat\gch),\\
+\left(\begin{gathered}
+  k^{\mathsf{meta}},k^{\mathsf{welcome}}\\
+  k^{\mathsf{confirm}},\initsec
+\end{gathered}\right)
+  &\gets \mathrm{Subkeys}_{S.\policy}(\epochsec).
+\end{aligned}
+\]
+Reject unless $\HMAC(k^{\mathsf{confirm}},\gch)=\mathsf{com.confirmation}$.
+
+\textbf{6. Install the new group epoch atomically.}
+\[
+\begin{aligned}
+S'&\gets \mathrm{InstallEpoch}(S,T,S.\epoch+1,S.\policy,\epochsec,\initsec),\\
+S'.\mathrm{senderChains}&\gets
+  \mathrm{ResetSenderChains}(\epochsec,S'.\mathrm{members}).
+\end{aligned}
+\]
+Return $S'$.
+\end{algorithm}
+\endgroup
+\FloatBarrier
+
+\subsection{Application Messages}
+
+Application messages have lower computational and bandwidth cost than
+group-epoch transition Commit messages. The sender advances its
+own chain, encrypts sender data under the group-epoch metadata key, encrypts payload
+content under the message key, signs the envelope, and optionally attaches a
+franking tag. The receiver authenticates the signature, decrypts sender data,
+checks the replay window, derives or retrieves the sender-chain key, decrypts
+the payload, and then applies policy checks such as mandatory franking,
+expiration, maximum size, and allowed message semantics.
+The sender and receiver state updates are monotone: a sent message persists the
+advanced sender chain, and an accepted receive persists replay-window state
+before plaintext is exposed to the application.
+
+\begingroup
+\LinesNotNumbered
+\SetAlgoNoLine
+\begin{algorithm}[!tbp]
+\caption{Encrypt and decrypt a group-epoch application message.}\label{alg:message}
+\footnotesize
+\textbf{Inputs.}
+Sender state $S_i$, receiver state $S_j$, and plaintext $m$.
+
+\textbf{Outputs.}
+Updated sender state $S_i'$, ciphertext $C$, and either updated receiver state
+$S_j'$ with plaintext $m'$ or rejection.
+\vspace{0.25\baselineskip}
+
+\textbf{1. Sender advances its chain and prepares sender data.}
+\[
+\begin{aligned}
+(mk,ck_i')&\gets \mathrm{AdvanceSenderChain}(S_i.ck_i),\\
+(n_{\mathsf{sd}},n_{\mathsf{pt}},\mathit{reuseGuard})
+  &\gets \mathrm{FreshMessageRandomness}(),\\
+sd&\gets (i,S_i.\mathrm{generation},\mathit{reuseGuard}),\\
+\mathsf{aad}_{\mathsf{sd}}&\gets S_i.\gid\concat S_i.\epoch,\\
+C_{\mathsf{sd}}&\gets
+  \AEAD.\Enc(S_i.k^{\mathsf{meta}},n_{\mathsf{sd}},sd,\mathsf{aad}_{\mathsf{sd}}).
+\end{aligned}
+\]
+
+\textbf{2. Sender applies message semantics and encrypts the payload.}
+If franking is required or requested, compute $(fk,\mathit{tag})\gets
+\mathrm{Frank}(m)$ and set $m^\star\gets(m,fk)$; otherwise set
+$\mathit{tag}\gets\varepsilon$ and $m^\star\gets m$. Then compute
+\[
+\begin{aligned}
+\mathsf{aad}_{\mathsf{pt}}&\gets
+  \mathsf{aad}_{\mathsf{sd}}\concat C_{\mathsf{sd}}\concat \mathit{tag},\\
+C_{\mathsf{pt}}&\gets
+  \AEAD.\Enc(mk,n_{\mathsf{pt}},m^\star,\mathsf{aad}_{\mathsf{pt}}),\\
+\sigma&\gets \mathrm{Sign}_{I_i}(S_i.\gid,S_i.\epoch,n_{\mathsf{sd}},
+  n_{\mathsf{pt}},C_{\mathsf{sd}},C_{\mathsf{pt}},\mathit{tag}),\\
+C&\gets (S_i.\gid,S_i.\epoch,n_{\mathsf{sd}},n_{\mathsf{pt}},
+  C_{\mathsf{sd}},C_{\mathsf{pt}},\mathit{tag},\sigma).
+\end{aligned}
+\]
+Set $S_i'\gets S_i[ck_i\leftarrow ck_i',
+\mathrm{generation}\leftarrow S_i.\mathrm{generation}+1]$ and persist $S_i'$
+before releasing $C$.
+
+\textbf{3. Receiver authenticates the envelope and opens sender data.}
+Reject unless $C$ matches the receiver's group identifier and group epoch and
+the sender signature verifies for the current roster. Then compute
+\[
+sd'\gets
+  \AEAD.\Dec(S_j.k^{\mathsf{meta}},n_{\mathsf{sd}},C_{\mathsf{sd}},
+    S_j.\gid\concat S_j.\epoch).
+\]
+Reject if sender-data decryption fails or if $sd'$ is already present in the
+replay window.
+
+\textbf{4. Receiver resolves the sender-chain key and decrypts the payload.}
+\[
+\begin{aligned}
+(mk',S_j^\star)&\gets \mathrm{ResolveSenderKey}(S_j,sd'),\\
+m^\star{}'&\gets
+  \AEAD.\Dec(mk',n_{\mathsf{pt}},C_{\mathsf{pt}},
+    S_j.\gid\concat S_j.\epoch\concat C_{\mathsf{sd}}\concat \mathit{tag}).
+\end{aligned}
+\]
+Reject if key resolution or payload decryption fails.
+
+\textbf{5. Receiver applies policy and commits receive state.}
+Open the payload semantics to obtain $m'$, reject unless
+$\mathrm{PolicyAccepts}(S_j.\policy,m^\star{}',\mathit{tag})$ holds. Set
+$S_j'\gets \mathrm{CommitReceiveState}(S_j^\star,sd')$, which marks $sd'$ as
+seen, and persist $S_j'$ before exposing $m'$.
+Return $(S_i',C,S_j',m')$.
+\end{algorithm}
+\endgroup
+\FloatBarrier
+
 \section{Message Layer}
 
-TreeKEM commits are comparatively expensive and are used for epoch changes.
-Inside one epoch, application messages use sender chains. For sender leaf $i$
-and generation $g$:
+TreeKEM Commit messages are comparatively expensive and are used for group-epoch changes.
+Inside one group epoch, application messages use sender chains. At group-epoch installation
+the base sender chain for leaf $i$ is reset from the accepted group-epoch secret;
+for sender leaf $i$ and generation $g$:
 \begin{align}
-  mk_{i,g} &= \HKDF\text{-}\mathrm{Expand}(ck_{i,g},\textsf{``Aura-Group-Msg''}),\\
-  ck'_{i,g+1} &= \HKDF\text{-}\mathrm{Expand}(ck_{i,g},\textsf{``Aura-Group-Chain''}),\\
+  ck^e_{i,0} &=
+  \HKDF\text{-}\mathrm{Expand}\bigl(\epochsec_e,32,\notag\\
+  &\qquad \domain{Aura-Group-SenderChain}\concat \gch_e
+    \concat \mathrm{le}_{32}(i)\bigr),
+    \label{eq:sender-chain-reset}\\
+  mk_{i,g} &= \HKDF\text{-}\mathrm{Expand}
+    (ck_{i,g},32,\domain{Aura-Group-Msg}),\\
+  \widetilde{ck}_{i,g+1} &= \HKDF\text{-}\mathrm{Expand}
+    (ck_{i,g},32,\domain{Aura-Group-Chain}),\\
   ck_{i,g+1} &=
   \begin{cases}
-    ck'_{i,g+1}, & \text{default policy},\\
-    \BLAKE_{\textsf{Aura-B2Chain}}(ck'_{i,g+1}), & \Shield{}.
+    \widetilde{ck}_{i,g+1}, & \text{default policy},\\
+    \mathrm{BLAKE2bMAC}_{\domain{Aura-B2Chain}}
+      (\widetilde{ck}_{i,g+1}), & \Shield{}.
   \end{cases}
 \end{align}
 The payload is padded and encrypted under $mk_{i,g}$. Sender metadata
-$(i,g,\mathit{reuseGuard})$ is encrypted under the epoch metadata key
+$(i,g,\mathit{reuseGuard})$ is encrypted under the group-epoch metadata key
 $k^{\mathsf{meta}}_e$. The message signature covers the group identifier,
-epoch, encrypted sender data, encrypted payload, nonces, and franking tag.
+group-epoch number, encrypted sender data, encrypted payload, nonces, and franking tag.
 
 \subsection{Replay Rejection}
 
@@ -552,7 +1215,11 @@ sender and globally; \Shield{} tightens the per-sender bound.
 
 For a frankable message the sender samples a franking key $fk$ and publishes:
 \begin{equation}
-  \mathit{tag} = \HMAC(fk,\mathit{content}\concat\mathit{sealedContent}).
+  \mathit{tag} =
+  \begin{cases}
+    \HMAC(fk,\mathit{content}\concat\mathit{sealedContent}), & \text{frankable},\\
+    \varepsilon, & \text{otherwise}.
+  \end{cases}
   \label{eq:franking}
 \end{equation}
 The tag is visible in the application message, while $fk$ is inside the
@@ -563,31 +1230,39 @@ franking goal of selective accountable disclosure~\cite{franking}.
 
 \begin{figure}[tbp]
 \centering
+\resizebox{0.98\textwidth}{!}{%
 \begin{tikzpicture}[
   font=\small,
-  role/.style={draw,rounded corners=2pt,minimum width=2.45cm,minimum height=0.72cm,align=center,fill=gray!7},
-  note/.style={draw,rounded corners=2pt,minimum width=2.8cm,minimum height=0.66cm,align=center,fill=blue!5,font=\scriptsize},
+  role/.style={draw,rounded corners=2pt,minimum width=2.55cm,
+    minimum height=0.72cm,align=center,fill=gray!7},
+  note/.style={draw,rounded corners=2pt,align=center,fill=blue!5,
+    font=\scriptsize,text width=2.65cm,minimum height=0.72cm},
+  relaynote/.style={note,fill=orange!8},
+  reportnote/.style={note,fill=green!7},
   arrow/.style={-Latex,thick},
   weak/.style={-Latex,thick,dashed,gray!75}
 ]
 \node[role] (sender) at (0,0) {Sender};
-\node[role] (relay) at (3.25,0) {Relay};
-\node[role] (receiver) at (6.5,0) {Receiver};
-\node[role] (moderator) at (9.75,0) {Moderator};
+\node[role] (relay) at (3.65,0) {Relay};
+\node[role] (recipient) at (7.3,0) {Recipient};
+\node[role] (moderator) at (10.95,0) {Moderator};
 
-\node[note] (seal) at (0,-1.15) {$fk$ inside\\E2E payload};
-\node[note] (opaque) at (3.25,-1.15) {sees ciphertext\\and tag only};
-\node[note] (open) at (6.5,-1.15) {may disclose\\$(fk,\mathit{content})$};
-\node[note] (verify) at (9.75,-1.15) {checks one\\reported message};
+\node[note] (seal) at (0,-1.18) {$fk$ sealed\\inside E2E payload};
+\node[relaynote] (opaque) at (3.65,-1.18) {stores opaque\\$(C,\mathit{tag})$};
+\node[reportnote] (open) at (7.3,-1.18) {can disclose\\$(fk,\mathit{content})$};
+\node[reportnote] (verify) at (10.95,-1.18) {verifies one\\reported message};
 
-\draw[arrow] (sender) -- node[above,font=\scriptsize] {$C,\mathit{tag}$} (relay);
-\draw[arrow] (relay) -- node[above,font=\scriptsize] {$C,\mathit{tag}$} (receiver);
-\draw[weak] (receiver) -- node[above,font=\scriptsize,black,fill=white,inner sep=1pt] {optional report} (moderator);
-\draw[arrow] (seal) -- (sender);
+\draw[arrow] (sender) -- node[above,font=\scriptsize,fill=white,inner sep=1pt]
+  {$C,\mathit{tag}$} (relay);
+\draw[arrow] (relay) -- node[above,font=\scriptsize,fill=white,inner sep=1pt]
+  {$C,\mathit{tag}$} (recipient);
+\draw[weak] (open) -- (verify);
+\draw[arrow] (sender) -- (seal);
 \draw[arrow] (relay) -- (opaque);
-\draw[arrow] (receiver) -- (open);
+\draw[arrow] (recipient) -- (open);
 \draw[arrow] (moderator) -- (verify);
 \end{tikzpicture}
+}
 \caption{Franking disclosure path. The relay stores an opaque commitment, while
 a recipient can later reveal exactly one message to a moderator.}
 \label{fig:franking-flow}
@@ -606,7 +1281,7 @@ decryption rejects expired messages and timestamps too far in the future.
   layer/.style={draw,rounded corners=2pt,align=center,minimum width=10.5cm,minimum height=0.78cm},
   arrow/.style={-Latex,thick}
 ]
-\node[layer,fill=gray!8] (wire) {GroupMessage: version, group id, epoch, application frame};
+\node[layer,fill=gray!8] (wire) {GroupMessage: version, group id, group epoch, application frame};
 \node[layer,below=0.45cm of wire,fill=blue!6] (sender) {Encrypted sender data: sender leaf, generation, reuse guard};
 \node[layer,below=0.45cm of sender,fill=green!7] (payload) {Encrypted payload: content, policy, franking key, sealed fields, references};
 \node[layer,below=0.45cm of payload,fill=orange!8] (sem) {Optional semantics: franking tag, sealed reveal, TTL expiration};
@@ -615,7 +1290,7 @@ decryption rejects expired messages and timestamps too far in the future.
 \draw[arrow] (payload) -- (sem);
 \end{tikzpicture}
 \caption{Application-message envelope. Sender data is hidden from passive
-observers under the epoch metadata key, while the payload uses the sender-chain
+observers under the group-epoch metadata key, while the payload uses the sender-chain
 message key.}
 \label{fig:message-envelope}
 \end{figure}
@@ -625,12 +1300,22 @@ message key.}
 External join is supported only when policy permits it. The joining member
 uses external key material derived from the current init secret and presents an
 authorization signed by an existing member. The authorization binds the group
-identifier, epoch, group context hash, external public keys, authorizer leaf,
+identifier, group-epoch number, group context hash, external public keys, authorizer leaf,
 joiner identity, and expiry. In \Shield{} groups this path is disabled.
 
+The authorization is evaluated against the public state and group context for
+the group epoch in which it was issued. A joiner cannot transplant it to a different
+tree hash, policy, group identifier, external key pair, or later group epoch without
+changing the signed data. Expiry is an authorization-creation boundary: it
+prevents a stale authorization from being used to form a new external-join
+Commit message. Once a valid external-join Commit message has been formed for the bound group epoch,
+offline members may still process that Commit later, because their acceptance
+check is the signed Commit message and policy-bound group-epoch transition rather than the
+joiner's local wall clock.
+
 The relay model is narrower. The relay may validate envelope structure,
-group identifier, epoch, sender signature format, and routing information.
-For commits it can maintain tentative delivery state, but it cannot verify the
+group identifier, group-epoch number, sender signature format, and routing information.
+For Commit messages it can maintain tentative delivery state, but it cannot verify the
 TreeKEM path secret, confirmation MAC, or final client-side membership state
 because it has no group secrets. This separation is important: relay-side
 validation is useful for abuse resistance and routing, but it is not a
@@ -641,27 +1326,28 @@ cryptographic authority.
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
   font=\small,
-  lane/.style={draw,rounded corners=2pt,align=center,minimum width=4.25cm,minimum height=0.78cm},
+  lane/.style={draw,rounded corners=2pt,align=center,minimum width=4.05cm,minimum height=0.82cm},
   relay/.style={lane,fill=orange!9},
   member/.style={lane,fill=blue!6},
   endrelay/.style={lane,fill=orange!15,thick},
   endmember/.style={lane,fill=green!8,thick},
   arrow/.style={-Latex,thick},
-  node distance=0.48cm and 0.75cm
+  boundary/.style={dashed,gray!70,line width=0.7pt},
+  node distance=0.58cm and 0.82cm
 ]
-\node[relay] (r1) at (0,0) {Relay lane: size, version, group id, epoch};
+\node[relay] (r1) at (0,0) {Relay lane: size, version, group id, group epoch};
 \node[relay,right=of r1] (r2) {signature syntax\\routing target};
 \node[endrelay,right=of r2] (r3) {tentative routing\\state only};
 
-\node[member] (m1) at (0,-1.45) {Member lane: decrypt sender data};
+\node[member] (m1) at (0,-1.8) {Member lane: decrypt sender data};
 \node[member,right=of m1] (m2) {process UpdatePath\\tree hash, policy, MAC};
-\node[endmember,right=of m2] (m3) {accepted epoch\\or accepted message};
+\node[endmember,right=of m2] (m3) {accepted group epoch\\or accepted message};
 
 \draw[arrow] (r1) -- (r2);
 \draw[arrow] (r2) -- (r3);
 \draw[arrow] (m1) -- (m2);
 \draw[arrow] (m2) -- (m3);
-\draw[arrow,dashed] (r2) -- node[right,font=\scriptsize,align=center]{cannot verify\\group secrets} (m2);
+\draw[boundary] ($(r1.south west)+(0,-0.36)$) -- ($(r3.south east)+(0,-0.36)$);
 \end{tikzpicture}%
 }
 \caption{Relay/member authority split. Relay checks are structural and useful for routing, while cryptographic acceptance remains a member-side state transition.}\label{fig:relay-authority}
@@ -675,20 +1361,60 @@ cryptographic authority.
 \toprule
 Check & Relay side & Member side \\
 \midrule
-Envelope format & Version, size, group identifier, epoch, payload type. & Same, plus decryption under local epoch keys. \\
-Commit structure & Epoch increment, group identifier, syntactic proposal shape, signature binding. & Proposal validity, TreeKEM path processing, tree hash, confirmation MAC. \\
+Envelope format & Version, size, group identifier, group-epoch number, payload type. & Same, plus decryption under local group-epoch keys. \\
+Commit structure & Group-epoch increment, group identifier, syntactic proposal shape, signature binding. & Proposal validity, TreeKEM path processing, tree hash, confirmation MAC. \\
 Application message & Sender identity binding from authenticated context, signature syntax, routing target. & Sender-data decrypt, replay window, sender-chain key, AEAD payload decrypt, policy checks. \\
-Membership state & Tentative routing roster. & Authoritative ratchet-tree state and accepted epoch. \\
+Membership state & Tentative routing roster. & Authoritative ratchet-tree state and accepted group epoch. \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-\section{Security Argument}
+\section{Security Argument}\label{sec:security}
 
-\begin{claim}[Hybrid epoch recovery]
-Assume honest erasure of old path secrets and epoch secrets. If an accepted
-commit after compromise contains fresh \DH{} and \KEM{} material generated by
-an uncompromised member, then the new epoch secret is pseudorandom provided at
+The security argument is modular rather than fully composable. It separates
+the cryptographic assumptions used by individual mechanisms from the protocol
+invariants that connect those mechanisms inside one accepted group epoch. This is a
+defined claim boundary: the argument does not prove arbitrary asynchronous
+group schedules. It argues that, for a locally accepted transition, the tree
+update, policy context, confirmation MAC, sender-chain state, replay window,
+and message semantics fit together in the intended way.
+
+\begin{table}[tbp]
+\centering
+\caption{Assumption use in the informal security argument.}\label{tab:assumptions}
+\small
+\begin{tabularx}{\textwidth}{@{}p{0.25\textwidth}YY@{}}
+\toprule
+Mechanism & Assumption or invariant & Used for \\
+\midrule
+X25519 path component & Classical DH hardness before a CRQC and fresh post-compromise keys. & Hybrid path secrecy and local recovery when the classical component survives. \\
+ML-KEM path component & IND-CCA2 security of ML-KEM-768. & Path secrecy against harvest-now-decrypt-later when the KEM component survives. \\
+HKDF schedule & Extractor/PRF behavior with domain-separated labels. & Combining previous init, commit secret, group-epoch context, and sender-chain derivation. \\
+AES-256-GCM-SIV & Authenticated encryption with misuse resistance under bounded nonce misuse. & Payload, sender-data, Welcome, and sealed-state confidentiality/integrity. \\
+Ed25519 signatures & Unforgeability of identity, Commit-message, and message signatures. & Key-package authenticity, Commit origin, and sender binding. \\
+Local erasure & Old path and group-epoch secrets are erased; any retained delayed-message keys are bounded and tagged by group epoch. & Forward secrecy, delayed delivery, and post-compromise recovery boundaries. \\
+State continuity & Commit/message acceptance is atomic with durable replay and sealed-state updates. & Preventing rollback from turning old ciphertexts into fresh events. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The central invariant is that there is a single accepted context for a
+member at a group epoch: the tuple $(\gid,e,\treehash_e,\policy)$ determines
+$\gch_e$, and $\gch_e$ determines the group-epoch keys and confirmation MAC. If any
+component changes, honest clients either derive different keys or fail
+confirmation. The second invariant is membership-indexed key availability:
+only leaves represented in the accepted ratchet tree, and not removed by the
+accepted Commit, obtain the path secret needed for the next group epoch. The third
+invariant is sender-indexed message state: once a group epoch is accepted, each
+sender has an independent chain and replay window, so duplicate generations do
+not become fresh messages. The fourth invariant is state continuity: rejected
+Commit messages and rejected ciphertexts do not partially advance group-epoch counters,
+sender chains, replay windows, or sealed-state freshness markers.
+
+\begin{claim}[Hybrid group-epoch recovery]
+Assume honest erasure of old path secrets and group-epoch secrets. If an accepted
+Commit after compromise contains fresh \DH{} and \KEM{} material generated by
+an uncompromised member, then the new group-epoch secret is pseudorandom provided at
 least one of the hybrid wrapping components remains secure and HKDF behaves as
 a randomness extractor and PRF.
 \end{claim}
@@ -698,118 +1424,268 @@ The argument follows the hybrid-combiner principle. Path secrets are delivered
 under a wrapping key derived from both a \DH{} shared value and a \KEM{} shared
 secret. Replacing one surviving component by random changes the wrapping key
 to a pseudorandom key. The commit secret then feeds HKDF-Extract with the
-previous init secret; the epoch context binds the accepted tree and policy.
+previous init secret; the group-epoch context binds the accepted tree and policy.
+If the previous init secret was compromised, recovery depends on the fresh
+commit secret. If the update path was generated before compromise or by a
+compromised member, this claim does not apply. Thus the recovery
+point is the first accepted honest group-epoch update whose path material was
+sampled after the compromise event.
 
 \begin{claim}[Policy consensus]
-Two members that accept the same commit but use different serialized security
+Two members that accept the same Commit but use different serialized security
 policies derive different group context hashes except with collision
-probability for \SHA{}. Consequently, they derive different epoch keys and fail
+probability for \SHA{}. Consequently, they derive different group-epoch keys and fail
 confirmation or later AEAD checks.
 \end{claim}
 
 \noindent
 This claim is the core reason to treat policy as cryptographic input. A relay
 or application cannot silently downgrade \Shield{} to a weaker policy while
-preserving the same epoch transcript.
+preserving the same group-epoch transcript.
+The same reasoning covers sender-key limits, mandatory franking, and external
+join policy because those fields are serialized into the policy bytes before
+hashing. A member that accepts the weaker policy enters a different group-epoch
+state from a member that accepts the stronger one; the mismatch is detected by
+confirmation or by later message decryption failure.
+
+\begin{claim}[Removed-member exclusion]
+Let member $R$ be removed by an accepted Commit from group epoch $e$ to
+$e+1$. If $R$ does not receive a valid path secret for group epoch $e+1$ and
+the remaining members erase old group-epoch keys and message keys as specified,
+then $R$ cannot derive sender-chain message keys for group epoch $e+1$ from
+its old group-epoch-$e$ state.
+\end{claim}
+
+\noindent
+The public Commit may reveal the proposal that removes $R$, but the new group-epoch
+secret is derived from the previous init secret and the fresh commit secret
+recovered through the update path. The update path is addressed to the
+co-path resolution of current recipients, not to removed leaves. Sender-chain
+bases are reset from the new group-epoch secret. Consequently, old sender-chain
+state does not extend across the removal boundary. This is a membership-interval
+exclusion statement, not a claim that already-delivered group-epoch-$e$ ciphertexts
+become undecryptable.
+
+If $R$ is later added again, the admission is a new group-epoch transition with a new
+key package or external-join authorization, a new leaf position as accepted by
+the tree, and fresh sender-chain bases derived from the re-addition group epoch. The
+new membership interval does not bridge the removal gap. In particular,
+successful re-addition gives $R$ access to group epochs at and after the new Welcome
+or accepted external join, not to application messages from group epochs in which
+$R$ was absent.
 
 \begin{claim}[Replay rejection]
-Within one epoch, a valid application ciphertext with the same sender leaf and
+Within one group epoch, a valid application ciphertext with the same sender leaf and
 generation is accepted at most once by a receiver that preserves its replay
 window state.
 \end{claim}
 
 \noindent
-The receiver decrypts sender data under the epoch metadata key, verifies the
+The receiver decrypts sender data under the group-epoch metadata key, verifies the
 sender signature, checks the replay window, obtains the sender-chain message
 key, and only then marks the generation as seen. Modified replays fail at
 signature, AEAD, franking, or replay checks depending on the mutation.
+Persistence matters: if a receiver restores old sealed state without an
+external anti-rollback floor, replay windows may also roll back. The security
+claim therefore requires sealed-state anti-rollback metadata to be treated as
+deployment state rather than as a cosmetic serialization field.
+
+\begin{claim}[Delayed-message state separation]
+If delayed application messages from previous group epochs are supported, the retained
+compatibility state is bounded, tagged by group epoch, and message-key scoped. Accepting
+such a delayed message cannot roll the current group epoch backward, reinstall
+an old tree, or revive a removed sender-chain state.
+\end{claim}
+
+\noindent
+This separates asynchronous delivery from rollback. A member may keep a small
+cache of skipped message keys or metadata-opening material for messages that
+were already authorized in their source group epoch. That cache is not the previous
+group-epoch secret, not the previous init secret, and not authority to process new
+Commit messages under an old tree. The message is checked against the group identifier,
+source group epoch, sender leaf, generation, replay window, and policy semantics for
+the group epoch that produced the key. If the cache is absent or exhausted, the
+message is rejected; the implementation does not synthesize old state from the
+current group epoch.
+
+\begin{claim}[Franking accountability]
+If a moderator verifies a disclosed tuple $(fk,m,\mathit{tag})$ for an
+accepted frankable message, then the tag corresponds to the franking key and
+content carried in an end-to-end encrypted payload accepted by a group member,
+except with the forgery probability of the MAC.
+\end{claim}
+
+\noindent
+The relay sees the franking tag before any report, but it does not know the
+franking key because $fk$ is carried inside the encrypted payload. A recipient
+can disclose $fk$ and the relevant content for one message. The moderator then
+checks the MAC relation for that message only. This does not give the
+moderator keys for unrelated messages, and it does not let the relay verify
+ordinary unreported traffic.
+
+\subsection{Failure Cases Outside the Claim Boundary}
+
+Several important failure cases are outside the positive claims.
+If all live members that can update the tree are compromised and later no
+honest member performs an update, there is no post-compromise recovery event.
+If clients accept unsigned or incorrectly bound key packages, then group
+membership authentication has already failed before TreeKEM processing begins.
+If a deployment permits policy changes without treating them as explicit
+Commit messages, then the policy-consensus argument no longer applies. If sealed state
+can be rolled back by the local platform, replay windows and skipped-key
+budgets can also be rolled back. These are not subtle limitations; they are
+the operational conditions under which the protocol state machine must run.
 
 \section{Scoped Symbolic Model}
 
-The construction is accompanied by a \ProVerif{} model
-(\path{formal/proverif/aura_group.pv}) for the core group epoch and message
-path~\cite{blanchet2016}. The model covers one accepted hybrid update path and
-one application message inside the resulting epoch. It abstracts away full
-asynchronous group scheduling, but it checks the part where policy-bound epoch
-agreement, message secrecy, and franking accountability meet.
+The construction is accompanied by the scoped \ProVerif{} model
+\texttt{formal/proverif/aura\_group.pv}~\cite{blanchet2016}. It can be run
+with \texttt{make -C formal proverif-group}. The model covers one accepted
+hybrid update path and one application message inside the resulting group
+epoch. The network adversary controls the public channel, can replay and
+substitute public messages, and sees the hybrid path wrapper and application
+ciphertext; honest acceptance is represented by confirmation-MAC and
+correspondence events. The model abstracts away full asynchronous group
+scheduling, proposal queues, delivery-service fairness, multiple concurrent
+senders, and multi-device state.
 
 \begin{table}[tbp]
 \centering
-\caption{\ProVerif{} group model: 6/6 scoped queries discharged.}\label{tab:group-proverif}
+\caption{\ProVerif{} group model: scoped queries discharged.}\label{tab:group-proverif}
 \small
-\begin{tabularx}{\textwidth}{@{}p{0.30\textwidth}p{0.16\textwidth}Y@{}}
+\begin{tabularx}{\textwidth}{@{}p{0.16\textwidth}p{0.28\textwidth}p{0.14\textwidth}Y@{}}
 \toprule
-Query & Result & Meaning \\
+Query & Model event or secrecy target & Result & Meaning \\
 \midrule
-Path-secret secrecy & true & The fresh TreeKEM path secret is not learned from the hybrid path wrapper. \\
-Previous-init secrecy & true & The previous init-secret contribution remains hidden in the accepted transition. \\
-Application-message secrecy & true & The in-epoch challenge payload is not learned by the network adversary. \\
-Commit correspondence & true & An accepted commit corresponds to an honest policy-bound commit event. \\
-Message correspondence & true & An accepted challenge message corresponds to an honest send under the same epoch key. \\
-Franking correspondence & true & A verified franking disclosure corresponds to an issued franking tag. \\
+Q1 & \texttt{path\_secret} secrecy & true & The fresh TreeKEM path secret is not learned from the hybrid path wrapper. \\
+Q2 & \texttt{prev\_init\_secret} secrecy & true & The previous init-secret contribution remains hidden in the accepted transition. \\
+Q3 & \texttt{app\_secret} secrecy & true & The challenge payload within the accepted group epoch is not learned by the network adversary. \\
+Q4 & \texttt{CommitAccepted} $\Rightarrow$ \texttt{CommitCreated} & true & An accepted Commit corresponds to an honest policy-bound Commit event. \\
+Q5 & \texttt{MessageAccepted} $\Rightarrow$ \texttt{MessageSent} & true & An accepted challenge message corresponds to an honest send under the same group-epoch key. \\
+Q6 & \texttt{FrankingVerified} $\Rightarrow$ \texttt{FrankingIssued} & true & A verified franking disclosure corresponds to an issued franking tag. \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-The result should be read as scoped symbolic evidence, not as a complete group
-security theorem. A full proof still needs tree-state concurrency, proposal
-interleavings, delivery schedules, and multi-device state. The present model is
-useful because it checks that the key claims made in \cref{eq:gch,eq:epoch-keys}
-and the message/franking path are not merely prose-level assertions.
+The six queries check the two composition points that the construction relies on:
+the Commit-to-epoch transition, where a path secret becomes a group-epoch
+secret under a policy-bound context, and the epoch-to-message transition,
+where the accepted epoch key becomes a message and franking key. The model
+represents the hybrid path wrapper, the policy-bound confirmation MAC, the
+application payload, and franking correspondence explicitly. Full tree
+traversal, all co-path recipients, skipped-key cache behavior, replay bitmaps,
+and arbitrary proposal interleavings remain outside this one-epoch model.
 
-\section{Implementation Evidence}
+\section{Reference Implementation Validation}
 
-The implementation has an executable group API for creation, add, remove,
-update, external join, encrypted application messages, sealed messages,
-disappearing messages, franking, reactions, edits, deletes, state sealing, and
-relay validation. The evidence used in this paper is summarized in
-\cref{tab:evidence}. Named tests and benchmarks are part of the artifact
-surface; they support engineering review but do not replace the scoped
-symbolic model or a future full group proof.
+The reference-implementation validation evidence is summarized in
+\cref{tab:evidence}. It is organized by validation class:
+lifecycle transitions, member exclusion, external-join authorization,
+message-layer misuse cases, higher-level message semantics, sealed-state
+persistence, and cost characterization. These checks show that the executable
+state machine enforces the same acceptance and rejection boundaries described
+by the specification.
 
 \begin{table}[tbp]
 \centering
-\caption{Implementation evidence for the group construction.}\label{tab:evidence}
+\caption{Reference-implementation validation evidence for the group construction.}\label{tab:evidence}
 \small
 \begin{tabularx}{\textwidth}{@{}p{0.26\textwidth}YY@{}}
 \toprule
 Area & Evidence & Security relevance \\
 \midrule
-TreeKEM update & Add, remove, update, interleaved three-member updates, parent-hash checks. & Epoch state evolves through authenticated update paths. \\
-Removed member exclusion & Removed-member decrypt failures and captured-ciphertext tests. & Old members do not obtain post-removal epoch keys. \\
-External join & Basic join, stale/expired/tampered authorization rejection, wrong public state rejection, policy-blocked joins. & Join surface is explicit and policy controlled. \\
-Message layer & Replay rejection, ciphertext bit-flip rejection, sender-signature tampering rejection. & Application messages are bound to epoch, sender, and generation. \\
-Message semantics & Sealed roundtrip, wrong-key reveal failure, disappearing TTL rejection, frankable verification and tamper rejection. & Higher-level semantics are enforced after cryptographic decrypt. \\
-Sealed state & Roundtrip, wrong key, wrong identity secret, nonce-size, wrapper-version, bit-flip, and rollback checks. & Local state persistence has integrity and external freshness requirements. \\
-Benchmarks & Group create, add member, encrypt/decrypt, update, and sealed-state profiles. & Cost measurements are review context, not security assumptions. \\
+TreeKEM update & Add, remove, update, interleaving, and parent-hash validation cases. & Group-epoch state evolves through authenticated update paths. \\
+Removed member exclusion & Rejection of post-removal decrypt attempts and stale captured ciphertexts. & Old members do not obtain post-removal group-epoch keys. \\
+External join & Rejection of stale, expired, tampered, wrong-state, or policy-blocked join attempts. & Join surface is explicit and policy controlled. \\
+Message layer & Replay, ciphertext-tamper, and sender-authentication rejection cases. & Application messages are bound to group epoch, sender, and generation. \\
+Message semantics & Validation of sealed, expiring, frankable, edited, and deleted message semantics. & Higher-level semantics are enforced after cryptographic decrypt. \\
+Sealed state & Rejection of malformed, wrong-key, wrong-identity, tampered, and rolled-back state. & Local state persistence has integrity and external freshness requirements. \\
+Performance & Measurements of group creation, admission, message processing, updates, and state sealing. & Cost measurements are engineering context, not security assumptions. \\
 \bottomrule
 \end{tabularx}
 \end{table}
+
+The validation suite exercises the construction at several layers: external
+interface behavior, lower-level TreeKEM invariants, key-package validation,
+key-schedule domain separation, message-layer misuse cases, time-dependent
+semantics, persistence checks, and adversarial rejection paths. The relevant
+point is not a list of test names, but the alignment between
+the executable state machine and the boundaries specified by the construction.
+
+The validation evidence covers hybrid path-secret processing, parent-hash
+validation, path-key rotation, pre-join and post-removal confidentiality
+boundaries, re-addition gap protection, per-group-epoch replay rejection,
+external-join authorization binding, \Shield{} policy enforcement, franking
+tamper rejection, and sealed-state integrity. This evidence supports the
+protocol description at the engineering boundary where parsing, persistence,
+replay handling, and rejection behavior are observable.
+
+Benchmarks are reported separately from security evidence. They measure
+the principal cost centers of the construction: creating a group, admitting a
+member, encrypting and decrypting group messages, performing an update, and
+exporting or importing sealed group state. Benchmark timings are not used as
+assumptions; the measurements are engineering context.
+
+\subsection{Reproducibility Notes}
+
+A reviewer can examine the construction through four views: the protocol
+description, the reference implementation, the validation corpus, and the
+symbolic model. The manuscript gives the protocol-level equations and claim
+boundary; the implementation realizes tree state, TreeKEM wrapping, Commit
+messages, key packages, Welcome processing, sender keys, and key schedule
+derivation; the validation material and symbolic model exercise these layers
+from complementary perspectives. Benchmark tables and validation counts are
+included for reproducibility and engineering context.
 
 \section{Comparison}
 
 \begin{table}[tbp]
 \centering
-\caption{Positioning against common group-messaging design points.}\label{tab:comparison}
+\caption{Design positioning against common group-messaging design points.}\label{tab:comparison}
 \small
 \begin{tabularx}{\textwidth}{@{}p{0.23\textwidth}YYY@{}}
 \toprule
-Property & MLS 1.0 & Sender-key style groups & \Aura{} Group \\
+Property & MLS 1.0 baseline & Sender-key style groups & \Aura{} Group profile \\
 \midrule
-Group epoch structure & TreeKEM epochs standardized in RFC 9420. & Often pairwise setup plus symmetric sender keys. & MLS-inspired tree epochs with hybrid update paths. \\
-Post-quantum material & Not fixed by RFC 9420 baseline. & Depends on pairwise setup and later extensions. & \DH{}+\KEM{} material on TreeKEM update paths. \\
-Policy as key input & Group context is central; application policy profiles are out of scope. & Usually application-layer. & Serialized policy is hashed into epoch context. \\
-In-epoch messages & Application secrets derived from epoch state. & Efficient sender chains. & Per-member sender chains with encrypted sender data. \\
-Accountability layer & Not the main protocol goal. & Product-specific. & Franking commitments integrated with E2E payloads. \\
-Relay authority & Delivery service is not a group-secret holder. & Service role varies by system. & Relay-blind structural validation only. \\
+Group-epoch structure & Standardized TreeKEM epochs and group context in RFC 9420. & Often pairwise admission plus symmetric sender-key traffic. & MLS-inspired epochs with hybrid TreeKEM update-path wrapping. \\
+Post-quantum material & Not specified by the RFC 9420 baseline. & Depends on the system's pairwise setup and update policy. & \DH{}+\KEM{} material carried in membership-changing update paths. \\
+Policy as key input & Group context is central; application policy profiles are separate. & Commonly enforced above the cryptographic group state. & Serialized policy is hashed into the epoch context and subkey schedule. \\
+Within-epoch messages & Application secrets derive from the accepted epoch state. & Efficient sender chains. & Per-member sender chains with encrypted sender data and epoch binding. \\
+Accountability hooks & Not the main protocol goal. & Product-specific. & Franking and sealed-content hooks bound to accepted epoch policy. \\
+Relay authority & Delivery service is not a group-secret holder. & Service role varies by system. & Relay performs structural checks; clients decide cryptographic acceptance. \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
+\subsection{Interpretation}
+
+The comparison in \cref{tab:comparison} is not meant to rank systems by a
+single axis. MLS is the mature standard reference for TreeKEM-based group
+messaging. Sender-key style designs are efficient for application traffic.
+\Aura{} Group combines those design principles in a narrower profile: use a
+tree for epoch-changing membership updates, carry hybrid \DH{}+\KEM{} material
+in the update path, and bind sender-chain message processing to the accepted
+epoch policy.
+
+The main tradeoff is complexity at the group-epoch boundary. A hybrid update path
+must carry more public material and more ciphertext material than a purely
+classical update. It also requires careful binding between recipient
+resolution, node index, tree hash, and policy context. The benefit is that a
+fresh honest group-epoch update can incorporate post-quantum material into the group
+state itself, rather than confining the post-quantum contribution to admission.
+
+The policy-binding design also has a deployment cost. If a product wants
+mutable policy, such as toggling franking or changing skipped-key limits, that
+policy change must be represented as an explicit group-epoch transition. This is
+less convenient than a server-side flag, but it yields an explicit
+cryptographic downgrade boundary for protocol participants. In high-risk
+groups that boundary is preferable: policy is accepted when the group epoch is
+accepted, not when a relay says it has changed.
+
 \section{Limitations}
 
 \begin{itemize}
-  \item \textbf{No post-quantum signatures.} Identity and commit
+  \item \textbf{No post-quantum signatures.} Identity and Commit-message
   authentication use Ed25519. A migration to ML-DSA or another post-quantum
   signature scheme would change key packages, signatures, and deployment
   size, but it is separate from hybrid TreeKEM secrecy.
@@ -817,10 +1693,10 @@ Relay authority & Delivery service is not a group-secret holder. & Service role 
   \item \textbf{Single-device model.} Multi-device fan-out, per-device
   membership, and device churn need an explicit state model.
 
-  \item \textbf{No full group proof yet.} The paper includes a scoped
-  \ProVerif{} model for one accepted epoch transition and one application
-  message. A full \Tamarin{}, \ProVerif{}, or game-based group proof should
-  still model tree state, membership concurrency, external joins, and replay
+  \item \textbf{Concurrent group proof boundary.} The present model includes a scoped
+  \ProVerif{} model for one accepted group-epoch transition and one application
+  message. Complete \Tamarin{}, \ProVerif{}, or game-based group proofs require
+  explicit tree state, membership concurrency, external joins, and replay
   windows, following the level of precision expected in formal MLS
   analyses~\cite{treesync,meier2013}.
 
@@ -830,29 +1706,45 @@ Relay authority & Delivery service is not a group-secret holder. & Service role 
 
   \item \textbf{Policy changes require a design decision.} The current model
   treats policy as fixed within the group state. Mutable policy would require
-  explicit commit semantics and downgrade analysis.
+  explicit Commit semantics and downgrade analysis.
+
+  \item \textbf{No delivery-service fairness guarantee.} A malicious relay can
+  delay or omit messages and Commit messages. The protocol can reject malformed or
+  stale state, but it cannot force delivery.
+
+  \item \textbf{No deniability proof.} Message signatures and franking are
+  useful for sender binding and accountable disclosure. No deniable
+  authentication claim is made for group application messages.
+
+  \item \textbf{No resource-exhaustion proof.} The reference implementation
+  enforces bounded parsing, skipped-key limits, and replay-window bounds, but a
+  full adversarial resource-consumption analysis is outside the current model.
 \end{itemize}
 
 \section{Conclusion}\label{sec:conclusion}
 
-\Aura{} Group defines a compact group-messaging construction in which hybrid
-TreeKEM epoch updates, policy-bound key derivation, \Shield{} enforcement,
-per-sender chains, encrypted sender data, and accountable message semantics
-are designed as one protocol surface. The strongest contribution is the
-policy-bound hybrid epoch: the group policy is not a side channel or a UI
-preference, but an input to the epoch keys themselves. The current artifact is
-ready for engineering evaluation and includes a scoped \ProVerif{} model for
-the core epoch/message path. The main remaining step before stronger
-proof-level claims is a full concurrent group-security model.
+\Aura{} Group specifies a policy-bound hybrid group state machine for
+post-quantum confidential messaging. Its core design combines TreeKEM update
+paths carrying \DH{} and \KEM{} material, group-epoch keys derived from a serialized
+group context, \Shield{} policy enforcement, per-sender chains, encrypted
+sender data, sealed persistence, and epoch-bound message semantics. The
+construction makes the policy boundary explicit: group policy is not relay
+metadata, a user-interface preference, or a mutable server-side flag, but
+cryptographic input to the accepted group epoch. The scoped \ProVerif{} model
+and the reference-implementation validation corpus support this
+group-epoch/message boundary, while stronger concurrent group-security,
+multi-device, post-quantum-signature, and delivery-fairness claims remain
+separate proof and deployment obligations.
 
 \section*{Data and Software Availability}
 
-The implementation, tests, formal-evidence files, benchmarks, and
-manuscript sources are maintained in the accompanying
-\href{https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs}{source repository}.
-The submission artifact should identify the exact revision used for
-review and, where required by the venue, include the same revision as a
-source bundle or DOI-backed archive.
+The implementation, manuscript source, validation material, symbolic model,
+benchmark summaries, and reproducibility material are maintained in the
+accompanying source repository:
+\url{https://github.com/oleksandrmelnychenko/aura-protected-protocol-rs}.
+The submission package will identify the exact revision used for review and,
+where required by the venue, include the same revision as a source bundle or
+DOI-backed archive.
 
 \section*{Funding}
 
@@ -861,57 +1753,46 @@ The author declares that this research received no external funding.
 \section*{CRediT Author Statement}
 
 Oleksandr Melnychenko: conceptualization, methodology, software,
-validation, formal analysis, investigation, writing--original draft,
+validation, symbolic modeling, investigation, writing--original draft,
 writing--review and editing, and visualization.
 
 \section*{Declaration of Competing Interest}
 
 The author declares that there are no known competing financial
 interests or personal relationships that could have appeared to
-influence the work reported in this paper.
-
-\section*{Acknowledgments}
-
-The author acknowledges OpenAI Codex for the limited manuscript-editing
-assistance described in the dedicated declaration below.
+influence the work reported here.
 
 \section*{Declaration of Generative AI and AI-assisted technologies in the writing process}
 
 OpenAI Codex was used during manuscript preparation to assist with
-English-language editing, consistency checks, and minor \LaTeX{}
-typesetting support. OpenAI Codex was not used as an authoritative
-source for technical claims, references, equations, implementation
-results, or experimental measurements. All protocol descriptions,
-equations, references, tables, implementation details, and experimental
-results were independently reviewed, verified, and approved by the
-author, who takes full responsibility for the content of the article.
+English-language editing, formatting, and consistency checks.
+It was not used as an authoritative source for technical claims,
+references, equations, implementation results, or experimental measurements.
+All content was independently reviewed and approved by the author, who takes
+full responsibility for the article.
 
 \bibliographystyle{elsarticle-num}
 \begin{thebibliography}{99}
 
 \bibitem{melnychenko2026aura}
 O.~Melnychenko.
-\newblock Aura: Hybrid Post-Quantum Confidentiality for Stateful Messaging with
-Per-Ratchet KEM Rotation and Symbolic Models.
+\newblock Aura Protocol: Hybrid Post-Quantum Confidentiality for Secure
+Messaging via Per-Ratchet KEM Rotation.
 \newblock Companion manuscript, 2026.
-\newblock Local artifact source: \path{docs/aura-paper.tex}; companion PDF:
-\href{run:aura-paper.pdf}{\path{aura-paper.pdf}}.
+\newblock Manuscript under preparation.
 
 \bibitem{melnychenko2026opaque}
 O.~Melnychenko.
 \newblock Hybrid Post-Quantum Authentication from OPAQUE and ML-KEM-768:
 Construction, Formal Analysis, and a Reproducible Implementation.
 \newblock Companion manuscript, 2026.
-\newblock Local artifact source:
-\path{../aura-security-opaque-rs/docs/main_jisa.tex}; companion PDF:
-\href{run:../../aura-security-opaque-rs/docs/main_jisa.pdf}{\path{main_jisa.pdf}}.
+\newblock Manuscript under preparation.
 
 \bibitem{melnychenko2026opaqueformal}
 O.~Melnychenko.
 \newblock Formal Verification Report---Hybrid PQ-OPAQUE Protocol.
 \newblock Companion formal-evidence report, 2026.
-\newblock Local artifact source:
-\path{../aura-security-opaque-rs/formal/logs/FULL_VERIFICATION_REPORT.md}.
+\newblock Technical report under preparation.
 
 \bibitem{jarecki2018}
 S.~Jarecki, H.~Krawczyk, and J.~Xu.
