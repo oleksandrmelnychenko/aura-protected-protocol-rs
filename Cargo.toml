@@ -35,7 +35,11 @@ x25519-dalek = { version = "2", features = ["static_secrets"] }
 # Ed25519 signatures
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 # ML-KEM-768 (FIPS 203, post-quantum KEM)
-ml-kem = "0.2"
+# Pinned EXACTLY: deterministic identity-Kyber prekey derivation depends on
+# ml-kem's unstabilized internal d-then-z RNG fill order; a minor bump could
+# silently change derived public keys -> PreKeyBundle/handshake brick. Belt over
+# Cargo.lock so the pin survives a lock regen. (Was "0.2".)
+ml-kem = "=0.2.3"
 # Constant-time operations
 subtle = "2"
 # BLAKE2b keyed hash
