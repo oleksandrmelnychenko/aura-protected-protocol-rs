@@ -5,7 +5,7 @@ use std::mem::size_of;
 
 use crate::core::constants::*;
 use crate::core::errors::ProtocolError;
-use crate::crypto::{CryptoInterop, KyberInterop, SecureMemoryHandle};
+use crate::crypto::{AesGcm, CryptoInterop, KyberInterop, SecureMemoryHandle};
 use crate::identity::IdentityKeys;
 use crate::proto::GroupKeyPackage;
 use crate::security::validation::DhValidator;
@@ -55,6 +55,122 @@ pub fn create_key_package(
     };
 
     Ok((kp, x25519_private, kyber_secret))
+}
+
+/// Version + domain-separation AAD for a sealed key-package-secrets blob, so it
+/// can only ever be opened back into key-package secrets (never confused with a
+/// session/group sealed state) and the on-disk format can evolve.
+const KEY_PACKAGE_SECRETS_SEAL_VERSION: u8 = 1;
+const KEY_PACKAGE_SECRETS_SEAL_AAD: &[u8] = b"aura-group-key-package-secrets-v1";
+
+/// Seals a key package's PRIVATE secrets (leaf x25519 private key + Kyber decap
+/// secret) under a 32-byte at-rest key so the host can PERSIST them across app
+/// launches and still process a Welcome that arrives in a later session.
+/// Without this the secrets live only in RAM and every cross-session Welcome
+/// fails. Mirrors the session/group sealed-state pattern (AES-256-GCM-SIV).
+/// Output layout: `version(1) || nonce(12) || AEAD(len16(x)||x || len16(k)||k)`.
+pub fn seal_key_package_secrets(
+    x25519_private: &SecureMemoryHandle,
+    kyber_secret: &SecureMemoryHandle,
+    seal_key: &[u8],
+) -> Result<Vec<u8>, ProtocolError> {
+    if seal_key.len() != AES_KEY_BYTES {
+        return Err(ProtocolError::invalid_input(format!(
+            "Seal key must be {AES_KEY_BYTES} bytes"
+        )));
+    }
+    let x = x25519_private
+        .read_zeroizing(x25519_private.size())
+        .map_err(ProtocolError::from_crypto)?;
+    let k = kyber_secret
+        .read_zeroizing(kyber_secret.size())
+        .map_err(ProtocolError::from_crypto)?;
+    if x.len() > u16::MAX as usize || k.len() > u16::MAX as usize {
+        return Err(ProtocolError::invalid_input(
+            "Key package secret exceeds maximum length",
+        ));
+    }
+
+    let mut inner = zeroize::Zeroizing::new(Vec::with_capacity(4 + x.len() + k.len()));
+    inner.extend_from_slice(&(x.len() as u16).to_be_bytes());
+    inner.extend_from_slice(&x);
+    inner.extend_from_slice(&(k.len() as u16).to_be_bytes());
+    inner.extend_from_slice(&k);
+
+    let nonce = CryptoInterop::get_random_bytes(AES_GCM_NONCE_BYTES);
+    let ciphertext = AesGcm::encrypt(seal_key, &nonce, &inner, KEY_PACKAGE_SECRETS_SEAL_AAD)?;
+
+    let mut out = Vec::with_capacity(1 + nonce.len() + ciphertext.len());
+    out.push(KEY_PACKAGE_SECRETS_SEAL_VERSION);
+    out.extend_from_slice(&nonce);
+    out.extend_from_slice(&ciphertext);
+    Ok(out)
+}
+
+fn read_len_prefixed(buf: &[u8], offset: usize) -> Result<(&[u8], usize), ProtocolError> {
+    if offset + 2 > buf.len() {
+        return Err(ProtocolError::invalid_input(
+            "Malformed sealed key package secrets",
+        ));
+    }
+    let len = u16::from_be_bytes([buf[offset], buf[offset + 1]]) as usize;
+    let start = offset + 2;
+    let end = start
+        .checked_add(len)
+        .ok_or_else(|| ProtocolError::invalid_input("Malformed sealed key package secrets"))?;
+    if end > buf.len() {
+        return Err(ProtocolError::invalid_input(
+            "Malformed sealed key package secrets",
+        ));
+    }
+    Ok((&buf[start..end], end))
+}
+
+/// Reverses `seal_key_package_secrets`: authenticates + decrypts the blob and
+/// rebuilds the two secure-memory handles. A wrong key or tampering fails the
+/// AEAD tag check and returns an error (never partial secrets).
+pub fn unseal_key_package_secrets(
+    sealed: &[u8],
+    seal_key: &[u8],
+) -> Result<(SecureMemoryHandle, SecureMemoryHandle), ProtocolError> {
+    if seal_key.len() != AES_KEY_BYTES {
+        return Err(ProtocolError::invalid_input(format!(
+            "Seal key must be {AES_KEY_BYTES} bytes"
+        )));
+    }
+    let header = 1 + AES_GCM_NONCE_BYTES;
+    if sealed.len() < header + AES_GCM_TAG_BYTES {
+        return Err(ProtocolError::invalid_input(
+            "Sealed key package secrets too short",
+        ));
+    }
+    if sealed[0] != KEY_PACKAGE_SECRETS_SEAL_VERSION {
+        return Err(ProtocolError::invalid_input(
+            "Unsupported sealed key package secrets version",
+        ));
+    }
+    let nonce = &sealed[1..header];
+    let ciphertext = &sealed[header..];
+    let inner = zeroize::Zeroizing::new(AesGcm::decrypt(
+        seal_key,
+        nonce,
+        ciphertext,
+        KEY_PACKAGE_SECRETS_SEAL_AAD,
+    )?);
+
+    let (x, off1) = read_len_prefixed(&inner, 0)?;
+    let (k, off2) = read_len_prefixed(&inner, off1)?;
+    if off2 != inner.len() {
+        return Err(ProtocolError::invalid_input(
+            "Trailing bytes in sealed key package secrets",
+        ));
+    }
+
+    let mut x_handle = SecureMemoryHandle::allocate(x.len()).map_err(ProtocolError::from_crypto)?;
+    x_handle.write(x).map_err(ProtocolError::from_crypto)?;
+    let mut k_handle = SecureMemoryHandle::allocate(k.len()).map_err(ProtocolError::from_crypto)?;
+    k_handle.write(k).map_err(ProtocolError::from_crypto)?;
+    Ok((x_handle, k_handle))
 }
 
 pub fn build_signed_content(

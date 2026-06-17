@@ -3084,6 +3084,116 @@ pub unsafe extern "C" fn aura_group_key_package_secrets_destroy(
     });
 }
 
+/// Seals a key package's private secrets under a 32-byte at-rest key so the host
+/// can persist them across launches (the secrets otherwise live only in RAM and
+/// every cross-session Welcome fails). Mirrors `aura_session_serialize_sealed`.
+///
+/// # Safety
+/// See module-level FFI safety contract. `handle` must be a live handle from
+/// `aura_group_generate_key_package` or `aura_group_key_package_secrets_deserialize_sealed`.
+/// `(key, key_length)` must form a readable 32-byte slice; `out_state` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn aura_group_key_package_secrets_serialize_sealed(
+    handle: *mut AuraKeyPackageSecretsHandle,
+    key: *const u8,
+    key_length: usize,
+    out_state: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if handle.is_null() || key.is_null() || out_state.is_null() {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "A required pointer is null",
+            );
+            return AuraErrorCode::AuraErrorNullPointer;
+        }
+        if key_length != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "Key must be exactly 32 bytes",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+        let key_slice = std::slice::from_raw_parts(key, key_length);
+        let secrets = &*handle;
+        use crate::protocol::group::key_package;
+        match key_package::seal_key_package_secrets(
+            &secrets.x25519_private,
+            &secrets.kyber_secret,
+            key_slice,
+        ) {
+            Ok(bytes) => {
+                write_buffer(out_state, bytes);
+                AuraErrorCode::AuraSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+/// Reverses `aura_group_key_package_secrets_serialize_sealed`, rebuilding a
+/// secrets handle from a sealed blob. A wrong key or tampering fails the AEAD tag.
+///
+/// # Safety
+/// See module-level FFI safety contract. `(state_bytes, state_length)` and
+/// `(key, key_length)` must form valid readable slices. `out_handle` must point
+/// to writable `*mut AuraKeyPackageSecretsHandle`.
+#[no_mangle]
+pub unsafe extern "C" fn aura_group_key_package_secrets_deserialize_sealed(
+    state_bytes: *const u8,
+    state_length: usize,
+    key: *const u8,
+    key_length: usize,
+    out_handle: *mut *mut AuraKeyPackageSecretsHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if state_bytes.is_null() || key.is_null() || out_handle.is_null() {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "A required pointer is null",
+            );
+            return AuraErrorCode::AuraErrorNullPointer;
+        }
+        if key_length != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "Key must be exactly 32 bytes",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+        if state_length == 0 || state_length > MAX_BUFFER_SIZE {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "Invalid sealed state length",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+        let state = std::slice::from_raw_parts(state_bytes, state_length);
+        let key_slice = std::slice::from_raw_parts(key, key_length);
+        use crate::protocol::group::key_package;
+        match key_package::unseal_key_package_secrets(state, key_slice) {
+            Ok((x25519_private, kyber_secret)) => {
+                replace_out_handle(
+                    out_handle,
+                    Box::into_raw(Box::new(AuraKeyPackageSecretsHandle {
+                        x25519_private,
+                        kyber_secret,
+                    })),
+                );
+                AuraErrorCode::AuraSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
 /// # Safety
 /// See module-level FFI safety contract. `(key_package_bytes, key_package_length)` must form a
 /// valid readable slice.
