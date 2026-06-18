@@ -3275,10 +3275,14 @@ pub unsafe extern "C" fn aura_group_create(
             Ok(v) => v,
             Err(code) => return code,
         };
+        // Default (non-shielded) e2e chats use the `standard()` policy: same
+        // sealed/enhanced posture as shield but a messaging-realistic skipped-key
+        // budget, so an offline burst or a few dropped events don't permanently
+        // wall the receive chain. `aura_group_create_shielded` keeps `shield()`.
         match GroupSession::create_with_policy_and_time_provider(
             identity,
             cred,
-            GroupSecurityPolicy::shield(),
+            GroupSecurityPolicy::standard(),
             time_provider,
         ) {
             Ok(session) => {

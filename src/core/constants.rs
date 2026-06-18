@@ -185,6 +185,14 @@ pub const OTK_EXHAUSTION_WARNING_PERCENT: u32 = 10;
 
 pub const SHIELD_MAX_MESSAGES_PER_EPOCH: u32 = 1_000;
 pub const SHIELD_MAX_SKIPPED_KEYS_PER_SENDER: u32 = 4;
+/// Per-sender skipped-generation budget for the default messaging tier
+/// (`GroupSecurityPolicy::standard()`, used by 1:1 / direct e2e chats). High
+/// enough to ride out an offline burst or a handful of dropped / reordered
+/// delivery events without the receive chain walling on "Too many skipped
+/// generations". Must stay `<= MAX_SKIPPED_SENDER_KEYS_PER_SENDER`; retained
+/// out-of-order keys remain bounded by the total cache `MAX_SKIPPED_SENDER_KEYS`.
+/// `shield()` deliberately keeps the tight budget of 4 for opt-in secret groups.
+pub const STANDARD_MAX_SKIPPED_KEYS_PER_SENDER: u32 = 1_000;
 pub const SHIELD_MIN_MESSAGES_PER_EPOCH: u32 = 10;
 pub const SHIELD_MIN_SKIPPED_PER_SENDER: usize = 1;
 pub const GROUP_ENHANCED_KDF_PASS1: &[u8] = b"Aura-Enhanced-Pass1";
@@ -195,7 +203,7 @@ pub const SHA256_HASH_BYTES: usize = 32;
 pub const HKDF_MAX_ITERATIONS: usize = 255;
 pub const HKDF_MAX_OUTPUT_BYTES: usize = HKDF_MAX_ITERATIONS * SHA256_HASH_BYTES;
 pub const MIN_MASTER_KEY_BYTES: usize = 32;
-pub const MAX_SKIPPED_SENDER_KEYS_PER_SENDER: usize = 32;
+pub const MAX_SKIPPED_SENDER_KEYS_PER_SENDER: usize = 1_024;
 
 pub const MKD_ED25519_INFO: &[u8] = b"aura-identity-ed25519";
 pub const MKD_X25519_INFO: &[u8] = b"aura-identity-x25519";

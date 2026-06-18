@@ -153,6 +153,24 @@ impl GroupSecurityPolicy {
         }
     }
 
+    /// Default messaging tier for 1:1 / direct e2e chats. Identical security
+    /// posture to `shield()` — enhanced key schedule, mandatory franking, no
+    /// external join, sealed at rest, so `is_shielded()` still holds — EXCEPT it
+    /// tolerates realistic message gaps: a peer may send a burst while this
+    /// device is offline, or a few delivery events may be dropped / reordered,
+    /// without the receive chain walling forever on "Too many skipped
+    /// generations". `shield()` keeps the tight skip budget of 4 only for opt-in
+    /// secret groups that accept rekey-on-gap.
+    pub const fn standard() -> Self {
+        Self {
+            max_messages_per_epoch: SHIELD_MAX_MESSAGES_PER_EPOCH,
+            max_skipped_keys_per_sender: STANDARD_MAX_SKIPPED_KEYS_PER_SENDER,
+            block_external_join: true,
+            enhanced_key_schedule: true,
+            mandatory_franking: true,
+        }
+    }
+
     pub const fn is_shielded(&self) -> bool {
         self.enhanced_key_schedule && self.mandatory_franking && self.block_external_join
     }
@@ -3265,6 +3283,61 @@ mod tests {
         GroupMention as ProtoGroupMention, GroupReplyContext as ProtoGroupReplyContext,
     };
     use std::collections::BTreeMap;
+
+    #[test]
+    fn standard_policy_rides_out_skip_gap_that_walls_shield() {
+        use super::{GroupSecurityPolicy, SenderKeyChain};
+        use crate::core::constants::{
+            MAX_SENDER_KEY_GENERATION, SENDER_KEY_BASE_BYTES, SHIELD_MAX_SKIPPED_KEYS_PER_SENDER,
+            STANDARD_MAX_SKIPPED_KEYS_PER_SENDER,
+        };
+
+        // Both tiers are valid, and standard must be strictly more gap-tolerant
+        // than shield or the death-spiral fix is moot.
+        assert!(GroupSecurityPolicy::shield().validate().is_ok());
+        assert!(GroupSecurityPolicy::standard().validate().is_ok());
+        assert_eq!(
+            GroupSecurityPolicy::shield().max_skipped_keys_per_sender,
+            SHIELD_MAX_SKIPPED_KEYS_PER_SENDER
+        );
+        assert_eq!(
+            GroupSecurityPolicy::standard().max_skipped_keys_per_sender,
+            STANDARD_MAX_SKIPPED_KEYS_PER_SENDER
+        );
+        assert!(STANDARD_MAX_SKIPPED_KEYS_PER_SENDER > SHIELD_MAX_SKIPPED_KEYS_PER_SENDER);
+
+        // A 23-generation gap is exactly the device-log repro ("Too many skipped
+        // generations: 23 (max 4)"): it must wall shield but be tolerated by
+        // standard, so a direct chat survives an offline burst / dropped events.
+        let gap: u32 = 23;
+        let base = vec![7u8; SENDER_KEY_BASE_BYTES];
+
+        let mut shield_chain = SenderKeyChain::new_with_policy(
+            0,
+            base.clone(),
+            true,
+            MAX_SENDER_KEY_GENERATION,
+            SHIELD_MAX_SKIPPED_KEYS_PER_SENDER as usize,
+        )
+        .expect("shield chain");
+        assert!(
+            shield_chain.advance_to(gap).is_err(),
+            "shield (max 4) must reject a 23-generation skip"
+        );
+
+        let mut standard_chain = SenderKeyChain::new_with_policy(
+            0,
+            base,
+            true,
+            MAX_SENDER_KEY_GENERATION,
+            STANDARD_MAX_SKIPPED_KEYS_PER_SENDER as usize,
+        )
+        .expect("standard chain");
+        assert!(
+            standard_chain.advance_to(gap).is_ok(),
+            "standard (max 1000) must ride out a 23-generation skip"
+        );
+    }
 
     #[test]
     fn replay_window_marks_duplicates_and_old_entries() {
