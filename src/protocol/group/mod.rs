@@ -2702,6 +2702,32 @@ impl GroupSession {
         })
     }
 
+    /// Like [`Self::decrypt`] but, for a sealed (shielded) message, also OPENS
+    /// the sealed payload and returns the real plaintext in
+    /// `GroupDecryptResult.plaintext` (the host receives the actual message
+    /// content, not the outer hint). The per-message seal key is used here and
+    /// never leaves the protocol layer — it is wiped when the taken
+    /// `SealedPayload` drops. Non-sealed messages are returned unchanged.
+    ///
+    /// This is what a receiving client wants: a shielded message decodes like
+    /// any other. (`decrypt` keeps the deferred sealed payload for callers that
+    /// want derive-on-read.)
+    pub fn decrypt_open_sealed(
+        &self,
+        message_bytes: &[u8],
+    ) -> Result<GroupDecryptResult, ProtocolError> {
+        let mut result = self.decrypt(message_bytes)?;
+        if let Some(sealed) = result.sealed_payload.take() {
+            result.plaintext = AesGcm::decrypt(
+                &sealed.seal_key,
+                &sealed.nonce,
+                &sealed.encrypted_content,
+                SEALED_AAD_SUFFIX,
+            )?;
+        }
+        Ok(result)
+    }
+
     pub fn encrypt_reaction(
         &self,
         message_id: &[u8],

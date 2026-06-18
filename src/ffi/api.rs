@@ -5786,7 +5786,11 @@ pub unsafe extern "C" fn aura_group_decrypt_ex(
             Ok(v) => v,
             Err(code) => return code,
         };
-        match session.decrypt(ct) {
+        // Open shielded payloads here so a sealed message decodes like any other
+        // on the client (real ChatMessage lands in `plaintext`); the seal key
+        // never crosses the FFI boundary. `content_type` stays `Sealed`, so the
+        // host still treats it as sealed for at-rest storage.
+        match session.decrypt_open_sealed(ct) {
             Ok(r) => {
                 write_buffer(std::ptr::addr_of_mut!((*out_result).plaintext), r.plaintext);
                 (*out_result).sender_leaf_index = r.sender_leaf_index;
