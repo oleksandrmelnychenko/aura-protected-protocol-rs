@@ -330,3 +330,87 @@ fn ed25519_verify(
     vk.verify_strict(message, &sig)
         .map_err(|_| ProtocolError::peer_pub_key("Ed25519 signature verification failed"))
 }
+
+#[cfg(test)]
+mod key_package_secret_seal_tests {
+    use super::*;
+
+    fn secret(byte: u8, len: usize) -> SecureMemoryHandle {
+        let mut handle = SecureMemoryHandle::allocate(len).expect("allocate secure memory");
+        handle.write(&vec![byte; len]).expect("write secret");
+        handle
+    }
+
+    #[test]
+    fn seal_then_unseal_recovers_both_secrets() {
+        let _ = CryptoInterop::initialize();
+        let seal_key = [0x11u8; AES_KEY_BYTES];
+        // Distinct lengths so a swapped or mis-framed blob would be caught.
+        let sealed = seal_key_package_secrets(&secret(0xAA, 32), &secret(0xBB, 64), &seal_key)
+            .expect("seal");
+        assert_eq!(
+            sealed[0], KEY_PACKAGE_SECRETS_SEAL_VERSION,
+            "sealed blob must carry the version byte"
+        );
+
+        let (rx, rk) = unseal_key_package_secrets(&sealed, &seal_key).expect("unseal");
+        assert_eq!(
+            rx.read_zeroizing(rx.size()).unwrap().as_slice(),
+            vec![0xAAu8; 32].as_slice(),
+            "x25519 private secret must round-trip exactly"
+        );
+        assert_eq!(
+            rk.read_zeroizing(rk.size()).unwrap().as_slice(),
+            vec![0xBBu8; 64].as_slice(),
+            "kyber decap secret must round-trip exactly"
+        );
+    }
+
+    #[test]
+    fn unseal_with_wrong_key_fails() {
+        let _ = CryptoInterop::initialize();
+        let sealed =
+            seal_key_package_secrets(&secret(0x01, 32), &secret(0x02, 64), &[0x11u8; AES_KEY_BYTES])
+                .expect("seal");
+        assert!(
+            unseal_key_package_secrets(&sealed, &[0x22u8; AES_KEY_BYTES]).is_err(),
+            "a secret sealed under one key must not open under another"
+        );
+    }
+
+    #[test]
+    fn unseal_rejects_tampered_ciphertext() {
+        let _ = CryptoInterop::initialize();
+        let seal_key = [0x11u8; AES_KEY_BYTES];
+        let mut sealed = seal_key_package_secrets(&secret(0x01, 32), &secret(0x02, 64), &seal_key)
+            .expect("seal");
+        let last = sealed.len() - 1;
+        sealed[last] ^= 0xFF;
+        assert!(
+            unseal_key_package_secrets(&sealed, &seal_key).is_err(),
+            "the AEAD tag must reject a flipped ciphertext bit"
+        );
+    }
+
+    #[test]
+    fn unseal_rejects_unknown_version() {
+        let _ = CryptoInterop::initialize();
+        let seal_key = [0x11u8; AES_KEY_BYTES];
+        let mut sealed = seal_key_package_secrets(&secret(0x01, 32), &secret(0x02, 64), &seal_key)
+            .expect("seal");
+        sealed[0] = 0xFE;
+        assert!(
+            unseal_key_package_secrets(&sealed, &seal_key).is_err(),
+            "an unknown version byte must be rejected"
+        );
+    }
+
+    #[test]
+    fn seal_rejects_non_32_byte_key() {
+        let _ = CryptoInterop::initialize();
+        assert!(
+            seal_key_package_secrets(&secret(0x01, 32), &secret(0x02, 64), &[0u8; 16]).is_err(),
+            "a seal key that is not AES_KEY_BYTES long must be rejected"
+        );
+    }
+}
