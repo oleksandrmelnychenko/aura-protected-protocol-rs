@@ -27,6 +27,31 @@ public enum AuraReferenceType: Int32, Sendable {
 
 public enum AuraAttachment {
 
+    private static func withManifestPointerBuffers<R>(
+        manifests: [Data],
+        _ body: (UnsafeBufferPointer<UnsafePointer<UInt8>?>, UnsafeBufferPointer<Int>) throws -> R
+    ) rethrows -> R {
+        var rawPtrs: [UnsafePointer<UInt8>?] = Array(repeating: nil, count: manifests.count)
+        let rawLens: [Int] = manifests.map(\.count)
+
+        func borrow(_ index: Int) throws -> R {
+            if index == manifests.count {
+                return try rawPtrs.withUnsafeBufferPointer { ptrBuf in
+                    try rawLens.withUnsafeBufferPointer { lenBuf in
+                        try body(ptrBuf, lenBuf)
+                    }
+                }
+            }
+
+            return try manifests[index].withUnsafeBytes { ptr in
+                rawPtrs[index] = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self)
+                return try borrow(index + 1)
+            }
+        }
+
+        return try borrow(0)
+    }
+
     public static func generateId() throws -> Data {
         var buf = NativeAuraBuffer(data: nil, length: 0)
         var err = NativeAuraError(code: 0, message: nil)
@@ -481,32 +506,18 @@ public enum AuraAttachment {
         var outCollage = NativeAuraBuffer(data: nil, length: 0)
         var err = NativeAuraError(code: 0, message: nil)
         let manifestCount = manifests.count
-        var pointers: [UnsafePointer<UInt8>?] = []
-        var lengths: [Int] = []
-        var pinned: [Data] = manifests
+        guard manifestCount > 0 else {
+            throw AuraError.invalidInput("At least one manifest is required")
+        }
 
-        let code = pinned.withUnsafeBufferPointer { _ in
-            var rawPtrs: [UnsafePointer<UInt8>?] = Array(repeating: nil, count: manifestCount)
-            var rawLens: [Int] = Array(repeating: 0, count: manifestCount)
-            return withExtendedLifetime(pinned) {
-                for i in 0..<manifestCount {
-                    pinned[i].withUnsafeBytes { ptr in
-                        rawPtrs[i] = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self)
-                        rawLens[i] = ptr.count
-                    }
-                }
-                return rawPtrs.withUnsafeBufferPointer { ptrBuf in
-                    rawLens.withUnsafeBufferPointer { lenBuf in
-                        native_epp_attachment_collage_create(
-                            ptrBuf.baseAddress!,
-                            lenBuf.baseAddress!,
-                            manifestCount,
-                            &outCollage,
-                            &err
-                        )
-                    }
-                }
-            }
+        let code = Self.withManifestPointerBuffers(manifests: manifests) { ptrBuf, lenBuf in
+            native_epp_attachment_collage_create(
+                ptrBuf.baseAddress!,
+                lenBuf.baseAddress!,
+                manifestCount,
+                &outCollage,
+                &err
+            )
         }
         defer {
             if outCollage.data != nil { native_epp_buffer_release(&outCollage) }
@@ -776,37 +787,25 @@ public enum AuraAttachment {
         let nameData = name.map { Data($0.utf8) } ?? Data()
         let descData = description.map { Data($0.utf8) } ?? Data()
         let layoutValue = layout?.rawValue ?? -1
+        guard manifestCount > 0 else {
+            throw AuraError.invalidInput("At least one manifest is required")
+        }
 
-        var pinned: [Data] = manifests
-        let code = pinned.withUnsafeBufferPointer { _ in
-            var rawPtrs: [UnsafePointer<UInt8>?] = Array(repeating: nil, count: manifestCount)
-            var rawLens: [Int] = Array(repeating: 0, count: manifestCount)
-            return withExtendedLifetime(pinned) {
-                for i in 0..<manifestCount {
-                    pinned[i].withUnsafeBytes { ptr in
-                        rawPtrs[i] = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self)
-                        rawLens[i] = ptr.count
-                    }
-                }
-                return rawPtrs.withUnsafeBufferPointer { ptrBuf in
-                    rawLens.withUnsafeBufferPointer { lenBuf in
-                        nameData.withUnsafeBytes { nPtr in
-                            descData.withUnsafeBytes { dPtr in
-                                native_epp_attachment_collage_create_with_metadata(
-                                    ptrBuf.baseAddress!,
-                                    lenBuf.baseAddress!,
-                                    manifestCount,
-                                    name != nil ? nPtr.baseAddress?.assumingMemoryBound(to: UInt8.self) : nil,
-                                    nameData.count,
-                                    description != nil ? dPtr.baseAddress?.assumingMemoryBound(to: UInt8.self) : nil,
-                                    descData.count,
-                                    layoutValue,
-                                    &outCollage,
-                                    &err
-                                )
-                            }
-                        }
-                    }
+        let code = Self.withManifestPointerBuffers(manifests: manifests) { ptrBuf, lenBuf in
+            nameData.withUnsafeBytes { nPtr in
+                descData.withUnsafeBytes { dPtr in
+                    native_epp_attachment_collage_create_with_metadata(
+                        ptrBuf.baseAddress!,
+                        lenBuf.baseAddress!,
+                        manifestCount,
+                        name != nil ? nPtr.baseAddress?.assumingMemoryBound(to: UInt8.self) : nil,
+                        nameData.count,
+                        description != nil ? dPtr.baseAddress?.assumingMemoryBound(to: UInt8.self) : nil,
+                        descData.count,
+                        layoutValue,
+                        &outCollage,
+                        &err
+                    )
                 }
             }
         }

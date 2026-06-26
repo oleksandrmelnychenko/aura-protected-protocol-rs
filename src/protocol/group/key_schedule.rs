@@ -50,7 +50,7 @@ impl GroupKeySchedule {
     pub fn derive_sub_keys_from_epoch_secret(
         epoch_secret: &[u8],
     ) -> Result<EpochKeys, ProtocolError> {
-        Self::derive_sub_keys_from_epoch_secret_ex(epoch_secret, false)
+        Self::derive_sub_keys_from_epoch_secret_ex(epoch_secret, true)
     }
 
     pub fn derive_sub_keys_from_epoch_secret_ex(

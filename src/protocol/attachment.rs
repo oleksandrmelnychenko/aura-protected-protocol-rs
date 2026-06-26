@@ -5,7 +5,7 @@ use crate::core::constants::{
     AES_GCM_NONCE_BYTES, ATTACHMENT_FILE_KEY_BYTES, ATTACHMENT_HASH_BYTES, ATTACHMENT_ID_BYTES,
     ATTACHMENT_NONCE_INFO, ATTACHMENT_PROTOCOL_VERSION, ATTACHMENT_THUMBNAIL_AAD_PREFIX,
     ATTACHMENT_THUMBNAIL_CHUNK_INDEX, COLLAGE_ID_BYTES, MAX_ATTACHMENT_ALT_TEXT_CHARS,
-    MAX_ATTACHMENT_CHUNK_SIZE, MAX_ATTACHMENT_ENCRYPTED_FILE_KEY_SIZE,
+    MAX_ATTACHMENT_CHUNK_COUNT, MAX_ATTACHMENT_CHUNK_SIZE, MAX_ATTACHMENT_ENCRYPTED_FILE_KEY_SIZE,
     MAX_ATTACHMENT_FILENAME_BYTES, MAX_ATTACHMENT_THUMBNAIL_SIZE, MAX_ATTACHMENT_TTL_SECONDS,
     MAX_COLLAGE_ATTACHMENTS, MAX_COLLAGE_DESCRIPTION_CHARS, MAX_COLLAGE_NAME_CHARS,
     MAX_CONTACT_AVATAR_DATA_SIZE, MAX_CONTACT_DISPLAY_NAME_CHARS, MAX_CONTACT_EMAIL_CHARS,
@@ -490,9 +490,7 @@ pub fn create_chunk_progress(
             "Attachment ID must be 32 bytes",
         ));
     }
-    if chunk_count == 0 {
-        return Err(ProtocolError::invalid_input("chunk_count must be > 0"));
-    }
+    validate_progress_chunk_count(chunk_count)?;
     Ok(ChunkProgress {
         attachment_id: attachment_id.to_vec(),
         chunk_count,
@@ -508,6 +506,7 @@ pub fn mark_chunk_completed(
     bytes_transferred: u64,
     now_unix: u64,
 ) -> Result<(), ProtocolError> {
+    validate_chunk_progress(progress)?;
     if chunk_index >= progress.chunk_count {
         return Err(ProtocolError::invalid_input(
             "chunk_index must be < chunk_count",
@@ -523,16 +522,49 @@ pub fn mark_chunk_completed(
     Ok(())
 }
 
-pub fn get_remaining_chunks(progress: &ChunkProgress) -> Vec<u32> {
+pub fn get_remaining_chunks(progress: &ChunkProgress) -> Result<Vec<u32>, ProtocolError> {
+    validate_chunk_progress(progress)?;
     let completed: BTreeSet<u32> = progress.completed_chunks.iter().copied().collect();
-    (0..progress.chunk_count)
+    Ok((0..progress.chunk_count)
         .filter(|i| !completed.contains(i))
-        .collect()
+        .collect())
 }
 
 pub fn is_transfer_complete(progress: &ChunkProgress) -> bool {
+    if validate_chunk_progress(progress).is_err() {
+        return false;
+    }
     let completed: BTreeSet<u32> = progress.completed_chunks.iter().copied().collect();
     u32::try_from(completed.len()).unwrap_or(0) >= progress.chunk_count
+}
+
+fn validate_progress_chunk_count(chunk_count: u32) -> Result<(), ProtocolError> {
+    if chunk_count == 0 {
+        return Err(ProtocolError::invalid_input("chunk_count must be > 0"));
+    }
+    if chunk_count > MAX_ATTACHMENT_CHUNK_COUNT {
+        return Err(ProtocolError::invalid_input(format!(
+            "chunk_count exceeds maximum {MAX_ATTACHMENT_CHUNK_COUNT}"
+        )));
+    }
+    Ok(())
+}
+
+pub fn validate_chunk_progress(progress: &ChunkProgress) -> Result<(), ProtocolError> {
+    if progress.attachment_id.len() != ATTACHMENT_ID_BYTES {
+        return Err(ProtocolError::invalid_input(
+            "Attachment ID must be 32 bytes",
+        ));
+    }
+    validate_progress_chunk_count(progress.chunk_count)?;
+    for &idx in &progress.completed_chunks {
+        if idx >= progress.chunk_count {
+            return Err(ProtocolError::invalid_input(
+                "completed chunk index must be < chunk_count",
+            ));
+        }
+    }
+    Ok(())
 }
 
 // --- Collage ---

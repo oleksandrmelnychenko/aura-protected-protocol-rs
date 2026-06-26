@@ -28,6 +28,16 @@ public struct AuraDecryptedVoipFrame {
     public let ratchetGeneration: UInt32
 }
 
+private func voipDataFromBuffer(_ buffer: NativeAuraBuffer) throws -> Data {
+    if buffer.length == 0 {
+        return Data()
+    }
+    guard let ptr = buffer.data else {
+        throw AuraError.bufferTooSmall
+    }
+    return Data(bytes: ptr, count: buffer.length)
+}
+
 public struct AuraVoipScreenShareMeta {
     public let width: UInt32
     public let height: UInt32
@@ -168,13 +178,13 @@ public final class AuraVoipSession: @unchecked Sendable {
         try checkResult(code, &err)
 
         let result = AuraEncryptedVoipFrame(
-            callId: Data(bytes: nativeFrame.call_id.data!, count: nativeFrame.call_id.length),
+            callId: try voipDataFromBuffer(nativeFrame.call_id),
             ssrc: nativeFrame.ssrc,
             frameCounter: nativeFrame.frame_counter,
             ratchetGeneration: nativeFrame.ratchet_generation,
-            encryptedPayload: Data(bytes: nativeFrame.encrypted_payload.data!, count: nativeFrame.encrypted_payload.length),
-            nonce: Data(bytes: nativeFrame.nonce.data!, count: nativeFrame.nonce.length),
-            encryptedHeader: Data(bytes: nativeFrame.encrypted_header.data!, count: nativeFrame.encrypted_header.length)
+            encryptedPayload: try voipDataFromBuffer(nativeFrame.encrypted_payload),
+            nonce: try voipDataFromBuffer(nativeFrame.nonce),
+            encryptedHeader: try voipDataFromBuffer(nativeFrame.encrypted_header)
         )
         return result
     }
@@ -210,7 +220,7 @@ public final class AuraVoipSession: @unchecked Sendable {
         try checkResult(code, &err)
 
         return AuraDecryptedVoipFrame(
-            payload: Data(bytes: nativeFrame.payload.data!, count: nativeFrame.payload.length),
+            payload: try voipDataFromBuffer(nativeFrame.payload),
             payloadType: nativeFrame.payload_type,
             ssrc: nativeFrame.ssrc,
             timestamp: nativeFrame.timestamp,
@@ -357,13 +367,13 @@ public final class AuraVoipSession: @unchecked Sendable {
         try checkResult(code, &err)
 
         return AuraEncryptedVoipFrame(
-            callId: Data(bytes: nativeFrame.call_id.data!, count: nativeFrame.call_id.length),
+            callId: try voipDataFromBuffer(nativeFrame.call_id),
             ssrc: nativeFrame.ssrc,
             frameCounter: nativeFrame.frame_counter,
             ratchetGeneration: nativeFrame.ratchet_generation,
-            encryptedPayload: Data(bytes: nativeFrame.encrypted_payload.data!, count: nativeFrame.encrypted_payload.length),
-            nonce: Data(bytes: nativeFrame.nonce.data!, count: nativeFrame.nonce.length),
-            encryptedHeader: Data(bytes: nativeFrame.encrypted_header.data!, count: nativeFrame.encrypted_header.length)
+            encryptedPayload: try voipDataFromBuffer(nativeFrame.encrypted_payload),
+            nonce: try voipDataFromBuffer(nativeFrame.nonce),
+            encryptedHeader: try voipDataFromBuffer(nativeFrame.encrypted_header)
         )
     }
 

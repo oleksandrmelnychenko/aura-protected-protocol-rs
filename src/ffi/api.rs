@@ -9196,7 +9196,10 @@ pub unsafe extern "C" fn aura_attachment_progress_get_remaining(
             }
         };
 
-        let remaining = crate::protocol::attachment::get_remaining_chunks(&progress);
+        let remaining = match crate::protocol::attachment::get_remaining_chunks(&progress) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
         *out_remaining_count = u32::try_from(remaining.len()).unwrap_or(0);
         let bytes: Vec<u8> = remaining.iter().flat_map(|i| i.to_le_bytes()).collect();
         write_buffer(out_remaining, bytes);

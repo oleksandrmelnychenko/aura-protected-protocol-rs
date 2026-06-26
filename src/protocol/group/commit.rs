@@ -127,7 +127,12 @@ pub fn create_commit(
         &group_context_hash,
         policy.enhanced_key_schedule,
     )?;
-    epoch_keys = apply_psk_proposals(epoch_keys, &proposals, psk_resolver)?;
+    epoch_keys = apply_psk_proposals(
+        epoch_keys,
+        &proposals,
+        psk_resolver,
+        policy.enhanced_key_schedule,
+    )?;
     CryptoInterop::secure_wipe(&mut commit_secret);
 
     let confirmation_mac = GroupKeySchedule::compute_confirmation_mac(
@@ -332,7 +337,12 @@ pub fn process_commit(
         &group_context_hash,
         policy.enhanced_key_schedule,
     )?;
-    epoch_keys = apply_psk_proposals(epoch_keys, &commit.proposals, psk_resolver)?;
+    epoch_keys = apply_psk_proposals(
+        epoch_keys,
+        &commit.proposals,
+        psk_resolver,
+        policy.enhanced_key_schedule,
+    )?;
     CryptoInterop::secure_wipe(&mut commit_secret);
 
     let expected_mac = GroupKeySchedule::compute_confirmation_mac(
@@ -368,6 +378,7 @@ fn apply_psk_proposals(
     mut epoch_keys: EpochKeys,
     proposals: &[GroupProposal],
     psk_resolver: Option<&dyn PskResolver>,
+    enhanced_key_schedule: bool,
 ) -> Result<EpochKeys, ProtocolError> {
     let mut has_psk = false;
     for proposal in proposals {
@@ -385,7 +396,10 @@ fn apply_psk_proposals(
     }
 
     if has_psk {
-        epoch_keys = GroupKeySchedule::derive_sub_keys_from_epoch_secret(&epoch_keys.epoch_secret)?;
+        epoch_keys = GroupKeySchedule::derive_sub_keys_from_epoch_secret_ex(
+            &epoch_keys.epoch_secret,
+            enhanced_key_schedule,
+        )?;
     }
 
     Ok(epoch_keys)

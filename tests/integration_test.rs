@@ -5502,6 +5502,7 @@ fn relay_roster_operations() {
 #[test]
 fn relay_commit_recipients() {
     use aura_protected_protocol::api::relay::*;
+    use aura_protected_protocol::proto::e2e::{CryptoEnvelope, CryptoPayloadType};
 
     let members = vec![
         GroupMemberRecord {
@@ -5535,6 +5536,32 @@ fn relay_commit_recipients() {
 
     let msg_recipients = message_recipients(&roster);
     assert_eq!(msg_recipients, vec![0, 1, 2]);
+
+    let spoofed_sender = CryptoEnvelope {
+        sender_device_id: b"bob".to_vec(),
+        recipient_device_id: vec![],
+        payload_type: CryptoPayloadType::CryptoPayloadGroupMessage as i32,
+        encrypted_payload: vec![0xAA; 64],
+        group_id: roster.group_id.clone(),
+        epoch: roster.epoch,
+        generation: 0,
+        sender_leaf_index: 0,
+    };
+    assert_eq!(
+        crypto_envelope_recipients(&spoofed_sender, &roster, 0).unwrap(),
+        vec![1, 2],
+        "unauthenticated envelope sender_device_id must not suppress a roster member"
+    );
+    let mismatched_sender = CryptoEnvelope {
+        sender_leaf_index: 1,
+        ..spoofed_sender
+    };
+    assert!(crypto_envelope_recipients(&mismatched_sender, &roster, 0).is_err());
+    assert_eq!(
+        message_recipients_for_authenticated_sender(&roster, 1).unwrap(),
+        vec![0, 2]
+    );
+    assert!(message_recipients_for_authenticated_sender(&roster, 99).is_err());
 }
 
 #[test]
@@ -7950,6 +7977,7 @@ fn group_psk_commit_derives_epoch_keys_from_psk_and_requires_resolver() {
     let mut processor_tree = base_tree.try_clone().unwrap();
     let mut no_resolver_create_tree = base_tree.try_clone().unwrap();
     let mut no_resolver_process_tree = base_tree.try_clone().unwrap();
+    let policy = GroupSecurityPolicy::default();
 
     let init_secret = CryptoInterop::get_random_bytes(INIT_SECRET_BYTES);
     let group_id = CryptoInterop::get_random_bytes(GROUP_ID_BYTES);
@@ -7981,7 +8009,7 @@ fn group_psk_commit_derives_epoch_keys_from_psk_and_requires_resolver() {
         0,
         &alice_ed25519_sk,
         None,
-        &GroupSecurityPolicy::default(),
+        &policy,
     );
     assert!(
         no_resolver_create.is_err(),
@@ -7997,7 +8025,7 @@ fn group_psk_commit_derives_epoch_keys_from_psk_and_requires_resolver() {
         0,
         &alice_ed25519_sk,
         Some(&resolver),
-        &GroupSecurityPolicy::default(),
+        &policy,
     );
     CryptoInterop::secure_wipe(&mut alice_ed25519_sk);
     let create_output = create_result.unwrap();
@@ -8044,7 +8072,7 @@ fn group_psk_commit_derives_epoch_keys_from_psk_and_requires_resolver() {
         &group_id,
         0,
         None,
-        &GroupSecurityPolicy::default(),
+        &policy,
     );
     assert!(
         no_resolver_process.is_err(),
@@ -8059,13 +8087,60 @@ fn group_psk_commit_derives_epoch_keys_from_psk_and_requires_resolver() {
         &group_id,
         0,
         Some(&resolver),
-        &GroupSecurityPolicy::default(),
+        &policy,
     )
     .unwrap();
 
     assert_eq!(
         processed.epoch_keys.epoch_secret, create_output.epoch_keys.epoch_secret,
         "Creator and processor must derive identical PSK-injected epoch_secret",
+    );
+}
+
+#[test]
+fn group_update_path_rejects_tampered_ancestor_public_key_even_if_resigned() {
+    use aura_protected_protocol::core::constants::ED25519_SECRET_KEY_BYTES;
+    use aura_protected_protocol::proto::GroupCommit;
+    use ed25519_dalek::Signer;
+
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let bob_id = IdentityKeys::create(10).unwrap();
+    let alice = GroupSession::create(&alice_id, b"alice".to_vec()).unwrap();
+    let (bob_kp, bob_x25519_priv, bob_kyber_sec) =
+        group::key_package::create_key_package(&bob_id, b"bob".to_vec()).unwrap();
+    let (_add_commit, welcome) = alice.add_member(&bob_kp).unwrap();
+    let bob = GroupSession::from_welcome(
+        &welcome,
+        bob_x25519_priv,
+        bob_kyber_sec,
+        &bob_id.get_identity_ed25519_public(),
+        &bob_id.get_identity_x25519_public(),
+        bob_id.get_identity_ed25519_private_key_copy().unwrap(),
+    )
+    .unwrap();
+
+    let update = alice.update().unwrap();
+    let mut commit = GroupCommit::decode(update.as_slice()).unwrap();
+    let update_path = commit.update_path.as_mut().unwrap();
+    update_path.nodes[0].x25519_public[0] ^= 0x01;
+
+    commit.committer_signature.clear();
+    let mut bytes_for_signature = Vec::new();
+    commit.encode(&mut bytes_for_signature).unwrap();
+    let alice_secret = alice_id.get_identity_ed25519_private_key_copy().unwrap();
+    let alice_secret_array: [u8; ED25519_SECRET_KEY_BYTES] =
+        alice_secret.as_slice().try_into().unwrap();
+    let signing_key = ed25519_dalek::SigningKey::from_keypair_bytes(&alice_secret_array).unwrap();
+    commit.committer_signature = signing_key.sign(&bytes_for_signature).to_bytes().to_vec();
+
+    let mut tampered = Vec::new();
+    commit.encode(&mut tampered).unwrap();
+    let err = bob.process_commit(&tampered).unwrap_err().to_string();
+    assert!(
+        err.contains("ancestor path level") || err.contains("public key mismatch"),
+        "expected TreeKEM ancestor key binding failure, got: {err}"
     );
 }
 
@@ -10155,6 +10230,8 @@ fn group_psk_injection_e2e_messaging() {
 
 #[test]
 fn group_reinit_sets_pending_state() {
+    use aura_protected_protocol::core::constants::GROUP_ID_BYTES;
+
     init();
 
     let alice_id = IdentityKeys::create(10).unwrap();
@@ -10180,6 +10257,28 @@ fn group_reinit_sets_pending_state() {
     let ct = alice.encrypt(b"pre-reinit").unwrap();
     let pt = bob.decrypt(&ct).unwrap();
     assert_eq!(pt.plaintext, b"pre-reinit");
+
+    let stale_ct = alice.encrypt(b"stale-before-reinit").unwrap();
+    let reinit_commit = alice
+        .create_reinit_commit(vec![0xA5; GROUP_ID_BYTES], 1)
+        .unwrap();
+    bob.process_commit(&reinit_commit).unwrap();
+
+    assert!(alice.pending_reinit().unwrap().is_some());
+    assert!(bob.pending_reinit().unwrap().is_some());
+    assert!(alice.encrypt(b"blocked").is_err());
+
+    let carol_id = IdentityKeys::create(10).unwrap();
+    let (carol_kp, _carol_x25519_priv, _carol_kyber_sec) =
+        group::key_package::create_key_package(&carol_id, b"carol".to_vec()).unwrap();
+    assert!(alice.add_member(&carol_kp).is_err());
+    assert!(alice.remove_member(bob.my_leaf_index().unwrap()).is_err());
+
+    let err = bob.decrypt(&stale_ct).unwrap_err().to_string();
+    assert!(
+        err.contains("pending reinit"),
+        "decrypt should fail because the old group is read-only, got: {err}"
+    );
 }
 
 #[test]

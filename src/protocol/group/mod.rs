@@ -220,6 +220,11 @@ impl GroupSecurityPolicy {
     }
 
     pub fn validate(&self) -> Result<(), ProtocolError> {
+        if !self.enhanced_key_schedule {
+            return Err(ProtocolError::invalid_input(
+                "enhanced_key_schedule must be enabled",
+            ));
+        }
         let max_msg = self.effective_max_messages_per_epoch();
         if max_msg < SHIELD_MIN_MESSAGES_PER_EPOCH {
             return Err(ProtocolError::invalid_input(format!(
@@ -1134,6 +1139,7 @@ impl GroupSession {
             .inner
             .lock()
             .map_err(|_| ProtocolError::invalid_state("GroupSession lock poisoned"))?;
+        ensure_no_pending_reinit(&inner, "add_member")?;
 
         let add_proposal = GroupProposal {
             proposal: Some(crate::proto::group_proposal::Proposal::Add(
@@ -1222,6 +1228,7 @@ impl GroupSession {
             .inner
             .lock()
             .map_err(|_| ProtocolError::invalid_state("GroupSession lock poisoned"))?;
+        ensure_no_pending_reinit(&inner, "remove_member")?;
 
         let remove_proposal = GroupProposal {
             proposal: Some(crate::proto::group_proposal::Proposal::Remove(
@@ -2253,6 +2260,7 @@ impl GroupSession {
             .inner
             .lock()
             .map_err(|_| ProtocolError::invalid_state("GroupSession lock poisoned"))?;
+        ensure_no_pending_reinit(&inner, "encrypt")?;
 
         if policy.content_type.is_edit() || policy.content_type.is_delete() {
             if policy.referenced_message_id.len() != MESSAGE_ID_BYTES {
@@ -2554,6 +2562,7 @@ impl GroupSession {
             .inner
             .lock()
             .map_err(|_| ProtocolError::invalid_state("GroupSession lock poisoned"))?;
+        ensure_no_pending_reinit(&inner, "decrypt")?;
 
         if group_msg.group_id != inner.group_id {
             return Err(ProtocolError::group_protocol("Group ID mismatch"));

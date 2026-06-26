@@ -433,6 +433,21 @@ pub fn message_recipients(roster: &GroupRoster) -> Vec<u32> {
     roster.leaf_indices()
 }
 
+pub fn message_recipients_for_authenticated_sender(
+    roster: &GroupRoster,
+    authenticated_sender_leaf_index: u32,
+) -> Result<Vec<u32>, ProtocolError> {
+    if roster
+        .find_member(authenticated_sender_leaf_index)
+        .is_none()
+    {
+        return Err(ProtocolError::group_membership(
+            "authenticated sender is not in roster",
+        ));
+    }
+    Ok(commit_recipients(roster, authenticated_sender_leaf_index))
+}
+
 pub fn apply_commit_to_roster_tentative(
     roster: &mut GroupRoster,
     info: &RelayCommitInfo,
@@ -715,16 +730,25 @@ pub fn route_crypto_envelope(
     Ok(envelope.group_id.clone())
 }
 
-pub fn crypto_envelope_recipients(envelope: &CryptoEnvelope, roster: &GroupRoster) -> Vec<u32> {
+pub fn crypto_envelope_recipients(
+    envelope: &CryptoEnvelope,
+    roster: &GroupRoster,
+    authenticated_sender_leaf_index: u32,
+) -> Result<Vec<u32>, ProtocolError> {
     if !envelope.recipient_device_id.is_empty() {
-        return vec![];
+        return Ok(vec![]);
     }
-    roster
-        .members
-        .iter()
-        .filter(|m| m.credential != envelope.sender_device_id)
-        .map(|m| m.leaf_index)
-        .collect()
+    if envelope.group_id != roster.group_id {
+        return Err(ProtocolError::group_protocol(
+            "group_id mismatch with roster",
+        ));
+    }
+    if envelope.sender_leaf_index != authenticated_sender_leaf_index {
+        return Err(ProtocolError::group_protocol(
+            "authenticated sender leaf does not match envelope sender leaf",
+        ));
+    }
+    message_recipients_for_authenticated_sender(roster, authenticated_sender_leaf_index)
 }
 
 // ── VoIP relay validation ───────────────────────────────────────────

@@ -369,9 +369,12 @@ mod key_package_secret_seal_tests {
     #[test]
     fn unseal_with_wrong_key_fails() {
         let _ = CryptoInterop::initialize();
-        let sealed =
-            seal_key_package_secrets(&secret(0x01, 32), &secret(0x02, 64), &[0x11u8; AES_KEY_BYTES])
-                .expect("seal");
+        let sealed = seal_key_package_secrets(
+            &secret(0x01, 32),
+            &secret(0x02, 64),
+            &[0x11u8; AES_KEY_BYTES],
+        )
+        .expect("seal");
         assert!(
             unseal_key_package_secrets(&sealed, &[0x22u8; AES_KEY_BYTES]).is_err(),
             "a secret sealed under one key must not open under another"

@@ -11,6 +11,7 @@ use crate::models::bundles::LocalPublicKeyBundle;
 use crate::models::key_materials::{Ed25519KeyPair, SignedPreKeyPair, X25519KeyPair};
 use crate::models::keys::{OneTimePreKey, OneTimePreKeyPublic};
 use crate::models::IdentityKeyBundle;
+use crate::security::DhValidator;
 use ed25519_dalek::{Signer, SigningKey};
 use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
@@ -1081,6 +1082,26 @@ impl IdentityKeys {
                 "Invalid remote signed pre-key public key",
             ));
         }
+        DhValidator::validate_x25519_public_key(bundle.identity_x25519_public()).map_err(|e| {
+            ProtocolError::peer_pub_key(format!("Invalid remote identity X25519 key: {e}"))
+        })?;
+        DhValidator::validate_x25519_public_key(bundle.signed_pre_key_public()).map_err(|e| {
+            ProtocolError::peer_pub_key(format!("Invalid remote signed pre-key X25519 key: {e}"))
+        })?;
+        if let Some(ephemeral) = bundle.ephemeral_x25519_public() {
+            DhValidator::validate_x25519_public_key(ephemeral).map_err(|e| {
+                ProtocolError::peer_pub_key(format!("Invalid remote ephemeral X25519 key: {e}"))
+            })?;
+        }
+        for opk in bundle.one_time_pre_keys() {
+            DhValidator::validate_x25519_public_key(opk.public_key()).map_err(|e| {
+                ProtocolError::peer_pub_key(format!("Invalid remote one-time X25519 key: {e}"))
+            })?;
+            if let Some(kyber_public) = opk.kyber_public() {
+                KyberInterop::validate_public_key(kyber_public)
+                    .map_err(ProtocolError::from_crypto)?;
+            }
+        }
         Self::verify_remote_identity_x25519_signature(
             bundle.identity_ed25519_public(),
             bundle.identity_x25519_public(),
@@ -1092,7 +1113,9 @@ impl IdentityKeys {
             bundle.signed_pre_key_signature(),
         )?;
         match bundle.kyber_public() {
-            Some(kp) if kp.len() == KYBER_PUBLIC_KEY_BYTES => {}
+            Some(kp) if kp.len() == KYBER_PUBLIC_KEY_BYTES => {
+                KyberInterop::validate_public_key(kp).map_err(ProtocolError::from_crypto)?;
+            }
             _ => {
                 return Err(ProtocolError::peer_pub_key(
                     "Invalid remote Kyber-768 public key",
@@ -1121,9 +1144,16 @@ impl IdentityKeys {
         let pk: [u8; X25519_PUBLIC_KEY_BYTES] = public_key
             .try_into()
             .map_err(|_| ProtocolError::generic("Invalid X25519 public key size"))?;
+        DhValidator::validate_x25519_public_key(public_key)?;
         let secret = StaticSecret::from(sk);
         let public = X25519PublicKey::from(pk);
-        Ok(secret.diffie_hellman(&public).to_bytes())
+        let shared = secret.diffie_hellman(&public).to_bytes();
+        if shared.iter().fold(0u8, |acc, &b| acc | b) == 0 {
+            return Err(ProtocolError::invalid_input(
+                "X25519 DH produced all-zero shared secret",
+            ));
+        }
+        Ok(shared)
     }
 
     fn perform_x3dh_dh_as_initiator(
@@ -1256,5 +1286,43 @@ impl IdentityKeys {
         CryptoInterop::secure_wipe(&mut spk_secret);
         CryptoInterop::secure_wipe(&mut identity_secret);
         Ok(offset)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn x25519_dh_rejects_small_order_public_key() {
+        CryptoInterop::initialize().expect("crypto init");
+
+        let private_key = [0x42u8; X25519_PRIVATE_KEY_BYTES];
+        let small_order_public = [0u8; X25519_PUBLIC_KEY_BYTES];
+
+        assert!(IdentityKeys::x25519_dh(&private_key, &small_order_public).is_err());
+    }
+
+    #[test]
+    fn remote_bundle_validation_rejects_malformed_kyber_public_key() {
+        CryptoInterop::initialize().expect("crypto init");
+
+        let identity = IdentityKeys::create(1).unwrap();
+        let bundle = identity.create_public_bundle().unwrap();
+        let malformed = LocalPublicKeyBundle::new(
+            bundle.identity_ed25519_public().to_vec(),
+            bundle.identity_x25519_public().to_vec(),
+            bundle.identity_x25519_signature().to_vec(),
+            bundle.signed_pre_key_id(),
+            bundle.signed_pre_key_public().to_vec(),
+            bundle.signed_pre_key_signature().to_vec(),
+            bundle.one_time_pre_keys().to_vec(),
+            bundle.ephemeral_x25519_public().map(Vec::from),
+            Some(vec![0u8; KYBER_PUBLIC_KEY_BYTES]),
+            None,
+            None,
+        );
+
+        assert!(IdentityKeys::validate_remote_bundle(&malformed).is_err());
     }
 }

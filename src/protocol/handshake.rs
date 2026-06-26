@@ -1263,7 +1263,7 @@ impl HandshakeResponder {
         // succeed, breaking the X3DH one-time-use invariant and degrading
         // forward secrecy.  The current order sacrifices at most one OPK on
         // a rare store error (callers must tolerate OPK inventory loss
-        // regardless, since X3DH already allows pre-key-less fallback) to
+        // regardless, since X3DH already allows pre-key-less operation) to
         // preserve the uniqueness guarantee.
         if let Some(opk_id) = used_opk_id {
             identity_keys.consume_one_time_pre_key_by_id(opk_id)?;

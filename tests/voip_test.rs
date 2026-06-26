@@ -124,6 +124,21 @@ fn media_crypto_empty_payload_rejected() {
 }
 
 #[test]
+fn media_crypto_decrypt_rejects_empty_plaintext_after_unpad() {
+    init();
+    let key = CryptoInterop::get_random_bytes(VOIP_MEDIA_KEY_BYTES);
+    let prefix: [u8; VOIP_NONCE_PREFIX_BYTES] = [0x11, 0x22, 0x33, 0x44];
+    let aad = b"empty-payload-regression";
+    let mut padded_empty = vec![0u8; VOIP_FRAME_PADDING_BLOCK];
+    padded_empty[0] = 0x01;
+    let nonce = MediaCrypto::build_nonce(&prefix, 0);
+    let ct = AesGcm::encrypt(&key, &nonce, &padded_empty, aad).unwrap();
+
+    let result = MediaCrypto::decrypt_frame(&key, &prefix, 0, &ct, aad);
+    assert!(result.is_err());
+}
+
+#[test]
 fn media_crypto_invalid_key_size_rejected() {
     init();
     let short_key = vec![0u8; 16];
@@ -1757,6 +1772,15 @@ fn voip_session_call_end_roundtrip() {
             b"should-fail",
         )
         .is_err());
+}
+
+#[test]
+fn voip_session_call_end_oversized_message_rejected_before_decode() {
+    init();
+    let (_alice, bob) = setup_voip_session_pair(false);
+    let oversized = vec![0u8; MAX_VOIP_SIGNAL_MESSAGE_SIZE + 1];
+
+    assert!(bob.process_call_end(&oversized).is_err());
 }
 
 #[test]

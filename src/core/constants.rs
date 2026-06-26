@@ -269,6 +269,7 @@ pub const ATTACHMENT_FILE_KEY_BYTES: usize = 32;
 pub const ATTACHMENT_HASH_BYTES: usize = 32;
 pub const MAX_ATTACHMENT_MANIFEST_SIZE: usize = 16 * 1024;
 pub const MAX_ATTACHMENT_CHUNK_SIZE: usize = 1024 * 1024;
+pub const MAX_ATTACHMENT_CHUNK_COUNT: u32 = (MAX_BUFFER_SIZE / 4) as u32;
 pub const MAX_ATTACHMENT_ENCRYPTED_FILE_KEY_SIZE: usize = 8 * 1024;
 pub const ATTACHMENT_NONCE_INFO: &[u8] = b"Aura-Attachment-Nonce";
 pub const MAX_ATTACHMENT_THUMBNAIL_SIZE: usize = 64 * 1024;

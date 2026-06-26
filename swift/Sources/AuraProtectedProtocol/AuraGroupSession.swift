@@ -33,13 +33,13 @@ public struct AuraGroupSecurityPolicy: Sendable {
     ///   - maxMessagesPerEpoch: Maximum messages per epoch (default: 1000).
     ///   - maxSkippedKeysPerSender: Maximum skipped keys per sender (default: 32).
     ///   - blockExternalJoin: Block external joins (default: false).
-    ///   - enhancedKeySchedule: Enable enhanced key schedule (default: false).
+    ///   - enhancedKeySchedule: Enable enhanced key schedule (default: true).
     ///   - mandatoryFranking: Require franking on all messages (default: false).
     public init(
         maxMessagesPerEpoch: UInt32 = 1000,
         maxSkippedKeysPerSender: UInt32 = 32,
         blockExternalJoin: Bool = false,
-        enhancedKeySchedule: Bool = false,
+        enhancedKeySchedule: Bool = true,
         mandatoryFranking: Bool = false
     ) {
         self.maxMessagesPerEpoch = maxMessagesPerEpoch
@@ -1133,7 +1133,7 @@ public final class AuraGroupSession {
             max_messages_per_epoch: 0,
             max_skipped_keys_per_sender: 0,
             block_external_join: 0,
-            enhanced_key_schedule: 0,
+            enhanced_key_schedule: 1,
             mandatory_franking: 0
         )
         var outError = NativeAuraError(code: 0, message: nil)

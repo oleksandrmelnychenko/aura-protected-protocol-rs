@@ -309,8 +309,18 @@ impl TreeKem {
         let my_direct_path_set: std::collections::HashSet<u32> =
             my_direct_path.iter().copied().collect();
 
-        let (anc_x25519_priv, _anc_x25519_pub, anc_kyber_sec, _anc_kyber_pub) =
+        let (anc_x25519_priv, anc_x25519_pub, anc_kyber_sec, anc_kyber_pub) =
             Self::derive_node_keypairs(&path_secret)?;
+        if anc_x25519_pub != path_node.x25519_public {
+            return Err(ProtocolError::tree_integrity(format!(
+                "X25519 public key mismatch at ancestor path level {ancestor_level}"
+            )));
+        }
+        if anc_kyber_pub != path_node.kyber_public {
+            return Err(ProtocolError::tree_integrity(format!(
+                "Kyber public key mismatch at ancestor path level {ancestor_level}"
+            )));
+        }
 
         tree.set_node_public_keys(
             ancestor_node_idx,

@@ -31,7 +31,7 @@ const fn permissive_group_policy() -> GroupSecurityPolicy {
         max_messages_per_epoch: 1_000,
         max_skipped_keys_per_sender: 4,
         block_external_join: false,
-        enhanced_key_schedule: false,
+        enhanced_key_schedule: true,
         mandatory_franking: false,
     }
 }

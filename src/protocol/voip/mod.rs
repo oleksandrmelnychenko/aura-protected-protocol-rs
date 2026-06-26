@@ -624,6 +624,11 @@ impl VoipSession {
     }
 
     pub fn process_call_end(&self, call_end_bytes: &[u8]) -> Result<(), ProtocolError> {
+        if call_end_bytes.len() > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
+            return Err(ProtocolError::invalid_input(
+                "CallEnd exceeds maximum VoIP signal size",
+            ));
+        }
         let call_end = crate::proto::CallEnd::decode(call_end_bytes)
             .map_err(|e| ProtocolError::decode(format!("CallEnd decode: {e}")))?;
 

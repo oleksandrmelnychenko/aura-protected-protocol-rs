@@ -3120,7 +3120,7 @@ fn ffi_group_external_join_roundtrip() {
             max_messages_per_epoch: 1000,
             max_skipped_keys_per_sender: 4,
             block_external_join: 0,
-            enhanced_key_schedule: 0,
+            enhanced_key_schedule: 1,
             mandatory_franking: 0,
         };
         let code = aura_group_create_with_policy(
@@ -3285,7 +3285,7 @@ fn ffi_group_decrypt_ex_clears_stale_result_on_failure() {
                     max_messages_per_epoch: 1000,
                     max_skipped_keys_per_sender: 4,
                     block_external_join: 0,
-                    enhanced_key_schedule: 0,
+                    enhanced_key_schedule: 1,
                     mandatory_franking: 0,
                 },
                 &mut alice_group_handle,
@@ -3476,7 +3476,7 @@ fn ffi_group_external_join_rejects_tampered_authorization() {
             max_messages_per_epoch: 1000,
             max_skipped_keys_per_sender: 4,
             block_external_join: 0,
-            enhanced_key_schedule: 0,
+            enhanced_key_schedule: 1,
             mandatory_franking: 0,
         };
         assert_eq!(
@@ -4788,11 +4788,13 @@ fn ffi_session_ratchet_stalling_warning_fires() {
 // ── Attachment v2 tests ──
 
 mod attachment_v2 {
-    use aura_protected_protocol::core::constants::MAX_COLLAGE_NAME_CHARS;
+    use aura_protected_protocol::core::constants::{
+        ATTACHMENT_ID_BYTES, MAX_ATTACHMENT_CHUNK_COUNT, MAX_COLLAGE_NAME_CHARS,
+    };
     use aura_protected_protocol::ffi::api::*;
     use aura_protected_protocol::proto::{
-        AttachmentManifest, CollageManifest, ContactCard, ContentPolicy, LinkPreview,
-        LocationAttachment, VoiceMessageMeta,
+        AttachmentManifest, ChunkProgress, CollageManifest, ContactCard, ContentPolicy,
+        LinkPreview, LocationAttachment, VoiceMessageMeta,
     };
     use prost::Message;
     use std::ptr;
@@ -5079,6 +5081,42 @@ mod attachment_v2 {
             aura_buffer_release(&mut updated);
             aura_buffer_release(&mut updated2);
             aura_buffer_release(&mut remaining);
+        }
+    }
+
+    #[test]
+    fn progress_rejects_unbounded_remaining_vector() {
+        init_v2();
+
+        let progress = ChunkProgress {
+            attachment_id: vec![0x42; ATTACHMENT_ID_BYTES],
+            chunk_count: MAX_ATTACHMENT_CHUNK_COUNT.saturating_add(1),
+            completed_chunks: vec![],
+            total_bytes_transferred: 0,
+            last_updated_unix: 0,
+        };
+        let mut bytes = Vec::new();
+        progress.encode(&mut bytes).unwrap();
+
+        let mut remaining = null_buffer();
+        let mut remaining_count = 0u32;
+        let mut err = null_error();
+        let code = unsafe {
+            aura_attachment_progress_get_remaining(
+                bytes.as_ptr(),
+                bytes.len(),
+                &mut remaining,
+                &mut remaining_count,
+                &mut err,
+            )
+        };
+
+        assert_eq!(code, AuraErrorCode::AuraErrorInvalidInput);
+        assert!(remaining.data.is_null());
+        assert_eq!(remaining.length, 0);
+        assert_eq!(remaining_count, 0);
+        unsafe {
+            aura_error_free(&mut err);
         }
     }
 

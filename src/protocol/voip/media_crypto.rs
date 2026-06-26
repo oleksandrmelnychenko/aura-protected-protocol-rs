@@ -145,6 +145,9 @@ fn unpad_frame(padded: &[u8]) -> Result<Vec<u8>, ProtocolError> {
             "invalid padding: no sentinel found",
         ));
     }
+    if found_pos == 0 {
+        return Err(ProtocolError::voip_media("empty decrypted frame payload"));
+    }
     // Iterate the *entire* buffer so the loop trip-count is independent of
     // `found_pos`, preventing a plaintext-length-dependent timing side-channel
     // on VoIP frames (the attacker could otherwise distinguish active speech
