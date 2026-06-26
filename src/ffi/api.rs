@@ -58,9 +58,9 @@ use crate::interfaces::{
     SystemTimeProvider,
 };
 use crate::proto::{
-    AttachmentManifest, AttachmentReference, ChunkProgress, CollageManifest, ContactCard,
-    ContentPolicy, InlineAttachment, LinkPreview, LocationAttachment, OneTimePreKey, PreKeyBundle,
-    SecureEnvelope, SessionMetadataResponse, VoiceMessageMeta,
+    AttachmentManifest, AttachmentReference, CallMediaType, ChunkProgress, CollageManifest,
+    ContactCard, ContentPolicy, InlineAttachment, LinkPreview, LocationAttachment, OneTimePreKey,
+    PreKeyBundle, ScreenShareMetadata, SecureEnvelope, SessionMetadataResponse, VoiceMessageMeta,
 };
 use crate::protocol::attachment::{StreamingDecryptor, StreamingEncryptor};
 use crate::protocol::group::{GroupSecurityPolicy, GroupSession};
@@ -6362,6 +6362,58 @@ unsafe fn require_voip_ref<'a>(
     Ok((guard, inner))
 }
 
+unsafe fn read_optional_voip_screen_share_meta(
+    width: u32,
+    height: u32,
+    frame_rate: u32,
+    codec_hint: *const u8,
+    codec_hint_len: usize,
+    out_error: *mut AuraError,
+) -> Result<Option<ScreenShareMetadata>, AuraErrorCode> {
+    let has_dimensions = width != 0 || height != 0 || frame_rate != 0;
+    let has_hint = !codec_hint.is_null() && codec_hint_len != 0;
+    if !has_dimensions && !has_hint {
+        return Ok(None);
+    }
+    if codec_hint.is_null() && codec_hint_len != 0 {
+        write_error(
+            out_error,
+            AuraErrorCode::AuraErrorNullPointer,
+            "screen share codec_hint pointer is null",
+        );
+        return Err(AuraErrorCode::AuraErrorNullPointer);
+    }
+    let codec_hint = if has_hint {
+        let bytes = std::slice::from_raw_parts(codec_hint, codec_hint_len);
+        match std::str::from_utf8(bytes) {
+            Ok(s) => Some(s.to_owned()),
+            Err(_) => {
+                write_error(
+                    out_error,
+                    AuraErrorCode::AuraErrorInvalidInput,
+                    "invalid UTF-8 in screen share codec_hint",
+                );
+                return Err(AuraErrorCode::AuraErrorInvalidInput);
+            }
+        }
+    } else {
+        None
+    };
+    let meta = ScreenShareMetadata {
+        width,
+        height,
+        frame_rate,
+        codec_hint,
+    };
+    match crate::protocol::voip::validate_screen_share_metadata(&meta) {
+        Ok(()) => Ok(Some(meta)),
+        Err(e) => {
+            let code = write_protocol_error(out_error, &e);
+            Err(code)
+        }
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn aura_voip_accept_call(
     identity_handle: *const AuraIdentityHandle,
@@ -6447,6 +6499,14 @@ pub unsafe extern "C" fn aura_voip_accept_call(
             );
             return AuraErrorCode::AuraErrorInvalidInput;
         }
+        if let Err(e) = crate::protocol::voip::validate_call_media_type(call_init.media_type) {
+            return write_protocol_error(out_error, &e);
+        }
+        if let Some(ref meta) = call_init.screen_share {
+            if let Err(e) = crate::protocol::voip::validate_screen_share_metadata(meta) {
+                return write_protocol_error(out_error, &e);
+            }
+        }
 
         let auth_context = crate::protocol::voip::call_key_exchange::CallInitAuthContext {
             version: call_init.version,
@@ -6457,7 +6517,7 @@ pub unsafe extern "C" fn aura_voip_accept_call(
         };
 
         let accept_output =
-            match crate::protocol::voip::call_key_exchange::callee_accept_with_context(
+            match crate::protocol::voip::call_key_exchange::callee_accept_with_context_and_screen_share(
                 &ed_secret,
                 &ed_public,
                 &kyber_secret,
@@ -6469,6 +6529,8 @@ pub unsafe extern "C" fn aura_voip_accept_call(
                 &call_init.signature,
                 &call_init.key_confirmation_mac,
                 &auth_context,
+                call_init.screen_share.as_ref(),
+                None,
             ) {
                 Ok(v) => v,
                 Err(e) => return write_protocol_error(out_error, &e),
@@ -6496,7 +6558,7 @@ pub unsafe extern "C" fn aura_voip_accept_call(
         }
         write_buffer(out_accept_bytes, buf);
 
-        let session = match crate::protocol::voip::VoipSession::from_key_material_with_time_provider(
+        let session = match crate::protocol::voip::VoipSession::from_key_material_with_time_provider_and_screen_share(
             call_init.call_id,
             crate::protocol::voip::CallRole::Callee,
             accept_output.key_material,
@@ -6504,6 +6566,196 @@ pub unsafe extern "C" fn aura_voip_accept_call(
             call_init.pq_rekey_interval_secs,
             call_init.shield_mode,
             time_provider,
+            call_init.screen_share,
+        ) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        replace_out_handle(
+            out_session,
+            Box::into_raw(Box::new(AuraVoipSessionHandle {
+                inner: Some(session),
+                in_use: AtomicBool::new(false),
+            })),
+        );
+        AuraErrorCode::AuraSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn aura_voip_accept_call_with_options(
+    identity_handle: *const AuraIdentityHandle,
+    call_init_bytes: *const u8,
+    call_init_len: usize,
+    peer_kyber_public: *const u8,
+    peer_kyber_public_len: usize,
+    screen_share_width: u32,
+    screen_share_height: u32,
+    screen_share_frame_rate: u32,
+    screen_share_codec_hint: *const u8,
+    screen_share_codec_hint_len: usize,
+    out_accept_bytes: *mut AuraBuffer,
+    out_session: *mut *mut AuraVoipSessionHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    ffi_catch_panic!(out_error, {
+        if out_accept_bytes.is_null() || out_session.is_null() {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "A required pointer is null",
+            );
+            return AuraErrorCode::AuraErrorNullPointer;
+        }
+        let accept_screen_share = match read_optional_voip_screen_share_meta(
+            screen_share_width,
+            screen_share_height,
+            screen_share_frame_rate,
+            screen_share_codec_hint,
+            screen_share_codec_hint_len,
+            out_error,
+        ) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let time_provider = match clone_identity_time_provider(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if call_init_bytes.is_null() || call_init_len == 0 {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "null CallInit bytes",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+        if call_init_len > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "CallInit too large",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+        if peer_kyber_public.is_null() || peer_kyber_public_len == 0 {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "null peer kyber public key",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+        let init_bytes = std::slice::from_raw_parts(call_init_bytes, call_init_len);
+        let kyber_pub = std::slice::from_raw_parts(peer_kyber_public, peer_kyber_public_len);
+
+        let call_init = match crate::proto::CallInit::decode(init_bytes) {
+            Ok(v) => v,
+            Err(e) => {
+                write_error(
+                    out_error,
+                    AuraErrorCode::AuraErrorDecode,
+                    &format!("CallInit decode: {e}"),
+                );
+                return AuraErrorCode::AuraErrorDecode;
+            }
+        };
+
+        if call_init.version != crate::core::constants::VOIP_PROTOCOL_VERSION {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "unsupported VoIP protocol version",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+        if let Err(e) = crate::protocol::voip::validate_call_media_type(call_init.media_type) {
+            return write_protocol_error(out_error, &e);
+        }
+        if let Some(ref meta) = call_init.screen_share {
+            if let Err(e) = crate::protocol::voip::validate_screen_share_metadata(meta) {
+                return write_protocol_error(out_error, &e);
+            }
+        }
+
+        let ed_secret = match identity.get_identity_ed25519_private_key_copy() {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        let ed_public = identity.get_identity_ed25519_public();
+        let kyber_secret = match identity.clone_kyber_secret_key() {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        let auth_context = crate::protocol::voip::call_key_exchange::CallInitAuthContext {
+            version: call_init.version,
+            media_type: call_init.media_type,
+            ratchet_interval_frames: call_init.ratchet_interval_frames,
+            pq_rekey_interval_secs: call_init.pq_rekey_interval_secs,
+            shield_mode: call_init.shield_mode,
+        };
+
+        let accept_output =
+            match crate::protocol::voip::call_key_exchange::callee_accept_with_context_and_screen_share(
+                &ed_secret,
+                &ed_public,
+                &kyber_secret,
+                kyber_pub,
+                &call_init.call_id,
+                &call_init.ephemeral_x25519_public,
+                &call_init.kyber_ciphertext,
+                &call_init.identity_ed25519_public,
+                &call_init.signature,
+                &call_init.key_confirmation_mac,
+                &auth_context,
+                call_init.screen_share.as_ref(),
+                accept_screen_share.as_ref(),
+            ) {
+                Ok(v) => v,
+                Err(e) => return write_protocol_error(out_error, &e),
+            };
+
+        let proto = crate::proto::CallAccept {
+            version: crate::core::constants::VOIP_PROTOCOL_VERSION,
+            callee_device_id: Vec::new(),
+            call_id: call_init.call_id.clone(),
+            ephemeral_x25519_public: accept_output.ephemeral_x25519_public,
+            kyber_ciphertext: accept_output.kyber_ciphertext,
+            identity_ed25519_public: accept_output.identity_ed25519_public,
+            signature: accept_output.signature,
+            key_confirmation_mac: accept_output.key_confirmation_mac,
+            screen_share: accept_screen_share.clone(),
+        };
+        let mut buf = Vec::new();
+        if let Err(e) = proto.encode(&mut buf) {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorEncode,
+                &format!("CallAccept encode: {e}"),
+            );
+            return AuraErrorCode::AuraErrorEncode;
+        }
+        write_buffer(out_accept_bytes, buf);
+
+        let session_meta = call_init
+            .screen_share
+            .clone()
+            .or_else(|| accept_screen_share.clone());
+        let session = match crate::protocol::voip::VoipSession::from_key_material_with_time_provider_and_screen_share(
+            call_init.call_id,
+            crate::protocol::voip::CallRole::Callee,
+            accept_output.key_material,
+            call_init.ratchet_interval_frames,
+            call_init.pq_rekey_interval_secs,
+            call_init.shield_mode,
+            time_provider,
+            session_meta,
         ) {
             Ok(v) => v,
             Err(e) => return write_protocol_error(out_error, &e),
@@ -7065,9 +7317,11 @@ pub unsafe extern "C" fn aura_voip_export_persisted_state(
 pub struct AuraVoipCallInitiatorHandle {
     pub init_output: Option<crate::protocol::voip::CallInitOutput>,
     pub call_id: Vec<u8>,
+    pub media_type: i32,
     pub shield_mode: bool,
     pub ratchet_interval_frames: u32,
     pub pq_rekey_interval_secs: u32,
+    pub screen_share_meta: Option<ScreenShareMetadata>,
     pub time_provider: Arc<dyn ITimeProvider>,
 }
 
@@ -7115,10 +7369,11 @@ pub unsafe extern "C" fn aura_voip_call_init(
             Err(e) => return write_protocol_error(out_error, &e),
         };
         let ed_public = identity.get_identity_ed25519_public();
+        let media_type = CallMediaType::CallMediaAudio as i32;
 
         let auth_context = crate::protocol::voip::call_key_exchange::CallInitAuthContext {
             version: crate::core::constants::VOIP_PROTOCOL_VERSION,
-            media_type: 1,
+            media_type,
             ratchet_interval_frames,
             pq_rekey_interval_secs,
             shield_mode: shield_mode != 0,
@@ -7144,7 +7399,7 @@ pub unsafe extern "C" fn aura_voip_call_init(
             identity_ed25519_public: init_output.identity_ed25519_public.clone(),
             signature: init_output.signature.clone(),
             key_confirmation_mac: init_output.key_confirmation_mac.clone(),
-            media_type: 1,
+            media_type,
             ratchet_interval_frames,
             pq_rekey_interval_secs,
             shield_mode: is_shield,
@@ -7165,9 +7420,139 @@ pub unsafe extern "C" fn aura_voip_call_init(
         let initiator = Box::new(AuraVoipCallInitiatorHandle {
             init_output: Some(init_output),
             call_id,
+            media_type,
             shield_mode: is_shield,
             ratchet_interval_frames,
             pq_rekey_interval_secs,
+            screen_share_meta: None,
+            time_provider,
+        });
+        replace_out_handle(out_initiator, Box::into_raw(initiator));
+
+        AuraErrorCode::AuraSuccess
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn aura_voip_call_init_with_options(
+    identity_handle: *const AuraIdentityHandle,
+    peer_kyber_public: *const u8,
+    peer_kyber_public_len: usize,
+    media_type: i32,
+    shield_mode: u8,
+    ratchet_interval_frames: u32,
+    pq_rekey_interval_secs: u32,
+    screen_share_width: u32,
+    screen_share_height: u32,
+    screen_share_frame_rate: u32,
+    screen_share_codec_hint: *const u8,
+    screen_share_codec_hint_len: usize,
+    out_init_bytes: *mut AuraBuffer,
+    out_initiator: *mut *mut AuraVoipCallInitiatorHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    ffi_catch_panic!(out_error, {
+        if out_init_bytes.is_null() || out_initiator.is_null() {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "A required pointer is null",
+            );
+            return AuraErrorCode::AuraErrorNullPointer;
+        }
+        if let Err(e) = crate::protocol::voip::validate_call_media_type(media_type) {
+            return write_protocol_error(out_error, &e);
+        }
+        let screen_share_meta = match read_optional_voip_screen_share_meta(
+            screen_share_width,
+            screen_share_height,
+            screen_share_frame_rate,
+            screen_share_codec_hint,
+            screen_share_codec_hint_len,
+            out_error,
+        ) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let time_provider = match clone_identity_time_provider(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let (_identity_guard, identity) = match require_identity_ref(identity_handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        if peer_kyber_public.is_null() || peer_kyber_public_len == 0 {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "null peer kyber public key",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+        let kyber_pub = std::slice::from_raw_parts(peer_kyber_public, peer_kyber_public_len);
+
+        let ed_secret = match identity.get_identity_ed25519_private_key_copy() {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+        let ed_public = identity.get_identity_ed25519_public();
+
+        let auth_context = crate::protocol::voip::call_key_exchange::CallInitAuthContext {
+            version: crate::core::constants::VOIP_PROTOCOL_VERSION,
+            media_type,
+            ratchet_interval_frames,
+            pq_rekey_interval_secs,
+            shield_mode: shield_mode != 0,
+        };
+
+        let init_output = match crate::protocol::voip::call_key_exchange::caller_init_with_context_and_screen_share(
+            &ed_secret,
+            &ed_public,
+            kyber_pub,
+            &auth_context,
+            screen_share_meta.as_ref(),
+        ) {
+            Ok(v) => v,
+            Err(e) => return write_protocol_error(out_error, &e),
+        };
+
+        let is_shield = shield_mode != 0;
+        let proto = crate::proto::CallInit {
+            version: crate::core::constants::VOIP_PROTOCOL_VERSION,
+            caller_device_id: Vec::new(),
+            call_id: init_output.call_id.clone(),
+            ephemeral_x25519_public: init_output.ephemeral_x25519_public.clone(),
+            kyber_ciphertext: init_output.kyber_ciphertext.clone(),
+            identity_ed25519_public: init_output.identity_ed25519_public.clone(),
+            signature: init_output.signature.clone(),
+            key_confirmation_mac: init_output.key_confirmation_mac.clone(),
+            media_type,
+            ratchet_interval_frames,
+            pq_rekey_interval_secs,
+            shield_mode: is_shield,
+            screen_share: screen_share_meta.clone(),
+        };
+        let mut buf = Vec::new();
+        if let Err(e) = proto.encode(&mut buf) {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorEncode,
+                &format!("CallInit encode: {e}"),
+            );
+            return AuraErrorCode::AuraErrorEncode;
+        }
+        write_buffer(out_init_bytes, buf);
+
+        let call_id = init_output.call_id.clone();
+        let initiator = Box::new(AuraVoipCallInitiatorHandle {
+            init_output: Some(init_output),
+            call_id,
+            media_type,
+            shield_mode: is_shield,
+            ratchet_interval_frames,
+            pq_rekey_interval_secs,
+            screen_share_meta,
             time_provider,
         });
         replace_out_handle(out_initiator, Box::into_raw(initiator));
@@ -7195,6 +7580,43 @@ pub unsafe extern "C" fn aura_voip_call_init_start(
         shield_mode,
         ratchet_interval_frames,
         pq_rekey_interval_secs,
+        out_init_bytes,
+        out_initiator,
+        out_error,
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn aura_voip_call_init_start_with_options(
+    identity_handle: *const AuraIdentityHandle,
+    peer_kyber_public: *const u8,
+    peer_kyber_public_len: usize,
+    media_type: i32,
+    shield_mode: u8,
+    ratchet_interval_frames: u32,
+    pq_rekey_interval_secs: u32,
+    screen_share_width: u32,
+    screen_share_height: u32,
+    screen_share_frame_rate: u32,
+    screen_share_codec_hint: *const u8,
+    screen_share_codec_hint_len: usize,
+    out_init_bytes: *mut AuraBuffer,
+    out_initiator: *mut *mut AuraVoipCallInitiatorHandle,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    aura_voip_call_init_with_options(
+        identity_handle,
+        peer_kyber_public,
+        peer_kyber_public_len,
+        media_type,
+        shield_mode,
+        ratchet_interval_frames,
+        pq_rekey_interval_secs,
+        screen_share_width,
+        screen_share_height,
+        screen_share_frame_rate,
+        screen_share_codec_hint,
+        screen_share_codec_hint_len,
         out_init_bytes,
         out_initiator,
         out_error,
@@ -7269,6 +7691,11 @@ pub unsafe extern "C" fn aura_voip_call_init_complete(
             );
             return AuraErrorCode::AuraErrorInvalidInput;
         }
+        if let Some(ref meta) = accept.screen_share {
+            if let Err(e) = crate::protocol::voip::validate_screen_share_metadata(meta) {
+                return write_protocol_error(out_error, &e);
+            }
+        }
 
         let initiator = &mut *initiator_handle;
         let Some(init_output) = initiator.init_output.take() else {
@@ -7287,13 +7714,13 @@ pub unsafe extern "C" fn aura_voip_call_init_complete(
 
         let auth_context = crate::protocol::voip::call_key_exchange::CallInitAuthContext {
             version: crate::core::constants::VOIP_PROTOCOL_VERSION,
-            media_type: 1,
+            media_type: initiator.media_type,
             ratchet_interval_frames: initiator.ratchet_interval_frames,
             pq_rekey_interval_secs: initiator.pq_rekey_interval_secs,
             shield_mode: initiator.shield_mode,
         };
         let key_material =
-            match crate::protocol::voip::call_key_exchange::caller_finish_with_context(
+            match crate::protocol::voip::call_key_exchange::caller_finish_with_context_and_screen_share(
                 &init_output,
                 &kyber_secret,
                 &initiator.call_id,
@@ -7303,12 +7730,17 @@ pub unsafe extern "C" fn aura_voip_call_init_complete(
                 &accept.signature,
                 &accept.key_confirmation_mac,
                 &auth_context,
+                accept.screen_share.as_ref(),
             ) {
                 Ok(v) => v,
                 Err(e) => return write_protocol_error(out_error, &e),
             };
 
-        let session = match crate::protocol::voip::VoipSession::from_key_material_with_time_provider(
+        let screen_share_meta = accept
+            .screen_share
+            .clone()
+            .or_else(|| initiator.screen_share_meta.clone());
+        let session = match crate::protocol::voip::VoipSession::from_key_material_with_time_provider_and_screen_share(
             initiator.call_id.clone(),
             crate::protocol::voip::CallRole::Caller,
             key_material,
@@ -7316,6 +7748,7 @@ pub unsafe extern "C" fn aura_voip_call_init_complete(
             initiator.pq_rekey_interval_secs,
             initiator.shield_mode,
             initiator.time_provider.clone(),
+            screen_share_meta,
         ) {
             Ok(v) => v,
             Err(e) => return write_protocol_error(out_error, &e),

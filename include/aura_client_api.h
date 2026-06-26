@@ -1195,11 +1195,22 @@ typedef enum {
 } AuraVoipCallControlTypeCode;
 
 /*
+ * AuraVoipCallMediaTypeCode — media policy values encoded into CallInit.
+ */
+typedef enum {
+    AURA_VOIP_CALL_MEDIA_AUDIO = 1,
+    AURA_VOIP_CALL_MEDIA_VIDEO = 2,
+    AURA_VOIP_CALL_MEDIA_AUDIO_VIDEO = 3,
+    AURA_VOIP_CALL_MEDIA_SCREEN_SHARE = 4,
+    AURA_VOIP_CALL_MEDIA_AUDIO_SCREEN = 5
+} AuraVoipCallMediaTypeCode;
+
+/*
  * aura_voip_call_init — begin an outbound call and create an initiator handle.
  *
  * This is the base API used by aura_voip_call_init_start(); both functions
- * have identical behavior and outputs. `out_init_bytes` and `out_initiator`
- * are required.
+ * have identical audio-call behavior and outputs. `out_init_bytes` and
+ * `out_initiator` are required.
  */
 AURA_API AuraErrorCode aura_voip_call_init(
     const AuraIdentityHandle*      identity_handle,
@@ -1208,6 +1219,28 @@ AURA_API AuraErrorCode aura_voip_call_init(
     uint8_t                       shield_mode,
     uint32_t                      ratchet_interval_frames,
     uint32_t                      pq_rekey_interval_secs,
+    AuraBuffer*                    out_init_bytes,
+    AuraVoipCallInitiatorHandle**  out_initiator,
+    AuraError*                     out_error);
+
+/*
+ * aura_voip_call_init_with_options — begin an outbound VoIP call with an
+ * explicit media type and optional screen-share metadata. Pass width, height,
+ * and frame_rate as 0 to omit screen-share metadata.
+ */
+AURA_API AuraErrorCode aura_voip_call_init_with_options(
+    const AuraIdentityHandle*      identity_handle,
+    const uint8_t*                peer_kyber_public,
+    size_t                        peer_kyber_public_len,
+    int32_t                       media_type,
+    uint8_t                       shield_mode,
+    uint32_t                      ratchet_interval_frames,
+    uint32_t                      pq_rekey_interval_secs,
+    uint32_t                      screen_share_width,
+    uint32_t                      screen_share_height,
+    uint32_t                      screen_share_frame_rate,
+    const uint8_t*                screen_share_codec_hint,
+    size_t                        screen_share_codec_hint_len,
     AuraBuffer*                    out_init_bytes,
     AuraVoipCallInitiatorHandle**  out_initiator,
     AuraError*                     out_error);
@@ -1222,6 +1255,27 @@ AURA_API AuraErrorCode aura_voip_call_init_start(
     uint8_t                       shield_mode,
     uint32_t                      ratchet_interval_frames,
     uint32_t                      pq_rekey_interval_secs,
+    AuraBuffer*                    out_init_bytes,
+    AuraVoipCallInitiatorHandle**  out_initiator,
+    AuraError*                     out_error);
+
+/*
+ * aura_voip_call_init_start_with_options — alias of
+ * aura_voip_call_init_with_options().
+ */
+AURA_API AuraErrorCode aura_voip_call_init_start_with_options(
+    const AuraIdentityHandle*      identity_handle,
+    const uint8_t*                peer_kyber_public,
+    size_t                        peer_kyber_public_len,
+    int32_t                       media_type,
+    uint8_t                       shield_mode,
+    uint32_t                      ratchet_interval_frames,
+    uint32_t                      pq_rekey_interval_secs,
+    uint32_t                      screen_share_width,
+    uint32_t                      screen_share_height,
+    uint32_t                      screen_share_frame_rate,
+    const uint8_t*                screen_share_codec_hint,
+    size_t                        screen_share_codec_hint_len,
     AuraBuffer*                    out_init_bytes,
     AuraVoipCallInitiatorHandle**  out_initiator,
     AuraError*                     out_error);
@@ -1261,6 +1315,26 @@ AURA_API AuraErrorCode aura_voip_accept_call(
     size_t                    call_init_len,
     const uint8_t*            peer_kyber_public,
     size_t                    peer_kyber_public_len,
+    AuraBuffer*                out_accept_bytes,
+    AuraVoipSessionHandle**    out_session,
+    AuraError*                 out_error);
+
+/*
+ * aura_voip_accept_call_with_options — process CallInit bytes and include
+ * optional callee screen-share metadata in the signed CallAccept. Pass width,
+ * height, and frame_rate as 0 to omit screen-share metadata.
+ */
+AURA_API AuraErrorCode aura_voip_accept_call_with_options(
+    const AuraIdentityHandle*  identity_handle,
+    const uint8_t*            call_init_bytes,
+    size_t                    call_init_len,
+    const uint8_t*            peer_kyber_public,
+    size_t                    peer_kyber_public_len,
+    uint32_t                  screen_share_width,
+    uint32_t                  screen_share_height,
+    uint32_t                  screen_share_frame_rate,
+    const uint8_t*            screen_share_codec_hint,
+    size_t                    screen_share_codec_hint_len,
     AuraBuffer*                out_accept_bytes,
     AuraVoipSessionHandle**    out_session,
     AuraError*                 out_error);

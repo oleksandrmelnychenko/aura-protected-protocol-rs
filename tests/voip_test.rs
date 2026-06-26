@@ -3,13 +3,14 @@
 
 #![allow(clippy::pedantic, clippy::nursery)]
 
-use aura_protected_protocol::api::AuraProtocol;
+use aura_protected_protocol::api::{AuraProtocol, AuraVoipCallOptions};
 use aura_protected_protocol::core::constants::*;
 use aura_protected_protocol::core::errors::ProtocolError;
 use aura_protected_protocol::crypto::{AesGcm, CryptoInterop, HkdfSha256, SecureMemoryHandle};
 use aura_protected_protocol::identity::IdentityKeys;
 use aura_protected_protocol::proto::{
-    CallRekey, CallRekeyAck, PreKeyBundle, RecordingConsentMessage, VoipSessionState,
+    CallAccept, CallInit, CallMediaType, CallRekey, CallRekeyAck, PreKeyBundle,
+    RecordingConsentMessage, VoipSessionState,
 };
 use aura_protected_protocol::protocol::voip::call_key_exchange::{
     callee_accept_with_context, caller_finish_with_context, caller_init_with_context,
@@ -1682,6 +1683,106 @@ fn api_voip_full_call_flow_via_public_api() {
         .unwrap();
     let decrypted = bob_session.decrypt_frame(&encrypted).unwrap();
     assert_eq!(decrypted.payload, b"hello-voip");
+}
+
+#[test]
+fn api_voip_call_options_screen_share_roundtrip() {
+    init();
+
+    let alice = AuraProtocol::new(1).unwrap();
+    let bob = AuraProtocol::new(1).unwrap();
+
+    let alice_bundle = alice.pre_key_bundle().unwrap();
+    let bob_bundle = bob.pre_key_bundle().unwrap();
+    let (alice_kyber, _) = extract_voip_peer_material(&alice_bundle);
+    let (bob_kyber, _) = extract_voip_peer_material(&bob_bundle);
+
+    let options = AuraVoipCallOptions {
+        media_type: CallMediaType::CallMediaAudioScreen as i32,
+        shield_mode: true,
+        ratchet_interval_frames: 512,
+        pq_rekey_interval_secs: 60,
+        screen_share: Some((1920, 1080, 30, Some("av1".to_owned()))),
+    };
+    let (initiator, call_init) = alice
+        .initiate_call_with_options(&bob_kyber, options)
+        .unwrap();
+    let decoded_init = CallInit::decode(call_init.as_slice()).unwrap();
+    assert_eq!(
+        decoded_init.media_type,
+        CallMediaType::CallMediaAudioScreen as i32
+    );
+    let init_screen = decoded_init.screen_share.as_ref().unwrap();
+    assert_eq!(init_screen.width, 1920);
+    assert_eq!(init_screen.height, 1080);
+    assert_eq!(init_screen.frame_rate, 30);
+    assert_eq!(init_screen.codec_hint.as_deref(), Some("av1"));
+
+    let (bob_session, call_accept) = bob
+        .accept_call_with_screen_share(
+            &call_init,
+            &alice_kyber,
+            Some((1280, 720, 30, Some("h264".to_owned()))),
+        )
+        .unwrap();
+    let decoded_accept = CallAccept::decode(call_accept.as_slice()).unwrap();
+    let accept_screen = decoded_accept.screen_share.as_ref().unwrap();
+    assert_eq!(accept_screen.width, 1280);
+    assert_eq!(accept_screen.height, 720);
+    assert_eq!(accept_screen.frame_rate, 30);
+    assert_eq!(accept_screen.codec_hint.as_deref(), Some("h264"));
+
+    assert_eq!(
+        bob_session.get_screen_share_meta().unwrap(),
+        Some((1920, 1080, 30, Some("av1".to_owned())))
+    );
+    let alice_session = alice.complete_call(initiator, &call_accept).unwrap();
+    assert_eq!(
+        alice_session.get_screen_share_meta().unwrap(),
+        Some((1280, 720, 30, Some("h264".to_owned())))
+    );
+
+    let encrypted = alice_session
+        .encrypt_frame(111, alice_session.ssrc(), 160, 1, b"hello-screen")
+        .unwrap();
+    let decrypted = bob_session.decrypt_frame(&encrypted).unwrap();
+    assert_eq!(decrypted.payload, b"hello-screen");
+}
+
+#[test]
+fn api_voip_call_init_screen_share_tamper_rejected() {
+    init();
+
+    let alice = AuraProtocol::new(1).unwrap();
+    let bob = AuraProtocol::new(1).unwrap();
+
+    let alice_bundle = alice.pre_key_bundle().unwrap();
+    let bob_bundle = bob.pre_key_bundle().unwrap();
+    let (alice_kyber, _) = extract_voip_peer_material(&alice_bundle);
+    let (bob_kyber, _) = extract_voip_peer_material(&bob_bundle);
+
+    let options = AuraVoipCallOptions {
+        media_type: CallMediaType::CallMediaScreenShare as i32,
+        shield_mode: false,
+        ratchet_interval_frames: 512,
+        pq_rekey_interval_secs: 60,
+        screen_share: Some((1920, 1080, 30, Some("av1".to_owned()))),
+    };
+    let (_initiator, call_init) = alice
+        .initiate_call_with_options(&bob_kyber, options)
+        .unwrap();
+
+    let mut tampered = CallInit::decode(call_init.as_slice()).unwrap();
+    tampered.screen_share.as_mut().unwrap().width = 2560;
+    let mut tampered_bytes = Vec::new();
+    tampered.encode(&mut tampered_bytes).unwrap();
+    assert!(bob.accept_call(&tampered_bytes, &alice_kyber).is_err());
+
+    let mut stripped = CallInit::decode(call_init.as_slice()).unwrap();
+    stripped.screen_share = None;
+    let mut stripped_bytes = Vec::new();
+    stripped.encode(&mut stripped_bytes).unwrap();
+    assert!(bob.accept_call(&stripped_bytes, &alice_kyber).is_err());
 }
 
 #[test]

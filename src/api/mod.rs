@@ -16,7 +16,10 @@ use crate::core::errors::ProtocolError;
 use crate::crypto::{CryptoInterop, HkdfSha256, SecureMemoryHandle, ShamirSecretSharing};
 use crate::identity::IdentityKeys;
 use crate::interfaces::{ITimeProvider, StaticStateKeyProvider, SystemTimeProvider};
-use crate::proto::{GroupKeyPackage, OneTimePreKey, PreKeyBundle, SecureEnvelope};
+use crate::proto::{
+    CallMediaType, GroupKeyPackage, OneTimePreKey, PreKeyBundle, ScreenShareMetadata,
+    SecureEnvelope,
+};
 use crate::protocol::group::{self, GroupSecurityPolicy, GroupSession};
 use crate::protocol::{HandshakeInitReplayGuard, HandshakeInitiator, HandshakeResponder, Session};
 
@@ -871,6 +874,48 @@ use std::sync::Arc;
 pub struct AuraVoipSession(VoipSession);
 pub type AuraVoipScreenShareMeta = (u32, u32, u32, Option<String>);
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuraVoipCallOptions {
+    pub media_type: i32,
+    pub shield_mode: bool,
+    pub ratchet_interval_frames: u32,
+    pub pq_rekey_interval_secs: u32,
+    pub screen_share: Option<AuraVoipScreenShareMeta>,
+}
+
+impl AuraVoipCallOptions {
+    #[must_use]
+    pub fn audio(
+        shield_mode: bool,
+        ratchet_interval_frames: u32,
+        pq_rekey_interval_secs: u32,
+    ) -> Self {
+        Self {
+            media_type: CallMediaType::CallMediaAudio as i32,
+            shield_mode,
+            ratchet_interval_frames,
+            pq_rekey_interval_secs,
+            screen_share: None,
+        }
+    }
+}
+
+fn screen_share_meta_from_api(
+    meta: Option<AuraVoipScreenShareMeta>,
+) -> Result<Option<ScreenShareMetadata>, ProtocolError> {
+    let Some((width, height, frame_rate, codec_hint)) = meta else {
+        return Ok(None);
+    };
+    let proto = ScreenShareMetadata {
+        width,
+        height,
+        frame_rate,
+        codec_hint,
+    };
+    voip::validate_screen_share_metadata(&proto)?;
+    Ok(Some(proto))
+}
+
 impl AuraVoipSession {
     pub fn encrypt_frame(
         &self,
@@ -1198,9 +1243,11 @@ impl AuraVoipSession {
 pub struct AuraCallInitiator {
     pub init_output: voip::call_key_exchange::CallInitOutput,
     pub call_id: Vec<u8>,
+    pub media_type: i32,
     pub shield_mode: bool,
     pub ratchet_interval_frames: u32,
     pub pq_rekey_interval_secs: u32,
+    screen_share_meta: Option<ScreenShareMetadata>,
     time_provider: Arc<dyn ITimeProvider>,
 }
 
@@ -1216,12 +1263,12 @@ impl AuraCallInitiator {
     ) -> Result<AuraVoipSession, ProtocolError> {
         let auth_context = voip::call_key_exchange::CallInitAuthContext {
             version: VOIP_PROTOCOL_VERSION,
-            media_type: 1,
+            media_type: self.media_type,
             ratchet_interval_frames: self.ratchet_interval_frames,
             pq_rekey_interval_secs: self.pq_rekey_interval_secs,
             shield_mode: self.shield_mode,
         };
-        let key_material = voip::call_key_exchange::caller_finish_with_context(
+        let key_material = voip::call_key_exchange::caller_finish_with_context_and_screen_share(
             &self.init_output,
             identity_kyber_secret,
             &self.call_id,
@@ -1231,8 +1278,9 @@ impl AuraCallInitiator {
             peer_signature,
             peer_key_confirm_mac,
             &auth_context,
+            None,
         )?;
-        let session = VoipSession::from_key_material_with_time_provider(
+        let session = VoipSession::from_key_material_with_time_provider_and_screen_share(
             self.call_id,
             CallRole::Caller,
             key_material,
@@ -1240,6 +1288,7 @@ impl AuraCallInitiator {
             self.pq_rekey_interval_secs,
             self.shield_mode,
             self.time_provider,
+            self.screen_share_meta,
         )?;
         Ok(AuraVoipSession(session))
     }
@@ -1263,15 +1312,45 @@ impl AuraCallInitiator {
         if call_accept.call_id != self.call_id {
             return Err(ProtocolError::voip_call("CallAccept call_id mismatch"));
         }
+        if let Some(ref meta) = call_accept.screen_share {
+            voip::validate_screen_share_metadata(meta)?;
+        }
 
-        self.complete(
+        let auth_context = voip::call_key_exchange::CallInitAuthContext {
+            version: VOIP_PROTOCOL_VERSION,
+            media_type: self.media_type,
+            ratchet_interval_frames: self.ratchet_interval_frames,
+            pq_rekey_interval_secs: self.pq_rekey_interval_secs,
+            shield_mode: self.shield_mode,
+        };
+        let key_material = voip::call_key_exchange::caller_finish_with_context_and_screen_share(
+            &self.init_output,
             identity_kyber_secret,
+            &self.call_id,
             &call_accept.ephemeral_x25519_public,
             &call_accept.kyber_ciphertext,
             &call_accept.identity_ed25519_public,
             &call_accept.signature,
             &call_accept.key_confirmation_mac,
+            &auth_context,
+            call_accept.screen_share.as_ref(),
+        )?;
+        let screen_share_meta = call_accept
+            .screen_share
+            .clone()
+            .or_else(|| self.screen_share_meta.clone());
+        let session = VoipSession::from_key_material_with_time_provider_and_screen_share(
+            self.call_id,
+            CallRole::Caller,
+            key_material,
+            self.ratchet_interval_frames,
+            self.pq_rekey_interval_secs,
+            self.shield_mode,
+            self.time_provider,
+            screen_share_meta,
         )
+        .map(AuraVoipSession)?;
+        Ok(session)
     }
 }
 
@@ -1283,22 +1362,40 @@ impl AuraProtocol {
         ratchet_interval_frames: u32,
         pq_rekey_interval_secs: u32,
     ) -> Result<(AuraCallInitiator, Vec<u8>), ProtocolError> {
+        self.initiate_call_with_options(
+            peer_kyber_public,
+            AuraVoipCallOptions::audio(
+                shield_mode,
+                ratchet_interval_frames,
+                pq_rekey_interval_secs,
+            ),
+        )
+    }
+
+    pub fn initiate_call_with_options(
+        &self,
+        peer_kyber_public: &[u8],
+        options: AuraVoipCallOptions,
+    ) -> Result<(AuraCallInitiator, Vec<u8>), ProtocolError> {
+        voip::validate_call_media_type(options.media_type)?;
+        let screen_share_meta = screen_share_meta_from_api(options.screen_share)?;
         let ed25519_secret = self.identity.get_identity_ed25519_private_key_copy()?;
         let ed25519_public = self.identity.get_identity_ed25519_public();
 
         let auth_context = voip::call_key_exchange::CallInitAuthContext {
             version: VOIP_PROTOCOL_VERSION,
-            media_type: 1,
-            ratchet_interval_frames,
-            pq_rekey_interval_secs,
-            shield_mode,
+            media_type: options.media_type,
+            ratchet_interval_frames: options.ratchet_interval_frames,
+            pq_rekey_interval_secs: options.pq_rekey_interval_secs,
+            shield_mode: options.shield_mode,
         };
 
-        let init_output = voip::call_key_exchange::caller_init_with_context(
+        let init_output = voip::call_key_exchange::caller_init_with_context_and_screen_share(
             &ed25519_secret,
             &ed25519_public,
             peer_kyber_public,
             &auth_context,
+            screen_share_meta.as_ref(),
         )?;
 
         let call_id = init_output.call_id.clone();
@@ -1313,11 +1410,11 @@ impl AuraProtocol {
             identity_ed25519_public: init_output.identity_ed25519_public.clone(),
             signature: init_output.signature.clone(),
             key_confirmation_mac: init_output.key_confirmation_mac.clone(),
-            media_type: 1,
-            ratchet_interval_frames,
-            pq_rekey_interval_secs,
-            shield_mode,
-            screen_share: None,
+            media_type: options.media_type,
+            ratchet_interval_frames: options.ratchet_interval_frames,
+            pq_rekey_interval_secs: options.pq_rekey_interval_secs,
+            shield_mode: options.shield_mode,
+            screen_share: screen_share_meta.clone(),
         };
 
         let mut buf = Vec::new();
@@ -1328,9 +1425,11 @@ impl AuraProtocol {
         let initiator = AuraCallInitiator {
             init_output,
             call_id,
-            shield_mode,
-            ratchet_interval_frames,
-            pq_rekey_interval_secs,
+            media_type: options.media_type,
+            shield_mode: options.shield_mode,
+            ratchet_interval_frames: options.ratchet_interval_frames,
+            pq_rekey_interval_secs: options.pq_rekey_interval_secs,
+            screen_share_meta,
             time_provider: self.time_provider.clone(),
         };
 
@@ -1341,6 +1440,15 @@ impl AuraProtocol {
         &self,
         call_init_bytes: &[u8],
         peer_kyber_public: &[u8],
+    ) -> Result<(AuraVoipSession, Vec<u8>), ProtocolError> {
+        self.accept_call_with_screen_share(call_init_bytes, peer_kyber_public, None)
+    }
+
+    pub fn accept_call_with_screen_share(
+        &self,
+        call_init_bytes: &[u8],
+        peer_kyber_public: &[u8],
+        screen_share: Option<AuraVoipScreenShareMeta>,
     ) -> Result<(AuraVoipSession, Vec<u8>), ProtocolError> {
         if call_init_bytes.len() > MAX_VOIP_SIGNAL_MESSAGE_SIZE {
             return Err(ProtocolError::voip_call("CallInit too large"));
@@ -1353,6 +1461,11 @@ impl AuraProtocol {
                 "unsupported VoIP protocol version",
             ));
         }
+        voip::validate_call_media_type(call_init.media_type)?;
+        if let Some(ref meta) = call_init.screen_share {
+            voip::validate_screen_share_metadata(meta)?;
+        }
+        let accept_screen_share = screen_share_meta_from_api(screen_share)?;
 
         let ed25519_secret = self.identity.get_identity_ed25519_private_key_copy()?;
         let ed25519_public = self.identity.get_identity_ed25519_public();
@@ -1366,7 +1479,7 @@ impl AuraProtocol {
             shield_mode: call_init.shield_mode,
         };
 
-        let accept_output = voip::call_key_exchange::callee_accept_with_context(
+        let accept_output = voip::call_key_exchange::callee_accept_with_context_and_screen_share(
             &ed25519_secret,
             &ed25519_public,
             &kyber_secret,
@@ -1378,6 +1491,8 @@ impl AuraProtocol {
             &call_init.signature,
             &call_init.key_confirmation_mac,
             &auth_context,
+            call_init.screen_share.as_ref(),
+            accept_screen_share.as_ref(),
         )?;
 
         let proto_accept = crate::proto::CallAccept {
@@ -1389,7 +1504,7 @@ impl AuraProtocol {
             identity_ed25519_public: accept_output.identity_ed25519_public,
             signature: accept_output.signature,
             key_confirmation_mac: accept_output.key_confirmation_mac,
-            screen_share: None,
+            screen_share: accept_screen_share.clone(),
         };
 
         let mut buf = Vec::new();
@@ -1397,7 +1512,11 @@ impl AuraProtocol {
             .encode(&mut buf)
             .map_err(|e| ProtocolError::encode(format!("CallAccept encode: {e}")))?;
 
-        let session = VoipSession::from_key_material_with_time_provider(
+        let session_meta = call_init
+            .screen_share
+            .clone()
+            .or_else(|| accept_screen_share.clone());
+        let session = VoipSession::from_key_material_with_time_provider_and_screen_share(
             call_init.call_id,
             CallRole::Callee,
             accept_output.key_material,
@@ -1405,6 +1524,7 @@ impl AuraProtocol {
             call_init.pq_rekey_interval_secs,
             call_init.shield_mode,
             self.time_provider.clone(),
+            session_meta,
         )?;
 
         Ok((AuraVoipSession(session), buf))

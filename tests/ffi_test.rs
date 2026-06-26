@@ -6733,6 +6733,8 @@ mod attachment_v2 {
 
 mod voip_improvements {
     use aura_protected_protocol::ffi::api::*;
+    use aura_protected_protocol::proto::{CallAccept, CallInit, CallMediaType};
+    use prost::Message;
     use std::ptr;
     use std::sync::atomic::Ordering;
 
@@ -7461,6 +7463,176 @@ mod voip_improvements {
     }
 
     #[test]
+    fn ffi_voip_call_options_screen_share_roundtrip() {
+        init_lib();
+        let mut alice_h: *mut AuraIdentityHandle = ptr::null_mut();
+        let mut bob_h: *mut AuraIdentityHandle = ptr::null_mut();
+        let mut err = null_error();
+
+        unsafe {
+            assert_eq!(
+                aura_identity_create(&mut alice_h, &mut err),
+                AuraErrorCode::AuraSuccess
+            );
+            assert_eq!(
+                aura_identity_create(&mut bob_h, &mut err),
+                AuraErrorCode::AuraSuccess
+            );
+        }
+
+        let mut alice_kyber = vec![0u8; 1184];
+        let mut bob_kyber = vec![0u8; 1184];
+        unsafe {
+            assert_eq!(
+                aura_identity_get_kyber_public(
+                    alice_h,
+                    alice_kyber.as_mut_ptr(),
+                    alice_kyber.len(),
+                    &mut err,
+                ),
+                AuraErrorCode::AuraSuccess
+            );
+            assert_eq!(
+                aura_identity_get_kyber_public(
+                    bob_h,
+                    bob_kyber.as_mut_ptr(),
+                    bob_kyber.len(),
+                    &mut err
+                ),
+                AuraErrorCode::AuraSuccess
+            );
+        }
+
+        let init_codec = b"av1";
+        let accept_codec = b"h264";
+        let mut init_buf = null_buffer();
+        let mut accept_buf = null_buffer();
+        let mut init_h: *mut AuraVoipCallInitiatorHandle = ptr::null_mut();
+        let mut bob_session_h: *mut AuraVoipSessionHandle = ptr::null_mut();
+        let mut alice_session_h: *mut AuraVoipSessionHandle = ptr::null_mut();
+
+        unsafe {
+            assert_eq!(
+                aura_voip_call_init_with_options(
+                    alice_h,
+                    bob_kyber.as_ptr(),
+                    bob_kyber.len(),
+                    CallMediaType::CallMediaAudioScreen as i32,
+                    1,
+                    512,
+                    60,
+                    1920,
+                    1080,
+                    30,
+                    init_codec.as_ptr(),
+                    init_codec.len(),
+                    &mut init_buf,
+                    &mut init_h,
+                    &mut err
+                ),
+                AuraErrorCode::AuraSuccess
+            );
+            let init_slice = std::slice::from_raw_parts(init_buf.data, init_buf.length);
+            let decoded_init = CallInit::decode(init_slice).unwrap();
+            assert_eq!(
+                decoded_init.media_type,
+                CallMediaType::CallMediaAudioScreen as i32
+            );
+            let init_screen = decoded_init.screen_share.as_ref().unwrap();
+            assert_eq!(init_screen.width, 1920);
+            assert_eq!(init_screen.height, 1080);
+            assert_eq!(init_screen.frame_rate, 30);
+            assert_eq!(init_screen.codec_hint.as_deref(), Some("av1"));
+
+            assert_eq!(
+                aura_voip_accept_call_with_options(
+                    bob_h,
+                    init_buf.data,
+                    init_buf.length,
+                    alice_kyber.as_ptr(),
+                    alice_kyber.len(),
+                    1280,
+                    720,
+                    30,
+                    accept_codec.as_ptr(),
+                    accept_codec.len(),
+                    &mut accept_buf,
+                    &mut bob_session_h,
+                    &mut err
+                ),
+                AuraErrorCode::AuraSuccess
+            );
+            let accept_slice = std::slice::from_raw_parts(accept_buf.data, accept_buf.length);
+            let decoded_accept = CallAccept::decode(accept_slice).unwrap();
+            let accept_screen = decoded_accept.screen_share.as_ref().unwrap();
+            assert_eq!(accept_screen.width, 1280);
+            assert_eq!(accept_screen.height, 720);
+            assert_eq!(accept_screen.frame_rate, 30);
+            assert_eq!(accept_screen.codec_hint.as_deref(), Some("h264"));
+
+            assert_eq!(
+                aura_voip_call_init_complete(
+                    init_h,
+                    alice_h,
+                    accept_buf.data,
+                    accept_buf.length,
+                    &mut alice_session_h,
+                    &mut err
+                ),
+                AuraErrorCode::AuraSuccess
+            );
+
+            let mut width = 0;
+            let mut height = 0;
+            let mut frame_rate = 0;
+            let mut hint = null_buffer();
+            assert_eq!(
+                aura_voip_get_screen_share_meta(
+                    bob_session_h,
+                    &mut width,
+                    &mut height,
+                    &mut frame_rate,
+                    &mut hint,
+                    &mut err
+                ),
+                AuraErrorCode::AuraSuccess
+            );
+            assert_eq!((width, height, frame_rate), (1920, 1080, 30));
+            assert_eq!(
+                std::slice::from_raw_parts(hint.data, hint.length),
+                init_codec
+            );
+            aura_buffer_release(&mut hint);
+
+            assert_eq!(
+                aura_voip_get_screen_share_meta(
+                    alice_session_h,
+                    &mut width,
+                    &mut height,
+                    &mut frame_rate,
+                    &mut hint,
+                    &mut err
+                ),
+                AuraErrorCode::AuraSuccess
+            );
+            assert_eq!((width, height, frame_rate), (1280, 720, 30));
+            assert_eq!(
+                std::slice::from_raw_parts(hint.data, hint.length),
+                accept_codec
+            );
+            aura_buffer_release(&mut hint);
+
+            aura_buffer_release(&mut init_buf);
+            aura_buffer_release(&mut accept_buf);
+            aura_voip_call_initiator_destroy(&mut init_h);
+            aura_voip_session_destroy(&mut alice_session_h);
+            aura_voip_session_destroy(&mut bob_session_h);
+            aura_identity_destroy(&mut alice_h);
+            aura_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
     fn ffi_voip_encrypt_frame_clears_stale_output_on_failure() {
         init_lib();
         let (
@@ -7809,6 +7981,47 @@ mod voip_improvements {
             );
             assert_eq!(
                 aura_voip_encrypt_call_control(alice_session_h, 1, 0, &mut enc, &mut err),
+                AuraErrorCode::AuraSuccess
+            );
+
+            aura_buffer_release(&mut enc.call_id);
+            aura_buffer_release(&mut enc.encrypted_payload);
+            aura_buffer_release(&mut enc.nonce);
+            aura_buffer_release(&mut enc.encrypted_header);
+            aura_buffer_release(&mut init_buf);
+            aura_buffer_release(&mut accept_buf);
+            aura_voip_session_destroy(&mut alice_session_h);
+            aura_voip_session_destroy(&mut bob_session_h);
+            aura_voip_call_initiator_destroy(&mut init_h);
+            aura_identity_destroy(&mut alice_h);
+            aura_identity_destroy(&mut bob_h);
+        }
+    }
+
+    #[test]
+    fn ffi_voip_encrypt_call_control_rejects_invalid_dtmf() {
+        init_lib();
+        let (
+            mut alice_h,
+            mut bob_h,
+            mut alice_session_h,
+            mut bob_session_h,
+            mut init_h,
+            mut init_buf,
+            mut accept_buf,
+        ) = setup_voip_session_pair();
+
+        let mut err = null_error();
+        let mut enc = null_encrypted_frame();
+
+        unsafe {
+            assert_eq!(
+                aura_voip_encrypt_call_control(alice_session_h, 5, b'X', &mut enc, &mut err),
+                AuraErrorCode::AuraErrorInvalidInput
+            );
+            assert!(enc.call_id.data.is_null());
+            assert_eq!(
+                aura_voip_encrypt_call_control(alice_session_h, 5, b'*', &mut enc, &mut err),
                 AuraErrorCode::AuraSuccess
             );
 

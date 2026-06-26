@@ -1314,16 +1314,28 @@ fn attack_call_control_mute_roundtrip() {
 fn attack_call_control_dtmf_all_digits() {
     init();
     let (a, b) = pair(false);
-    for digit in 0..16u8 {
+    for digit in *b"0123456789*#ABCDabcd" {
         let enc = a
             .encrypt_call_control(CallControlType::Dtmf(digit))
             .unwrap();
         let dec = b.decrypt_frame(&enc).unwrap();
+        let expected = if digit.is_ascii_lowercase() {
+            digit.to_ascii_uppercase()
+        } else {
+            digit
+        };
         assert_eq!(
             VoipSession::decode_call_control(&dec),
-            Some(CallControlType::Dtmf(digit))
+            Some(CallControlType::Dtmf(expected))
         );
     }
+}
+
+#[test]
+fn attack_call_control_invalid_dtmf_rejected() {
+    init();
+    let (a, _) = pair(false);
+    assert!(a.encrypt_call_control(CallControlType::Dtmf(b'X')).is_err());
 }
 
 #[test]

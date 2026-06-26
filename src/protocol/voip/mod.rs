@@ -23,13 +23,17 @@ use media_crypto::MediaCrypto;
 use replay_window::ReplayWindow;
 
 pub use call_key_exchange::{
-    callee_accept_with_context, caller_finish_with_context, caller_init_with_context,
-    rekey_complete, rekey_initiate, CallAcceptOutput, CallInitAuthContext, CallInitOutput,
+    callee_accept_with_context, callee_accept_with_context_and_screen_share,
+    caller_finish_with_context, caller_finish_with_context_and_screen_share,
+    caller_init_with_context, caller_init_with_context_and_screen_share, rekey_complete,
+    rekey_initiate, CallAcceptOutput, CallInitAuthContext, CallInitOutput,
     CallKeyMaterial as VoipKeyMaterial,
 };
 
 #[allow(unused_imports)]
-use crate::proto::{CallQualityMetrics, RecordingConsentMessage, ScreenShareMetadata};
+use crate::proto::{
+    CallMediaType, CallQualityMetrics, RecordingConsentMessage, ScreenShareMetadata,
+};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -155,6 +159,34 @@ pub enum CallControlType {
     Dtmf(u8),
 }
 
+fn encode_dtmf_tone(tone: u8) -> Result<u8, ProtocolError> {
+    match tone {
+        b'0'..=b'9' => Ok(tone - b'0'),
+        b'*' => Ok(10),
+        b'#' => Ok(11),
+        b'A' | b'a' => Ok(12),
+        b'B' | b'b' => Ok(13),
+        b'C' | b'c' => Ok(14),
+        b'D' | b'd' => Ok(15),
+        _ => Err(ProtocolError::InvalidInput(
+            "DTMF tone must be ASCII 0-9, *, #, or A-D".into(),
+        )),
+    }
+}
+
+fn decode_dtmf_tone(code: u8) -> Option<u8> {
+    match code {
+        0..=9 => Some(b'0' + code),
+        10 => Some(b'*'),
+        11 => Some(b'#'),
+        12 => Some(b'A'),
+        13 => Some(b'B'),
+        14 => Some(b'C'),
+        15 => Some(b'D'),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CallRole {
     Caller,
@@ -267,8 +299,34 @@ impl VoipSession {
         shield_mode: bool,
         time_provider: Arc<dyn ITimeProvider>,
     ) -> Result<Self, ProtocolError> {
+        Self::from_key_material_with_time_provider_and_screen_share(
+            call_id,
+            role,
+            key_material,
+            ratchet_interval_frames,
+            pq_rekey_interval_secs,
+            shield_mode,
+            time_provider,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_key_material_with_time_provider_and_screen_share(
+        call_id: Vec<u8>,
+        role: CallRole,
+        key_material: CallKeyMaterial,
+        ratchet_interval_frames: u32,
+        pq_rekey_interval_secs: u32,
+        shield_mode: bool,
+        time_provider: Arc<dyn ITimeProvider>,
+        screen_share_meta: Option<ScreenShareMetadata>,
+    ) -> Result<Self, ProtocolError> {
         if call_id.len() != CALL_ID_BYTES {
             return Err(ProtocolError::voip_call("invalid call_id size"));
+        }
+        if let Some(ref meta) = screen_share_meta {
+            validate_screen_share_metadata(meta)?;
         }
 
         let created_at_unix = now_unix_secs(time_provider.as_ref())?;
@@ -315,7 +373,7 @@ impl VoipSession {
             frames_since_ratchet: 0,
             event_handler: None,
             pending_rekey: None,
-            screen_share_meta: None,
+            screen_share_meta,
             frames_sent: 0,
             frames_received: 0,
             frames_dropped: 0,
@@ -532,7 +590,7 @@ impl VoipSession {
             CallControlType::Unmute => 0x02,
             CallControlType::Hold => 0x03,
             CallControlType::Unhold => 0x04,
-            CallControlType::Dtmf(digit) => 0x10 | (digit & 0x0F),
+            CallControlType::Dtmf(digit) => 0x10 | encode_dtmf_tone(digit)?,
         };
         let payload = [0xCC, control_byte];
         let header = FrameHeader {
@@ -557,7 +615,7 @@ impl VoipSession {
             0x02 => Some(CallControlType::Unmute),
             0x03 => Some(CallControlType::Hold),
             0x04 => Some(CallControlType::Unhold),
-            v if v & 0xF0 == 0x10 => Some(CallControlType::Dtmf(v & 0x0F)),
+            v if v & 0xF0 == 0x10 => decode_dtmf_tone(v & 0x0F).map(CallControlType::Dtmf),
             _ => None,
         }
     }
@@ -1703,6 +1761,19 @@ pub fn validate_screen_share_metadata(meta: &ScreenShareMetadata) -> Result<(), 
         }
     }
     Ok(())
+}
+
+pub fn validate_call_media_type(media_type: i32) -> Result<(), ProtocolError> {
+    match media_type {
+        value if value == CallMediaType::CallMediaAudio as i32 => Ok(()),
+        value if value == CallMediaType::CallMediaVideo as i32 => Ok(()),
+        value if value == CallMediaType::CallMediaAudioVideo as i32 => Ok(()),
+        value if value == CallMediaType::CallMediaScreenShare as i32 => Ok(()),
+        value if value == CallMediaType::CallMediaAudioScreen as i32 => Ok(()),
+        _ => Err(ProtocolError::InvalidInput(
+            "unsupported VoIP call media_type".into(),
+        )),
+    }
 }
 
 pub fn validate_call_quality_metrics(metrics: &CallQualityMetrics) -> Result<(), ProtocolError> {

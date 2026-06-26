@@ -1,6 +1,7 @@
 use crate::core::constants::*;
 use crate::core::errors::ProtocolError;
 use crate::crypto::{CryptoInterop, HkdfSha256, KyberInterop, SecureMemoryHandle};
+use crate::proto::ScreenShareMetadata;
 use crate::security::DhValidator;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use hmac::{Hmac, Mac};
@@ -106,12 +107,35 @@ fn append_call_init_auth_context(message: &mut Vec<u8>, context: &CallInitAuthCo
     message.push(u8::from(context.shield_mode));
 }
 
+fn append_screen_share_signature_context(
+    message: &mut Vec<u8>,
+    screen_share: Option<&ScreenShareMetadata>,
+) {
+    let Some(meta) = screen_share else {
+        return;
+    };
+
+    message.extend_from_slice(b"Aura-VoIP-ScreenShare-v1");
+    message.extend_from_slice(&meta.width.to_le_bytes());
+    message.extend_from_slice(&meta.height.to_le_bytes());
+    message.extend_from_slice(&meta.frame_rate.to_le_bytes());
+    match meta.codec_hint.as_deref() {
+        Some(hint) => {
+            message.push(1);
+            message.extend_from_slice(&(hint.len() as u32).to_le_bytes());
+            message.extend_from_slice(hint.as_bytes());
+        }
+        None => message.push(0),
+    }
+}
+
 fn sign_call_material_with_context(
     ed25519_secret: &[u8],
     call_id: &[u8],
     eph_x25519_public: &[u8],
     kyber_ct: &[u8],
     context: &CallInitAuthContext,
+    screen_share: Option<&ScreenShareMetadata>,
 ) -> Result<Vec<u8>, ProtocolError> {
     if ed25519_secret.len() != ED25519_SECRET_KEY_BYTES {
         return Err(ProtocolError::voip_call("invalid Ed25519 secret key size"));
@@ -126,6 +150,7 @@ fn sign_call_material_with_context(
         Vec::with_capacity(call_id.len() + eph_x25519_public.len() + kyber_ct.len() + 17);
     append_call_material_message(&mut message, call_id, eph_x25519_public, kyber_ct);
     append_call_init_auth_context(&mut message, context);
+    append_screen_share_signature_context(&mut message, screen_share);
 
     let sig = signing_key.sign(&message);
     Ok(sig.to_bytes().to_vec())
@@ -138,6 +163,7 @@ fn verify_call_signature_with_context(
     kyber_ct: &[u8],
     signature: &[u8],
     context: &CallInitAuthContext,
+    screen_share: Option<&ScreenShareMetadata>,
 ) -> Result<(), ProtocolError> {
     if ed25519_public.len() != ED25519_PUBLIC_KEY_BYTES {
         return Err(ProtocolError::voip_call("invalid Ed25519 public key size"));
@@ -161,6 +187,7 @@ fn verify_call_signature_with_context(
         Vec::with_capacity(call_id.len() + eph_x25519_public.len() + kyber_ct.len() + 17);
     append_call_material_message(&mut message, call_id, eph_x25519_public, kyber_ct);
     append_call_init_auth_context(&mut message, context);
+    append_screen_share_signature_context(&mut message, screen_share);
 
     verifying_key
         .verify_strict(&message, &sig)
@@ -199,6 +226,22 @@ pub fn caller_init_with_context(
     peer_kyber_public: &[u8],
     auth_context: &CallInitAuthContext,
 ) -> Result<CallInitOutput, ProtocolError> {
+    caller_init_with_context_and_screen_share(
+        identity_ed25519_secret,
+        identity_ed25519_public,
+        peer_kyber_public,
+        auth_context,
+        None,
+    )
+}
+
+pub fn caller_init_with_context_and_screen_share(
+    identity_ed25519_secret: &[u8],
+    identity_ed25519_public: &[u8],
+    peer_kyber_public: &[u8],
+    auth_context: &CallInitAuthContext,
+    screen_share: Option<&ScreenShareMetadata>,
+) -> Result<CallInitOutput, ProtocolError> {
     let call_id = CryptoInterop::get_random_bytes(CALL_ID_BYTES);
 
     let eph_secret = StaticSecret::random_from_rng(rand_core::OsRng);
@@ -221,6 +264,7 @@ pub fn caller_init_with_context(
         &eph_public_bytes,
         &kyber_ct,
         auth_context,
+        screen_share,
     )?;
 
     let kyber_ss_bytes = kyber_ss
@@ -472,6 +516,39 @@ pub fn callee_accept_with_context(
     peer_key_confirm_mac: &[u8],
     auth_context: &CallInitAuthContext,
 ) -> Result<CallAcceptOutput, ProtocolError> {
+    callee_accept_with_context_and_screen_share(
+        identity_ed25519_secret,
+        identity_ed25519_public,
+        identity_kyber_secret,
+        peer_kyber_public,
+        call_id,
+        peer_eph_x25519_public,
+        peer_kyber_ct,
+        peer_ed25519_public,
+        peer_signature,
+        peer_key_confirm_mac,
+        auth_context,
+        None,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn callee_accept_with_context_and_screen_share(
+    identity_ed25519_secret: &[u8],
+    identity_ed25519_public: &[u8],
+    identity_kyber_secret: &SecureMemoryHandle,
+    peer_kyber_public: &[u8],
+    call_id: &[u8],
+    peer_eph_x25519_public: &[u8],
+    peer_kyber_ct: &[u8],
+    peer_ed25519_public: &[u8],
+    peer_signature: &[u8],
+    peer_key_confirm_mac: &[u8],
+    auth_context: &CallInitAuthContext,
+    peer_screen_share: Option<&ScreenShareMetadata>,
+    local_screen_share: Option<&ScreenShareMetadata>,
+) -> Result<CallAcceptOutput, ProtocolError> {
     if call_id.len() != CALL_ID_BYTES {
         return Err(ProtocolError::voip_call("invalid call_id size"));
     }
@@ -483,6 +560,7 @@ pub fn callee_accept_with_context(
         peer_kyber_ct,
         peer_signature,
         auth_context,
+        peer_screen_share,
     )?;
 
     let caller_kyber_ss = KyberInterop::decapsulate(peer_kyber_ct, identity_kyber_secret)
@@ -537,6 +615,7 @@ pub fn callee_accept_with_context(
         &eph_public_bytes,
         &callee_kyber_ct,
         auth_context,
+        local_screen_share,
     )?;
 
     let mac = compute_key_confirm_mac_with_context(
@@ -570,6 +649,33 @@ pub fn caller_finish_with_context(
     peer_key_confirm_mac: &[u8],
     auth_context: &CallInitAuthContext,
 ) -> Result<CallKeyMaterial, ProtocolError> {
+    caller_finish_with_context_and_screen_share(
+        init_output,
+        identity_kyber_secret,
+        call_id,
+        peer_eph_x25519_public,
+        peer_kyber_ct,
+        peer_ed25519_public,
+        peer_signature,
+        peer_key_confirm_mac,
+        auth_context,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn caller_finish_with_context_and_screen_share(
+    init_output: &CallInitOutput,
+    identity_kyber_secret: &SecureMemoryHandle,
+    call_id: &[u8],
+    peer_eph_x25519_public: &[u8],
+    peer_kyber_ct: &[u8],
+    peer_ed25519_public: &[u8],
+    peer_signature: &[u8],
+    peer_key_confirm_mac: &[u8],
+    auth_context: &CallInitAuthContext,
+    peer_screen_share: Option<&ScreenShareMetadata>,
+) -> Result<CallKeyMaterial, ProtocolError> {
     if call_id.len() != CALL_ID_BYTES {
         return Err(ProtocolError::voip_call("invalid call_id size"));
     }
@@ -581,6 +687,7 @@ pub fn caller_finish_with_context(
         peer_kyber_ct,
         peer_signature,
         auth_context,
+        peer_screen_share,
     )?;
 
     let eph_priv_bytes = init_output
