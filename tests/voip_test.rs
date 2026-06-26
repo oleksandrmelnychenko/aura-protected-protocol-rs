@@ -2437,6 +2437,16 @@ fn voip_sealed_state_equal_counter_accepted() {
 }
 
 #[test]
+fn voip_sealed_state_zero_counter_rejected_on_export() {
+    init();
+    let (alice, _bob) = setup_voip_session_pair(false);
+
+    let state_key = CryptoInterop::get_random_bytes(AES_KEY_BYTES);
+    let err = alice.export_sealed_state(&state_key, 0).unwrap_err();
+    assert!(matches!(err, ProtocolError::InvalidInput(_)));
+}
+
+#[test]
 fn voip_sealed_state_wrong_key_rejected() {
     init();
     let (alice, _bob) = setup_voip_session_pair(false);
@@ -2446,6 +2456,65 @@ fn voip_sealed_state_wrong_key_rejected() {
     let sealed = alice.export_sealed_state(&key1, 1).unwrap();
 
     assert!(VoipSession::from_sealed_state(&sealed, &key2, 0).is_err());
+}
+
+fn rewrite_voip_sealed_state(
+    sealed: &[u8],
+    key: &[u8],
+    external_counter: u64,
+    mutate: impl FnOnce(&mut VoipSessionState),
+) -> Vec<u8> {
+    let nonce_offset = 8;
+    let mac_offset = nonce_offset + AES_GCM_NONCE_BYTES;
+    let ct_offset = mac_offset + HMAC_BYTES;
+    let nonce = &sealed[nonce_offset..mac_offset];
+    let ciphertext = &sealed[ct_offset..];
+
+    let state_bytes = AesGcm::decrypt(key, nonce, ciphertext, &[]).unwrap();
+    let mut state = VoipSessionState::decode(state_bytes.as_slice()).unwrap();
+    mutate(&mut state);
+
+    let mut modified_state = Vec::new();
+    state.encode(&mut modified_state).unwrap();
+    let modified_ct = AesGcm::encrypt(key, nonce, &modified_state, &[]).unwrap();
+
+    let hmac_key = HkdfSha256::derive_key_bytes(
+        key,
+        HMAC_BYTES,
+        &external_counter.to_le_bytes(),
+        b"Aura-VoIP-StateHMAC",
+    )
+    .unwrap();
+    let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(&hmac_key).unwrap();
+    mac.update(&modified_ct);
+    mac.update(nonce);
+    let hmac_tag = mac.finalize().into_bytes();
+
+    let mut forged = Vec::new();
+    forged.extend_from_slice(&external_counter.to_le_bytes());
+    forged.extend_from_slice(nonce);
+    forged.extend_from_slice(&hmac_tag);
+    forged.extend_from_slice(&modified_ct);
+    forged
+}
+
+#[test]
+fn voip_sealed_state_zero_counter_rejected_on_import() {
+    init();
+    let (alice, _bob) = setup_voip_session_pair(false);
+
+    let key = CryptoInterop::get_random_bytes(AES_KEY_BYTES);
+    let sealed = alice.export_sealed_state(&key, 1).unwrap();
+    let forged = rewrite_voip_sealed_state(&sealed, &key, 0, |state| {
+        state.external_counter = 0;
+    });
+
+    let result = VoipSession::from_sealed_state(&forged, &key, 0);
+    match result {
+        Err(ProtocolError::InvalidInput(_)) => {}
+        Ok(_) => panic!("zero external counter must be rejected"),
+        Err(e) => panic!("unexpected error for zero external counter: {e}"),
+    }
 }
 
 #[test]
@@ -2459,6 +2528,38 @@ fn voip_sealed_state_tampered_rejected() {
     sealed[last] ^= 0xFF;
 
     assert!(VoipSession::from_sealed_state(&sealed, &key, 0).is_err());
+}
+
+#[test]
+fn voip_sealed_state_missing_replay_bitmap_rejected_when_high_water_zero() {
+    init();
+    let (alice, bob) = setup_voip_session_pair(false);
+
+    let first = bob
+        .encrypt_frame(
+            &FrameHeader {
+                payload_type: 111,
+                ssrc: bob.ssrc(),
+                timestamp: 160,
+                sequence_number: 1,
+            },
+            b"b0",
+        )
+        .unwrap();
+    alice.decrypt_frame(&first).unwrap();
+
+    let key = CryptoInterop::get_random_bytes(AES_KEY_BYTES);
+    let sealed = alice.export_sealed_state(&key, 3).unwrap();
+    let external_counter = u64::from_le_bytes(sealed[0..8].try_into().unwrap());
+    let forged = rewrite_voip_sealed_state(&sealed, &key, external_counter, |state| {
+        assert_eq!(state.replay_high_water, 0);
+        assert!(state.frames_received > 0);
+        assert!(!state.replay_bitmap.is_empty());
+        state.replay_bitmap.clear();
+    });
+
+    let result = VoipSession::from_sealed_state(&forged, &key, 0);
+    assert!(result.is_err());
 }
 
 #[test]

@@ -33,10 +33,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use zeroize::Zeroize;
 
 use crate::core::constants::{
-    AES_GCM_NONCE_BYTES, AES_KEY_BYTES, ATTACHMENT_FILE_KEY_BYTES, ATTACHMENT_HASH_BYTES,
-    ATTACHMENT_ID_BYTES, ATTACHMENT_PROTOCOL_VERSION, CALL_ID_BYTES, DEFAULT_ONE_TIME_KEY_COUNT,
-    DEVICE_ID_BYTES, ED25519_PUBLIC_KEY_BYTES, HMAC_BYTES, KYBER_PUBLIC_KEY_BYTES,
-    MAX_ATTACHMENT_CHUNK_SIZE, MAX_ATTACHMENT_ENCRYPTED_FILE_KEY_SIZE,
+    AES_GCM_NONCE_BYTES, AES_GCM_TAG_BYTES, AES_KEY_BYTES, ATTACHMENT_FILE_KEY_BYTES,
+    ATTACHMENT_HASH_BYTES, ATTACHMENT_ID_BYTES, ATTACHMENT_PROTOCOL_VERSION, CALL_ID_BYTES,
+    DEFAULT_ONE_TIME_KEY_COUNT, DEVICE_ID_BYTES, ED25519_PUBLIC_KEY_BYTES, HMAC_BYTES,
+    KYBER_PUBLIC_KEY_BYTES, MAX_ATTACHMENT_CHUNK_SIZE, MAX_ATTACHMENT_ENCRYPTED_FILE_KEY_SIZE,
     MAX_ATTACHMENT_FILENAME_BYTES, MAX_ATTACHMENT_MANIFEST_SIZE, MAX_ATTACHMENT_THUMBNAIL_SIZE,
     MAX_BUFFER_SIZE, MAX_COLLAGE_ATTACHMENTS, MAX_COLLAGE_DESCRIPTION_CHARS,
     MAX_COLLAGE_MANIFEST_SIZE, MAX_COLLAGE_NAME_CHARS, MAX_CONTACT_AVATAR_DATA_SIZE,
@@ -5715,8 +5715,14 @@ pub struct AuraGroupDecryptResult {
     pub referenced_message_id: AuraBuffer,
     pub has_sealed_payload: u8,
     pub has_franking_data: u8,
-    pub mentions_count: u32,
-    pub reply_to_message_id: AuraBuffer,
+    pub sealed_hint: AuraBuffer,
+    pub sealed_encrypted_content: AuraBuffer,
+    pub sealed_nonce: AuraBuffer,
+    pub sealed_key: AuraBuffer,
+    pub franking_tag: AuraBuffer,
+    pub franking_key: AuraBuffer,
+    pub franking_content: AuraBuffer,
+    pub franking_sealed_content: AuraBuffer,
 }
 
 unsafe fn clear_group_decrypt_result(result: *mut AuraGroupDecryptResult) {
@@ -5736,9 +5742,22 @@ unsafe fn clear_group_decrypt_result(result: *mut AuraGroupDecryptResult) {
     (*result).referenced_message_id.length = 0;
     (*result).has_sealed_payload = 0;
     (*result).has_franking_data = 0;
-    (*result).mentions_count = 0;
-    (*result).reply_to_message_id.data = std::ptr::null_mut();
-    (*result).reply_to_message_id.length = 0;
+    (*result).sealed_hint.data = std::ptr::null_mut();
+    (*result).sealed_hint.length = 0;
+    (*result).sealed_encrypted_content.data = std::ptr::null_mut();
+    (*result).sealed_encrypted_content.length = 0;
+    (*result).sealed_nonce.data = std::ptr::null_mut();
+    (*result).sealed_nonce.length = 0;
+    (*result).sealed_key.data = std::ptr::null_mut();
+    (*result).sealed_key.length = 0;
+    (*result).franking_tag.data = std::ptr::null_mut();
+    (*result).franking_tag.length = 0;
+    (*result).franking_key.data = std::ptr::null_mut();
+    (*result).franking_key.length = 0;
+    (*result).franking_content.data = std::ptr::null_mut();
+    (*result).franking_content.length = 0;
+    (*result).franking_sealed_content.data = std::ptr::null_mut();
+    (*result).franking_sealed_content.length = 0;
 }
 
 /// # Safety
@@ -5751,7 +5770,14 @@ pub unsafe extern "C" fn aura_group_decrypt_result_free(result: *mut AuraGroupDe
     aura_buffer_release(std::ptr::addr_of_mut!((*result).plaintext));
     aura_buffer_release(std::ptr::addr_of_mut!((*result).message_id));
     aura_buffer_release(std::ptr::addr_of_mut!((*result).referenced_message_id));
-    aura_buffer_release(std::ptr::addr_of_mut!((*result).reply_to_message_id));
+    aura_buffer_release(std::ptr::addr_of_mut!((*result).sealed_hint));
+    aura_buffer_release(std::ptr::addr_of_mut!((*result).sealed_encrypted_content));
+    aura_buffer_release(std::ptr::addr_of_mut!((*result).sealed_nonce));
+    aura_buffer_release(std::ptr::addr_of_mut!((*result).sealed_key));
+    aura_buffer_release(std::ptr::addr_of_mut!((*result).franking_tag));
+    aura_buffer_release(std::ptr::addr_of_mut!((*result).franking_key));
+    aura_buffer_release(std::ptr::addr_of_mut!((*result).franking_content));
+    aura_buffer_release(std::ptr::addr_of_mut!((*result).franking_sealed_content));
     clear_group_decrypt_result(result);
 }
 
@@ -5790,11 +5816,7 @@ pub unsafe extern "C" fn aura_group_decrypt_ex(
             Ok(v) => v,
             Err(code) => return code,
         };
-        // Open shielded payloads here so a sealed message decodes like any other
-        // on the client (real ChatMessage lands in `plaintext`); the seal key
-        // never crosses the FFI boundary. `content_type` stays `Sealed`, so the
-        // host still treats it as sealed for at-rest storage.
-        match session.decrypt_open_sealed(ct) {
+        match session.decrypt(ct) {
             Ok(r) => {
                 write_buffer(std::ptr::addr_of_mut!((*out_result).plaintext), r.plaintext);
                 (*out_result).sender_leaf_index = r.sender_leaf_index;
@@ -5812,19 +5834,42 @@ pub unsafe extern "C" fn aura_group_decrypt_ex(
                 );
                 (*out_result).has_sealed_payload = u8::from(r.sealed_payload.is_some());
                 (*out_result).has_franking_data = u8::from(r.franking_data.is_some());
-                #[allow(clippy::cast_possible_truncation)]
-                {
-                    (*out_result).mentions_count = r.mentions.len() as u32;
+                if let Some(mut sealed) = r.sealed_payload {
+                    write_buffer(
+                        std::ptr::addr_of_mut!((*out_result).sealed_hint),
+                        std::mem::take(&mut sealed.hint),
+                    );
+                    write_buffer(
+                        std::ptr::addr_of_mut!((*out_result).sealed_encrypted_content),
+                        std::mem::take(&mut sealed.encrypted_content),
+                    );
+                    write_buffer(
+                        std::ptr::addr_of_mut!((*out_result).sealed_nonce),
+                        std::mem::take(&mut sealed.nonce),
+                    );
+                    write_buffer(
+                        std::ptr::addr_of_mut!((*out_result).sealed_key),
+                        std::mem::take(&mut sealed.seal_key),
+                    );
                 }
-                let reply_id = r
-                    .reply_context
-                    .as_ref()
-                    .map(|rc| rc.reply_to_message_id.clone())
-                    .unwrap_or_default();
-                write_buffer(
-                    std::ptr::addr_of_mut!((*out_result).reply_to_message_id),
-                    reply_id,
-                );
+                if let Some(mut franking) = r.franking_data {
+                    write_buffer(
+                        std::ptr::addr_of_mut!((*out_result).franking_tag),
+                        std::mem::take(&mut franking.franking_tag),
+                    );
+                    write_buffer(
+                        std::ptr::addr_of_mut!((*out_result).franking_key),
+                        std::mem::take(&mut franking.franking_key),
+                    );
+                    write_buffer(
+                        std::ptr::addr_of_mut!((*out_result).franking_content),
+                        std::mem::take(&mut franking.content),
+                    );
+                    write_buffer(
+                        std::ptr::addr_of_mut!((*out_result).franking_sealed_content),
+                        std::mem::take(&mut franking.sealed_content),
+                    );
+                }
                 AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
@@ -11664,6 +11709,14 @@ pub unsafe extern "C" fn aura_channel_decrypt_message(
                 "A required pointer is null",
             );
             return AuraErrorCode::AuraErrorNullPointer;
+        }
+        if ciphertext_length > MAX_ENVELOPE_MESSAGE_SIZE + AES_GCM_TAG_BYTES {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "ciphertext length exceeds maximum",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
         }
         let ct = std::slice::from_raw_parts(ciphertext, ciphertext_length).to_vec();
         let mut nonce_buf = [0u8; CHANNEL_NONCE_BYTES];

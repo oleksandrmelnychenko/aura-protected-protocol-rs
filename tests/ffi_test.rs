@@ -4,9 +4,41 @@
 #![allow(clippy::borrow_as_ptr, unsafe_code)]
 
 use aura_protected_protocol::crypto::CryptoInterop;
+use aura_protected_protocol::ffi::api::{AuraBuffer, AuraGroupDecryptResult};
+use std::ptr;
 
 fn init() {
     CryptoInterop::initialize().expect("crypto init");
+}
+
+const fn ffi_null_buffer() -> AuraBuffer {
+    AuraBuffer {
+        data: ptr::null_mut(),
+        length: 0,
+    }
+}
+
+const fn ffi_zero_group_decrypt_result() -> AuraGroupDecryptResult {
+    AuraGroupDecryptResult {
+        plaintext: ffi_null_buffer(),
+        sender_leaf_index: 0,
+        generation: 0,
+        content_type: 0,
+        ttl_seconds: 0,
+        sent_timestamp: 0,
+        message_id: ffi_null_buffer(),
+        referenced_message_id: ffi_null_buffer(),
+        has_sealed_payload: 0,
+        has_franking_data: 0,
+        sealed_hint: ffi_null_buffer(),
+        sealed_encrypted_content: ffi_null_buffer(),
+        sealed_nonce: ffi_null_buffer(),
+        sealed_key: ffi_null_buffer(),
+        franking_tag: ffi_null_buffer(),
+        franking_key: ffi_null_buffer(),
+        franking_content: ffi_null_buffer(),
+        franking_sealed_content: ffi_null_buffer(),
+    }
 }
 
 mod ffi {
@@ -3397,11 +3429,14 @@ fn ffi_group_decrypt_ex_clears_stale_result_on_failure() {
             },
             has_sealed_payload: 0,
             has_franking_data: 0,
-            mentions_count: 0,
-            reply_to_message_id: AuraBuffer {
-                data: ptr::null_mut(),
-                length: 0,
-            },
+            sealed_hint: ffi_null_buffer(),
+            sealed_encrypted_content: ffi_null_buffer(),
+            sealed_nonce: ffi_null_buffer(),
+            sealed_key: ffi_null_buffer(),
+            franking_tag: ffi_null_buffer(),
+            franking_key: ffi_null_buffer(),
+            franking_content: ffi_null_buffer(),
+            franking_sealed_content: ffi_null_buffer(),
         };
         assert_eq!(
             aura_group_decrypt_ex(
@@ -3434,17 +3469,263 @@ fn ffi_group_decrypt_ex_clears_stale_result_on_failure() {
         assert_eq!(result.message_id.length, 0);
         assert!(result.referenced_message_id.data.is_null());
         assert_eq!(result.referenced_message_id.length, 0);
-        assert!(result.reply_to_message_id.data.is_null());
-        assert_eq!(result.reply_to_message_id.length, 0);
+        assert!(result.sealed_hint.data.is_null());
+        assert_eq!(result.sealed_hint.length, 0);
+        assert!(result.sealed_encrypted_content.data.is_null());
+        assert_eq!(result.sealed_encrypted_content.length, 0);
+        assert!(result.sealed_nonce.data.is_null());
+        assert_eq!(result.sealed_nonce.length, 0);
+        assert!(result.sealed_key.data.is_null());
+        assert_eq!(result.sealed_key.length, 0);
+        assert!(result.franking_tag.data.is_null());
+        assert_eq!(result.franking_tag.length, 0);
+        assert!(result.franking_key.data.is_null());
+        assert_eq!(result.franking_key.length, 0);
+        assert!(result.franking_content.data.is_null());
+        assert_eq!(result.franking_content.length, 0);
+        assert!(result.franking_sealed_content.data.is_null());
+        assert_eq!(result.franking_sealed_content.length, 0);
         assert_eq!(result.has_sealed_payload, 0);
         assert_eq!(result.has_franking_data, 0);
-        assert_eq!(result.mentions_count, 0);
 
         aura_group_decrypt_result_free(&mut result);
         aura_buffer_release(&mut public_state);
         aura_buffer_release(&mut authorization);
         aura_buffer_release(&mut commit);
         aura_buffer_release(&mut ciphertext);
+        aura_group_destroy(&mut alice_group_handle);
+        aura_group_destroy(&mut bob_group_handle);
+        aura_identity_destroy(&mut alice_handle);
+        aura_identity_destroy(&mut bob_handle);
+    }
+}
+
+#[test]
+fn ffi_group_decrypt_ex_projects_sealed_and_franking_buffers() {
+    init();
+
+    use aura_protected_protocol::core::constants::{
+        AES_GCM_NONCE_BYTES, AES_KEY_BYTES, HMAC_BYTES,
+    };
+    use aura_protected_protocol::ffi::api::*;
+
+    unsafe {
+        let mut alice_handle: *mut AuraIdentityHandle = ptr::null_mut();
+        let mut bob_handle: *mut AuraIdentityHandle = ptr::null_mut();
+        let mut alice_group_handle: *mut AuraGroupSessionHandle = ptr::null_mut();
+        let mut bob_group_handle: *mut AuraGroupSessionHandle = ptr::null_mut();
+        let mut err = AuraError {
+            code: AuraErrorCode::AuraSuccess,
+            message: ptr::null_mut(),
+        };
+
+        assert_eq!(
+            aura_identity_create(&mut alice_handle, &mut err),
+            AuraErrorCode::AuraSuccess
+        );
+        assert_eq!(
+            aura_identity_create(&mut bob_handle, &mut err),
+            AuraErrorCode::AuraSuccess
+        );
+        assert_eq!(
+            aura_group_create_with_policy(
+                alice_handle,
+                b"alice".as_ptr(),
+                b"alice".len(),
+                &AuraGroupSecurityPolicy {
+                    max_messages_per_epoch: 1000,
+                    max_skipped_keys_per_sender: 4,
+                    block_external_join: 0,
+                    enhanced_key_schedule: 1,
+                    mandatory_franking: 0,
+                },
+                &mut alice_group_handle,
+                &mut err,
+            ),
+            AuraErrorCode::AuraSuccess
+        );
+
+        let mut public_state = ffi_null_buffer();
+        assert_eq!(
+            aura_group_export_public_state(alice_group_handle, &mut public_state, &mut err),
+            AuraErrorCode::AuraSuccess
+        );
+
+        let mut bob_ed = [0u8; 32];
+        let mut bob_x = [0u8; 32];
+        assert_eq!(
+            aura_identity_get_ed25519_public(
+                bob_handle,
+                bob_ed.as_mut_ptr(),
+                bob_ed.len(),
+                &mut err,
+            ),
+            AuraErrorCode::AuraSuccess
+        );
+        assert_eq!(
+            aura_identity_get_x25519_public(bob_handle, bob_x.as_mut_ptr(), bob_x.len(), &mut err),
+            AuraErrorCode::AuraSuccess
+        );
+
+        let mut authorization = ffi_null_buffer();
+        assert_eq!(
+            aura_group_authorize_external_join(
+                alice_group_handle,
+                bob_ed.as_ptr(),
+                bob_ed.len(),
+                bob_x.as_ptr(),
+                bob_x.len(),
+                b"bob".as_ptr(),
+                b"bob".len(),
+                &mut authorization,
+                &mut err,
+            ),
+            AuraErrorCode::AuraSuccess
+        );
+
+        let mut commit = ffi_null_buffer();
+        assert_eq!(
+            aura_group_join_external(
+                bob_handle,
+                public_state.data,
+                public_state.length,
+                authorization.data,
+                authorization.length,
+                b"bob".as_ptr(),
+                b"bob".len(),
+                &mut bob_group_handle,
+                &mut commit,
+                &mut err,
+            ),
+            AuraErrorCode::AuraSuccess
+        );
+        assert_eq!(
+            aura_group_process_commit(alice_group_handle, commit.data, commit.length, &mut err),
+            AuraErrorCode::AuraSuccess
+        );
+
+        let sealed_plaintext = b"ffi sealed secret";
+        let sealed_hint = b"visible ffi hint";
+        let mut sealed_ct = ffi_null_buffer();
+        assert_eq!(
+            aura_group_encrypt_sealed(
+                alice_group_handle,
+                sealed_plaintext.as_ptr(),
+                sealed_plaintext.len(),
+                sealed_hint.as_ptr(),
+                sealed_hint.len(),
+                &mut sealed_ct,
+                &mut err,
+            ),
+            AuraErrorCode::AuraSuccess
+        );
+
+        let mut sealed_result = ffi_zero_group_decrypt_result();
+        assert_eq!(
+            aura_group_decrypt_ex(
+                bob_group_handle,
+                sealed_ct.data,
+                sealed_ct.length,
+                &mut sealed_result,
+                &mut err,
+            ),
+            AuraErrorCode::AuraSuccess
+        );
+        assert_eq!(sealed_result.has_sealed_payload, 1);
+        assert!(!sealed_result.sealed_hint.data.is_null());
+        assert!(!sealed_result.sealed_encrypted_content.data.is_null());
+        assert_eq!(sealed_result.sealed_nonce.length, AES_GCM_NONCE_BYTES);
+        assert_eq!(sealed_result.sealed_key.length, AES_KEY_BYTES);
+        assert_eq!(
+            std::slice::from_raw_parts(
+                sealed_result.plaintext.data,
+                sealed_result.plaintext.length
+            ),
+            sealed_hint
+        );
+
+        let mut revealed = ffi_null_buffer();
+        assert_eq!(
+            aura_group_reveal_sealed(
+                sealed_result.sealed_hint.data,
+                sealed_result.sealed_hint.length,
+                sealed_result.sealed_encrypted_content.data,
+                sealed_result.sealed_encrypted_content.length,
+                sealed_result.sealed_nonce.data,
+                sealed_result.sealed_nonce.length,
+                sealed_result.sealed_key.data,
+                sealed_result.sealed_key.length,
+                &mut revealed,
+                &mut err,
+            ),
+            AuraErrorCode::AuraSuccess
+        );
+        assert_eq!(
+            std::slice::from_raw_parts(revealed.data, revealed.length),
+            sealed_plaintext
+        );
+
+        let frankable_plaintext = b"ffi frankable content";
+        let mut frankable_ct = ffi_null_buffer();
+        assert_eq!(
+            aura_group_encrypt_frankable(
+                alice_group_handle,
+                frankable_plaintext.as_ptr(),
+                frankable_plaintext.len(),
+                &mut frankable_ct,
+                &mut err,
+            ),
+            AuraErrorCode::AuraSuccess
+        );
+
+        let mut frankable_result = ffi_zero_group_decrypt_result();
+        assert_eq!(
+            aura_group_decrypt_ex(
+                bob_group_handle,
+                frankable_ct.data,
+                frankable_ct.length,
+                &mut frankable_result,
+                &mut err,
+            ),
+            AuraErrorCode::AuraSuccess
+        );
+        assert_eq!(frankable_result.has_franking_data, 1);
+        assert_eq!(frankable_result.franking_tag.length, HMAC_BYTES);
+        assert_eq!(frankable_result.franking_key.length, AES_KEY_BYTES);
+        assert_eq!(
+            std::slice::from_raw_parts(
+                frankable_result.franking_content.data,
+                frankable_result.franking_content.length,
+            ),
+            frankable_plaintext
+        );
+
+        let mut franking_valid = 0u8;
+        assert_eq!(
+            aura_group_verify_franking(
+                frankable_result.franking_tag.data,
+                frankable_result.franking_tag.length,
+                frankable_result.franking_key.data,
+                frankable_result.franking_key.length,
+                frankable_result.franking_content.data,
+                frankable_result.franking_content.length,
+                frankable_result.franking_sealed_content.data,
+                frankable_result.franking_sealed_content.length,
+                &mut franking_valid,
+                &mut err,
+            ),
+            AuraErrorCode::AuraSuccess
+        );
+        assert_eq!(franking_valid, 1);
+
+        aura_group_decrypt_result_free(&mut sealed_result);
+        aura_group_decrypt_result_free(&mut frankable_result);
+        aura_buffer_release(&mut revealed);
+        aura_buffer_release(&mut sealed_ct);
+        aura_buffer_release(&mut frankable_ct);
+        aura_buffer_release(&mut public_state);
+        aura_buffer_release(&mut authorization);
+        aura_buffer_release(&mut commit);
         aura_group_destroy(&mut alice_group_handle);
         aura_group_destroy(&mut bob_group_handle);
         aura_identity_destroy(&mut alice_handle);
@@ -6587,6 +6868,46 @@ mod voip_improvements {
             init_buf,
             accept_buf,
         )
+    }
+
+    #[test]
+    fn ffi_voip_export_sealed_state_rejects_zero_counter() {
+        init_lib();
+        let (
+            mut alice_h,
+            mut bob_h,
+            mut alice_session_h,
+            mut bob_session_h,
+            mut init_h,
+            mut init_buf,
+            mut accept_buf,
+        ) = setup_voip_session_pair();
+        let state_key = [0x42u8; 32];
+        let mut sealed = null_buffer();
+        let mut err = null_error();
+
+        unsafe {
+            let code = aura_voip_export_sealed_state(
+                alice_session_h,
+                state_key.as_ptr(),
+                state_key.len(),
+                0,
+                &mut sealed,
+                &mut err,
+            );
+            assert_eq!(code, AuraErrorCode::AuraErrorInvalidInput);
+            assert!(sealed.data.is_null());
+
+            aura_error_free(&mut err);
+            aura_buffer_release(&mut sealed);
+            aura_buffer_release(&mut init_buf);
+            aura_buffer_release(&mut accept_buf);
+            aura_voip_call_initiator_destroy(&mut init_h);
+            aura_voip_session_destroy(&mut alice_session_h);
+            aura_voip_session_destroy(&mut bob_session_h);
+            aura_identity_destroy(&mut alice_h);
+            aura_identity_destroy(&mut bob_h);
+        }
     }
 
     #[test]

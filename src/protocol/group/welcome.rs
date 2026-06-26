@@ -14,6 +14,8 @@ use super::tree::RatchetTree;
 use super::tree_kem::TreeKem;
 use super::GroupSecurityPolicy;
 
+const WELCOME_PROVENANCE_SIGNATURE_INFO: &[u8] = b"Aura-Group-WelcomeProvenance-v1";
+
 pub struct WelcomeResult {
     pub tree: RatchetTree,
     pub my_leaf_idx: u32,
@@ -23,6 +25,77 @@ pub struct WelcomeResult {
     pub group_context_hash: Vec<u8>,
     pub sender_store: SenderKeyStore,
     pub security_policy_bytes: Vec<u8>,
+}
+
+fn append_len_prefixed(out: &mut Vec<u8>, bytes: &[u8]) {
+    out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+    out.extend_from_slice(bytes);
+}
+
+fn welcome_signature_input(welcome: &GroupWelcome) -> Result<Vec<u8>, ProtocolError> {
+    let mut encrypted_joiner_bytes = Vec::new();
+    if let Some(encrypted_joiner) = &welcome.encrypted_joiner_secret {
+        encrypted_joiner
+            .encode(&mut encrypted_joiner_bytes)
+            .map_err(|e| ProtocolError::encode(format!("Welcome joiner secret encode: {e}")))?;
+    }
+
+    let mut input = Vec::new();
+    input.extend_from_slice(WELCOME_PROVENANCE_SIGNATURE_INFO);
+    input.extend_from_slice(&welcome.version.to_le_bytes());
+    input.extend_from_slice(&welcome.epoch.to_le_bytes());
+    input.extend_from_slice(&welcome.target_leaf_index.to_le_bytes());
+    input.extend_from_slice(&welcome.committer_leaf_index.to_le_bytes());
+    append_len_prefixed(&mut input, &welcome.group_id);
+    append_len_prefixed(&mut input, &welcome.encrypted_group_info);
+    append_len_prefixed(&mut input, &welcome.welcome_nonce);
+    append_len_prefixed(&mut input, &encrypted_joiner_bytes);
+    append_len_prefixed(&mut input, &welcome.tree_hash);
+    Ok(input)
+}
+
+fn ed25519_sign_welcome(secret_key: &[u8], message: &[u8]) -> Result<Vec<u8>, ProtocolError> {
+    if secret_key.len() != ED25519_SECRET_KEY_BYTES {
+        return Err(ProtocolError::invalid_input(
+            "Invalid Ed25519 secret key size",
+        ));
+    }
+    let sk_array: [u8; ED25519_SECRET_KEY_BYTES] = secret_key
+        .try_into()
+        .map_err(|_| ProtocolError::invalid_input("Invalid Ed25519 secret key size"))?;
+    let signing_key = ed25519_dalek::SigningKey::from_keypair_bytes(&sk_array)
+        .map_err(|_| ProtocolError::key_generation("Invalid Ed25519 keypair bytes"))?;
+    use ed25519_dalek::Signer;
+    Ok(signing_key.sign(message).to_bytes().to_vec())
+}
+
+fn ed25519_verify_welcome(
+    public_key: &[u8],
+    signature: &[u8],
+    message: &[u8],
+) -> Result<(), ProtocolError> {
+    if public_key.len() != ED25519_PUBLIC_KEY_BYTES {
+        return Err(ProtocolError::welcome_error(
+            "Welcome committer Ed25519 public key has invalid size",
+        ));
+    }
+    if signature.len() != ED25519_SIGNATURE_BYTES {
+        return Err(ProtocolError::welcome_error(
+            "Welcome committer signature has invalid size",
+        ));
+    }
+    let pk_array: [u8; ED25519_PUBLIC_KEY_BYTES] = public_key.try_into().map_err(|_| {
+        ProtocolError::welcome_error("Welcome committer Ed25519 public key has invalid size")
+    })?;
+    let vk = ed25519_dalek::VerifyingKey::from_bytes(&pk_array)
+        .map_err(|_| ProtocolError::welcome_error("Invalid Welcome committer Ed25519 key"))?;
+    let sig_array: [u8; ED25519_SIGNATURE_BYTES] = signature.try_into().map_err(|_| {
+        ProtocolError::welcome_error("Welcome committer signature has invalid size")
+    })?;
+    let sig = ed25519_dalek::Signature::from_bytes(&sig_array);
+    vk.verify_strict(message, &sig).map_err(|_| {
+        ProtocolError::welcome_error("Welcome committer signature verification failed")
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -36,7 +109,20 @@ pub fn create_welcome(
     confirmation_mac: &[u8],
     group_context_hash: &[u8],
     security_policy_bytes: &[u8],
+    committer_leaf_index: u32,
+    committer_ed25519_secret: &[u8],
 ) -> Result<GroupWelcome, ProtocolError> {
+    if committer_leaf_index == new_member_leaf_idx {
+        return Err(ProtocolError::welcome_error(
+            "Welcome committer cannot be the new member",
+        ));
+    }
+    if tree.get_leaf_data(committer_leaf_index).is_none() {
+        return Err(ProtocolError::welcome_error(
+            "Welcome committer leaf is not present in tree",
+        ));
+    }
+
     let tree_hash = tree.tree_hash()?;
 
     let mut welcome_epoch_info =
@@ -95,7 +181,7 @@ pub fn create_welcome(
         new_member_leaf_idx,
     )?;
 
-    Ok(GroupWelcome {
+    let mut welcome = GroupWelcome {
         version: GROUP_PROTOCOL_VERSION,
         group_id: group_id.to_vec(),
         epoch,
@@ -104,7 +190,13 @@ pub fn create_welcome(
         encrypted_joiner_secret: Some(encrypted_joiner),
         tree_hash,
         target_leaf_index: new_member_leaf_idx,
-    })
+        committer_leaf_index,
+        committer_signature: Vec::new(),
+    };
+    let signature_input = welcome_signature_input(&welcome)?;
+    welcome.committer_signature = ed25519_sign_welcome(committer_ed25519_secret, &signature_input)?;
+
+    Ok(welcome)
 }
 
 pub fn process_welcome(
@@ -205,6 +297,21 @@ pub fn process_welcome(
     if !hash_ok {
         return Err(ProtocolError::welcome_error("Tree hash mismatch"));
     }
+
+    if welcome.committer_leaf_index == my_leaf_idx {
+        return Err(ProtocolError::welcome_error(
+            "Welcome committer cannot be the target member",
+        ));
+    }
+    let committer = tree
+        .get_leaf_data(welcome.committer_leaf_index)
+        .ok_or_else(|| ProtocolError::welcome_error("Welcome committer leaf is not present"))?;
+    let signature_input = welcome_signature_input(welcome)?;
+    ed25519_verify_welcome(
+        &committer.identity_ed25519_public,
+        &welcome.committer_signature,
+        &signature_input,
+    )?;
 
     let group_context_hash = GroupKeySchedule::compute_group_context_hash(
         &welcome.group_id,

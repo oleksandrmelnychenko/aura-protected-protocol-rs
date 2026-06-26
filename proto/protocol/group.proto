@@ -148,6 +148,8 @@ message GroupWelcome {
   GroupHybridCiphertext encrypted_joiner_secret = 6;
   bytes tree_hash = 7;                // SHA-256 commitment to tree state
   uint32 target_leaf_index = 8;       // Leaf index of the new member (avoids brute-force search)
+  uint32 committer_leaf_index = 9;    // Existing member that authorized this Welcome
+  bytes committer_signature = 10;     // Ed25519 signature over Welcome provenance fields
 }
 
 message GroupInfo {

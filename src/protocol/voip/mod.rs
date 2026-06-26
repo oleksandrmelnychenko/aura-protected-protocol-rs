@@ -657,6 +657,12 @@ impl VoipSession {
         state_key: &[u8],
         external_counter: u64,
     ) -> Result<Vec<u8>, ProtocolError> {
+        if external_counter == 0 {
+            return Err(ProtocolError::invalid_input(
+                "sealed state external counter must be greater than zero",
+            ));
+        }
+
         let inner = self
             .inner
             .lock()
@@ -771,6 +777,11 @@ impl VoipSession {
                 .try_into()
                 .map_err(|_| ProtocolError::voip_call("counter parse failed"))?,
         );
+        if stored_counter == 0 {
+            return Err(ProtocolError::invalid_input(
+                "sealed state external counter must be greater than zero",
+            ));
+        }
         if stored_counter < min_external_counter {
             return Err(ProtocolError::voip_call("sealed state rollback detected"));
         }
@@ -864,12 +875,9 @@ impl VoipSession {
         };
 
         let replay_window = if state.replay_bitmap.is_empty() {
-            if state.replay_high_water > 0 {
-                return Err(ProtocolError::voip_call(
-                    "sealed state replay bitmap missing for non-zero replay window",
-                ));
-            }
-            ReplayWindow::new()
+            return Err(ProtocolError::voip_call(
+                "sealed state replay bitmap missing",
+            ));
         } else {
             let mut replay_words = ReplayWindow::new().bitmap_words();
             let expected_len = replay_words.len() * std::mem::size_of::<u64>();

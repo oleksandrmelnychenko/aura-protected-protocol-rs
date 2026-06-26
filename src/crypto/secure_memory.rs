@@ -233,16 +233,12 @@ mod inner {
         }
     }
 
-    static POOL: OnceLock<SecurePool> = OnceLock::new();
+    static POOL: OnceLock<Result<SecurePool, CryptoError>> = OnceLock::new();
 
-    fn pool() -> &'static SecurePool {
-        POOL.get_or_init(|| {
-            SecurePool::build().expect(
-                "failed to build secure memory pool — \
-                 mlock denied at startup; check RLIMIT_MEMLOCK / cgroup memory.max / \
-                 AURA_SECURE_POOL_*_SLOTS env",
-            )
-        })
+    fn pool() -> Result<&'static SecurePool, CryptoError> {
+        POOL.get_or_init(SecurePool::build)
+            .as_ref()
+            .map_err(Clone::clone)
     }
 
     pub struct SecureMemoryHandle {
@@ -268,7 +264,7 @@ mod inner {
             if size == 0 || size > MAX_BUFFER_SIZE {
                 return Err(CryptoError::AllocationFailed { size });
             }
-            let (ptr, slot_size) = pool()
+            let (ptr, slot_size) = pool()?
                 .allocate(size)
                 .ok_or(CryptoError::AllocationFailed { size })?;
             Ok(Self {
@@ -363,7 +359,9 @@ mod inner {
             // invariant that no fresh allocation ever reads stale
             // secret bytes.
             self.as_slice_mut().zeroize();
-            pool().release(self.ptr, self.slot_size);
+            if let Ok(pool) = pool() {
+                pool.release(self.ptr, self.slot_size);
+            }
         }
     }
 }

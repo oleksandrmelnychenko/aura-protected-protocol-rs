@@ -1172,14 +1172,21 @@ impl GroupSession {
             &policy,
         );
         inner.psk_resolver = psk_resolver;
-        CryptoInterop::secure_wipe(&mut ed25519_sk);
-        let commit_output = commit_output?;
+        let commit_output = match commit_output {
+            Ok(output) => output,
+            Err(e) => {
+                CryptoInterop::secure_wipe(&mut ed25519_sk);
+                return Err(e);
+            }
+        };
 
-        let new_leaf_idx = commit_output
-            .added_leaf_indices
-            .first()
-            .copied()
-            .ok_or_else(|| ProtocolError::group_protocol("No leaf added"))?;
+        let new_leaf_idx = match commit_output.added_leaf_indices.first().copied() {
+            Some(idx) => idx,
+            None => {
+                CryptoInterop::secure_wipe(&mut ed25519_sk);
+                return Err(ProtocolError::group_protocol("No leaf added"));
+            }
+        };
 
         let welcome = welcome::create_welcome(
             &inner.tree,
@@ -1191,7 +1198,11 @@ impl GroupSession {
             &commit_output.commit.confirmation_mac,
             &commit_output.group_context_hash,
             &inner.security_policy.policy_bytes(),
-        )?;
+            my_leaf_idx,
+            &ed25519_sk,
+        );
+        CryptoInterop::secure_wipe(&mut ed25519_sk);
+        let welcome = welcome?;
 
         inner
             .init_secret

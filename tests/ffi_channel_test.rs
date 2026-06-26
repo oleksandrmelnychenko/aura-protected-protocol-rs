@@ -12,6 +12,7 @@
 //   - AuraBuffer lifecycle
 #![allow(clippy::borrow_as_ptr, clippy::ref_as_ptr, unsafe_code)]
 
+use aura_protected_protocol::core::constants::{AES_GCM_TAG_BYTES, MAX_ENVELOPE_MESSAGE_SIZE};
 use aura_protected_protocol::crypto::CryptoInterop;
 use aura_protected_protocol::ffi::api::*;
 use ed25519_dalek::SigningKey as EdSigningKey;
@@ -303,6 +304,44 @@ fn encrypt_with_empty_plaintext_via_ffi() {
     );
 
     unsafe { aura_buffer_release(&mut ciphertext as *mut _) };
+}
+
+#[test]
+fn decrypt_rejects_oversized_ciphertext_before_copy_via_ffi() {
+    init();
+    let oversized = vec![0u8; MAX_ENVELOPE_MESSAGE_SIZE + AES_GCM_TAG_BYTES + 1];
+    let nonce = [0u8; 12];
+    let signature = [0u8; 64];
+    let channel_key_id = [0x22_u8; 16];
+    let channel_key = [0xCD_u8; 32];
+    let channel_id = [0x11_u8; 16];
+    let sender_pub = [0x44_u8; 32];
+    let mut decrypted = null_buffer();
+    let mut err = null_error();
+
+    let code = unsafe {
+        aura_channel_decrypt_message(
+            oversized.as_ptr(),
+            oversized.len(),
+            nonce.as_ptr(),
+            signature.as_ptr(),
+            channel_key_id.as_ptr(),
+            0,
+            channel_key.as_ptr(),
+            channel_id.as_ptr(),
+            sender_pub.as_ptr(),
+            &mut decrypted as *mut _,
+            &mut err as *mut _,
+        )
+    };
+
+    assert_eq!(code, AuraErrorCode::AuraErrorInvalidInput);
+    assert!(decrypted.data.is_null());
+
+    unsafe {
+        aura_error_free(&mut err as *mut _);
+        aura_buffer_release(&mut decrypted as *mut _);
+    }
 }
 
 #[test]

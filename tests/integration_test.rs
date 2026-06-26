@@ -5765,6 +5765,8 @@ fn relay_extract_welcome_target_invalid_group_id_size_rejected() {
         encrypted_joiner_secret: None,
         tree_hash: vec![0x11; 32],
         target_leaf_index: 1,
+        committer_leaf_index: 0,
+        committer_signature: vec![],
     };
     let mut buf = Vec::new();
     welcome.encode(&mut buf).unwrap();
@@ -9644,6 +9646,65 @@ fn group_welcome_truncated_rejected() {
             "Welcome truncated to {len} bytes must be rejected"
         );
     }
+}
+
+#[test]
+fn group_welcome_missing_committer_signature_rejected() {
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let bob_id = IdentityKeys::create(10).unwrap();
+
+    let alice = GroupSession::create(&alice_id, b"alice".to_vec()).unwrap();
+    let (bob_kp, bob_x, bob_k) =
+        group::key_package::create_key_package(&bob_id, b"bob".to_vec()).unwrap();
+    let (_commit, welcome) = alice.add_member(&bob_kp).unwrap();
+
+    let mut welcome_msg =
+        aura_protected_protocol::proto::GroupWelcome::decode(welcome.as_slice()).unwrap();
+    welcome_msg.committer_signature.clear();
+    let mut unsigned = Vec::new();
+    welcome_msg.encode(&mut unsigned).unwrap();
+
+    let result = GroupSession::from_welcome(
+        &unsigned,
+        bob_x,
+        bob_k,
+        &bob_id.get_identity_ed25519_public(),
+        &bob_id.get_identity_x25519_public(),
+        bob_id.get_identity_ed25519_private_key_copy().unwrap(),
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn group_welcome_tampered_committer_signature_rejected() {
+    init();
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let bob_id = IdentityKeys::create(10).unwrap();
+
+    let alice = GroupSession::create(&alice_id, b"alice".to_vec()).unwrap();
+    let (bob_kp, bob_x, bob_k) =
+        group::key_package::create_key_package(&bob_id, b"bob".to_vec()).unwrap();
+    let (_commit, welcome) = alice.add_member(&bob_kp).unwrap();
+
+    let mut welcome_msg =
+        aura_protected_protocol::proto::GroupWelcome::decode(welcome.as_slice()).unwrap();
+    assert!(!welcome_msg.committer_signature.is_empty());
+    welcome_msg.committer_signature[0] ^= 0x01;
+    let mut tampered = Vec::new();
+    welcome_msg.encode(&mut tampered).unwrap();
+
+    let result = GroupSession::from_welcome(
+        &tampered,
+        bob_x,
+        bob_k,
+        &bob_id.get_identity_ed25519_public(),
+        &bob_id.get_identity_x25519_public(),
+        bob_id.get_identity_ed25519_private_key_copy().unwrap(),
+    );
+    assert!(result.is_err());
 }
 
 #[test]
