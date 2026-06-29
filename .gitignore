@@ -40,3 +40,6 @@ artifact-output/
 secrets/
 fuzz/target
 .claude/
+
+# Xcode per-user data (rewritten by Xcode on open/build)
+**/xcuserdata/
