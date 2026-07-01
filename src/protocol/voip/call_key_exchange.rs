@@ -4,7 +4,7 @@ use crate::crypto::{CryptoInterop, HkdfSha256, KyberInterop, SecureMemoryHandle}
 use crate::proto::ScreenShareMetadata;
 use crate::security::DhValidator;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 use zeroize::Zeroizing;

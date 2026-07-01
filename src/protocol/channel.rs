@@ -474,7 +474,9 @@ mod tests {
         h.update(r.compress().as_bytes());
         h.update(public_key.compress().as_bytes());
         h.update(message);
-        Scalar::from_hash(h)
+        let mut wide = [0u8; 64];
+        wide.copy_from_slice(&h.finalize());
+        Scalar::from_bytes_mod_order_wide(&wide)
     }
 
     #[test]

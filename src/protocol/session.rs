@@ -17,7 +17,7 @@ use crate::proto::{
 };
 use crate::protocol::nonce::{NonceGenerator, NonceState as NonceStateLocal};
 use crate::security::DhValidator;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use prost::Message;
 use prost_types::Timestamp;
 use sha2::{Digest, Sha256};

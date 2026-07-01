@@ -12,7 +12,7 @@ use crate::crypto::{CryptoInterop, HkdfSha256, SecureMemoryHandle};
 use crate::interfaces::{ITimeProvider, SystemTimeProvider};
 use crate::security::DhValidator;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use prost::Message;
 use sha2::Sha256;
 

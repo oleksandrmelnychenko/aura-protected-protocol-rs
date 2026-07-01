@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use prost::Message;
 use sha2::Sha256;
 use zeroize::Zeroizing;
@@ -3283,7 +3283,7 @@ impl GroupSession {
     }
 
     fn compute_group_state_hmac(key: &[u8], data: &[u8]) -> Result<Vec<u8>, ProtocolError> {
-        use hmac::{Hmac, Mac};
+        use hmac::{Hmac, KeyInit, Mac};
         use sha2::Sha256;
         let mut mac = Hmac::<Sha256>::new_from_slice(key)
             .map_err(|e| ProtocolError::group_protocol(format!("HMAC init: {e}")))?;

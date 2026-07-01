@@ -7745,7 +7745,7 @@ fn group_sealed_state_unsupported_internal_state_version_rejected() {
         GROUP_PROTOCOL_VERSION, GROUP_STATE_HMAC_INFO, HMAC_BYTES,
     };
     use aura_protected_protocol::proto::{GroupProtocolState, SealedGroupState};
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     use sha2::Sha256;
 
     init();

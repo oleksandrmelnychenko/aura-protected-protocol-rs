@@ -4,7 +4,7 @@
 use crate::core::constants::{HMAC_BYTES, MAX_SHARE_SIZE};
 use crate::core::errors::ProtocolError;
 use crate::crypto::CryptoInterop;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;

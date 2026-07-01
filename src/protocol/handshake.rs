@@ -11,7 +11,7 @@ use crate::proto::{HandshakeAck, HandshakeInit, PreKeyBundle};
 use crate::protocol::nonce::NonceGenerator;
 use crate::protocol::session::{build_protocol_state, HandshakeState, Session};
 use crate::security::DhValidator;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use prost::Message;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;

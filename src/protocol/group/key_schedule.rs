@@ -228,7 +228,7 @@ impl GroupKeySchedule {
         confirmation_key: &[u8],
         group_context_hash: &[u8],
     ) -> Result<Vec<u8>, ProtocolError> {
-        use hmac::{Hmac, Mac};
+        use hmac::{Hmac, KeyInit, Mac};
         use sha2::Sha256;
 
         let mut mac = Hmac::<Sha256>::new_from_slice(confirmation_key)

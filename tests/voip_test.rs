@@ -20,7 +20,7 @@ use aura_protected_protocol::protocol::voip::frame::{build_frame_aad, FrameHeade
 use aura_protected_protocol::protocol::voip::key_ratchet::MediaKeyRatchet;
 use aura_protected_protocol::protocol::voip::media_crypto::MediaCrypto;
 use aura_protected_protocol::protocol::voip::{CallRole, CallState, VoipSession};
-use hmac::Mac;
+use hmac::{KeyInit, Mac};
 use prost::Message;
 
 fn init() {
