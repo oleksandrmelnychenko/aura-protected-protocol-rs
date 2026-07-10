@@ -53,7 +53,7 @@ The paper and implementation do not claim:
 | Hybrid X3DH derives a shared root under the either-or classical/PQ combiner argument. | `docs/aura-paper.tex`, `docs/security-proof.tex`, `src/protocol/handshake.rs`, Tamarin handshake lemmas |
 | The KEM public key used for the next ratchet epoch is bound into HKDF `info`. | `src/protocol/session.rs`, `docs/aura-paper.tex`, paper equations and implementation cross-reference map |
 | A receiver rejects partial ratchet headers and rolls back state on malformed ratchet envelopes. | `src/protocol/session.rs`, `tests/attack_poc.rs` |
-| After local endpoint compromise, classical PCS is recovered after one honest directed step. Under conservative two-endpoint compromise, no first-step PCS is claimed; hybrid recovery starts after a directed step uses peer DH/KEM material generated after compromise. | Theorem 4 in the paper, `docs/security-proof.tex`, Tamarin ratchet model |
+| After local endpoint compromise, classical PCS is recovered after one honest directed step. Under conservative two-endpoint compromise, no first-step PCS is claimed; hybrid recovery starts after a directed step uses peer DH/KEM material generated after compromise. | Security claim 4 in `docs/aura-paper.tex`, Tamarin ratchet model |
 | Metadata encryption uses an independent per-epoch key rather than reusing payload message keys. | `src/protocol/session.rs`, paper AEAD equations, tests covering encrypted metadata |
 | Replay protection, skipped-key handling, and sealed-state rollback constraints match the security claims. | `src/protocol/session.rs`, `tests/attack_poc.rs`, artifact vectors |
 | Benchmark comparisons use one traffic model for handshake-only, sparse, periodic, and per-reply PQ profiles. | `benches/protocol_bench.rs`, `pq_traffic_profiles` Criterion group |
@@ -66,7 +66,8 @@ The paper and implementation do not claim:
 |---|---|---|
 | Gap-CDH over X25519-style DH | Hybrid combiner, AKE, FS, PCS | Are the reductions and abstractions stated at the right level for the implemented X25519 use? |
 | ML-KEM-768 IND-CCA2 | Handshake KEM and hybrid ratchet KEM | Is the code using the KEM API in a way consistent with the proof model? |
-| HKDF dual-PRF behavior | Classical/PQ combiner and ratchet key schedule | Is the salt/IKM asymmetry justified and consistently implemented? |
+| Explicit two-source HKDF assumption | Handshake classical/PQ combiner | Is the salt/IKM asymmetry justified without attributing the exact result to RFC 5869? |
+| Explicit split-input ratchet-KDF assumption | Ratchet input `DH || KEM` with a possibly known previous root | Does the PCS argument clearly require component robustness when only one concatenated contribution is fresh? |
 | AES-256-GCM-SIV MRAE/INT-CTXT | Payload and metadata AEAD | Are nonce construction and associated data sufficient for the stated bounds? |
 | Ed25519 SUF-CMA | Identity and signed pre-key authentication | Are PQ-signature limitations clearly separated from KEM security claims? |
 | Out-of-band identity verification | TOFU/safety-number trust model | Is the key-distribution boundary explicit enough for the claims? |

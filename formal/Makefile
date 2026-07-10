@@ -34,7 +34,7 @@ check-proverif:
 		{ echo "Error: $(PROVERIF) not found. Install: https://bblanche.gitlabpages.inria.fr/proverif/"; exit 1; }
 
 handshake: check-tamarin
-	$(TAMARIN) --prove --heuristic=S $(SPTHY_HANDSHAKE)
+	$(TAMARIN) --prove --heuristic=S --derivcheck-timeout=60 $(SPTHY_HANDSHAKE)
 
 ratchet: check-tamarin
 	$(TAMARIN) --prove --heuristic=S $(SPTHY_RATCHET)

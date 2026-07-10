@@ -2024,6 +2024,12 @@ impl Session {
         if check_inner_expired(&inner.state, self.time_provider.as_ref())? {
             return Err(ProtocolError::invalid_state("Session expired"));
         }
+        let activity_unix = self.time_provider.now_unix_secs()?;
+        let next_total_sent = inner
+            .state
+            .total_messages_sent
+            .checked_add(1)
+            .ok_or_else(|| ProtocolError::invalid_state("Sent-message counter overflow"))?;
         if inner.state.send_metadata_key.len() != METADATA_KEY_BYTES {
             return Err(ProtocolError::invalid_state(
                 "Send metadata key not initialized",
@@ -2240,8 +2246,8 @@ impl Session {
             }
         });
 
-        inner.state.last_activity_unix = Some(self.time_provider.now_unix_secs()?);
-        inner.state.total_messages_sent += 1;
+        inner.state.last_activity_unix = Some(activity_unix);
+        inner.state.total_messages_sent = next_total_sent;
 
         Ok(envelope)
     }
@@ -2280,6 +2286,12 @@ impl Session {
         if check_inner_expired(&inner.state, self.time_provider.as_ref())? {
             return Err(ProtocolError::invalid_state("Session expired"));
         }
+        let activity_unix = self.time_provider.now_unix_secs()?;
+        let next_total_received = inner
+            .state
+            .total_messages_received
+            .checked_add(1)
+            .ok_or_else(|| ProtocolError::invalid_state("Received-message counter overflow"))?;
         if envelope.version != PROTOCOL_VERSION {
             return Err(ProtocolError::invalid_input("Invalid envelope version"));
         }
@@ -2306,44 +2318,53 @@ impl Session {
         type RatchetSnapshot = (
             ProtocolState,
             BTreeMap<u64, Vec<u8>>,
-            Vec<u8>,
-            Vec<u8>,
             BTreeMap<(u64, u64), Vec<u8>>,
             u64,
             bool,
         );
+        let rollback_ratchet = |inner: &mut SessionInner, snapshot: Option<RatchetSnapshot>| {
+            if let Some((mut state, mut cached_mk, mut skipped, replay_ep, ratchet_pending)) =
+                snapshot
+            {
+                wipe_protocol_state_keys(&mut inner.state);
+                for key in inner.cached_metadata_keys.values_mut() {
+                    CryptoInterop::secure_wipe(key);
+                }
+                for key in inner.skipped_message_keys.values_mut() {
+                    CryptoInterop::secure_wipe(key);
+                }
+
+                inner.state = std::mem::take(&mut state);
+                inner.cached_metadata_keys = std::mem::take(&mut cached_mk);
+                inner.skipped_message_keys = std::mem::take(&mut skipped);
+                inner.replay_epoch = replay_ep;
+                inner.send_ratchet_pending = ratchet_pending;
+            }
+        };
         let mut ratchet_snapshot: Option<RatchetSnapshot> = None;
         if has_dh || has_kyber_ct || has_new_kyber_pk {
             if !has_dh || !has_kyber_ct || !has_new_kyber_pk {
                 return Err(ProtocolError::invalid_input("Incomplete ratchet header: dh_public_key, kyber_ciphertext, and new_kyber_public must all be present"));
             }
-            if envelope_epoch != inner.state.recv_ratchet_epoch + 1 {
+            let expected_epoch = inner
+                .state
+                .recv_ratchet_epoch
+                .checked_add(1)
+                .ok_or_else(|| ProtocolError::invalid_state("Receive ratchet epoch overflow"))?;
+            if envelope_epoch != expected_epoch {
                 return Err(ProtocolError::invalid_state("Unexpected ratchet epoch"));
             }
-            let kyber_sk_backup = inner
-                .kyber_secret_handle
-                .as_ref()
-                .map(|h| h.read_bytes(KYBER_SECRET_KEY_BYTES))
-                .transpose()
-                .map_err(ProtocolError::from_crypto)?
-                .unwrap_or_default();
-            let dh_sk_backup = inner
-                .dh_private_handle
-                .as_ref()
-                .map(|h| h.read_bytes(X25519_PRIVATE_KEY_BYTES))
-                .transpose()
-                .map_err(ProtocolError::from_crypto)?
-                .unwrap_or_default();
             ratchet_snapshot = Some((
                 inner.state.clone(),
                 inner.cached_metadata_keys.clone(),
-                kyber_sk_backup,
-                dh_sk_backup,
                 inner.skipped_message_keys.clone(),
                 inner.replay_epoch,
                 inner.send_ratchet_pending,
             ));
-            Self::apply_recv_ratchet(&mut inner, envelope)?;
+            if let Err(err) = Self::apply_recv_ratchet(&mut inner, envelope) {
+                rollback_ratchet(&mut inner, ratchet_snapshot.take());
+                return Err(err);
+            }
             is_old_epoch = false;
         } else if envelope_epoch == inner.state.recv_ratchet_epoch {
             is_old_epoch = false;
@@ -2364,50 +2385,13 @@ impl Session {
             &inner.state.metadata_key
         };
 
-        let rollback_ratchet = |inner: &mut SessionInner, snapshot: Option<RatchetSnapshot>| {
-            if let Some((
-                state,
-                cached_mk,
-                mut kyber_sk,
-                mut dh_sk,
-                skipped,
-                replay_ep,
-                ratchet_pending,
-            )) = snapshot
-            {
-                inner.state = state;
-                inner.cached_metadata_keys = cached_mk;
-                inner.skipped_message_keys = skipped;
-                inner.replay_epoch = replay_ep;
-                inner.send_ratchet_pending = ratchet_pending;
-                if !kyber_sk.is_empty() {
-                    match SecureMemoryHandle::allocate(KYBER_SECRET_KEY_BYTES) {
-                        Ok(mut handle) => {
-                            let _ = handle.write(&kyber_sk);
-                            inner.kyber_secret_handle = Some(handle);
-                        }
-                        Err(_) => {
-                            inner.kyber_secret_handle = None;
-                        }
-                    }
-                }
-                if !dh_sk.is_empty() {
-                    match SecureMemoryHandle::allocate(X25519_PRIVATE_KEY_BYTES) {
-                        Ok(mut handle) => {
-                            let _ = handle.write(&dh_sk);
-                            inner.dh_private_handle = Some(handle);
-                        }
-                        Err(_) => {
-                            inner.dh_private_handle = None;
-                        }
-                    }
-                }
-                CryptoInterop::secure_wipe(&mut kyber_sk);
-                CryptoInterop::secure_wipe(&mut dh_sk);
+        let metadata_aad = match build_metadata_aad(&inner.state, envelope_epoch) {
+            Ok(value) => value,
+            Err(err) => {
+                rollback_ratchet(&mut inner, ratchet_snapshot.take());
+                return Err(err);
             }
         };
-
-        let metadata_aad = build_metadata_aad(&inner.state, envelope_epoch)?;
         let metadata_result = AesGcm::decrypt(
             metadata_key_ref,
             &envelope.header_nonce,
@@ -2625,19 +2609,18 @@ impl Session {
             inner.state.send_ratchet_pending = true;
         }
 
-        if let Some((mut state, _, mut kyber_sk, mut dh_sk, mut skipped, _, _)) =
-            ratchet_snapshot.take()
-        {
-            CryptoInterop::secure_wipe(&mut kyber_sk);
-            CryptoInterop::secure_wipe(&mut dh_sk);
+        if let Some((mut state, mut cached_mk, mut skipped, _, _)) = ratchet_snapshot.take() {
             wipe_protocol_state_keys(&mut state);
+            for key in cached_mk.values_mut() {
+                CryptoInterop::secure_wipe(key);
+            }
             for key in skipped.values_mut() {
                 CryptoInterop::secure_wipe(key);
             }
         }
 
-        inner.state.last_activity_unix = Some(self.time_provider.now_unix_secs()?);
-        inner.state.total_messages_received += 1;
+        inner.state.last_activity_unix = Some(activity_unix);
+        inner.state.total_messages_received = next_total_received;
 
         Ok(DecryptResult {
             plaintext,
@@ -3292,5 +3275,39 @@ mod tests {
         let envelope = alice.encrypt(b"hello after rollback", 0, 2, None).unwrap();
         let decrypted = bob.decrypt(&envelope).unwrap();
         assert_eq!(decrypted.plaintext, b"hello after rollback");
+    }
+
+    #[test]
+    fn recv_ratchet_apply_error_restores_skipped_key_state() {
+        init_crypto();
+        let (alice, bob) = create_session_pair_with_chain_limit(8);
+
+        let _delayed_0 = alice.encrypt(b"delayed 0", 0, 0, None).unwrap();
+        let _delayed_1 = alice.encrypt(b"delayed 1", 0, 1, None).unwrap();
+        let reply = bob.encrypt(b"trigger reply", 0, 0, None).unwrap();
+        alice.decrypt(&reply).unwrap();
+        let ratchet = alice.encrypt(b"ratchet", 0, 2, None).unwrap();
+        assert_eq!(ratchet.previous_chain_length, Some(2));
+
+        let kyber_secret_handle = {
+            let mut inner = bob.inner.lock().unwrap();
+            assert_eq!(inner.state.recv_chain.as_ref().unwrap().message_index, 0);
+            assert!(inner.skipped_message_keys.is_empty());
+            inner.kyber_secret_handle.take().unwrap()
+        };
+
+        let failed = bob.decrypt(&ratchet);
+        assert!(failed.is_err());
+
+        {
+            let mut inner = bob.inner.lock().unwrap();
+            assert_eq!(inner.state.recv_ratchet_epoch, 0);
+            assert_eq!(inner.state.recv_chain.as_ref().unwrap().message_index, 0);
+            assert!(inner.skipped_message_keys.is_empty());
+            inner.kyber_secret_handle = Some(kyber_secret_handle);
+        }
+
+        let decrypted = bob.decrypt(&ratchet).unwrap();
+        assert_eq!(decrypted.plaintext, b"ratchet");
     }
 }

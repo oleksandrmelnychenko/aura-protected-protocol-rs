@@ -18,7 +18,7 @@ Hybrid secure-messaging protocol targeting post-quantum confidentiality of sessi
 | Group module | N/A | N/A | **MLS-inspired hybrid PQ TreeKEM** (outside 1:1 proof scope) |
 | Shield mode | No | No | **Yes** (enhanced key schedule, mandatory franking) |
 | Message features | Basic | Basic | **Sealed, disappearing, frankable, edit, delete** |
-| Formal proofs | eCK sketch | High-level | **6 theorems + 10 Tamarin lemmas + 3 ProVerif queries** (1:1 handshake/ratchet) |
+| Formal proofs | eCK sketch | High-level | **6 reduction-style claims + 10 Tamarin lemmas + 4 active ProVerif queries** (1:1 handshake/ratchet) |
 
 ## Architecture
 
@@ -178,7 +178,7 @@ cargo test --release --features ffi
 cargo test --all-features
 ```
 
-Coverage spans Rust API, integration, FFI, VoIP, attack-PoC, and property-based tests. The current local snapshot enumerates 750 default test scenarios and 889 scenarios with `--features ffi`.
+Coverage spans Rust API, integration, FFI, VoIP, attack-PoC, and property-based tests. The paper's pinned `b788e07` snapshot enumerates 750 default scenarios. Because the suite evolves on `main`, current counts should be obtained with `cargo test --release -- --list` rather than inferred from the paper ledger.
 
 ### Paper Artifact Reproduction
 
@@ -313,22 +313,27 @@ The formal claims below cover the two-party handshake and session ratchet analyz
 - `key_agreement` — both parties derive same root key
 - `ratchet_exists` — reachability
 
-### ProVerif (3/6 queries discharged)
+### ProVerif (4/4 active proof-scope queries discharged)
 
-`formal/proverif/aura.pv` — KEM shared-secret secrecy, non-injective authentication, and message secrecy proven. Q3 is documented but disabled in the default artifact because the four-DH model does not terminate within the artifact budget. Q5/Q6 are negative stress queries: Q5 is false for a broad unpartnered active trace, and Q6 is false for raw KEM-secret secrecy after KEM secret-key reveal.
+`formal/proverif/aura.pv` proves KEM shared-secret secrecy, non-injective authentication, message secrecy, and scoped honest-message correspondence. Injective authentication remains disabled because the four-DH query does not terminate within the artifact budget. Raw KEM-secret secrecy after KEM secret-key reveal is false by decapsulation semantics and is not an active claim. The correspondence query is deliberately scoped to matching endpoints, root state, and challenge plaintext; broad unpartnered integrity is not claimed.
 
-### Game-Based Security Proofs
+### Reduction-Style Security Analysis
 
-`docs/security-proof.tex` — 6 theorems with constructive reductions:
+`docs/aura-paper.tex`, Section 6, is the canonical claim boundary. It contains
+six security claims with argument sketches, not complete game-by-game proofs:
 
-| Theorem | Property | Assumptions |
-|---------|----------|-------------|
-| 1 | Hybrid Combiner IND-CCA2 | Gap-CDH OR ML-KEM-768 IND-CCA2 |
-| 2 | Modified X3DH leakage-model AKE security | Gap-CDH + IND-CCA2 + dual-PRF + ROM |
-| 3 | Forward Secrecy | Gap-CDH + dual-PRF; initial KEM gives HNDL only absent later KEM-SK disclosure |
-| 4 | Post-Compromise Security | Local classical PCS under Gap-CDH; delayed hybrid recovery under Gap-CDH + IND-CCA2 after post-compromise peer DH/KEM material is used |
-| 5 | Message Confidentiality + Integrity | Modified X3DH leakage model + PRF + MRAE |
-| 6 | Replay Resistance | INT-CTXT + bounded nonce cache |
+| Claim | Property | Principal assumptions |
+|-------|----------|-----------------------|
+| 1 | Hybrid root-key pseudorandomness | Alternative Gap-CDH or ML-KEM-768 IND-CCA2 path plus the explicit two-source HKDF assumption |
+| 2 | Modified pre-key leakage-model AKE security | Selected combiner path, HMAC PRF, Ed25519 SUF-CMA, and session-selection losses |
+| 3 | Forward secrecy | Gap-CDH and the two-source HKDF assumption; the initial KEM term is not counted after KEM-SK disclosure |
+| 4 | Post-compromise security | Alternative Gap-CDH or ML-KEM path plus the explicit split-input ratchet-KDF assumption |
+| 5 | Message confidentiality and integrity | Root/chain PRF hybrids and MRAE security |
+| 6 | Replay resistance | INT-CTXT, key erasure, bounded replay state, and durable-state continuity |
+
+`docs/security-proof.tex` is retained as a historical extended working note. It
+predates the narrowed assumptions and claim language above and is not part of
+the evaluated release evidence.
 
 ## Project Structure
 
@@ -373,9 +378,9 @@ swift/
     AuraCrypto.swift     Shamir SSS + envelope validation
 formal/
   tamarin/        Tamarin models (handshake 6/6, ratchet 4/4)
-  proverif/       ProVerif model (3/6 queries)
+  proverif/       ProVerif model (4/4 active proof-scope queries)
 docs/
-  security-proof.tex       Game-based proofs (6 theorems, 8 lemmas)
+  security-proof.tex       Historical extended working note (non-canonical)
   attachment-flow.md       Attachment encryption and transport contract
   features/
     sealed-messages.md       Sealed messages design doc
@@ -492,8 +497,8 @@ CI and scheduled workflows cover these categories:
 | Job | What it does |
 |-----|-------------|
 | **Check & Clippy** | `cargo check` + `cargo clippy -- -D warnings` (with and without `ffi` feature) |
-| **Test** | Release and feature-matrix test runs on Linux, macOS, Windows; local snapshot: 750 default scenarios, 889 with `--features ffi` |
-| **Formal Verification** | Tamarin Prover (10 lemmas) + ProVerif (3/6 queries discharged), with uploaded formal artifact logs |
+| **Test** | Release and feature-matrix test runs on Linux, macOS, Windows; the paper snapshot contains 750 default scenarios and current counts are enumerated by CI |
+| **Formal Verification** | Tamarin Prover (10 lemmas) + ProVerif (4/4 active proof-scope queries discharged), with uploaded formal artifact logs |
 | **MSRV** | Minimum supported Rust version (1.86) |
 | **Fuzz Smoke Test** | All 42 libfuzzer targets (10s each) |
 | **Security Audit** | `cargo audit` for known vulnerabilities |

@@ -85,6 +85,7 @@ versions() {
     protoc --version 2>/dev/null | sed 's/^/protoc=/' || echo "protoc=missing"
     curl --version 2>/dev/null | head -n 1 | sed 's/^/curl=/' || echo "curl=missing"
     pdflatex --version 2>/dev/null | head -n 1 | sed 's/^/pdflatex=/' || echo "pdflatex=missing"
+    tectonic --version 2>/dev/null | head -n 1 | sed 's/^/tectonic=/' || echo "tectonic=missing"
     if command -v tamarin-prover >/dev/null 2>&1; then
       tamarin-prover --version 2>/dev/null | head -n 1 | sed 's/^/tamarin=/'
     else
@@ -105,10 +106,13 @@ capture_criterion() {
 }
 
 paper_build() {
-  run_shell paper_english \
-    "rm -rf '$OUT/aura-paper-build' && mkdir -p '$OUT/aura-paper-build' && cd '$ROOT/docs' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-build' aura-paper.tex >'$OUT/paper_english_pass1.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-build' aura-paper.tex >'$OUT/paper_english_pass2.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-build' aura-paper.tex && cp '$OUT/aura-paper-build/aura-paper.pdf' '$OUT/aura-paper.pdf'"
-  run_shell paper_ukrainian \
-    "rm -rf '$OUT/aura-paper-ua-build' && mkdir -p '$OUT/aura-paper-ua-build' && cd '$ROOT/docs' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-ua-build' aura-paper-ua.tex >'$OUT/paper_ukrainian_pass1.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-ua-build' aura-paper-ua.tex >'$OUT/paper_ukrainian_pass2.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-ua-build' aura-paper-ua.tex && cp '$OUT/aura-paper-ua-build/aura-paper-ua.pdf' '$OUT/aura-paper-ua.pdf'"
+  if command -v tectonic >/dev/null 2>&1; then
+    run_shell paper_english \
+      "rm -rf '$OUT/aura-paper-build' && mkdir -p '$OUT/aura-paper-build' && cd '$ROOT/docs' && tectonic --outdir '$OUT/aura-paper-build' aura-paper.tex && cp '$OUT/aura-paper-build/aura-paper.pdf' '$OUT/aura-paper.pdf'"
+  else
+    run_shell paper_english \
+      "rm -rf '$OUT/aura-paper-build' && mkdir -p '$OUT/aura-paper-build' && cd '$ROOT/docs' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-build' aura-paper.tex >'$OUT/paper_english_pass1.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-build' aura-paper.tex >'$OUT/paper_english_pass2.log' && pdflatex -interaction=nonstopmode -halt-on-error -output-directory='$OUT/aura-paper-build' aura-paper.tex && cp '$OUT/aura-paper-build/aura-paper.pdf' '$OUT/aura-paper.pdf'"
+  fi
 }
 
 reference_audit() {
@@ -167,7 +171,7 @@ usage: $0 [quick|test|formal|paper|references|bench|full]
 quick  - fixed paper vectors + attack PoC tests
 test   - full Rust tests, with and without ffi
 formal - Tamarin handshake/ratchet + ProVerif
-paper  - rebuild English and Ukrainian paper PDFs
+paper  - rebuild the canonical English paper PDF
 references - verify paper bibliography/citation consistency and URL reachability
 bench  - Criterion benchmark suite
 full   - test + formal + paper + references + bench

@@ -1,11 +1,11 @@
 # Aura Protocol — Formal Verification Models
 
 Machine-checked formal verification of the Aura Protection Protocol,
-complementing the game-based security proofs in `docs/security-proof.tex`.
+complementing the scoped reduction-style analysis in `docs/aura-paper.tex`.
 
 ## Verification Results
 
-### Tamarin Prover — Handshake Model (6/6 verified, 7.07s)
+### Tamarin Prover — Handshake Model (6/6 verified)
 
 | Lemma | Result | Steps |
 |-------|--------|-------|
@@ -15,6 +15,10 @@ complementing the game-based security proofs in `docs/security-proof.tex`.
 | `forward_secrecy_hybrid` | **verified** | 33 |
 | `key_confirmation` | **verified** | 6 |
 | `session_exists` | **verified** | 11 |
+
+The `make handshake` target raises Tamarin's derivation-check budget from the
+five-second default to 60 seconds. This avoids a host-dependent well-formedness
+timeout warning; the proof run is counted only when those checks complete.
 
 ### Tamarin Prover — Ratchet Model (4/4 verified, 0.42s)
 
@@ -131,7 +135,7 @@ opam install proverif
 # Verify all models
 make all
 
-# Tamarin handshake only (6 lemmas, ~7s)
+# Tamarin handshake only (6 lemmas; 60s derivation-check budget)
 make handshake
 
 # Tamarin ratchet only (4 lemmas, <1s)

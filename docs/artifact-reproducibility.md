@@ -22,14 +22,15 @@ Modes:
 | Quick smoke | `./scripts/reproduce-paper-artifact.sh quick` | Fixed vectors, deterministic handshake/envelope/cross-ratchet/multi-epoch KATs, vector dump, attack-PoC regression tests |
 | Rust tests | `./scripts/reproduce-paper-artifact.sh test` | Full `cargo test --release` with and without `ffi` |
 | Formal models | `./scripts/reproduce-paper-artifact.sh formal` | Tamarin handshake, Tamarin ratchet, ProVerif |
-| Paper build | `./scripts/reproduce-paper-artifact.sh paper` | Rebuild English, Ukrainian, and companion proof PDFs with `pdflatex` |
+| Paper build | `./scripts/reproduce-paper-artifact.sh paper` | Rebuild the canonical English paper PDF with Tectonic when available, otherwise `pdflatex` |
 | Reference audit | `./scripts/reproduce-paper-artifact.sh references` | Check bibliography/citation consistency and external URL reachability |
 | Benchmarks | `./scripts/reproduce-paper-artifact.sh bench` | Criterion benchmark suite |
 | Full artifact | `./scripts/reproduce-paper-artifact.sh full` | Tests, formal models, PDFs, reference audit, benchmarks |
 
 The `formal` mode requires `tamarin-prover` and `proverif`. The `paper` mode
-requires `pdflatex`; consequently `full` requires the Rust toolchain,
-formal-verification tools, `pdflatex`, `protoc`, `curl`, network access, and
+uses Tectonic when available and otherwise requires a `pdflatex` installation
+that provides the Elsevier class and package dependencies. Consequently `full` requires the Rust toolchain,
+formal-verification tools, a supported TeX engine, `protoc`, `curl`, network access, and
 benchmark dependencies. The quick mode only needs the Rust toolchain and
 `protoc`. The `references` mode also requires `curl` and network access.
 
@@ -117,13 +118,13 @@ Multi-epoch delayed-delivery vector:
 | Multi-epoch delayed-delivery KAT | `src/protocol/session.rs`, `tests/paper_vectors.rs`, `examples/paper_vectors.rs` | `cargo test --release --features test-vectors --test paper_vectors` |
 | Replay rejection, rollback guards, malformed envelope recovery | `tests/attack_poc.rs`, `tests/integration_test.rs` | `cargo test --release --test attack_poc`; full: `cargo test --release` |
 | FFI behavior | `src/ffi/api.rs`, `tests/ffi_test.rs`, `tests/ffi_channel_test.rs` | `cargo test --release --features ffi` |
-| Tamarin handshake lemmas | `formal/tamarin/aura_handshake.spthy` | `make -C formal handshake` |
+| Tamarin handshake lemmas | `formal/tamarin/aura_handshake.spthy` | `make -C formal handshake` (uses a 60-second derivation-check budget) |
 | Tamarin ratchet lemmas | `formal/tamarin/aura_ratchet.spthy` | `make -C formal ratchet` |
 | ProVerif queries | `formal/proverif/aura.pv` | `make -C formal proverif` |
 | Performance numbers | `benches/protocol_bench.rs` | `cargo bench` |
 | PQ traffic-profile comparability | `benches/protocol_bench.rs` | `cargo bench --bench protocol_bench pq_traffic_profiles` |
 | Ablation and sensitivity ledger | `docs/ablation-study.md` | See commands inside `docs/ablation-study.md` |
-| Paper compilation | `docs/aura-paper.tex`, `docs/aura-paper-ua.tex`, `docs/security-proof.tex` | `./scripts/reproduce-paper-artifact.sh paper` |
+| Paper compilation | canonical `docs/aura-paper.tex` | `./scripts/reproduce-paper-artifact.sh paper` |
 | Reference validity | `docs/reference-audit.md`, `scripts/audit-paper-references.sh` | `./scripts/reproduce-paper-artifact.sh references` |
 
 ## Expected formal-model status
@@ -134,15 +135,16 @@ The current formal status is:
 |---|---|
 | Tamarin handshake model | 6/6 lemmas verified |
 | Tamarin ratchet model | 4/4 lemmas verified |
-| ProVerif model | 3/6 queries discharged for the handshake/message-path model |
+| ProVerif model | 4/4 active proof-scope queries discharged for the handshake/message-path model |
 
-The three non-discharged ProVerif queries are not treated as machine-checked
-results. Q3 (injective authentication) is documented but disabled in the default
-artifact because it does not terminate in the four-DH model. Q5 is false for a
-broad unpartnered active trace and therefore does not match the partnered-session
-integrity theorem. Q6 is false for raw KEM-secret secrecy after KEM secret-key
-reveal; the claimed hybrid-root property is covered by the Tamarin-style
-secrecy/PCS models and game-based proofs.
+Two stress obligations remain outside the active query count. Injective
+authentication is documented but disabled because it does not terminate in the
+four-DH model within the artifact budget. Raw KEM-secret secrecy after KEM
+secret-key reveal is false by decapsulation semantics. The fourth active query
+checks honest-message correspondence only for matching challenge plaintext,
+endpoints, and root state; broad unpartnered integrity is not claimed. The
+hybrid-root and PCS claims are instead scoped by the Tamarin abstractions and
+reduction-style arguments.
 
 ## Environment capture
 
@@ -167,7 +169,7 @@ sha256sum -c SHA256SUMS
 ## CI artifact bundle
 
 The `Paper Artifact` GitHub Actions workflow runs the quick fixed-vector suite,
-rebuilds the English, Ukrainian, and companion proof PDFs, and audits paper
+rebuilds the canonical English paper PDF, and audits paper
 references on pull requests that touch the artifact surface, source code,
 formal models, or artifact scripts, on tagged releases, and on manual dispatch.
 It uploads the full `artifact-output/**` tree as a reviewable workflow artifact,
