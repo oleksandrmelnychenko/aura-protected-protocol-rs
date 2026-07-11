@@ -170,15 +170,13 @@
 \begin{abstract}
 Long-lived end-to-end encrypted conversations remain exposed to
 harvest-now-decrypt-later attacks when post-quantum protection is confined to
-session establishment. Aura Protocol incorporates ML-KEM-768 into an
-authenticated X25519 pre-key exchange and subsequent
-directed ratchet transitions. The design retains classical Ed25519 identity
-authentication, so its post-quantum claim concerns session-secret
-confidentiality rather than post-quantum peer authentication. Each transition
-combines fresh X25519 and ML-KEM contributions, binds the advertised KEM public
-key through HKDF, and derives separate payload and metadata keys. The analysis
-distinguishes local from two-endpoint compromise. After local compromise, the
-first honest directed transition restores a classical contribution. Hybrid
+session establishment. Aura Protocol uses an authenticated X25519/ML-KEM-768
+pre-key exchange and renews both sources at each directed transition rather
+than on a sparse or periodic schedule. It retains classical Ed25519 identity
+authentication, so post-quantum claims concern session-secret confidentiality,
+not peer authentication. Each transition binds the advertised KEM public key
+through HKDF and derives separate payload and metadata keys. After local
+compromise, the first honest directed transition restores a classical contribution. Hybrid
 recovery requires a later transition using peer DH and KEM material generated
 after the compromise. Six reduction-style arguments rely on Gap-CDH, ML-KEM IND-CCA2, explicit
 two-source and split-input PRF assumptions for HKDF, and misuse-resistant
@@ -268,26 +266,33 @@ symbolic models, executable validation, and measurements of the implemented
 state machine.
 
 \medskip
-\noindent\textbf{Contributions and novelty.} Aura Protocol contributes a
-two-party construction for directed hybrid ratcheting. Sparse post-quantum ratcheting
-(\SPQR{}/ML-KEM Braid~\cite{signal-spqr,signal-double-ratchet,mlkem-braid})
-and periodic in-band rekeying (Apple \PQThree{}~\cite{apple-pq3,stebila-pq3,linker-pq3})
-are the closest modern baselines. Against that background, the paper makes four
-contributions:
+\noindent\textbf{Scientific novelty.} Relative to sparse post-quantum
+ratcheting (\SPQR{}/ML-KEM Braid~\cite{signal-spqr,signal-double-ratchet,mlkem-braid})
+and periodic in-band rekeying (Apple \PQThree{}~\cite{apple-pq3,stebila-pq3,linker-pq3}),
+the central scientific novelty is a directed hybrid-ratchet state-transition
+method. It couples each direction change to joint X25519/ML-KEM renewal, binds
+the newly advertised KEM public key into the derived state, and gives an
+explicit two-case PCS statement: one-step classical recovery after local
+compromise and delayed hybrid recovery after two-endpoint compromise. The
+novelty is construction-level rather than a claim of a new cryptographic
+primitive. It is developed through three method-level contributions:
 
 \begin{enumerate}
-  \item \textbf{N1: directed hybrid ratcheting and recovery.} Every direction change triggers an X25519 and ML-KEM-768 update. The resulting PCS statement separates one-step classical recovery after local compromise from delayed hybrid recovery after full two-endpoint compromise (\cref{thm:pcs}).
+  \item \textbf{N1: directed hybrid transition and PCS characterization.} Every direction change advances the root state with X25519 and ML-KEM-768 contributions. The resulting PCS characterization separates one-step classical recovery after local compromise from delayed hybrid recovery after full two-endpoint compromise (\cref{thm:pcs}).
 
-  \item \textbf{N2: HKDF binding of ratchet KEM keys.} Each fresh ML-KEM public key enters the HKDF info parameter during ratchet key derivation. Substitution changes the derived root state and causes the subsequent AEAD check to fail, which binds the accepted KEM key without a per-ratchet signature (\cref{lem:augmented-hkdf}).
+  \item \textbf{N2: ratchet KEM-key state binding.} Each newly advertised ML-KEM public key enters the HKDF info parameter during ratchet key derivation. Substitution changes the derived root state and causes the subsequent AEAD check to fail, which binds the accepted KEM key without a per-ratchet signature (\cref{lem:augmented-hkdf}).
 
-  \item \textbf{N3: two-layer AEAD with metadata-key rotation.} Envelope metadata and payload bytes use separate keys. The metadata key rotates by ratchet epoch, and both layers use AES-256-GCM-SIV to limit the consequences of nonce reuse (\cref{lem:two-layer}).
-
-  \item \textbf{N4: implementation-backed evaluation.} Reduction-style arguments and reduced symbolic models are paired with executable checks of parsing, ratchet atomicity, replay handling, sealed-state persistence, and the measured cost of the two-party implementation.
+  \item \textbf{N3: ratchet-scoped metadata-key separation.} Envelope metadata and payload bytes use separate key domains. The metadata key rotates by ratchet epoch, and both layers use AES-256-GCM-SIV to limit the consequences of nonce reuse (\cref{lem:two-layer}).
 \end{enumerate}
+
+\noindent\textbf{Validation contribution (V1).} The three method-level
+contributions are evaluated through reduction-style arguments, reduced symbolic
+models, executable checks of parsing, ratchet atomicity, replay handling and
+sealed-state persistence, and measurements of the two-party implementation.
 
 \begin{table}[H]
 \centering
-\caption{Contribution-to-evidence map for the two-party Aura Protocol scope.}
+\caption{Claim-to-evidence map for the two-party Aura Protocol scope.}
 \label{tab:contribution-map}
 \footnotesize
 \setlength{\tabcolsep}{2pt}
@@ -295,10 +300,10 @@ contributions:
 \toprule
 ID & Research claim & Main evidence in this paper \\
 \midrule
-N1 & Directed hybrid ratcheting can refresh DH and KEM material beyond the initial handshake. & PCS claim (\cref{thm:pcs}), ratchet algorithm (\cref{alg:send-ratchet}), ratchet benchmarks (\cref{tab:bench-core,tab:bench-overhead}). \\
+N1 & A direction-triggered X25519/ML-KEM state transition yields distinct local and two-endpoint PCS recovery conditions. & PCS claim (\cref{thm:pcs}), ratchet algorithm (\cref{alg:send-ratchet}), ratchet benchmarks (\cref{tab:bench-core,tab:bench-overhead}). \\
 N2 & HKDF-info binding makes KEM public-key substitution a state mismatch rather than a silent downgrade. & Augmented-binding lemma (\cref{lem:augmented-hkdf}), manipulation traces (\cref{tab:kem-binding-traces}), tamper/rejection validation. \\
-N3 & Metadata and payload protection can be separated without merging their key domains. & Two-layer AEAD lemma (\cref{lem:two-layer}), metadata taxonomy (\cref{tab:metadata-boundary}), envelope processing tests. \\
-N4 & The implemented state machine preserves the protocol's rejection, replay, persistence, and cost assumptions. & Verification-scope table (\cref{tab:verification-scope}), validation map (\cref{tab:test-proof-mapping}), operational invariants (\cref{sec:operational-invariants}), and benchmark results. \\
+N3 & Ratchet-scoped metadata keys separate envelope metadata from per-message payload protection. & Two-layer AEAD lemma (\cref{lem:two-layer}), metadata taxonomy (\cref{tab:metadata-boundary}), envelope processing tests. \\
+V1 & The implemented state machine preserves the protocol's rejection, replay, persistence, and cost assumptions. & Verification-scope table (\cref{tab:verification-scope}), validation map (\cref{tab:test-proof-mapping}), operational invariants (\cref{sec:operational-invariants}), and benchmark results. \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -1934,14 +1939,16 @@ Formalized PQ-PCS delay & No & SCKA epoch analysis & Published PQ3 analysis & \t
 \end{tabularx}
 \end{table}
 
-The comparison identifies Aura Protocol's specific design role. Signal \SPQR{} provides
-the closest Signal-family baseline for sparse post-quantum state evolution,
-whereas Apple \PQThree{} represents a deployed industrial design with periodic
-in-band rekeying. Aura Protocol uses a directed-ratchet construction in which
-fresh KEM material enters the channel state at ratchet
-boundaries, the advertised KEM public key is bound into the transcript without
-an extra signature, and metadata has its own rotating key. The implementation
-and formal models make this construction independently inspectable.
+The comparison identifies Aura Protocol's specific design role. The claimed
+novelty is construction-level, not the use of ML-KEM in messaging by itself.
+Signal \SPQR{} provides the closest Signal-family baseline for sparse
+post-quantum state evolution, whereas Apple \PQThree{} represents a deployed
+industrial design with periodic in-band rekeying. Within this landscape, Aura
+Protocol jointly analyzes a direction-triggered X25519/ML-KEM transition,
+HKDF binding of each advertised KEM key, rotating metadata keys, and an explicit
+local-versus-two-endpoint PCS boundary in one open state machine. The
+implementation and formal models make that construction independently
+inspectable.
 
 \subsection{Ratcheting Strategy}
 
@@ -2102,7 +2109,7 @@ implementation paths exercised by the validation suite.
 
 \subsection{Limitations}
 
-\begin{table}[tbp]
+\begin{table}[H]
 \centering
 \caption{Ranked limitations and deployment effect.}
 \label{tab:limitations}
@@ -2127,16 +2134,16 @@ Medium & Symbolic-model abstraction. & Tamarin and ProVerif support scoped claim
 % ═════════════════════════════════════════════════════════════
 \section{Conclusion}\label{sec:conclusion}
 
-Aura Protocol shows that post-quantum confidentiality can be incorporated into
-the continuing state evolution of a two-party secure-messaging protocol without
-treating the KEM as a one-time handshake add-on. The construction refreshes
-ML-KEM material at directed ratchet boundaries, binds each advertised KEM public
-key into the HKDF transcript, separates payload and envelope-metadata keys, and
-uses nonce-misuse-resistant AEAD for both message layers. The analysis identifies
-different recovery points for local and two-endpoint compromise. Local recovery
-obtains a fresh classical contribution at the next honest transition. Hybrid
-recovery requires a later transition that uses peer DH and KEM material created
-after the compromise.
+Aura Protocol contributes a directed hybrid-ratchet state-transition method for
+continuing post-quantum confidentiality in a two-party secure-messaging channel.
+The construction-level novelty lies in coupling each direction change to
+X25519/ML-KEM renewal, binding the advertised KEM public key into the derived
+state, and stating separate recovery conditions for local and two-endpoint
+compromise. Local recovery obtains a fresh classical contribution at the next
+honest transition. Hybrid recovery requires a later transition that uses peer
+DH and KEM material created after the compromise. The method also rotates a
+separate metadata key per ratchet epoch and uses nonce-misuse-resistant AEAD for
+metadata and payload.
 
 Six reduction-style arguments state the computational assumptions behind the
 construction. Ten Tamarin lemmas, three primary ProVerif queries, and one scoped
