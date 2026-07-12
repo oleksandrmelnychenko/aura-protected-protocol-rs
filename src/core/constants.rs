@@ -186,8 +186,9 @@ pub const OTK_EXHAUSTION_WARNING_PERCENT: u32 = 10;
 pub const SHIELD_MAX_MESSAGES_PER_EPOCH: u32 = 1_000;
 pub const SHIELD_MAX_SKIPPED_KEYS_PER_SENDER: u32 = 4;
 /// Per-sender skipped-generation budget for the default messaging tier
-/// (`GroupSecurityPolicy::standard()`, used by 1:1 / direct e2e chats). High
-/// enough to ride out an offline burst or a handful of dropped / reordered
+/// (`GroupSecurityPolicy::standard()`, used by 1:1 / direct e2e chats).
+///
+/// High enough to ride out an offline burst or a handful of dropped / reordered
 /// delivery events without the receive chain walling on "Too many skipped
 /// generations". Must stay `<= MAX_SKIPPED_SENDER_KEYS_PER_SENDER`; retained
 /// out-of-order keys remain bounded by the total cache `MAX_SKIPPED_SENDER_KEYS`.
@@ -269,6 +270,11 @@ pub const ATTACHMENT_FILE_KEY_BYTES: usize = 32;
 pub const ATTACHMENT_HASH_BYTES: usize = 32;
 pub const MAX_ATTACHMENT_MANIFEST_SIZE: usize = 16 * 1024;
 pub const MAX_ATTACHMENT_CHUNK_SIZE: usize = 1024 * 1024;
+const _: () = assert!(MAX_BUFFER_SIZE / 4 <= u32::MAX as usize);
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "the adjacent compile-time assertion proves this protocol bound fits u32"
+)]
 pub const MAX_ATTACHMENT_CHUNK_COUNT: u32 = (MAX_BUFFER_SIZE / 4) as u32;
 pub const MAX_ATTACHMENT_ENCRYPTED_FILE_KEY_SIZE: usize = 8 * 1024;
 pub const ATTACHMENT_NONCE_INFO: &[u8] = b"Aura-Attachment-Nonce";

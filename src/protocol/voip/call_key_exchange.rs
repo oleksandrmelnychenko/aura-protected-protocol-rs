@@ -110,9 +110,9 @@ fn append_call_init_auth_context(message: &mut Vec<u8>, context: &CallInitAuthCo
 fn append_screen_share_signature_context(
     message: &mut Vec<u8>,
     screen_share: Option<&ScreenShareMetadata>,
-) {
+) -> Result<(), ProtocolError> {
     let Some(meta) = screen_share else {
-        return;
+        return Ok(());
     };
 
     message.extend_from_slice(b"Aura-VoIP-ScreenShare-v1");
@@ -122,11 +122,14 @@ fn append_screen_share_signature_context(
     match meta.codec_hint.as_deref() {
         Some(hint) => {
             message.push(1);
-            message.extend_from_slice(&(hint.len() as u32).to_le_bytes());
+            let hint_len = u32::try_from(hint.len())
+                .map_err(|_| ProtocolError::voip_call("screen-share codec hint too long"))?;
+            message.extend_from_slice(&hint_len.to_le_bytes());
             message.extend_from_slice(hint.as_bytes());
         }
         None => message.push(0),
     }
+    Ok(())
 }
 
 fn sign_call_material_with_context(
@@ -150,7 +153,7 @@ fn sign_call_material_with_context(
         Vec::with_capacity(call_id.len() + eph_x25519_public.len() + kyber_ct.len() + 17);
     append_call_material_message(&mut message, call_id, eph_x25519_public, kyber_ct);
     append_call_init_auth_context(&mut message, context);
-    append_screen_share_signature_context(&mut message, screen_share);
+    append_screen_share_signature_context(&mut message, screen_share)?;
 
     let sig = signing_key.sign(&message);
     Ok(sig.to_bytes().to_vec())
@@ -187,7 +190,7 @@ fn verify_call_signature_with_context(
         Vec::with_capacity(call_id.len() + eph_x25519_public.len() + kyber_ct.len() + 17);
     append_call_material_message(&mut message, call_id, eph_x25519_public, kyber_ct);
     append_call_init_auth_context(&mut message, context);
-    append_screen_share_signature_context(&mut message, screen_share);
+    append_screen_share_signature_context(&mut message, screen_share)?;
 
     verifying_key
         .verify_strict(&message, &sig)

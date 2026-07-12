@@ -371,7 +371,7 @@ impl HandshakeInitiator {
     }
 
     fn start_with_time_provider_inner(
-        identity_keys: &mut IdentityKeys,
+        identity_keys: &IdentityKeys,
         peer_bundle: &PreKeyBundle,
         max_messages_per_chain: u32,
         time_provider: Arc<dyn ITimeProvider>,
@@ -473,12 +473,19 @@ impl HandshakeInitiator {
             CryptoInterop::secure_wipe(&mut eph_private);
         })?;
 
-        let (kyber_ciphertext, kyber_ss_handle) = match kyber_encapsulation_seed {
+        let (kyber_ciphertext, kyber_ss_handle) = {
             #[cfg(feature = "test-vectors")]
-            Some(seed) => KyberInterop::encapsulate_from_seed(&peer_bundle.kyber_public, seed),
+            {
+                kyber_encapsulation_seed.map_or_else(
+                    || KyberInterop::encapsulate(&peer_bundle.kyber_public),
+                    |seed| KyberInterop::encapsulate_from_seed(&peer_bundle.kyber_public, seed),
+                )
+            }
             #[cfg(not(feature = "test-vectors"))]
-            Some(_) => unreachable!("test-vector KEM seed is unavailable without test-vectors"),
-            None => KyberInterop::encapsulate(&peer_bundle.kyber_public),
+            {
+                let _ = kyber_encapsulation_seed;
+                KyberInterop::encapsulate(&peer_bundle.kyber_public)
+            }
         }
         .map_err(|e| {
             CryptoInterop::secure_wipe(&mut identity_private);

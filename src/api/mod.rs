@@ -717,7 +717,7 @@ impl AuraProtocol {
         let session = GroupSession::create_with_policy_and_time_provider(
             &self.identity,
             credential,
-            GroupSecurityPolicy::shield(),
+            GroupSecurityPolicy::standard(),
             self.time_provider.clone(),
         )?;
         Ok(AuraGroupSession(session))
@@ -885,7 +885,7 @@ pub struct AuraVoipCallOptions {
 
 impl AuraVoipCallOptions {
     #[must_use]
-    pub fn audio(
+    pub const fn audio(
         shield_mode: bool,
         ratchet_interval_frames: u32,
         pq_rekey_interval_secs: u32,
@@ -1337,7 +1337,6 @@ impl AuraCallInitiator {
         )?;
         let screen_share_meta = call_accept
             .screen_share
-            .clone()
             .or_else(|| self.screen_share_meta.clone());
         let session = VoipSession::from_key_material_with_time_provider_and_screen_share(
             self.call_id,
@@ -1705,6 +1704,13 @@ impl AuraGroupSession {
         self.0.decrypt(message_bytes)
     }
 
+    pub fn decrypt_open_sealed(
+        &self,
+        message_bytes: &[u8],
+    ) -> Result<group::GroupDecryptResult, ProtocolError> {
+        self.0.decrypt_open_sealed(message_bytes)
+    }
+
     pub fn group_id(&self) -> Result<Vec<u8>, ProtocolError> {
         self.0.group_id()
     }
@@ -1763,6 +1769,16 @@ impl AuraGroupSession {
         ttl_seconds: u32,
     ) -> Result<Vec<u8>, ProtocolError> {
         self.0.encrypt_disappearing(plaintext, ttl_seconds)
+    }
+
+    pub fn encrypt_sealed_disappearing(
+        &self,
+        plaintext: &[u8],
+        hint: &[u8],
+        ttl_seconds: u32,
+    ) -> Result<Vec<u8>, ProtocolError> {
+        self.0
+            .encrypt_sealed_disappearing(plaintext, hint, ttl_seconds)
     }
 
     pub fn encrypt_frankable(&self, plaintext: &[u8]) -> Result<Vec<u8>, ProtocolError> {
@@ -1936,6 +1952,12 @@ impl AuraGroupSession {
 
     pub fn is_shielded(&self) -> Result<bool, ProtocolError> {
         self.0.is_shielded()
+    }
+
+    pub fn security_tier(&self) -> Result<group::GroupSecurityTier, ProtocolError> {
+        self.0
+            .security_policy()
+            .map(|policy| policy.security_tier())
     }
 
     pub fn security_policy(&self) -> Result<GroupSecurityPolicy, ProtocolError> {

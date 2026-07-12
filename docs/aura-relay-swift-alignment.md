@@ -31,7 +31,7 @@
 Для групового ingress рекомендований і узгоджений шлях:
 
 - `validate_crypto_envelope(...)`
-- `validate_commit_for_relay_strict(...)` і `validate_group_message_for_relay_strict(...)` (з обов'язковим sender identity binding з auth-контексту)
+- `validate_commit_for_relay_strict(...)`, `validate_welcome_for_relay_strict(...)` і `validate_group_message_for_relay_strict(...)` (з обов'язковим sender/committer identity binding з auth-контексту)
 
 `*_strict`-виклики обов'язково біндять sender identity до автентифікованого transport/session контексту, а не до незахищених полів payload.
 

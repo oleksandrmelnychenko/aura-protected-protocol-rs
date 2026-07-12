@@ -143,6 +143,8 @@ mod inner {
             if slot_count == 0 {
                 return Err(CryptoError::AllocationFailed { size: slot_size });
             }
+            let slot_count_u32 = u32::try_from(slot_count)
+                .map_err(|_| CryptoError::AllocationFailed { size: slot_size })?;
             let total = slot_size
                 .checked_mul(slot_count)
                 .ok_or(CryptoError::AllocationFailed { size: slot_size })?;
@@ -154,12 +156,12 @@ mod inner {
             #[cfg(target_os = "linux")]
             unsafe {
                 libc::madvise(
-                    slots.as_ptr() as *mut libc::c_void,
+                    slots.as_ptr().cast_mut().cast::<libc::c_void>(),
                     slots.len(),
                     libc::MADV_DONTDUMP,
                 );
             }
-            let free_list = (0..slot_count as u32).rev().collect();
+            let free_list = (0..slot_count_u32).rev().collect();
             Ok(Self {
                 slot_size,
                 slots,
@@ -174,13 +176,16 @@ mod inner {
                 .expect("secure pool free-list poisoned");
             let idx = fl.pop()?;
             let off = (idx as usize) * self.slot_size;
-            unsafe { NonNull::new((self.slots.as_ptr() as *mut u8).add(off)) }
+            unsafe { NonNull::new(self.slots.as_ptr().cast_mut().add(off)) }
         }
 
         fn push(&self, ptr: NonNull<u8>) {
             let off = (ptr.as_ptr() as usize) - (self.slots.as_ptr() as usize);
             debug_assert!(off + self.slot_size <= self.slots.len());
-            let idx = (off / self.slot_size) as u32;
+            let Ok(idx) = u32::try_from(off / self.slot_size) else {
+                debug_assert!(false, "secure pool slot index exceeds u32");
+                return;
+            };
             unsafe {
                 std::ptr::write_bytes(ptr.as_ptr(), 0, self.slot_size);
             }
@@ -274,15 +279,15 @@ mod inner {
             })
         }
 
-        pub fn size(&self) -> usize {
+        pub const fn size(&self) -> usize {
             self.len
         }
 
-        fn as_slice(&self) -> &[u8] {
+        const fn as_slice(&self) -> &[u8] {
             unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
         }
 
-        fn as_slice_mut(&mut self) -> &mut [u8] {
+        const fn as_slice_mut(&mut self) -> &mut [u8] {
             unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
         }
 
@@ -384,7 +389,7 @@ mod tests {
         for _ in 0..10_000 {
             handles.push(SecureMemoryHandle::allocate(32).unwrap());
         }
-        // drop all
+        assert_eq!(handles.len(), 10_000);
     }
 
     #[test]

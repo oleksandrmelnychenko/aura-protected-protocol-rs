@@ -32,7 +32,7 @@ fn append_len_prefixed(out: &mut Vec<u8>, bytes: &[u8]) {
     out.extend_from_slice(bytes);
 }
 
-fn welcome_signature_input(welcome: &GroupWelcome) -> Result<Vec<u8>, ProtocolError> {
+pub(crate) fn welcome_signature_input(welcome: &GroupWelcome) -> Result<Vec<u8>, ProtocolError> {
     let mut encrypted_joiner_bytes = Vec::new();
     if let Some(encrypted_joiner) = &welcome.encrypted_joiner_secret {
         encrypted_joiner

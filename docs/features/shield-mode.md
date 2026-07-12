@@ -1,215 +1,130 @@
-# Shield Mode (Захищений режим групи)
+# Shield Mode (версійований захищений профіль групи)
 
-## Концепція
+## Що реально гарантує Shield V1
 
-Shield Mode — посилений режим безпеки для групових сесій, де **policy криптографічно прив'язана до group context hash**. Зміна хоча б одного біта policy ламає всі HKDF-деривації — ключі, MAC, confirmation — все стає невалідним. Це не конфігурація "на честь", а enforcement на рівні криптографії.
+Shield V1 — це стабільний профіль `GroupSecurityPolicy`, прив'язаний до
+криптографічного group context. Клієнт може чесно показувати назву Shield V1
+лише тоді, коли policy точно відповідає цьому versioned preset:
 
-**Маркетинг**: "Cryptographic policy enforcement — не перевірки на рівні коду, а прив'язка до key schedule"
+| Контроль | Shield V1 |
+|---|---:|
+| `max_messages_per_epoch` | 1 000 |
+| `max_skipped_keys_per_sender` | 4 |
+| `block_external_join` | `true` |
+| `enhanced_key_schedule` | `true` |
+| `mandatory_franking` | `true` |
 
-## Криптографічний дизайн
+`GroupSecurityTier` має три стабільні значення:
 
-```
-Creator                              Member
-    │                                    │
-    │  create_with_policy(policy)        │
-    │  ────────────────────────────►    │
-    │                                    │
-    │  group_context_hash = SHA-256(     │
-    │    group_id ‖ epoch ‖              │
-    │    tree_hash ‖ policy_bytes        │  ← policy прив'язана
-    │  )                                 │
-    │                                    │
-    │  epoch_keys = double_KDF(          │
-    │    init_secret,                    │
-    │    commit_secret,                  │
-    │    group_context_hash              │  ← KDF залежить від policy
-    │  )                                 │
-    │                                    │
-    │  chain_key = BLAKE2b(              │
-    │    HKDF(chain_key, info)           │  ← додатковий хеш-шар
-    │  )                                 │
-    │                                    │
-    │  Welcome { policy_bytes, MAC }  ──►│  process_welcome():
-    │                                    │  verify MAC → policy consensus
-    │                                    │  validate(policy) → bounds check
-```
+- `Standard` — стандартний приватний E2E-профіль із delivery-tolerant вікном у
+  1 000 пропущених ключів;
+- `ShieldV1` — строгий профіль вище;
+- `Custom` — валідна policy, яка не відповідає іменованому профілю.
 
-### П'ять прапорців policy
+Майбутній Shield V2 має отримати окремий enum/preset. Значення Shield V1 не
+можна тихо перевизначити в новій версії бібліотеки.
 
-| Прапорець | Що робить | Де enforcement |
-|-----------|-----------|----------------|
-| `enhanced_key_schedule` | Double-KDF (два HKDF-Expand проходи з різними info) | `derive_sub_key()` в key_schedule.rs |
-| `enhanced` (chain) | BLAKE2b поверх HKDF-derived chain key | `next_message_key()` в sender_key.rs |
-| `mandatory_franking` | Force `frankable = true` для всіх повідомлень | `encrypt_with_policy()` override в mod.rs |
-| `block_external_join` | Відмова на вході в `from_external_join()` | Перевірка перед TreeKEM processing |
-| `max_messages_per_epoch` | Ліміт повідомлень до обов'язкової epoch rotation | Подвійна перевірка: GroupSession + SenderKeyChain |
+## Криптографічне зв'язування policy
 
-### Double-KDF (enhanced key schedule)
+Серіалізовані `policy_bytes` входять до group context hash:
 
-```
-Звичайний:  epoch_secret →─ HKDF-Expand(info) ─→ sub_key
-
-Enhanced:   epoch_secret →─ HKDF-Expand(info ‖ "Aura-Enhanced-Pass1") ─→ intermediate
-            intermediate →─ HKDF-Expand(info ‖ "Aura-Enhanced-Pass2") ─→ sub_key
+```text
+SHA-256(
+  len(group_id) || group_id ||
+  epoch ||
+  len(tree_hash) || tree_hash ||
+  len(policy_bytes) || policy_bytes
+)
 ```
 
-Компрометація одного HKDF-виклику не дає ключ — потрібно зламати обидва проходи з різними info strings.
+Цей hash використовується key schedule і confirmation MAC. Тому учасник з
+іншою policy не може непомітно застосувати той самий Commit або Welcome.
+Policy також зберігається у sealed state і переноситься у Welcome.
 
-### BLAKE2b chain ratchet
+## Standard проти Shield V1
 
-```
-Звичайний:  chain_key →─ HKDF-Expand("chain") ─→ next_chain_key
+| Властивість | Standard | Shield V1 |
+|---|---:|---:|
+| Enhanced key schedule | так | так |
+| Mandatory franking | так | так |
+| External join blocked | так | так |
+| Max messages / epoch | 1 000 | 1 000 |
+| Max skipped keys / sender | 1 000 | 4 |
+| `is_shielded()` | `false` | `true` |
 
-Enhanced:   chain_key →─ HKDF-Expand("chain") ─→ tmp
-            tmp →─ BLAKE2b("Aura-B2Chain", tmp) ─→ next_chain_key
-            secure_wipe(tmp)
-```
+Обидва профілі залишаються сильним E2E. Різниця V1 навмисно полягає у строгій
+межі пропущених sender keys і окремій версованій класифікації, яку host може
+використати для Shield-specific message format та UX.
 
-Два різних криптографічних примітиви в ланцюжку — компрометація HKDF не дає ключі без BLAKE2b.
+## Sealed messages
 
-### Mandatory franking
+`encrypt_sealed()` створює вкладений encrypted payload, ключ якого виводиться
+з per-message key. Одержувач, який уже має право розшифрувати групове
+повідомлення, також може відкрити sealed payload. Отже це:
 
-При `mandatory_franking = true`:
-- `encrypt()` автоматично додає franking tag (навіть якщо caller не запитував)
-- `decrypt()` перевіряє наявність franking tag для повідомлень з franking_key
-- Модератор/relay може верифікувати автентичність повідомлення через `verify_franking()`
+- корисний окремий wire/content type;
+- не додатковий ACL між членами групи;
+- не приховування автора;
+- не traffic-analysis resistance.
 
-### Reduced skip window
+Низькорівневий Rust API залишає вибір `encrypt()` / `encrypt_sealed()` host-у;
+для disappearing Shield-повідомлень доступний окремий
+`encrypt_sealed_disappearing()` primitive.
+Клієнт, що заявляє Shield-specific sealed delivery, повинен використовувати
+sealed API і мати round-trip тест на реальному receive path.
 
-Shield Mode зменшує вікно пропущених ключів з 32 до 4 per sender. Це обмежує можливість flood-атаки через skipped key cache.
+## Що Shield V1 не приховує
 
-| Параметр | Default | Shield |
-|----------|---------|--------|
-| `max_messages_per_epoch` | 100,000 | 1,000 |
-| `max_skipped_keys_per_sender` | 32 | 4 |
-| `max_skipped_total` (store) | 256 | 256 |
+Shield V1 не шифрує від сервісу:
 
-## Policy immutability
+- roster та ролі учасників;
+- назву, опис і avatar групи;
+- sender/device identifiers у транспортному контурі;
+- timestamps, message sizes та traffic shape;
+- факт вступу, виходу чи видалення учасника.
 
-Policy встановлюється при створенні групи і **ніколи не змінюється**:
-- Передається як `&GroupSecurityPolicy` reference (не `&mut`)
-- Зберігається в `GroupSessionInner.security_policy`
-- Commit processing бере policy з локального стану, не з commit message
-- Policy consensus забезпечується через confirmation MAC:
-  - `group_context_hash` включає `policy_bytes`
-  - `confirmation_mac = HMAC(confirmation_key, group_context_hash)`
-  - Якщо хтось має іншу policy → MAC не сходиться → commit відкидається
+Такі гарантії потребують окремого encrypted-metadata протоколу та padding/
+batching/mix-network дизайну. Їх не можна приписувати Shield V1.
 
-## Валідація
+## Delivery gap і recovery
 
-Policy валідується при:
-- Створенні групи (`create_with_policy`)
-- Десеріалізації з Welcome (`from_welcome`)
-- Десеріалізації зі стану (`from_sealed_state`)
-- Зовнішньому join (`from_external_join`)
+Вікно `4` захищає від неконтрольованого skipped-key cache, але робить Shield V1
+чутливим до offline burst або втрати понад чотирьох послідовних повідомлень.
+Протокол повертає помилку замість необмеженого просування ratchet. Host повинен
+fail closed і виконати контрольований epoch update/rejoin/recovery flow; не
+можна мовчки скидати криптографічний стан або трактувати ciphertext як втрачений
+plaintext.
 
-Обмеження:
-- `max_messages_per_epoch`: 10 — 100,000
-- `max_skipped_keys_per_sender`: 1 — 32
-
-## Властивості безпеки
-
-| Властивість | Гарантія |
-|-------------|----------|
-| **Policy binding** | SHA-256(policy_bytes) в group_context_hash → впливає на всі ключі |
-| **Consensus** | Confirmation MAC верифікує що всі члени мають однакову policy |
-| **Immutability** | Policy не мутується після створення; commit не несе policy на wire |
-| **Double-KDF** | Два HKDF-проходи з різними info — компрометація одного не дає ключ |
-| **BLAKE2b chain** | Другий криптографічний примітив у chain ratchet |
-| **Forced rotation** | `max_messages_per_epoch` обмежує час життя sender keys |
-| **Anti-flood** | Зменшене skip window запобігає cache flood через skipped keys |
-| **Mandatory franking** | Всі повідомлення автентифіковані для модерації |
-| **External join block** | Запобігає незапрошеному вступу до групи |
-
-## API
-
-### Rust
+## Rust API
 
 ```rust
-// Створити shielded групу (preset з усіма захистами)
-let session = proto.create_shielded_group(b"credential".to_vec())?;
+use aura_protected_protocol::protocol::{GroupSecurityTier, GroupSecurityPolicy};
 
-// Або custom policy
-let policy = GroupSecurityPolicy {
-    max_messages_per_epoch: 500,
-    max_skipped_keys_per_sender: 2,
-    block_external_join: true,
-    enhanced_key_schedule: true,
-    mandatory_franking: true,
-};
-let session = proto.create_group_with_policy(b"credential".to_vec(), policy)?;
+let standard = proto.create_group(b"credential".to_vec())?;
+assert_eq!(standard.security_tier()?, GroupSecurityTier::Standard);
+assert!(!standard.is_shielded()?);
 
-// Перевірити стан
-assert!(session.is_shielded()?);
+let shield = proto.create_shielded_group(b"credential".to_vec())?;
+assert_eq!(shield.security_tier()?, GroupSecurityTier::ShieldV1);
+assert!(shield.is_shielded()?);
 
-// Отримати деталі policy
-let p = session.security_policy()?;
-assert_eq!(p.max_messages_per_epoch, 500);
-assert!(p.mandatory_franking);
-
-// Шифрування працює як звичайно — enforcement прозорий
-let ct = session.encrypt(b"message")?;
-
-// Epoch rotation обов'язкова після ліміту
-for _ in 0..500 {
-    session.encrypt(b"msg")?;
-}
-// Наступний encrypt → Err("Epoch rotation required")
-let _ = session.update()?; // epoch rotation
-session.encrypt(b"continues")?; // OK
+let mut stricter = GroupSecurityPolicy::shield();
+stricter.max_messages_per_epoch = 500;
+stricter.max_skipped_keys_per_sender = 2;
+assert_eq!(stricter.security_tier(), GroupSecurityTier::Custom);
+assert!(!stricter.is_shielded());
 ```
 
-### C FFI
+## C FFI
 
 ```c
-// Shielded (preset)
 AuraGroupSessionHandle* group = NULL;
 aura_group_create_shielded(identity, cred, cred_len, &group, &err);
 
-// Custom policy
-AuraGroupSecurityPolicy policy = {
-    .max_messages_per_epoch = 500,
-    .max_skipped_keys_per_sender = 2,
-    .block_external_join = 1,
-    .enhanced_key_schedule = 1,
-    .mandatory_franking = 1,
-};
-aura_group_create_with_policy(identity, cred, cred_len, &policy, &group, &err);
-
-// Query
-uint8_t shielded = 0;
-aura_group_is_shielded(group, &shielded, &err);
-
-AuraGroupSecurityPolicy out_policy = {0};
-aura_group_get_security_policy(group, &out_policy, &err);
-printf("max messages: %u\n", out_policy.max_messages_per_epoch);
+AuraGroupSecurityTier tier = AURA_GROUP_SECURITY_TIER_CUSTOM;
+aura_group_get_security_tier(group, &tier, &err);
+assert(tier == AURA_GROUP_SECURITY_TIER_SHIELD_V1);
 ```
 
-## Комбінація з іншими фічами
-
-Shield Mode сумісний з усіма типами повідомлень:
-
-```rust
-// Disappearing + Shield → franking автоматично додається
-session.encrypt_disappearing(b"secret", 3600)?;
-
-// Sealed + Shield → inner content remains hidden until reveal
-session.encrypt_sealed(b"sealed", b"hint")?;
-
-// Frankable + Shield → mandatory franking вже увімкнений, explicit frankable = no-op
-session.encrypt_frankable(b"reportable")?;
-
-// Edit/Delete + Shield → працює, referenced_message_id зберігається
-session.encrypt_edit(b"edited", &message_id)?;
-```
-
-## Default vs Shield
-
-| | Default (`GroupSecurityPolicy::default()`) | Shield (`GroupSecurityPolicy::shield()`) |
-|---|---|---|
-| `enhanced_key_schedule` | `false` | `true` |
-| `mandatory_franking` | `false` | `true` |
-| `block_external_join` | `false` | `true` |
-| `max_messages_per_epoch` | 0 → effective 100,000 | 1,000 |
-| `max_skipped_keys_per_sender` | 0 → effective 32 | 4 |
-| Backward compatible | Так — пуста policy = існуюча поведінка | Ні — вимагає всіх учасників на новій версії |
+`aura_group_is_shielded()` збережено як сумісний helper, але для нової логіки
+краще використовувати `aura_group_get_security_tier()`.

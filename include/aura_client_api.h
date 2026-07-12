@@ -91,13 +91,15 @@ typedef struct AuraSessionConfig {
  *
  *   max_messages_per_epoch
  *     Hard cap on sender-key messages before a mandatory Update commit is
- *     required. aura_group_create() uses the Shield preset (1000/4). For
+ *     required. aura_group_create() uses the Standard preset (1000/1000);
+ *     aura_group_create_shielded() uses Shield V1 (1000/4). For
  *     custom policies, 0 maps to the hard sender-key generation cap (100000).
  *
  *   max_skipped_keys_per_sender
  *     Maximum number of out-of-order message keys cached per sender.
  *     Prevents memory exhaustion from artificially skipped messages.
- *     0 = library default (32).
+ *     0 maps to the hard per-sender ceiling (1024). Named Standard and Shield
+ *     presets always encode explicit values (1000 and 4 respectively).
  *
  *   block_external_join
  *     Non-zero: reject ExternalInit commits from outside the group.
@@ -120,6 +122,17 @@ typedef struct AuraGroupSecurityPolicy {
     uint8_t  enhanced_key_schedule;
     uint8_t  mandatory_franking;
 } AuraGroupSecurityPolicy;
+
+/*
+ * Stable, versioned classification of the policy bytes bound into the group
+ * context hash. Future Shield revisions receive a new enum value; they do not
+ * silently redefine AURA_GROUP_SECURITY_TIER_SHIELD_V1.
+ */
+typedef enum AuraGroupSecurityTier {
+    AURA_GROUP_SECURITY_TIER_CUSTOM = 0,
+    AURA_GROUP_SECURITY_TIER_STANDARD = 1,
+    AURA_GROUP_SECURITY_TIER_SHIELD_V1 = 2
+} AuraGroupSecurityTier;
 
 /*
  * aura_sealed_state_counter_tracker_* — managed anti-rollback helper for sealed
@@ -1081,6 +1094,25 @@ AURA_API AuraErrorCode aura_session_get_local_identity(
     AuraSessionHandle*        handle,
     AuraSessionPeerIdentity*  out_identity,
     AuraError*                out_error);
+
+/*
+ * aura_envelope_validate — validate an encrypted envelope without decrypting.
+ *
+ * Use this at an untrusted transport boundary before routing an envelope to a
+ * session. The function enforces the wire format and global size limit; it does
+ * not authenticate a peer or replace aura_session_decrypt().
+ *
+ * Parameters:
+ *   encrypted_envelope        — borrowed serialized envelope bytes.
+ *   encrypted_envelope_length — byte length of encrypted_envelope.
+ *   out_error                 — optional error detail.
+ *
+ * Returns: AURA_SUCCESS or a validation/decode error.
+ */
+AURA_API AuraErrorCode aura_envelope_validate(
+    const uint8_t* encrypted_envelope,
+    size_t         encrypted_envelope_length,
+    AuraError*     out_error);
 
 /*
  * aura_envelope_metadata_parse — parse the raw metadata buffer returned by
@@ -2377,7 +2409,8 @@ AURA_API AuraErrorCode aura_group_validate_key_package(
  * aura_group_create — create a new group as the sole initial member.
  *
  * The caller becomes leaf index 0.  Use aura_group_add_member() to invite
- * others.  Group uses the hardened shielded policy by default.
+ * others. Group uses the hardened Standard E2E policy by default. Use
+ * aura_group_create_shielded() for the stricter, versioned Shield V1 policy.
  *
  * Parameters:
  *   identity_handle — caller's long-term identity (not consumed).
@@ -2398,13 +2431,13 @@ AURA_API AuraErrorCode aura_group_create(
     AuraError*                out_error);
 
 /*
- * aura_group_create_shielded — create a new group with metadata shielding
- * enabled.
+ * aura_group_create_shielded — create a new group with the Shield V1 policy.
  *
- * Like aura_group_create() but enables enhanced sender-key padding and
- * traffic-analysis resistance features.  All members must support shielded
- * mode; mixing shielded and non-shielded clients in the same group is not
- * supported.
+ * Shield V1 is a strict, cryptographically bound policy profile: at most 1000
+ * messages per epoch, at most 4 skipped keys per sender, invited-only joins,
+ * the enhanced key schedule, and mandatory franking. It does NOT hide sender,
+ * roster, timing, message size, or other server-visible traffic metadata.
+ * All members must support the same bound policy.
  *
  * Parameters: same as aura_group_create().
  *
@@ -2418,7 +2451,7 @@ AURA_API AuraErrorCode aura_group_create_shielded(
     AuraError*                out_error);
 
 /*
- * aura_group_is_shielded — query whether the group has shielding enabled.
+ * aura_group_is_shielded — query whether the group satisfies Shield V1.
  *
  * Parameters:
  *   handle       — active group session handle.
@@ -2430,6 +2463,18 @@ AURA_API AuraErrorCode aura_group_create_shielded(
 AURA_API AuraErrorCode aura_group_is_shielded(
     AuraGroupSessionHandle*  handle,
     uint8_t*                out_shielded,
+    AuraError*               out_error);
+
+/*
+ * aura_group_get_security_tier — return the stable policy classification.
+ *
+ * Unlike a generic boolean, this API keeps future Shield revisions distinct.
+ * The result is derived from the immutable policy already bound into the group
+ * context hash and survives Welcome/state serialization round-trips.
+ */
+AURA_API AuraErrorCode aura_group_get_security_tier(
+    AuraGroupSessionHandle*  handle,
+    AuraGroupSecurityTier*   out_tier,
     AuraError*               out_error);
 
 /*
@@ -2670,7 +2715,9 @@ AURA_API AuraErrorCode aura_group_decrypt(
  * aura_group_decrypt_ex — decrypt a group message with full metadata.
  *
  * Populates an AuraGroupDecryptResult with plaintext, sender, generation,
- * content type, TTL, timestamps, message IDs, and feature flags.
+ * content type, TTL, timestamps, message IDs, and feature flags. For a sealed
+ * message this is the deferred-reveal form: plaintext is the outer hint and
+ * the authenticated nested payload fields are populated.
  * Must be freed with aura_group_decrypt_result_free() after use.
  *
  * Parameters:
@@ -2686,6 +2733,23 @@ AURA_API AuraErrorCode aura_group_decrypt(
  *          AURA_ERROR_MESSAGE_EXPIRED, or AURA_ERROR_GROUP_MEMBERSHIP.
  */
 AURA_API AuraErrorCode aura_group_decrypt_ex(
+    AuraGroupSessionHandle*  handle,
+    const uint8_t*          ciphertext,
+    size_t                  ciphertext_length,
+    AuraGroupDecryptResult*  out_result,
+    AuraError*               out_error);
+
+/*
+ * aura_group_decrypt_open_sealed_ex — client receive-path variant.
+ *
+ * Identical metadata contract to aura_group_decrypt_ex(), except a nested
+ * sealed payload is opened inside the protocol boundary. `plaintext` receives
+ * the actual inner content, `content_type` remains sealed, and no seal key is
+ * exported in AuraGroupDecryptResult. Use this for clients that must decode a
+ * Shield message immediately; keep aura_group_decrypt_ex() for explicit
+ * deferred-reveal workflows.
+ */
+AURA_API AuraErrorCode aura_group_decrypt_open_sealed_ex(
     AuraGroupSessionHandle*  handle,
     const uint8_t*          ciphertext,
     size_t                  ciphertext_length,
@@ -3090,8 +3154,8 @@ AURA_API AuraErrorCode aura_group_encrypt_sealed(
     AuraError*               out_error);
 
 /*
- * aura_group_encrypt_disappearing — encrypt a message with a server-enforced
- * time-to-live.
+ * aura_group_encrypt_disappearing — encrypt a message with an authenticated
+ * recipient-enforced time-to-live.
  *
  * The TTL and sent_timestamp are embedded in the authenticated plaintext.
  * aura_group_decrypt_ex() returns AURA_ERROR_MESSAGE_EXPIRED if the current
@@ -3113,6 +3177,25 @@ AURA_API AuraErrorCode aura_group_encrypt_disappearing(
     AuraGroupSessionHandle*  handle,
     const uint8_t*          plaintext,
     size_t                  plaintext_length,
+    uint32_t                ttl_seconds,
+    AuraBuffer*              out_ciphertext,
+    AuraError*               out_error);
+
+/*
+ * aura_group_encrypt_sealed_disappearing — combine authenticated TTL metadata
+ * with the nested sealed payload used by Shield V1.
+ *
+ * Decryption enforces sent_timestamp + ttl_seconds before returning content.
+ * The actual plaintext remains inside the per-message seal layer; `hint` is
+ * the only pre-open plaintext. Use aura_group_decrypt_open_sealed_ex() to open
+ * the nested payload inside the native boundary.
+ */
+AURA_API AuraErrorCode aura_group_encrypt_sealed_disappearing(
+    AuraGroupSessionHandle*  handle,
+    const uint8_t*          plaintext,
+    size_t                  plaintext_length,
+    const uint8_t*          hint,
+    size_t                  hint_length,
     uint32_t                ttl_seconds,
     AuraBuffer*              out_ciphertext,
     AuraError*               out_error);

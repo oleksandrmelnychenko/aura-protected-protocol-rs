@@ -14,7 +14,7 @@ use aura_protected_protocol::identity::IdentityKeys;
 use aura_protected_protocol::proto::{
     GroupCommit, GroupExternalJoinAuthorization, OneTimePreKey, PreKeyBundle,
 };
-use aura_protected_protocol::protocol::GroupSecurityPolicy;
+use aura_protected_protocol::protocol::{ContentType, GroupSecurityPolicy};
 use prost::Message;
 use std::sync::Once;
 
@@ -1227,6 +1227,31 @@ fn api_group_encrypt_sealed_roundtrip() {
 }
 
 #[test]
+fn api_group_decrypt_open_sealed_returns_inner_plaintext_without_seal_key() {
+    init();
+
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let bob_proto = AuraProtocol::new(5).unwrap();
+
+    let alice_group = alice_proto.create_group(b"alice".to_vec()).unwrap();
+    let (bob_kp, bob_x25519, bob_kyber) = bob_proto.generate_key_package(b"bob".to_vec()).unwrap();
+
+    let (_commit, welcome) = alice_group.add_member(&bob_kp).unwrap();
+    let bob_group = bob_proto
+        .join_group(&welcome, bob_x25519, bob_kyber)
+        .unwrap();
+
+    let ct = alice_group
+        .encrypt_sealed(b"secret content", b"hint")
+        .unwrap();
+    let result = bob_group.decrypt_open_sealed(&ct).unwrap();
+
+    assert_eq!(result.plaintext, b"secret content");
+    assert_eq!(result.content_type, ContentType::Sealed);
+    assert!(result.sealed_payload.is_none());
+}
+
+#[test]
 fn api_group_encrypt_frankable_roundtrip() {
     init();
 
@@ -1271,6 +1296,32 @@ fn api_group_encrypt_disappearing_roundtrip() {
         .unwrap();
     let result = bob_group.decrypt(&ct).unwrap();
     assert_eq!(result.plaintext, b"ephemeral");
+}
+
+#[test]
+fn api_group_encrypt_sealed_disappearing_roundtrip() {
+    init();
+
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let bob_proto = AuraProtocol::new(5).unwrap();
+    let alice_group = alice_proto
+        .create_shielded_group(b"alice".to_vec())
+        .unwrap();
+    let (bob_kp, bob_x25519, bob_kyber) = bob_proto.generate_key_package(b"bob".to_vec()).unwrap();
+    let (_commit, welcome) = alice_group.add_member(&bob_kp).unwrap();
+    let bob_group = bob_proto
+        .join_group(&welcome, bob_x25519, bob_kyber)
+        .unwrap();
+
+    let ciphertext = alice_group
+        .encrypt_sealed_disappearing(b"ephemeral shield", b"hint", 3_600)
+        .unwrap();
+    let result = bob_group.decrypt_open_sealed(&ciphertext).unwrap();
+
+    assert_eq!(result.plaintext, b"ephemeral shield");
+    assert_eq!(result.content_type, ContentType::SealedDisappearing);
+    assert_eq!(result.ttl_seconds, 3_600);
+    assert!(result.sealed_payload.is_none());
 }
 
 #[test]
@@ -1672,7 +1723,7 @@ fn shield_policy_bound_in_context_hash() {
     let default_policy = default_session.security_policy().unwrap();
     let shield_policy = shield_session.security_policy().unwrap();
 
-    assert_eq!(default_policy.policy_bytes(), shield_policy.policy_bytes());
+    assert_ne!(default_policy.policy_bytes(), shield_policy.policy_bytes());
 }
 
 #[test]
@@ -1755,17 +1806,22 @@ fn shield_mandatory_franking() {
 }
 
 #[test]
-fn default_policy_is_shielded() {
+fn default_and_shielded_group_have_distinct_security_tiers() {
     init();
     let proto = AuraProtocol::new(0).unwrap();
-    let session = proto.create_group(b"cred".to_vec()).unwrap();
-    assert!(session.is_shielded().unwrap());
+    let standard_session = proto.create_group(b"standard".to_vec()).unwrap();
+    let shielded_session = proto.create_shielded_group(b"shield-v1".to_vec()).unwrap();
 
-    let policy = session.security_policy().unwrap();
-    assert_eq!(policy.max_messages_per_epoch, 1_000);
-    assert!(policy.enhanced_key_schedule);
-    assert!(policy.mandatory_franking);
-    assert!(policy.block_external_join);
+    assert!(!standard_session.is_shielded().unwrap());
+    assert!(shielded_session.is_shielded().unwrap());
+
+    let standard_policy = standard_session.security_policy().unwrap();
+    let shielded_policy = shielded_session.security_policy().unwrap();
+    assert_ne!(
+        standard_policy.policy_bytes(),
+        shielded_policy.policy_bytes(),
+        "the cryptographically bound policy bytes must distinguish the tiers"
+    );
 }
 
 #[test]

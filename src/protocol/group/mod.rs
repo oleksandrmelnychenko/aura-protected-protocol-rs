@@ -133,7 +133,24 @@ impl SenderReplayWindow {
     }
 }
 
-#[derive(Clone, Debug)]
+/// Stable classification of a cryptographically bound group security policy.
+///
+/// The numeric values are also exposed through the C FFI.
+/// Future Shield revisions must add a new variant instead of silently changing
+/// the meaning of [`GroupSecurityTier::ShieldV1`].
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum GroupSecurityTier {
+    /// A valid caller-supplied policy that does not match a named preset.
+    Custom = 0,
+    /// The default E2E messaging policy with a delivery-tolerant skip window.
+    Standard = 1,
+    /// Shield V1: the exact versioned preset and its mandatory controls.
+    ShieldV1 = 2,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupSecurityPolicy {
     pub max_messages_per_epoch: u32,
     pub max_skipped_keys_per_sender: u32,
@@ -153,14 +170,10 @@ impl GroupSecurityPolicy {
         }
     }
 
-    /// Default messaging tier for 1:1 / direct e2e chats. Identical security
-    /// posture to `shield()` — enhanced key schedule, mandatory franking, no
-    /// external join, sealed at rest, so `is_shielded()` still holds — EXCEPT it
-    /// tolerates realistic message gaps: a peer may send a burst while this
-    /// device is offline, or a few delivery events may be dropped / reordered,
-    /// without the receive chain walling forever on "Too many skipped
-    /// generations". `shield()` keeps the tight skip budget of 4 only for opt-in
-    /// secret groups that accept rekey-on-gap.
+    /// Default messaging tier for direct and ordinary private E2E chats.  It
+    /// retains the enhanced key schedule, mandatory franking, and invited-only
+    /// membership posture, but tolerates realistic delivery gaps.  It is not
+    /// Shield V1 and must never be reported as such.
     pub const fn standard() -> Self {
         Self {
             max_messages_per_epoch: SHIELD_MAX_MESSAGES_PER_EPOCH,
@@ -171,8 +184,35 @@ impl GroupSecurityPolicy {
         }
     }
 
+    /// Classifies the immutable, context-bound policy into a stable named tier.
+    ///
+    /// Named tiers are exact, versioned presets. A valid policy with tighter or
+    /// looser numeric limits remains `Custom`; otherwise a future policy change
+    /// could silently alter the meaning of persisted `ShieldV1` state.
+    pub const fn security_tier(&self) -> GroupSecurityTier {
+        if self.max_messages_per_epoch == SHIELD_MAX_MESSAGES_PER_EPOCH
+            && self.max_skipped_keys_per_sender == SHIELD_MAX_SKIPPED_KEYS_PER_SENDER
+            && self.enhanced_key_schedule
+            && self.mandatory_franking
+            && self.block_external_join
+        {
+            GroupSecurityTier::ShieldV1
+        } else if self.max_messages_per_epoch == SHIELD_MAX_MESSAGES_PER_EPOCH
+            && self.max_skipped_keys_per_sender == STANDARD_MAX_SKIPPED_KEYS_PER_SENDER
+            && self.enhanced_key_schedule
+            && self.mandatory_franking
+            && self.block_external_join
+        {
+            GroupSecurityTier::Standard
+        } else {
+            GroupSecurityTier::Custom
+        }
+    }
+
+    /// Returns true only for policies satisfying the versioned Shield V1
+    /// contract.  This intentionally does not mean merely "hardened E2E".
     pub const fn is_shielded(&self) -> bool {
-        self.enhanced_key_schedule && self.mandatory_franking && self.block_external_join
+        matches!(self.security_tier(), GroupSecurityTier::ShieldV1)
     }
 
     pub fn policy_bytes(&self) -> Vec<u8> {
@@ -253,7 +293,7 @@ impl GroupSecurityPolicy {
 
 impl Default for GroupSecurityPolicy {
     fn default() -> Self {
-        Self::shield()
+        Self::standard()
     }
 }
 
@@ -323,18 +363,39 @@ pub enum ContentType {
 }
 
 impl ContentType {
-    const fn from_u32(v: u32) -> Self {
-        match v {
-            CONTENT_TYPE_SEALED => ContentType::Sealed,
-            CONTENT_TYPE_DISAPPEARING => ContentType::Disappearing,
-            CONTENT_TYPE_SEALED_DISAPPEARING => ContentType::SealedDisappearing,
-            CONTENT_TYPE_EDIT => ContentType::Edit,
-            CONTENT_TYPE_DELETE => ContentType::Delete,
-            CONTENT_TYPE_REACTION => ContentType::Reaction,
-            CONTENT_TYPE_READ_RECEIPT => ContentType::ReadReceipt,
-            CONTENT_TYPE_TYPING => ContentType::Typing,
-            _ => ContentType::Normal,
+    fn try_from_wire(v: i32) -> Result<Self, ProtocolError> {
+        let value = u32::try_from(v).map_err(|_| {
+            ProtocolError::invalid_input(format!("Unsupported group content_type {v}"))
+        })?;
+        match value {
+            CONTENT_TYPE_NORMAL => Ok(ContentType::Normal),
+            CONTENT_TYPE_SEALED => Ok(ContentType::Sealed),
+            CONTENT_TYPE_DISAPPEARING => Ok(ContentType::Disappearing),
+            CONTENT_TYPE_SEALED_DISAPPEARING => Ok(ContentType::SealedDisappearing),
+            CONTENT_TYPE_EDIT => Ok(ContentType::Edit),
+            CONTENT_TYPE_DELETE => Ok(ContentType::Delete),
+            CONTENT_TYPE_REACTION => Ok(ContentType::Reaction),
+            CONTENT_TYPE_READ_RECEIPT => Ok(ContentType::ReadReceipt),
+            CONTENT_TYPE_TYPING => Ok(ContentType::Typing),
+            _ => Err(ProtocolError::invalid_input(format!(
+                "Unsupported group content_type {v}"
+            ))),
         }
+    }
+
+    fn validate_ttl(self, ttl_seconds: u32) -> Result<(), ProtocolError> {
+        if self.is_disappearing() {
+            if ttl_seconds == 0 || ttl_seconds > MAX_TTL_SECONDS {
+                return Err(ProtocolError::invalid_input(format!(
+                    "Disappearing message TTL must be 1..{MAX_TTL_SECONDS}, got {ttl_seconds}"
+                )));
+            }
+        } else if ttl_seconds != 0 {
+            return Err(ProtocolError::invalid_input(format!(
+                "Non-disappearing message TTL must be 0, got {ttl_seconds}"
+            )));
+        }
+        Ok(())
     }
 
     pub const fn to_u32(self) -> u32 {
@@ -875,7 +936,7 @@ impl GroupSession {
         Self::create_with_policy_and_time_provider(
             identity,
             credential,
-            GroupSecurityPolicy::shield(),
+            GroupSecurityPolicy::standard(),
             Arc::new(SystemTimeProvider),
         )
     }
@@ -1180,12 +1241,9 @@ impl GroupSession {
             }
         };
 
-        let new_leaf_idx = match commit_output.added_leaf_indices.first().copied() {
-            Some(idx) => idx,
-            None => {
-                CryptoInterop::secure_wipe(&mut ed25519_sk);
-                return Err(ProtocolError::group_protocol("No leaf added"));
-            }
+        let Some(new_leaf_idx) = commit_output.added_leaf_indices.first().copied() else {
+            CryptoInterop::secure_wipe(&mut ed25519_sk);
+            return Err(ProtocolError::group_protocol("No leaf added"));
         };
 
         let welcome = welcome::create_welcome(
@@ -1999,6 +2057,28 @@ impl GroupSession {
         Ok((gpt, franking_tag))
     }
 
+    fn validate_sealed_payload_fields(
+        content_type: ContentType,
+        sealed_content: &[u8],
+        sealed_nonce: &[u8],
+    ) -> Result<(), ProtocolError> {
+        if !content_type.is_sealed() {
+            return Ok(());
+        }
+        if sealed_content.len() < AES_GCM_TAG_BYTES {
+            return Err(ProtocolError::invalid_input(format!(
+                "Sealed message encrypted content must contain at least the {AES_GCM_TAG_BYTES}-byte authentication tag"
+            )));
+        }
+        if sealed_nonce.len() != AES_GCM_NONCE_BYTES {
+            return Err(ProtocolError::invalid_input(format!(
+                "Sealed message nonce must be {AES_GCM_NONCE_BYTES} bytes, got {}",
+                sealed_nonce.len()
+            )));
+        }
+        Ok(())
+    }
+
     #[allow(clippy::type_complexity)]
     fn parse_group_plaintext(
         &self,
@@ -2020,12 +2100,14 @@ impl GroupSession {
     > {
         let policy = gpt.policy.as_ref();
         let content_type_raw = policy.map_or(0, |p| p.content_type);
-        #[allow(clippy::cast_sign_loss)]
-        let content_type = ContentType::from_u32(content_type_raw as u32);
+        let content_type = ContentType::try_from_wire(content_type_raw)?;
         let ttl_seconds = policy.map_or(0, |p| p.ttl_seconds);
         let sent_timestamp = policy.map_or(0, |p| p.sent_timestamp);
 
-        if content_type.is_disappearing() && ttl_seconds > 0 {
+        Self::validate_sealed_payload_fields(content_type, &gpt.sealed_content, &gpt.sealed_nonce)?;
+        content_type.validate_ttl(ttl_seconds)?;
+
+        if content_type.is_disappearing() {
             let now = now_unix_secs(self.time_provider.as_ref())?;
 
             if sent_timestamp > now.saturating_add(MAX_FUTURE_TIMESTAMP_SKEW_SECS) {
@@ -2272,6 +2354,7 @@ impl GroupSession {
             .lock()
             .map_err(|_| ProtocolError::invalid_state("GroupSession lock poisoned"))?;
         ensure_no_pending_reinit(&inner, "encrypt")?;
+        policy.content_type.validate_ttl(policy.ttl_seconds)?;
 
         if policy.content_type.is_edit() || policy.content_type.is_delete() {
             if policy.referenced_message_id.len() != MESSAGE_ID_BYTES {
@@ -2480,6 +2563,32 @@ impl GroupSession {
                 ..MessagePolicy::default()
             },
             None,
+        )
+    }
+
+    /// Encrypts a disappearing message while retaining the nested sealed
+    /// payload used by Shield V1. The TTL and sent timestamp are authenticated
+    /// by the outer group message, and the actual content remains behind the
+    /// per-message seal layer.
+    pub fn encrypt_sealed_disappearing(
+        &self,
+        plaintext: &[u8],
+        hint: &[u8],
+        ttl_seconds: u32,
+    ) -> Result<Vec<u8>, ProtocolError> {
+        if ttl_seconds == 0 || ttl_seconds > MAX_TTL_SECONDS {
+            return Err(ProtocolError::invalid_input(format!(
+                "TTL must be 1..{MAX_TTL_SECONDS}, got {ttl_seconds}"
+            )));
+        }
+        self.encrypt_internal(
+            hint,
+            &MessagePolicy {
+                content_type: ContentType::SealedDisappearing,
+                ttl_seconds,
+                ..MessagePolicy::default()
+            },
+            Some(plaintext),
         )
     }
 
@@ -3296,13 +3405,67 @@ impl GroupSession {
 mod tests {
     use super::{
         decode_replay_windows_from_state, encode_replay_windows_for_state, prune_member_roles,
-        validate_mentions_for_content, validate_reply_context, SenderReplayWindow,
+        validate_mentions_for_content, validate_reply_context, ContentType, GroupSession,
+        SenderReplayWindow, CONTENT_TYPE_SEALED_DISAPPEARING,
     };
-    use crate::core::constants::MESSAGE_ID_BYTES;
+    use crate::core::constants::{
+        AES_GCM_NONCE_BYTES, AES_GCM_TAG_BYTES, MAX_TTL_SECONDS, MESSAGE_ID_BYTES,
+    };
     use crate::proto::{
         GroupMention as ProtoGroupMention, GroupReplyContext as ProtoGroupReplyContext,
     };
     use std::collections::BTreeMap;
+
+    #[test]
+    fn sealed_payload_validation_rejects_missing_encrypted_content() {
+        let error = GroupSession::validate_sealed_payload_fields(
+            ContentType::Sealed,
+            &[],
+            &[0; AES_GCM_NONCE_BYTES],
+        )
+        .expect_err("sealed content type must carry authenticated inner ciphertext");
+
+        assert!(error.to_string().contains("encrypted content"));
+    }
+
+    #[test]
+    fn sealed_payload_validation_rejects_invalid_nonce_length() {
+        let error = GroupSession::validate_sealed_payload_fields(
+            ContentType::SealedDisappearing,
+            &[0; AES_GCM_TAG_BYTES],
+            &[0; AES_GCM_NONCE_BYTES - 1],
+        )
+        .expect_err("sealed content type must carry a canonical nonce");
+
+        assert!(error.to_string().contains("nonce must be"));
+    }
+
+    #[test]
+    fn content_type_wire_decode_is_fail_closed() {
+        assert_eq!(
+            ContentType::try_from_wire(
+                i32::try_from(CONTENT_TYPE_SEALED_DISAPPEARING)
+                    .expect("wire content type fits i32"),
+            )
+            .unwrap(),
+            ContentType::SealedDisappearing
+        );
+        assert!(ContentType::try_from_wire(-1).is_err());
+        assert!(ContentType::try_from_wire(i32::MAX).is_err());
+    }
+
+    #[test]
+    fn content_type_ttl_invariants_are_exact() {
+        assert!(ContentType::Normal.validate_ttl(0).is_ok());
+        assert!(ContentType::Normal.validate_ttl(1).is_err());
+        assert!(ContentType::Disappearing.validate_ttl(0).is_err());
+        assert!(ContentType::Disappearing
+            .validate_ttl(MAX_TTL_SECONDS)
+            .is_ok());
+        assert!(ContentType::SealedDisappearing
+            .validate_ttl(MAX_TTL_SECONDS + 1)
+            .is_err());
+    }
 
     #[test]
     fn standard_policy_rides_out_skip_gap_that_walls_shield() {
@@ -3324,7 +3487,9 @@ mod tests {
             GroupSecurityPolicy::standard().max_skipped_keys_per_sender,
             STANDARD_MAX_SKIPPED_KEYS_PER_SENDER
         );
-        assert!(STANDARD_MAX_SKIPPED_KEYS_PER_SENDER > SHIELD_MAX_SKIPPED_KEYS_PER_SENDER);
+        const {
+            assert!(STANDARD_MAX_SKIPPED_KEYS_PER_SENDER > SHIELD_MAX_SKIPPED_KEYS_PER_SENDER);
+        }
 
         // A 23-generation gap is exactly the device-log repro ("Too many skipped
         // generations: 23 (max 4)"): it must wall shield but be tolerated by
@@ -3356,6 +3521,43 @@ mod tests {
         assert!(
             standard_chain.advance_to(gap).is_ok(),
             "standard (max 1000) must ride out a 23-generation skip"
+        );
+    }
+
+    #[test]
+    fn standard_policy_is_not_classified_as_shield_v1() {
+        use super::GroupSecurityPolicy;
+
+        assert!(GroupSecurityPolicy::shield().is_shielded());
+        assert!(
+            !GroupSecurityPolicy::standard().is_shielded(),
+            "the standard skipped-key budget must not be reported as Shield V1"
+        );
+    }
+
+    #[test]
+    fn stricter_custom_policy_is_not_relabelled_as_shield_v1() {
+        use super::{GroupSecurityPolicy, GroupSecurityTier};
+
+        let mut stricter = GroupSecurityPolicy::shield();
+        stricter.max_messages_per_epoch = 500;
+        stricter.max_skipped_keys_per_sender = 2;
+
+        assert!(stricter.validate().is_ok());
+        assert_eq!(stricter.security_tier(), GroupSecurityTier::Custom);
+        assert!(!stricter.is_shielded());
+    }
+
+    #[test]
+    fn policy_looser_than_shield_v1_is_not_classified_as_shielded() {
+        use super::GroupSecurityPolicy;
+
+        let mut policy = GroupSecurityPolicy::shield();
+        policy.max_skipped_keys_per_sender += 1;
+
+        assert!(
+            !policy.is_shielded(),
+            "a policy outside the Shield V1 bounds must not inherit the Shield label"
         );
     }
 

@@ -63,7 +63,9 @@ use crate::proto::{
     PreKeyBundle, ScreenShareMetadata, SecureEnvelope, SessionMetadataResponse, VoiceMessageMeta,
 };
 use crate::protocol::attachment::{StreamingDecryptor, StreamingEncryptor};
-use crate::protocol::group::{GroupSecurityPolicy, GroupSession};
+use crate::protocol::group::{
+    GroupDecryptResult, GroupSecurityPolicy, GroupSecurityTier, GroupSession,
+};
 use crate::protocol::{HandshakeInitiator, HandshakeResponder, Session};
 
 /// Upper bound for message-ID count accepted via FFI (prevents overflow in
@@ -287,6 +289,26 @@ pub struct AuraGroupSecurityPolicy {
     pub block_external_join: u8,
     pub enhanced_key_schedule: u8,
     pub mandatory_franking: u8,
+}
+
+/// Versioned security-tier identifiers returned by
+/// [`aura_group_get_security_tier`].
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuraGroupSecurityTier {
+    AuraGroupSecurityTierCustom = 0,
+    AuraGroupSecurityTierStandard = 1,
+    AuraGroupSecurityTierShieldV1 = 2,
+}
+
+impl From<GroupSecurityTier> for AuraGroupSecurityTier {
+    fn from(value: GroupSecurityTier) -> Self {
+        match value {
+            GroupSecurityTier::Custom => Self::AuraGroupSecurityTierCustom,
+            GroupSecurityTier::Standard => Self::AuraGroupSecurityTierStandard,
+            GroupSecurityTier::ShieldV1 => Self::AuraGroupSecurityTierShieldV1,
+        }
+    }
 }
 
 /// Catches Rust panics at the FFI boundary and converts them to error codes.
@@ -3085,7 +3107,9 @@ pub unsafe extern "C" fn aura_group_key_package_secrets_destroy(
 }
 
 /// Seals a key package's private secrets under a 32-byte at-rest key so the host
-/// can persist them across launches (the secrets otherwise live only in RAM and
+/// can persist them across launches.
+///
+/// The secrets otherwise live only in RAM and
 /// every cross-session Welcome fails). Mirrors `aura_session_serialize_sealed`.
 ///
 /// # Safety
@@ -3378,6 +3402,41 @@ pub unsafe extern "C" fn aura_group_is_shielded(
         match session.is_shielded() {
             Ok(shielded) => {
                 *out_shielded = u8::from(shielded);
+                AuraErrorCode::AuraSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+/// Returns the stable, versioned security tier derived from the group's
+/// cryptographically bound policy.
+///
+/// # Safety
+/// See module-level FFI safety contract. `out_tier` must point to writable
+/// [`AuraGroupSecurityTier`] storage.
+#[no_mangle]
+pub unsafe extern "C" fn aura_group_get_security_tier(
+    handle: *mut AuraGroupSessionHandle,
+    out_tier: *mut AuraGroupSecurityTier,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_tier.is_null() {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "out_tier is null",
+            );
+            return AuraErrorCode::AuraErrorNullPointer;
+        }
+        let (_guard, session) = match require_group_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        match session.security_policy() {
+            Ok(policy) => {
+                *out_tier = policy.security_tier().into();
                 AuraErrorCode::AuraSuccess
             }
             Err(e) => write_protocol_error(out_error, &e),
@@ -5560,6 +5619,68 @@ pub unsafe extern "C" fn aura_group_encrypt_disappearing(
     })
 }
 
+/// Encrypts a disappearing group message with a nested sealed payload.
+///
+/// # Safety
+/// See module-level FFI safety contract. `(plaintext, plaintext_length)` and
+/// the optional `(hint, hint_length)` must form valid readable slices.
+#[no_mangle]
+pub unsafe extern "C" fn aura_group_encrypt_sealed_disappearing(
+    handle: *mut AuraGroupSessionHandle,
+    plaintext: *const u8,
+    plaintext_length: usize,
+    hint: *const u8,
+    hint_length: usize,
+    ttl_seconds: u32,
+    out_ciphertext: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if plaintext.is_null() || out_ciphertext.is_null() {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "A required pointer is null",
+            );
+            return AuraErrorCode::AuraErrorNullPointer;
+        }
+        if plaintext_length > MAX_ENVELOPE_MESSAGE_SIZE {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "Plaintext too large",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+        if hint_length > MAX_BUFFER_SIZE {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "hint too large",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+
+        let pt = std::slice::from_raw_parts(plaintext, plaintext_length);
+        let hint_slice = if hint.is_null() || hint_length == 0 {
+            &[]
+        } else {
+            std::slice::from_raw_parts(hint, hint_length)
+        };
+        let (_guard, session) = match require_group_mut(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        match session.encrypt_sealed_disappearing(pt, hint_slice, ttl_seconds) {
+            Ok(ct_bytes) => {
+                write_buffer(out_ciphertext, ct_bytes);
+                AuraErrorCode::AuraSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
 /// # Safety
 /// See module-level FFI safety contract.  `(plaintext, plaintext_length)` must form a valid
 /// readable slice.
@@ -5760,6 +5881,112 @@ unsafe fn clear_group_decrypt_result(result: *mut AuraGroupDecryptResult) {
     (*result).franking_sealed_content.length = 0;
 }
 
+unsafe fn write_group_decrypt_result(
+    out_result: *mut AuraGroupDecryptResult,
+    mut result: GroupDecryptResult,
+) {
+    write_buffer(
+        std::ptr::addr_of_mut!((*out_result).plaintext),
+        std::mem::take(&mut result.plaintext),
+    );
+    (*out_result).sender_leaf_index = result.sender_leaf_index;
+    (*out_result).generation = result.generation;
+    (*out_result).content_type = result.content_type.to_u32();
+    (*out_result).ttl_seconds = result.ttl_seconds;
+    (*out_result).sent_timestamp = result.sent_timestamp;
+    write_buffer(
+        std::ptr::addr_of_mut!((*out_result).message_id),
+        std::mem::take(&mut result.message_id),
+    );
+    write_buffer(
+        std::ptr::addr_of_mut!((*out_result).referenced_message_id),
+        std::mem::take(&mut result.referenced_message_id),
+    );
+    (*out_result).has_sealed_payload = u8::from(result.sealed_payload.is_some());
+    (*out_result).has_franking_data = u8::from(result.franking_data.is_some());
+    if let Some(mut sealed) = result.sealed_payload {
+        write_buffer(
+            std::ptr::addr_of_mut!((*out_result).sealed_hint),
+            std::mem::take(&mut sealed.hint),
+        );
+        write_buffer(
+            std::ptr::addr_of_mut!((*out_result).sealed_encrypted_content),
+            std::mem::take(&mut sealed.encrypted_content),
+        );
+        write_buffer(
+            std::ptr::addr_of_mut!((*out_result).sealed_nonce),
+            std::mem::take(&mut sealed.nonce),
+        );
+        write_buffer(
+            std::ptr::addr_of_mut!((*out_result).sealed_key),
+            std::mem::take(&mut sealed.seal_key),
+        );
+    }
+    if let Some(mut franking) = result.franking_data {
+        write_buffer(
+            std::ptr::addr_of_mut!((*out_result).franking_tag),
+            std::mem::take(&mut franking.franking_tag),
+        );
+        write_buffer(
+            std::ptr::addr_of_mut!((*out_result).franking_key),
+            std::mem::take(&mut franking.franking_key),
+        );
+        write_buffer(
+            std::ptr::addr_of_mut!((*out_result).franking_content),
+            std::mem::take(&mut franking.content),
+        );
+        write_buffer(
+            std::ptr::addr_of_mut!((*out_result).franking_sealed_content),
+            std::mem::take(&mut franking.sealed_content),
+        );
+    }
+}
+
+unsafe fn group_decrypt_ex_impl(
+    handle: *mut AuraGroupSessionHandle,
+    ciphertext: *const u8,
+    ciphertext_length: usize,
+    out_result: *mut AuraGroupDecryptResult,
+    out_error: *mut AuraError,
+    open_sealed: bool,
+) -> AuraErrorCode {
+    if ciphertext.is_null() || out_result.is_null() {
+        write_error(
+            out_error,
+            AuraErrorCode::AuraErrorNullPointer,
+            "A required pointer is null",
+        );
+        return AuraErrorCode::AuraErrorNullPointer;
+    }
+    clear_group_decrypt_result(out_result);
+    if ciphertext_length > MAX_GROUP_MESSAGE_SIZE {
+        write_error(
+            out_error,
+            AuraErrorCode::AuraErrorInvalidInput,
+            "Ciphertext too large",
+        );
+        return AuraErrorCode::AuraErrorInvalidInput;
+    }
+
+    let ct = std::slice::from_raw_parts(ciphertext, ciphertext_length);
+    let (_guard, session) = match require_group_mut(handle, out_error) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    let decrypted = if open_sealed {
+        session.decrypt_open_sealed(ct)
+    } else {
+        session.decrypt(ct)
+    };
+    match decrypted {
+        Ok(result) => {
+            write_group_decrypt_result(out_result, result);
+            AuraErrorCode::AuraSuccess
+        }
+        Err(error) => write_protocol_error(out_error, &error),
+    }
+}
+
 /// # Safety
 /// `result` must be null or point to a value previously written by this FFI layer.
 #[no_mangle]
@@ -5793,87 +6020,44 @@ pub unsafe extern "C" fn aura_group_decrypt_ex(
     out_error: *mut AuraError,
 ) -> AuraErrorCode {
     ffi_catch_panic!(out_error, unsafe {
-        if ciphertext.is_null() || out_result.is_null() {
-            write_error(
-                out_error,
-                AuraErrorCode::AuraErrorNullPointer,
-                "A required pointer is null",
-            );
-            return AuraErrorCode::AuraErrorNullPointer;
-        }
-        clear_group_decrypt_result(out_result);
-        if ciphertext_length > MAX_GROUP_MESSAGE_SIZE {
-            write_error(
-                out_error,
-                AuraErrorCode::AuraErrorInvalidInput,
-                "Ciphertext too large",
-            );
-            return AuraErrorCode::AuraErrorInvalidInput;
-        }
+        group_decrypt_ex_impl(
+            handle,
+            ciphertext,
+            ciphertext_length,
+            out_result,
+            out_error,
+            false,
+        )
+    })
+}
 
-        let ct = std::slice::from_raw_parts(ciphertext, ciphertext_length);
-        let (_guard, session) = match require_group_mut(handle, out_error) {
-            Ok(v) => v,
-            Err(code) => return code,
-        };
-        match session.decrypt(ct) {
-            Ok(r) => {
-                write_buffer(std::ptr::addr_of_mut!((*out_result).plaintext), r.plaintext);
-                (*out_result).sender_leaf_index = r.sender_leaf_index;
-                (*out_result).generation = r.generation;
-                (*out_result).content_type = r.content_type.to_u32();
-                (*out_result).ttl_seconds = r.ttl_seconds;
-                (*out_result).sent_timestamp = r.sent_timestamp;
-                write_buffer(
-                    std::ptr::addr_of_mut!((*out_result).message_id),
-                    r.message_id,
-                );
-                write_buffer(
-                    std::ptr::addr_of_mut!((*out_result).referenced_message_id),
-                    r.referenced_message_id,
-                );
-                (*out_result).has_sealed_payload = u8::from(r.sealed_payload.is_some());
-                (*out_result).has_franking_data = u8::from(r.franking_data.is_some());
-                if let Some(mut sealed) = r.sealed_payload {
-                    write_buffer(
-                        std::ptr::addr_of_mut!((*out_result).sealed_hint),
-                        std::mem::take(&mut sealed.hint),
-                    );
-                    write_buffer(
-                        std::ptr::addr_of_mut!((*out_result).sealed_encrypted_content),
-                        std::mem::take(&mut sealed.encrypted_content),
-                    );
-                    write_buffer(
-                        std::ptr::addr_of_mut!((*out_result).sealed_nonce),
-                        std::mem::take(&mut sealed.nonce),
-                    );
-                    write_buffer(
-                        std::ptr::addr_of_mut!((*out_result).sealed_key),
-                        std::mem::take(&mut sealed.seal_key),
-                    );
-                }
-                if let Some(mut franking) = r.franking_data {
-                    write_buffer(
-                        std::ptr::addr_of_mut!((*out_result).franking_tag),
-                        std::mem::take(&mut franking.franking_tag),
-                    );
-                    write_buffer(
-                        std::ptr::addr_of_mut!((*out_result).franking_key),
-                        std::mem::take(&mut franking.franking_key),
-                    );
-                    write_buffer(
-                        std::ptr::addr_of_mut!((*out_result).franking_content),
-                        std::mem::take(&mut franking.content),
-                    );
-                    write_buffer(
-                        std::ptr::addr_of_mut!((*out_result).franking_sealed_content),
-                        std::mem::take(&mut franking.sealed_content),
-                    );
-                }
-                AuraErrorCode::AuraSuccess
-            }
-            Err(e) => write_protocol_error(out_error, &e),
-        }
+/// Decrypts a group message and opens any nested sealed payload before it
+/// crosses the FFI boundary.
+///
+/// The result keeps the authenticated sealed content
+/// type, but `plaintext` contains the actual inner payload and no seal key is
+/// exported to the host.
+///
+/// # Safety
+/// See module-level FFI safety contract. `(ciphertext, ciphertext_length)` must
+/// form a valid readable slice.
+#[no_mangle]
+pub unsafe extern "C" fn aura_group_decrypt_open_sealed_ex(
+    handle: *mut AuraGroupSessionHandle,
+    ciphertext: *const u8,
+    ciphertext_length: usize,
+    out_result: *mut AuraGroupDecryptResult,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        group_decrypt_ex_impl(
+            handle,
+            ciphertext,
+            ciphertext_length,
+            out_result,
+            out_error,
+            true,
+        )
     })
 }
 
@@ -7738,7 +7922,6 @@ pub unsafe extern "C" fn aura_voip_call_init_complete(
 
         let screen_share_meta = accept
             .screen_share
-            .clone()
             .or_else(|| initiator.screen_share_meta.clone());
         let session = match crate::protocol::voip::VoipSession::from_key_material_with_time_provider_and_screen_share(
             initiator.call_id.clone(),

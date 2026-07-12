@@ -31,16 +31,16 @@ public struct AuraGroupSecurityPolicy: Sendable {
     ///
     /// - Parameters:
     ///   - maxMessagesPerEpoch: Maximum messages per epoch (default: 1000).
-    ///   - maxSkippedKeysPerSender: Maximum skipped keys per sender (default: 32).
-    ///   - blockExternalJoin: Block external joins (default: false).
+    ///   - maxSkippedKeysPerSender: Maximum skipped keys per sender (default: 1000).
+    ///   - blockExternalJoin: Block external joins (default: true).
     ///   - enhancedKeySchedule: Enable enhanced key schedule (default: true).
-    ///   - mandatoryFranking: Require franking on all messages (default: false).
+    ///   - mandatoryFranking: Require franking on all messages (default: true).
     public init(
         maxMessagesPerEpoch: UInt32 = 1000,
-        maxSkippedKeysPerSender: UInt32 = 32,
-        blockExternalJoin: Bool = false,
+        maxSkippedKeysPerSender: UInt32 = 1000,
+        blockExternalJoin: Bool = true,
         enhancedKeySchedule: Bool = true,
-        mandatoryFranking: Bool = false
+        mandatoryFranking: Bool = true
     ) {
         self.maxMessagesPerEpoch = maxMessagesPerEpoch
         self.maxSkippedKeysPerSender = maxSkippedKeysPerSender
@@ -54,6 +54,16 @@ public struct AuraGroupSecurityPolicy: Sendable {
     public static let shield = AuraGroupSecurityPolicy(
         maxMessagesPerEpoch: 1000,
         maxSkippedKeysPerSender: 4,
+        blockExternalJoin: true,
+        enhancedKeySchedule: true,
+        mandatoryFranking: true
+    )
+
+    /// The default private E2E preset. It retains the hardened controls while
+    /// allowing a delivery-tolerant skipped-key window. It is not Shield V1.
+    public static let standard = AuraGroupSecurityPolicy(
+        maxMessagesPerEpoch: 1000,
+        maxSkippedKeysPerSender: 1000,
         blockExternalJoin: true,
         enhancedKeySchedule: true,
         mandatoryFranking: true
@@ -80,6 +90,14 @@ public struct AuraGroupSecurityPolicy: Sendable {
             mandatoryFranking: native.mandatory_franking != 0
         )
     }
+}
+
+/// Stable classification of the policy cryptographically bound to a group.
+/// Future Shield revisions receive a new case instead of redefining Shield V1.
+public enum AuraGroupSecurityTier: UInt32, Sendable {
+    case custom = 0
+    case standard = 1
+    case shieldV1 = 2
 }
 
 // MARK: - Group Decrypt Result
@@ -176,7 +194,7 @@ public final class AuraGroupSession {
 
     // MARK: - Creation
 
-    /// Creates a new group session with the hardened shielded security policy.
+    /// Creates a new group session with the Standard private E2E policy.
     ///
     /// The caller becomes the first (and only) member of the group.
     ///
@@ -637,6 +655,21 @@ public final class AuraGroupSession {
     /// - Returns: An `AuraGroupDecryptResult` with all available metadata.
     /// - Throws: `AuraError` if decryption fails.
     public func decryptEx(_ ciphertext: Data) throws -> AuraGroupDecryptResult {
+        try decryptDetailed(ciphertext, openSealedPayload: false)
+    }
+
+    /// Decrypts a group message and opens a nested sealed payload inside the
+    /// native protocol boundary. The returned plaintext is the actual inner
+    /// content, while `contentType` remains authenticated as sealed. No seal
+    /// key is exported through the result.
+    public func decryptOpenedSealedEx(_ ciphertext: Data) throws -> AuraGroupDecryptResult {
+        try decryptDetailed(ciphertext, openSealedPayload: true)
+    }
+
+    private func decryptDetailed(
+        _ ciphertext: Data,
+        openSealedPayload: Bool
+    ) throws -> AuraGroupDecryptResult {
         guard handle != nil else { throw AuraError.objectDisposed }
         var nativeResult = NativeAuraGroupDecryptResult(
             plaintext: NativeAuraBuffer(data: nil, length: 0),
@@ -660,13 +693,23 @@ public final class AuraGroupSession {
         )
         var outError = NativeAuraError(code: 0, message: nil)
         let result = ciphertext.withUnsafeBytes { ctBytes in
-            native_epp_group_decrypt_ex(
-                handle,
-                ctBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                ciphertext.count,
-                &nativeResult,
-                &outError
-            )
+            if openSealedPayload {
+                native_epp_group_decrypt_open_sealed_ex(
+                    handle,
+                    ctBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    ciphertext.count,
+                    &nativeResult,
+                    &outError
+                )
+            } else {
+                native_epp_group_decrypt_ex(
+                    handle,
+                    ctBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    ciphertext.count,
+                    &nativeResult,
+                    &outError
+                )
+            }
         }
         defer {
             native_epp_group_decrypt_result_free(&nativeResult)
@@ -777,6 +820,43 @@ public final class AuraGroupSession {
                 &outCiphertext,
                 &outError
             )
+        }
+        defer {
+            if outCiphertext.data != nil { native_epp_buffer_release(&outCiphertext) }
+            native_epp_error_free(&outError)
+        }
+        guard result == AURA_SUCCESS else {
+            throw AuraError.from(code: result, nativeError: outError)
+        }
+        guard let data = dataFromBuffer(outCiphertext) else {
+            throw AuraError.bufferTooSmall
+        }
+        return data
+    }
+
+    /// Encrypts a disappearing message while keeping its actual content behind
+    /// the nested sealed layer used by Shield V1.
+    public func encryptSealedDisappearing(
+        _ plaintext: Data,
+        hint: Data,
+        ttlSeconds: UInt32
+    ) throws -> Data {
+        guard handle != nil else { throw AuraError.objectDisposed }
+        var outCiphertext = NativeAuraBuffer(data: nil, length: 0)
+        var outError = NativeAuraError(code: 0, message: nil)
+        let result = plaintext.withUnsafeBytes { ptBytes in
+            hint.withUnsafeBytes { hintBytes in
+                native_epp_group_encrypt_sealed_disappearing(
+                    handle,
+                    ptBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    plaintext.count,
+                    hintBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    hint.count,
+                    ttlSeconds,
+                    &outCiphertext,
+                    &outError
+                )
+            }
         }
         defer {
             if outCiphertext.data != nil { native_epp_buffer_release(&outCiphertext) }
@@ -1106,20 +1186,30 @@ public final class AuraGroupSession {
         return indices
     }
 
-    /// Whether this group session uses the shielded security policy.
-    ///
-    /// - Throws: `AuraError` if the query fails.
-    public var isShielded: Bool {
+    /// Stable policy tier cryptographically bound to this group session.
+    public var securityTier: AuraGroupSecurityTier {
         get throws {
             guard handle != nil else { throw AuraError.objectDisposed }
-            var outShielded: UInt8 = 0
+            var rawTier = AuraGroupSecurityTier.custom.rawValue
             var outError = NativeAuraError(code: 0, message: nil)
-            let result = native_epp_group_is_shielded(handle, &outShielded, &outError)
+            let result = native_epp_group_get_security_tier(handle, &rawTier, &outError)
             defer { native_epp_error_free(&outError) }
             guard result == AURA_SUCCESS else {
                 throw AuraError.from(code: result, nativeError: outError)
             }
-            return outShielded != 0
+            guard let tier = AuraGroupSecurityTier(rawValue: rawTier) else {
+                throw AuraError.decode("Unsupported native group security tier \(rawTier)")
+            }
+            return tier
+        }
+    }
+
+    /// Whether this group session satisfies the versioned Shield V1 policy.
+    ///
+    /// - Throws: `AuraError` if the query fails.
+    public var isShielded: Bool {
+        get throws {
+            try securityTier == .shieldV1
         }
     }
 

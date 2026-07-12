@@ -5,16 +5,18 @@ use std::collections::HashSet;
 
 use crate::core::constants::*;
 use crate::core::errors::ProtocolError;
+use crate::crypto::KyberInterop;
 use crate::proto::{GroupAddProposal, GroupProposal, GroupRemoveProposal};
+use crate::security::DhValidator;
 
 use super::key_package::validate_key_package;
 use super::tree::{LeafData, RatchetTree};
 
-pub fn validate_proposals(
-    tree: &RatchetTree,
-    proposals: &[GroupProposal],
-    committer_leaf_idx: u32,
-) -> Result<(), ProtocolError> {
+/// Validate proposal fields independent of a local ratchet tree.
+///
+/// Relay services run this before routing a signed Commit. Group members run
+/// the same checks before applying tree-dependent membership semantics.
+pub fn validate_proposal_shapes(proposals: &[GroupProposal]) -> Result<(), ProtocolError> {
     if proposals.len() > MAX_PROPOSALS_PER_COMMIT {
         return Err(ProtocolError::group_membership(format!(
             "Too many proposals: {} (max {})",
@@ -34,15 +36,6 @@ pub fn validate_proposals(
                     ProtocolError::group_membership("Add proposal missing key package")
                 })?;
                 validate_key_package(kp)?;
-                for existing_leaf_idx in tree.populated_leaf_indices() {
-                    if let Some(ld) = tree.get_leaf_data(existing_leaf_idx) {
-                        if ld.identity_ed25519_public == kp.identity_ed25519_public {
-                            return Err(ProtocolError::group_membership(
-                                "Add proposal: identity key already exists in group tree",
-                            ));
-                        }
-                    }
-                }
                 if !added_identity_keys.insert(kp.identity_ed25519_public.clone()) {
                     return Err(ProtocolError::group_membership(
                         "Duplicate Add proposal: same identity key added twice",
@@ -50,41 +43,38 @@ pub fn validate_proposals(
                 }
             }
             Some(crate::proto::group_proposal::Proposal::Remove(remove)) => {
-                let leaf_idx = remove.removed_leaf_index;
-                if !removed_leaves.insert(leaf_idx) {
+                if !removed_leaves.insert(remove.removed_leaf_index) {
                     return Err(ProtocolError::group_membership(format!(
-                        "Duplicate Remove proposal for leaf {leaf_idx}"
+                        "Duplicate Remove proposal for leaf {}",
+                        remove.removed_leaf_index
                     )));
-                }
-                if leaf_idx >= tree.leaf_count() {
-                    return Err(ProtocolError::group_membership(format!(
-                        "Remove: leaf index {leaf_idx} out of range"
-                    )));
-                }
-                if tree.get_leaf_data(leaf_idx).is_none() {
-                    return Err(ProtocolError::group_membership(format!(
-                        "Remove: leaf {leaf_idx} is already blank"
-                    )));
-                }
-                if leaf_idx == committer_leaf_idx {
-                    return Err(ProtocolError::group_membership(
-                        "Cannot remove the committer",
-                    ));
                 }
             }
-            Some(crate::proto::group_proposal::Proposal::Update(_)) => {}
+            Some(crate::proto::group_proposal::Proposal::Update(update)) => {
+                DhValidator::validate_x25519_public_key(&update.leaf_x25519_public).map_err(
+                    |error| {
+                        ProtocolError::group_membership(format!(
+                            "Update proposal has invalid X25519 leaf key: {error}"
+                        ))
+                    },
+                )?;
+                KyberInterop::validate_public_key(&update.leaf_kyber_public)
+                    .map_err(ProtocolError::from_crypto)?;
+            }
             Some(crate::proto::group_proposal::Proposal::ExternalInit(ext)) => {
-                if ext.ephemeral_x25519_public.len() != X25519_PUBLIC_KEY_BYTES {
-                    return Err(ProtocolError::group_membership(format!(
-                        "ExternalInit: invalid ephemeral X25519 key length: {}",
-                        ext.ephemeral_x25519_public.len()
-                    )));
-                }
-                if ext.kyber_ciphertext.len() != KYBER_CIPHERTEXT_BYTES {
-                    return Err(ProtocolError::group_membership(format!(
-                        "ExternalInit: invalid Kyber ciphertext length: {}",
-                        ext.kyber_ciphertext.len()
-                    )));
+                DhValidator::validate_x25519_public_key(&ext.ephemeral_x25519_public).map_err(
+                    |error| {
+                        ProtocolError::group_membership(format!(
+                            "ExternalInit has invalid ephemeral X25519 key: {error}"
+                        ))
+                    },
+                )?;
+                KyberInterop::validate_ciphertext(&ext.kyber_ciphertext)
+                    .map_err(ProtocolError::from_crypto)?;
+                if ext.authorization.is_empty() {
+                    return Err(ProtocolError::group_membership(
+                        "ExternalInit authorization is required",
+                    ));
                 }
             }
             Some(crate::proto::group_proposal::Proposal::Psk(psk)) => {
@@ -125,6 +115,60 @@ pub fn validate_proposals(
         return Err(ProtocolError::group_membership(
             "ReInit commit must not contain other proposal types",
         ));
+    }
+
+    Ok(())
+}
+
+pub fn validate_proposals(
+    tree: &RatchetTree,
+    proposals: &[GroupProposal],
+    committer_leaf_idx: u32,
+) -> Result<(), ProtocolError> {
+    validate_proposal_shapes(proposals)?;
+
+    for proposal in proposals {
+        match &proposal.proposal {
+            Some(crate::proto::group_proposal::Proposal::Add(add)) => {
+                let kp = add.key_package.as_ref().ok_or_else(|| {
+                    ProtocolError::group_membership("Add proposal missing key package")
+                })?;
+                for existing_leaf_idx in tree.populated_leaf_indices() {
+                    if let Some(ld) = tree.get_leaf_data(existing_leaf_idx) {
+                        if ld.identity_ed25519_public == kp.identity_ed25519_public {
+                            return Err(ProtocolError::group_membership(
+                                "Add proposal: identity key already exists in group tree",
+                            ));
+                        }
+                    }
+                }
+            }
+            Some(crate::proto::group_proposal::Proposal::Remove(remove)) => {
+                let leaf_idx = remove.removed_leaf_index;
+                if leaf_idx >= tree.leaf_count() {
+                    return Err(ProtocolError::group_membership(format!(
+                        "Remove: leaf index {leaf_idx} out of range"
+                    )));
+                }
+                if tree.get_leaf_data(leaf_idx).is_none() {
+                    return Err(ProtocolError::group_membership(format!(
+                        "Remove: leaf {leaf_idx} is already blank"
+                    )));
+                }
+                if leaf_idx == committer_leaf_idx {
+                    return Err(ProtocolError::group_membership(
+                        "Cannot remove the committer",
+                    ));
+                }
+            }
+            Some(
+                crate::proto::group_proposal::Proposal::Update(_)
+                | crate::proto::group_proposal::Proposal::ExternalInit(_)
+                | crate::proto::group_proposal::Proposal::Psk(_)
+                | crate::proto::group_proposal::Proposal::ReInit(_),
+            ) => {}
+            None => unreachable!("shape validation rejects empty proposals"),
+        }
     }
 
     Ok(())

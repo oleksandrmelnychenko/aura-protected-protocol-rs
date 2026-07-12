@@ -26,71 +26,22 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+          targets: aarch64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios,aarch64-apple-ios-macabi,x86_64-apple-ios-macabi
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build Rust FFI for all Apple targets
-        run: |
-          for target in aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios; do
-            cargo rustc --release --features ffi --target "$target" --crate-type staticlib
-          done
+      - name: Build XCFramework
+        run: bash scripts/release/build-apple-xcframework.sh
 
-      - name: Create fat simulator library
+      - name: Compile Swift wrapper against fresh XCFramework
         run: |
-          lipo -create \
-            target/aarch64-apple-ios-sim/release/libaura_protected_protocol.a \
-            target/x86_64-apple-ios/release/libaura_protected_protocol.a \
-            -output target/libaura_protected_protocol_sim.a
-
-      - name: Create framework bundles with headers
-        run: |
-          create_framework() {
-            local lib="$1" dst="$2"
-            local fw="$dst/AuraProtectedProtocolC.framework"
-            mkdir -p "$fw/Headers" "$fw/Modules"
-            cp "$lib" "$fw/AuraProtectedProtocolC"
-            cp include/*.h "$fw/Headers/"
-            cp include/module.modulemap "$fw/Modules/"
-            cat > "$fw/Info.plist" <<'PLIST'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleDevelopmentRegion</key>
-            <string>en</string>
-            <key>CFBundleExecutable</key>
-            <string>AuraProtectedProtocolC</string>
-            <key>CFBundleIdentifier</key>
-            <string>ai.auramessenger.AuraProtectedProtocolC</string>
-            <key>CFBundleInfoDictionaryVersion</key>
-            <string>6.0</string>
-            <key>CFBundleName</key>
-            <string>AuraProtectedProtocolC</string>
-            <key>CFBundlePackageType</key>
-            <string>FMWK</string>
-            <key>CFBundleShortVersionString</key>
-            <string>2.0.0</string>
-            <key>CFBundleVersion</key>
-            <string>2.0.0</string>
-          </dict>
-          </plist>
-          PLIST
-          }
-          create_framework target/aarch64-apple-darwin/release/libaura_protected_protocol.a dist/frameworks/macos-arm64
-          create_framework target/aarch64-apple-ios/release/libaura_protected_protocol.a     dist/frameworks/ios-arm64
-          create_framework target/libaura_protected_protocol_sim.a                           dist/frameworks/ios-sim
-
-      - name: Create XCFramework
-        run: |
-          mkdir -p dist/apple
-          xcodebuild -create-xcframework \
-            -framework dist/frameworks/macos-arm64/AuraProtectedProtocolC.framework \
-            -framework dist/frameworks/ios-arm64/AuraProtectedProtocolC.framework \
-            -framework dist/frameworks/ios-sim/AuraProtectedProtocolC.framework \
-            -output dist/apple/AuraProtectedProtocol.xcframework
-          cd dist/apple && zip -r AuraProtectedProtocol.xcframework.zip AuraProtectedProtocol.xcframework
-          shasum -a 256 AuraProtectedProtocol.xcframework.zip > AuraProtectedProtocol.xcframework.zip.sha256
+          swift build --configuration release
+          xcodebuild \
+            -scheme AuraProtectedProtocol \
+            -destination 'generic/platform=macOS,variant=Mac Catalyst' \
+            -derivedDataPath "$RUNNER_TEMP/aura-protected-protocol-catalyst" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
 
       - uses: actions/upload-artifact@v4
         with:
@@ -144,5 +95,6 @@ jobs:
             ### Platforms
             - macOS arm64
             - iOS (arm64, simulator)
+            - Mac Catalyst (arm64, x86_64)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

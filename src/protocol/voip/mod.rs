@@ -174,7 +174,7 @@ fn encode_dtmf_tone(tone: u8) -> Result<u8, ProtocolError> {
     }
 }
 
-fn decode_dtmf_tone(code: u8) -> Option<u8> {
+const fn decode_dtmf_tone(code: u8) -> Option<u8> {
     match code {
         0..=9 => Some(b'0' + code),
         10 => Some(b'*'),

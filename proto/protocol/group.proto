@@ -341,7 +341,7 @@ message GroupReplyContext {
 
 message GroupSecurityPolicy {
   uint32 max_messages_per_epoch = 1;      // 0 = use default (100,000)
-  uint32 max_skipped_keys_per_sender = 2; // 0 = use default (32)
+  uint32 max_skipped_keys_per_sender = 2; // 0 = hard per-sender ceiling (1024)
   bool block_external_join = 3;           // If true, from_external_join is rejected
   bool enhanced_key_schedule = 4;         // Double-KDF + BLAKE2b chain hash
   bool mandatory_franking = 5;            // All messages must include franking tag

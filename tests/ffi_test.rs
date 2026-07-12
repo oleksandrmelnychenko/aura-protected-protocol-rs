@@ -3505,7 +3505,8 @@ fn ffi_group_decrypt_ex_projects_sealed_and_franking_buffers() {
     init();
 
     use aura_protected_protocol::core::constants::{
-        AES_GCM_NONCE_BYTES, AES_KEY_BYTES, HMAC_BYTES,
+        AES_GCM_NONCE_BYTES, AES_KEY_BYTES, CONTENT_TYPE_SEALED, CONTENT_TYPE_SEALED_DISAPPEARING,
+        HMAC_BYTES,
     };
     use aura_protected_protocol::ffi::api::*;
 
@@ -3665,6 +3666,84 @@ fn ffi_group_decrypt_ex_projects_sealed_and_franking_buffers() {
             sealed_plaintext
         );
 
+        let opened_plaintext = b"ffi opened sealed secret";
+        let mut opened_ct = ffi_null_buffer();
+        assert_eq!(
+            aura_group_encrypt_sealed(
+                alice_group_handle,
+                opened_plaintext.as_ptr(),
+                opened_plaintext.len(),
+                sealed_hint.as_ptr(),
+                sealed_hint.len(),
+                &mut opened_ct,
+                &mut err,
+            ),
+            AuraErrorCode::AuraSuccess
+        );
+
+        let mut opened_result = ffi_zero_group_decrypt_result();
+        assert_eq!(
+            aura_group_decrypt_open_sealed_ex(
+                bob_group_handle,
+                opened_ct.data,
+                opened_ct.length,
+                &mut opened_result,
+                &mut err,
+            ),
+            AuraErrorCode::AuraSuccess
+        );
+        assert_eq!(opened_result.content_type, CONTENT_TYPE_SEALED);
+        assert_eq!(opened_result.has_sealed_payload, 0);
+        assert!(opened_result.sealed_key.data.is_null());
+        assert_eq!(opened_result.sealed_key.length, 0);
+        assert_eq!(
+            std::slice::from_raw_parts(
+                opened_result.plaintext.data,
+                opened_result.plaintext.length
+            ),
+            opened_plaintext
+        );
+
+        let sealed_disappearing_plaintext = b"ffi ephemeral shield secret";
+        let mut sealed_disappearing_ct = ffi_null_buffer();
+        assert_eq!(
+            aura_group_encrypt_sealed_disappearing(
+                alice_group_handle,
+                sealed_disappearing_plaintext.as_ptr(),
+                sealed_disappearing_plaintext.len(),
+                sealed_hint.as_ptr(),
+                sealed_hint.len(),
+                3_600,
+                &mut sealed_disappearing_ct,
+                &mut err,
+            ),
+            AuraErrorCode::AuraSuccess
+        );
+        let mut sealed_disappearing_result = ffi_zero_group_decrypt_result();
+        assert_eq!(
+            aura_group_decrypt_open_sealed_ex(
+                bob_group_handle,
+                sealed_disappearing_ct.data,
+                sealed_disappearing_ct.length,
+                &mut sealed_disappearing_result,
+                &mut err,
+            ),
+            AuraErrorCode::AuraSuccess
+        );
+        assert_eq!(
+            sealed_disappearing_result.content_type,
+            CONTENT_TYPE_SEALED_DISAPPEARING
+        );
+        assert_eq!(sealed_disappearing_result.ttl_seconds, 3_600);
+        assert_eq!(sealed_disappearing_result.has_sealed_payload, 0);
+        assert_eq!(
+            std::slice::from_raw_parts(
+                sealed_disappearing_result.plaintext.data,
+                sealed_disappearing_result.plaintext.length
+            ),
+            sealed_disappearing_plaintext
+        );
+
         let frankable_plaintext = b"ffi frankable content";
         let mut frankable_ct = ffi_null_buffer();
         assert_eq!(
@@ -3719,9 +3798,13 @@ fn ffi_group_decrypt_ex_projects_sealed_and_franking_buffers() {
         assert_eq!(franking_valid, 1);
 
         aura_group_decrypt_result_free(&mut sealed_result);
+        aura_group_decrypt_result_free(&mut opened_result);
+        aura_group_decrypt_result_free(&mut sealed_disappearing_result);
         aura_group_decrypt_result_free(&mut frankable_result);
         aura_buffer_release(&mut revealed);
         aura_buffer_release(&mut sealed_ct);
+        aura_buffer_release(&mut opened_ct);
+        aura_buffer_release(&mut sealed_disappearing_ct);
         aura_buffer_release(&mut frankable_ct);
         aura_buffer_release(&mut public_state);
         aura_buffer_release(&mut authorization);
@@ -3944,6 +4027,74 @@ fn ffi_group_member_role_apis_are_disabled() {
 
         aura_group_destroy(&mut group_handle);
         aura_identity_destroy(&mut alice_handle);
+    }
+}
+
+#[test]
+fn ffi_group_security_tier_distinguishes_standard_and_shield_v1() {
+    init();
+
+    use aura_protected_protocol::ffi::api::*;
+    use std::ptr;
+
+    unsafe {
+        let mut identity: *mut AuraIdentityHandle = ptr::null_mut();
+        let mut standard: *mut AuraGroupSessionHandle = ptr::null_mut();
+        let mut shield: *mut AuraGroupSessionHandle = ptr::null_mut();
+        let mut err = AuraError {
+            code: AuraErrorCode::AuraSuccess,
+            message: ptr::null_mut(),
+        };
+
+        assert_eq!(
+            aura_identity_create(&mut identity, &mut err),
+            AuraErrorCode::AuraSuccess
+        );
+        assert_eq!(
+            aura_group_create(identity, ptr::null(), 0, &mut standard, &mut err),
+            AuraErrorCode::AuraSuccess
+        );
+        assert_eq!(
+            aura_group_create_shielded(identity, ptr::null(), 0, &mut shield, &mut err),
+            AuraErrorCode::AuraSuccess
+        );
+
+        let mut standard_tier = AuraGroupSecurityTier::AuraGroupSecurityTierCustom;
+        let mut shield_tier = AuraGroupSecurityTier::AuraGroupSecurityTierCustom;
+        let mut standard_is_shielded = 1u8;
+        let mut shield_is_shielded = 0u8;
+
+        assert_eq!(
+            aura_group_get_security_tier(standard, &mut standard_tier, &mut err),
+            AuraErrorCode::AuraSuccess
+        );
+        assert_eq!(
+            aura_group_get_security_tier(shield, &mut shield_tier, &mut err),
+            AuraErrorCode::AuraSuccess
+        );
+        assert_eq!(
+            aura_group_is_shielded(standard, &mut standard_is_shielded, &mut err),
+            AuraErrorCode::AuraSuccess
+        );
+        assert_eq!(
+            aura_group_is_shielded(shield, &mut shield_is_shielded, &mut err),
+            AuraErrorCode::AuraSuccess
+        );
+
+        assert_eq!(
+            standard_tier,
+            AuraGroupSecurityTier::AuraGroupSecurityTierStandard
+        );
+        assert_eq!(
+            shield_tier,
+            AuraGroupSecurityTier::AuraGroupSecurityTierShieldV1
+        );
+        assert_eq!(standard_is_shielded, 0);
+        assert_eq!(shield_is_shielded, 1);
+
+        aura_group_destroy(&mut standard);
+        aura_group_destroy(&mut shield);
+        aura_identity_destroy(&mut identity);
     }
 }
 

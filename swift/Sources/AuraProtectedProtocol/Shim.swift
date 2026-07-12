@@ -667,6 +667,13 @@ internal func native_epp_group_is_shielded(
     _ out_error: UnsafeMutablePointer<NativeAuraError>?
 ) -> UInt32
 
+@_silgen_name("aura_group_get_security_tier")
+internal func native_epp_group_get_security_tier(
+    _ handle: UnsafeMutableRawPointer?,
+    _ out_tier: UnsafeMutablePointer<UInt32>?,
+    _ out_error: UnsafeMutablePointer<NativeAuraError>?
+) -> UInt32
+
 @_silgen_name("aura_group_get_security_policy")
 internal func native_epp_group_get_security_policy(
     _ handle: UnsafeMutableRawPointer?,
@@ -789,6 +796,18 @@ internal func native_epp_group_encrypt_disappearing(
     _ out_error: UnsafeMutablePointer<NativeAuraError>?
 ) -> UInt32
 
+@_silgen_name("aura_group_encrypt_sealed_disappearing")
+internal func native_epp_group_encrypt_sealed_disappearing(
+    _ handle: UnsafeMutableRawPointer?,
+    _ plaintext: UnsafePointer<UInt8>?,
+    _ plaintext_length: Int,
+    _ hint: UnsafePointer<UInt8>?,
+    _ hint_length: Int,
+    _ ttl_seconds: UInt32,
+    _ out_ciphertext: UnsafeMutablePointer<NativeAuraBuffer>?,
+    _ out_error: UnsafeMutablePointer<NativeAuraError>?
+) -> UInt32
+
 @_silgen_name("aura_group_encrypt_frankable")
 internal func native_epp_group_encrypt_frankable(
     _ handle: UnsafeMutableRawPointer?,
@@ -820,6 +839,15 @@ internal func native_epp_group_encrypt_delete(
 
 @_silgen_name("aura_group_decrypt_ex")
 internal func native_epp_group_decrypt_ex(
+    _ handle: UnsafeMutableRawPointer?,
+    _ ciphertext: UnsafePointer<UInt8>?,
+    _ ciphertext_length: Int,
+    _ out_result: UnsafeMutablePointer<NativeAuraGroupDecryptResult>?,
+    _ out_error: UnsafeMutablePointer<NativeAuraError>?
+) -> UInt32
+
+@_silgen_name("aura_group_decrypt_open_sealed_ex")
+internal func native_epp_group_decrypt_open_sealed_ex(
     _ handle: UnsafeMutableRawPointer?,
     _ ciphertext: UnsafePointer<UInt8>?,
     _ ciphertext_length: Int,

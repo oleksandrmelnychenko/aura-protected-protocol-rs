@@ -16,7 +16,7 @@ Hybrid secure-messaging protocol targeting post-quantum confidentiality of sessi
 | AEAD | AES-256-CBC + HMAC | AES-256-CBC + HMAC | **AES-256-GCM-SIV** (nonce-misuse resistant) |
 | Post-compromise recovery | 1-step (DH) | 1-step (DH) | **local classical PCS after one step; hybrid recovery after post-compromise peer KEM material is used** |
 | Group module | N/A | N/A | **MLS-inspired hybrid PQ TreeKEM** (outside 1:1 proof scope) |
-| Shield mode | No | No | **Yes** (enhanced key schedule, mandatory franking) |
+| Shield mode | No | No | **Yes** (versioned strict group policy; no anonymity claim) |
 | Message features | Basic | Basic | **Sealed, disappearing, frankable, edit, delete** |
 | Formal proofs | eCK sketch | High-level | **6 reduction-style claims + 10 Tamarin lemmas + 4 active ProVerif queries** (1:1 handshake/ratchet) |
 
@@ -54,17 +54,22 @@ Shield Mode                            │ Sealed inner content + reveal key    
 
 ## Shield Mode
 
-Shield mode is an enhanced security policy for group sessions that enables stricter cryptographic guarantees:
+Shield V1 is a versioned, cryptographically bound policy profile for private
+group sessions. It is intentionally reported separately from the default
+Standard E2E tier.
 
 | Parameter | Default | Shield |
 |-----------|---------|--------|
-| Enhanced key schedule (2-pass KDF) | Off | **On** |
-| Mandatory franking | Off | **On** |
-| Block external join | Off | **On** |
+| Enhanced key schedule (2-pass KDF) | On | **On** |
+| Mandatory franking | On | **On** |
+| Block external join | On | **On** |
 | Max messages per epoch | 1000 | 1000 |
-| Effective max skipped keys per sender | 32 | 4 |
+| Effective max skipped keys per sender | 1000 | **4** |
 
 The implementation keeps a broader global skipped-key hard cap of 256 entries.
+Shield V1 does **not** hide the sender, roster, timestamps, message sizes, or
+traffic shape from the service. Sealed message payloads are a distinct message
+format, not traffic-analysis resistance.
 
 ```swift
 // Swift — create a shielded group
@@ -84,8 +89,9 @@ let group = try AuraGroupSession.create(identity: identity, credential: cred, po
 // Rust — create a shielded group
 let group = AuraProtocol::group_create_shielded(&identity, &credential)?;
 
-// Query shield status
-let is_shielded = group.is_shielded();
+// Query the versioned tier (ShieldV1, Standard, or Custom)
+let tier = group.security_tier()?;
+let is_shielded = group.is_shielded()?;
 let policy = group.security_policy();
 ```
 
@@ -460,12 +466,12 @@ let delete = try group.encryptDelete(targetMessageId: msgId)
 | **1:1 Session** | encrypt, decrypt, serialize, deserialize, nonceRemaining |
 | **Group Session** | create, createShielded, create(policy:), join, joinExternal |
 | **Group Membership** | addMember, removeMember, update, processCommit, generateKeyPackage |
-| **Group Messaging** | encrypt, decrypt, decryptEx (full metadata) |
+| **Group Messaging** | encrypt, decrypt, decryptEx (deferred sealed metadata), decryptOpenedSealedEx (inner plaintext, no exported seal key) |
 | **Special Messages** | encryptSealed, encryptDisappearing, encryptFrankable, encryptEdit, encryptDelete |
 | **Crypto Verification** | computeMessageId, revealSealed, verifyFranking |
-| **Group State** | groupId, epoch, myLeafIndex, memberCount, memberLeafIndices, isShielded, securityPolicy |
+| **Group State** | groupId, epoch, myLeafIndex, memberCount, memberLeafIndices, securityTier, isShielded, securityPolicy |
 | **Serialization** | serialize/deserialize (group + 1:1), exportPublicState |
-| **Shield Mode** | AuraGroupSecurityPolicy, .shield preset, createShielded, isShielded |
+| **Shield Mode** | AuraGroupSecurityPolicy, .standard/.shield presets, AuraGroupSecurityTier, createShielded, securityTier, isShielded |
 | **Managed State** | AuraSealedStateCounterTracker, AuraSealedStateSlot, persisted-state export/restore |
 | **Time Provider** | AuraTimeProvider.manual, setNowUnix, identity/session/VoIP trusted-time binding |
 | **VoIP** | call init/accept/finish, media encrypt/decrypt, rekey, sealed/persisted state |
@@ -480,6 +486,7 @@ All relay functions are in `aura_protected_protocol::api::relay`:
 
 - `validate_crypto_envelope()` — validate 1:1 envelope structure
 - `validate_commit_for_relay_strict()` — structural group-commit validation + sender identity binding from auth context
+- `validate_welcome_for_relay_strict()` — validate the complete public Welcome shape and bind its provenance signature to the authenticated committer
 - `validate_group_message_for_relay_strict()` — validate group message + sender signature + auth-context identity binding
 - `apply_commit_to_roster_tentative()` — update tentative relay membership state
 - `extract_welcome_target()` — find welcome recipient

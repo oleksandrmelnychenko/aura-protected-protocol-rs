@@ -63,11 +63,13 @@ pub fn create_key_package(
 const KEY_PACKAGE_SECRETS_SEAL_VERSION: u8 = 1;
 const KEY_PACKAGE_SECRETS_SEAL_AAD: &[u8] = b"aura-group-key-package-secrets-v1";
 
-/// Seals a key package's PRIVATE secrets (leaf x25519 private key + Kyber decap
-/// secret) under a 32-byte at-rest key so the host can PERSIST them across app
-/// launches and still process a Welcome that arrives in a later session.
+/// Seals a key package's private secrets under a 32-byte at-rest key.
+///
+/// This lets the host persist the leaf X25519 private key and Kyber decapsulation
+/// secret across app launches and process a Welcome received in a later session.
 /// Without this the secrets live only in RAM and every cross-session Welcome
 /// fails. Mirrors the session/group sealed-state pattern (AES-256-GCM-SIV).
+///
 /// Output layout: `version(1) || nonce(12) || AEAD(len16(x)||x || len16(k)||k)`.
 pub fn seal_key_package_secrets(
     x25519_private: &SecureMemoryHandle,
@@ -85,16 +87,15 @@ pub fn seal_key_package_secrets(
     let k = kyber_secret
         .read_zeroizing(kyber_secret.size())
         .map_err(ProtocolError::from_crypto)?;
-    if x.len() > u16::MAX as usize || k.len() > u16::MAX as usize {
-        return Err(ProtocolError::invalid_input(
-            "Key package secret exceeds maximum length",
-        ));
-    }
+    let x_len = u16::try_from(x.len())
+        .map_err(|_| ProtocolError::invalid_input("Key package secret exceeds maximum length"))?;
+    let k_len = u16::try_from(k.len())
+        .map_err(|_| ProtocolError::invalid_input("Key package secret exceeds maximum length"))?;
 
     let mut inner = zeroize::Zeroizing::new(Vec::with_capacity(4 + x.len() + k.len()));
-    inner.extend_from_slice(&(x.len() as u16).to_be_bytes());
+    inner.extend_from_slice(&x_len.to_be_bytes());
     inner.extend_from_slice(&x);
-    inner.extend_from_slice(&(k.len() as u16).to_be_bytes());
+    inner.extend_from_slice(&k_len.to_be_bytes());
     inner.extend_from_slice(&k);
 
     let nonce = CryptoInterop::get_random_bytes(AES_GCM_NONCE_BYTES);
@@ -126,8 +127,10 @@ fn read_len_prefixed(buf: &[u8], offset: usize) -> Result<(&[u8], usize), Protoc
     Ok((&buf[start..end], end))
 }
 
-/// Reverses `seal_key_package_secrets`: authenticates + decrypts the blob and
-/// rebuilds the two secure-memory handles. A wrong key or tampering fails the
+/// Authenticates and decrypts a sealed key-package-secrets blob.
+///
+/// This reverses [`seal_key_package_secrets`] and rebuilds the two secure-memory
+/// handles. A wrong key or tampering fails the
 /// AEAD tag check and returns an error (never partial secrets).
 pub fn unseal_key_package_secrets(
     sealed: &[u8],

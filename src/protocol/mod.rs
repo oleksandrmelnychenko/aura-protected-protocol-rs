@@ -18,8 +18,8 @@ pub use channel::{
     CHANNEL_KEY_BLOB_BYTES, CHANNEL_KEY_ID_BYTES,
 };
 pub use group::{
-    ContentType, FrankingData, GroupDecryptResult, GroupSecurityPolicy, GroupSession,
-    MessagePolicy, SealedPayload,
+    ContentType, FrankingData, GroupDecryptResult, GroupSecurityPolicy, GroupSecurityTier,
+    GroupSession, MessagePolicy, SealedPayload,
 };
 pub use handshake::{HandshakeInitReplayGuard, HandshakeInitiator, HandshakeResponder};
 pub use nonce::{NonceGenerator, NonceState};

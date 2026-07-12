@@ -198,15 +198,19 @@ fn resign_group_commit_for_test(
 }
 
 #[test]
-fn group_create_defaults_to_shield_policy() {
+fn group_create_defaults_to_standard_policy() {
     init();
     let identity = IdentityKeys::create(5).unwrap();
     let session = GroupSession::create(&identity, b"owner".to_vec()).unwrap();
     let policy = session.security_policy().unwrap();
-    assert!(policy.is_shielded());
+    assert!(!policy.is_shielded());
     assert!(policy.block_external_join);
     assert!(policy.enhanced_key_schedule);
     assert!(policy.mandatory_franking);
+    assert_eq!(
+        policy,
+        aura_protected_protocol::protocol::group::GroupSecurityPolicy::standard()
+    );
 }
 
 #[test]
@@ -5776,6 +5780,84 @@ fn relay_extract_welcome_target_invalid_group_id_size_rejected() {
 }
 
 #[test]
+fn relay_validate_welcome_for_relay_strict_binds_shape_target_and_committer() {
+    use aura_protected_protocol::api::relay::{
+        extract_welcome_target, validate_welcome_for_relay_strict,
+    };
+    use aura_protected_protocol::proto::GroupWelcome;
+    use prost::Message;
+
+    init();
+
+    let alice = AuraProtocol::new(10).unwrap();
+    let bob = AuraProtocol::new(10).unwrap();
+    let (bob_kp, _, _) = bob.generate_key_package(b"bob".to_vec()).unwrap();
+    let alice_group = alice.create_group(b"alice".to_vec()).unwrap();
+    let group_id = alice_group.group_id().unwrap();
+    let (_, welcome_bytes) = alice_group.add_member(&bob_kp).unwrap();
+    let (_, epoch, target_leaf_index) = extract_welcome_target(&welcome_bytes).unwrap();
+    let alice_identity = alice.identity_ed25519_public();
+
+    let info = validate_welcome_for_relay_strict(
+        &welcome_bytes,
+        &group_id,
+        epoch,
+        target_leaf_index,
+        &alice_identity,
+    )
+    .unwrap();
+    assert_eq!(info.group_id, group_id);
+    assert_eq!(info.epoch, epoch);
+    assert_eq!(info.target_leaf_index, target_leaf_index);
+    assert_eq!(info.committer_leaf_index, 0);
+
+    let mallory = AuraProtocol::new(10).unwrap();
+    assert!(validate_welcome_for_relay_strict(
+        &welcome_bytes,
+        &info.group_id,
+        epoch,
+        target_leaf_index,
+        &mallory.identity_ed25519_public(),
+    )
+    .is_err());
+    assert!(validate_welcome_for_relay_strict(
+        &welcome_bytes,
+        &info.group_id,
+        epoch + 1,
+        target_leaf_index,
+        &alice_identity,
+    )
+    .is_err());
+
+    let mut forged = GroupWelcome::decode(welcome_bytes.as_slice()).unwrap();
+    forged.committer_signature[0] ^= 0x40;
+    assert!(validate_welcome_for_relay_strict(
+        &forged.encode_to_vec(),
+        &info.group_id,
+        epoch,
+        target_leaf_index,
+        &alice_identity,
+    )
+    .is_err());
+
+    let mut malformed = GroupWelcome::decode(welcome_bytes.as_slice()).unwrap();
+    malformed
+        .encrypted_joiner_secret
+        .as_mut()
+        .unwrap()
+        .nonce
+        .clear();
+    assert!(validate_welcome_for_relay_strict(
+        &malformed.encode_to_vec(),
+        &info.group_id,
+        epoch,
+        target_leaf_index,
+        &alice_identity,
+    )
+    .is_err());
+}
+
+#[test]
 fn relay_validate_commit_for_relay_strict_checks_signature_and_sender_binding() {
     use aura_protected_protocol::api::relay::{
         validate_commit_for_relay_strict, GroupMemberRecord, GroupRoster,
@@ -6004,6 +6086,51 @@ fn relay_validate_commit_for_relay_rejects_invalid_add_key_package() {
     let alice_identity = alice.identity_ed25519_public();
     let result = validate_commit_for_relay_strict(&tampered, &roster, &alice_identity);
     assert!(result.is_err());
+}
+
+#[test]
+fn relay_validate_commit_for_relay_rejects_malformed_update_proposal_shape() {
+    use aura_protected_protocol::api::relay::{
+        validate_commit_for_relay_strict, GroupMemberRecord, GroupRoster,
+    };
+    use aura_protected_protocol::proto::{group_proposal, GroupCommit, GroupProposal};
+    use prost::Message;
+
+    init();
+
+    let alice = AuraProtocol::new(10).unwrap();
+    let bob = AuraProtocol::new(10).unwrap();
+    let (bob_kp, _, _) = bob.generate_key_package(b"bob".to_vec()).unwrap();
+    let alice_group = alice.create_group(b"alice".to_vec()).unwrap();
+    let group_id = alice_group.group_id().unwrap();
+    let (commit_bytes, _) = alice_group.add_member(&bob_kp).unwrap();
+    let roster = GroupRoster::new(
+        group_id,
+        GroupMemberRecord {
+            leaf_index: 0,
+            identity_ed25519_public: alice.identity_ed25519_public(),
+            identity_x25519_public: alice.identity_x25519_public(),
+            credential: b"alice".to_vec(),
+        },
+    );
+
+    let mut commit = GroupCommit::decode(commit_bytes.as_slice()).unwrap();
+    commit.proposals.push(GroupProposal {
+        proposal: Some(group_proposal::Proposal::Update(
+            aura_protected_protocol::proto::GroupUpdateProposal {
+                leaf_x25519_public: vec![],
+                leaf_kyber_public: vec![],
+            },
+        )),
+    });
+
+    let error = validate_commit_for_relay_strict(
+        &commit.encode_to_vec(),
+        &roster,
+        &alice.identity_ed25519_public(),
+    )
+    .expect_err("malformed public Update proposal must fail closed");
+    assert!(error.to_string().contains("Update proposal"));
 }
 
 #[test]
@@ -8658,6 +8785,28 @@ fn group_disappearing_message_fresh() {
 }
 
 #[test]
+fn group_sealed_disappearing_message_roundtrip() {
+    use aura_protected_protocol::protocol::group::{ContentType, GroupSession};
+
+    let mut policy = aura_protected_protocol::protocol::group::GroupSecurityPolicy::shield();
+    policy.max_messages_per_epoch = 5_000;
+    let (alice, bob) = create_two_member_group_with_policy(policy);
+    let plaintext = b"Shield content with an authenticated lifetime";
+    let hint = b"Disappearing Shield message";
+
+    let ciphertext = alice
+        .encrypt_sealed_disappearing(plaintext, hint, 3_600)
+        .unwrap();
+    let result = bob.decrypt(&ciphertext).unwrap();
+
+    assert_eq!(result.plaintext, hint);
+    assert_eq!(result.content_type, ContentType::SealedDisappearing);
+    assert_eq!(result.ttl_seconds, 3_600);
+    let sealed = result.sealed_payload.as_ref().unwrap();
+    assert_eq!(GroupSession::reveal_sealed(sealed).unwrap(), plaintext);
+}
+
+#[test]
 fn group_disappearing_message_expired() {
     let (alice, bob) = create_two_member_group();
     let plaintext = b"Ephemeral";
@@ -8682,6 +8831,12 @@ fn group_disappearing_invalid_ttl_rejected() {
     assert!(r.is_err());
 
     let r = alice.encrypt_disappearing(b"test", 7 * 24 * 3600 + 1);
+    assert!(r.is_err());
+
+    let r = alice.encrypt_sealed_disappearing(b"test", b"hint", 0);
+    assert!(r.is_err());
+
+    let r = alice.encrypt_sealed_disappearing(b"test", b"hint", 7 * 24 * 3600 + 1);
     assert!(r.is_err());
 }
 

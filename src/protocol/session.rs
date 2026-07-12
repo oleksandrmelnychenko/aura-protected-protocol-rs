@@ -1473,10 +1473,7 @@ impl Session {
         // count-based limit isn't reached.
         let current_epoch = inner.state.recv_ratchet_epoch;
         let min_allowed_epoch = current_epoch.saturating_sub(MAX_METADATA_KEY_EPOCH_AGE);
-        loop {
-            let Some((&oldest_epoch, _)) = inner.cached_metadata_keys.iter().next() else {
-                break;
-            };
+        while let Some((&oldest_epoch, _)) = inner.cached_metadata_keys.iter().next() {
             if oldest_epoch < min_allowed_epoch {
                 if let Some((_, mut key)) = inner.cached_metadata_keys.pop_first() {
                     CryptoInterop::secure_wipe(&mut key);
@@ -1647,11 +1644,11 @@ impl Session {
         let (new_kyber_sk_handle, new_kyber_pk) = {
             #[cfg(feature = "test-vectors")]
             {
-                if let Some(entropy) = test_entropy.as_ref() {
-                    KyberInterop::generate_keypair_from_seed(&entropy.kyber_keygen_seed)
-                } else {
-                    KyberInterop::generate_keypair()
-                }
+                test_entropy
+                    .as_ref()
+                    .map_or_else(KyberInterop::generate_keypair, |entropy| {
+                        KyberInterop::generate_keypair_from_seed(&entropy.kyber_keygen_seed)
+                    })
             }
             #[cfg(not(feature = "test-vectors"))]
             {

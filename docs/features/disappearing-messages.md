@@ -72,10 +72,9 @@ let result = session.decrypt(&ct); // Err(MessageExpired)
 
 Disappearing + Sealed:
 ```rust
-let policy = MessagePolicy {
-    content_type: ContentType::SealedDisappearing,
-    ttl_seconds: 300, // 5 хвилин
-    frankable: false,
-};
-let ct = session.encrypt_with_policy(plaintext, &policy)?;
+let ct = session.encrypt_sealed_disappearing(
+    plaintext,
+    b"Disappearing Shield message",
+    300, // 5 хвилин
+)?;
 ```

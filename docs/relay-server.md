@@ -29,11 +29,19 @@
 |--------------|---------------|----------|
 | `relay::validate_commit_for_relay_strict(commit_bytes, roster, expected_sender_identity_ed25519)` | `commit_bytes` — сирі байти GroupCommit, `roster` — поточний `GroupRoster`, `expected_sender_identity_ed25519` — ідентичність з auth-контексту (обовʼязково) | `Result<RelayCommitInfo, ProtocolError>` |
 
-Перевіряє: epoch = roster.epoch + 1, `group_id` збігається з roster, є `update_path`, а також Ed25519 підпис комітера, привʼязаний до auth-контексту. Для `ExternalInit` relay виводить identity комітера з `Add` proposal, бо joiner ще не входить до поточного roster. Це **структурна** relay-side перевірка для маршрутизації й tentative server state; вона не еквівалентна повній member-side `process_commit()` валідації.
+Перевіряє: epoch = roster.epoch + 1, `group_id` збігається з roster, є `update_path`, усі proposal мають валідну публічну форму (включно з KeyPackage/Update/ExternalInit/PSK/ReInit constraints), а також Ed25519 підпис комітера, привʼязаний до auth-контексту. Для `ExternalInit` relay виводить identity комітера з `Add` proposal, бо joiner ще не входить до поточного roster. Це **структурна** relay-side перевірка для маршрутизації й tentative server state; вона не еквівалентна повній member-side `process_commit()` валідації.
 
 **Що передавати:** Сервер зберігає по одному `GroupRoster` на групу (group_id, epoch, список членів). Перед прийняттям коміту викликає `validate_commit_for_relay_strict`; після успіху може використовувати результат для маршрутизації та **tentative** relay state (див. нижче), але authoritative membership/state лишається за клієнтами.
 
-### 3. Валідація групового повідомлення (Application)
+### 3. Валідація Welcome
+
+| Що викликати | Що передавати | Повертає |
+|--------------|---------------|----------|
+| `relay::validate_welcome_for_relay_strict(welcome_bytes, expected_group_id, expected_epoch, expected_target_leaf_index, expected_committer_ed25519)` | Сирі `GroupWelcome` bytes та всі очікувані значення з authoritative transaction/auth context | `Result<RelayWelcomeInfo, ProtocolError>` |
+
+Перевіряє protocol version, size, exact group/epoch/target, межі leaf indices, обовʼязкові encrypted fields, nonce/KEM/AEAD/tree-hash lengths і Ed25519 provenance signature. Relay додатково має звірити returned `committer_leaf_index` із leaf authenticated sender у resulting roster. Decrypt `GroupInfo`, tree hash і confirmation MAC усе одно перевіряє target client, бо relay не має joiner secrets.
+
+### 4. Валідація групового повідомлення (Application)
 
 | Що викликати | Що передавати | Повертає |
 |--------------|---------------|----------|
@@ -41,7 +49,7 @@
 
 Перевіряє: версію протоколу, `group_id` та `epoch` збігаються з roster, контент — application, Ed25519 підпис відправника і (за потреби) binding до очікуваної identity.
 
-### 4. Валідація Key Package (зберігання / Add)
+### 5. Валідація Key Package (зберігання / Add)
 
 | Що викликати | Що передавати | Повертає |
 |--------------|---------------|----------|
@@ -193,11 +201,11 @@
 1. Отримати від клієнта байти CryptoEnvelope.
 2. Викликати `validate_crypto_envelope(envelope_bytes)`.
 3. За `payload_type` та `group_id` визначити групу; завантажити її `GroupRoster`.
-4. Якщо це Commit: `validate_commit_for_relay_strict(commit_bytes, roster, expected_sender_identity_ed25519)` → `RelayCommitInfo`; `commit_recipients(roster, committer)` → список одержувачів; для кожного одержувача можна зберегти/відправити Commit; за потреби оновити **tentative** relay roster через `apply_commit_to_roster_tentative(...)` + доставка Welcome цільовому leaf.
+4. Якщо це Commit: `validate_commit_for_relay_strict(commit_bytes, roster, expected_sender_identity_ed25519)` → `RelayCommitInfo`; `commit_recipients(roster, committer)` → список одержувачів; для кожного одержувача можна зберегти/відправити Commit; за потреби оновити **tentative** relay roster через `apply_commit_to_roster_tentative(...)`. Перед доставкою кожного Welcome викликати `validate_welcome_for_relay_strict(...)` і звірити returned committer leaf із authenticated sender у resulting roster. Новий leaf отримує Welcome, а не Add Commit, який створив цей leaf.
 5. Якщо це GroupMessage: `validate_group_message_for_relay_strict(message_bytes, roster, sender_leaf_index, expected_sender_identity_ed25519)`; `message_recipients(roster)` або `crypto_envelope_recipients(envelope, roster)` → кому доставити; `store_event` для кожного одержувача або відправка в реальному часі.
 6. Для 1:1 envelope сервер лише пересилає blob одержувачу за його ідентифікатором (наприклад, за session/device).
 7. `sender_device_id`, `sender_leaf_index` та identity для strict-валідації мають братися з автентифікованого transport/session контексту, а не довірятися напряму полям у payload.
 
-Уся криптографія (дешифрування, перевірка підписів всередині payload) виконується на клієнті; сервер лише валідує формат і маршрутизує.
+Content decryption, TreeKEM acceptance і confirmation MAC лишаються на клієнті. Relay перевіряє доступні йому public signatures/shape/auth bindings, але не повинен трактувати tentative roster як доказ client-side acceptance.
 
 Див. також узгоджений контракт `protocol <-> relay <-> Swift`: [docs/aura-relay-swift-alignment.md](aura-relay-swift-alignment.md).

@@ -8,12 +8,14 @@ use prost::Message;
 
 use crate::core::constants::*;
 use crate::core::errors::ProtocolError;
+use crate::crypto::KyberInterop;
 use crate::proto::e2e::{CryptoEnvelope, CryptoPayloadType};
 use crate::proto::{
     GroupApplicationMessage, GroupCommit, GroupKeyPackage, GroupMessage, GroupWelcome, PreKeyBundle,
 };
-use crate::protocol::group::key_package;
+use crate::protocol::group::{key_package, membership, welcome};
 use crate::protocol::handshake::validate_bundle;
+use crate::security::DhValidator;
 
 #[derive(Debug, Clone)]
 pub struct GroupMemberRecord {
@@ -106,6 +108,7 @@ fn validate_commit_for_relay_core(
     if commit.update_path.is_none() {
         return Err(ProtocolError::group_protocol("Commit missing update_path"));
     }
+    membership::validate_proposal_shapes(&commit.proposals)?;
 
     let (committer_identity_ed25519, kind) = relay_commit_sender_identity(&commit, roster)?;
     let mut commit_for_verify = commit.clone();
@@ -579,6 +582,148 @@ pub fn extract_welcome_target(welcome_bytes: &[u8]) -> Result<(Vec<u8>, u64, u32
     }
 
     Ok((welcome.group_id, welcome.epoch, welcome.target_leaf_index))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayWelcomeInfo {
+    pub group_id: Vec<u8>,
+    pub epoch: u64,
+    pub target_leaf_index: u32,
+    pub committer_leaf_index: u32,
+}
+
+/// Validate every publicly checkable Welcome invariant.
+///
+/// The provenance signature is bound to the authenticated committer identity.
+/// This deliberately cannot decrypt `GroupInfo` or verify its confirmation MAC;
+/// those checks remain the target member's responsibility.
+pub fn validate_welcome_for_relay_strict(
+    welcome_bytes: &[u8],
+    expected_group_id: &[u8],
+    expected_epoch: u64,
+    expected_target_leaf_index: u32,
+    expected_committer_ed25519: &[u8],
+) -> Result<RelayWelcomeInfo, ProtocolError> {
+    if welcome_bytes.is_empty() {
+        return Err(ProtocolError::invalid_input("Welcome is empty"));
+    }
+    if welcome_bytes.len() > MAX_GROUP_MESSAGE_SIZE {
+        return Err(ProtocolError::invalid_input("Welcome too large"));
+    }
+    if expected_group_id.len() != GROUP_ID_BYTES {
+        return Err(ProtocolError::invalid_input(
+            "Expected Welcome group_id has invalid size",
+        ));
+    }
+    if !relay_leaf_index_in_range(expected_target_leaf_index) {
+        return Err(ProtocolError::invalid_input(
+            "Expected Welcome target leaf is out of range",
+        ));
+    }
+
+    let welcome = GroupWelcome::decode(welcome_bytes)
+        .map_err(|error| ProtocolError::decode(format!("Welcome decode: {error}")))?;
+    if welcome.version != GROUP_PROTOCOL_VERSION {
+        return Err(ProtocolError::welcome_error(format!(
+            "Unsupported Welcome version: {}",
+            welcome.version
+        )));
+    }
+    if welcome.group_id.len() != GROUP_ID_BYTES || welcome.group_id != expected_group_id {
+        return Err(ProtocolError::welcome_error(
+            "Welcome group_id does not match the expected group",
+        ));
+    }
+    if welcome.epoch != expected_epoch {
+        return Err(ProtocolError::welcome_error(format!(
+            "Welcome epoch mismatch: expected {expected_epoch}, got {}",
+            welcome.epoch
+        )));
+    }
+    if welcome.target_leaf_index != expected_target_leaf_index {
+        return Err(ProtocolError::welcome_error(format!(
+            "Welcome target leaf mismatch: expected {expected_target_leaf_index}, got {}",
+            welcome.target_leaf_index
+        )));
+    }
+    if !relay_leaf_index_in_range(welcome.committer_leaf_index) {
+        return Err(ProtocolError::welcome_error(
+            "Welcome committer leaf is out of range",
+        ));
+    }
+    if welcome.committer_leaf_index == welcome.target_leaf_index {
+        return Err(ProtocolError::welcome_error(
+            "Welcome committer cannot be the target member",
+        ));
+    }
+    if welcome.encrypted_group_info.len() <= AES_GCM_TAG_BYTES {
+        return Err(ProtocolError::welcome_error(
+            "Welcome encrypted_group_info is missing or truncated",
+        ));
+    }
+    if welcome.welcome_nonce.len() != AES_GCM_NONCE_BYTES {
+        return Err(ProtocolError::welcome_error(format!(
+            "Welcome nonce must be {AES_GCM_NONCE_BYTES} bytes"
+        )));
+    }
+    if welcome.tree_hash.len() != SHA256_HASH_BYTES {
+        return Err(ProtocolError::welcome_error(format!(
+            "Welcome tree_hash must be {SHA256_HASH_BYTES} bytes"
+        )));
+    }
+    let encrypted_joiner = welcome
+        .encrypted_joiner_secret
+        .as_ref()
+        .ok_or_else(|| ProtocolError::welcome_error("Missing encrypted joiner secret"))?;
+    validate_welcome_hybrid_ciphertext_shape(encrypted_joiner)?;
+
+    let signature_input = welcome::welcome_signature_input(&welcome)?;
+    verify_ed25519_message(
+        expected_committer_ed25519,
+        &welcome.committer_signature,
+        &signature_input,
+        "Welcome committer signature verification failed",
+    )?;
+
+    Ok(RelayWelcomeInfo {
+        group_id: welcome.group_id,
+        epoch: welcome.epoch,
+        target_leaf_index: welcome.target_leaf_index,
+        committer_leaf_index: welcome.committer_leaf_index,
+    })
+}
+
+fn validate_welcome_hybrid_ciphertext_shape(
+    ciphertext: &crate::proto::GroupHybridCiphertext,
+) -> Result<(), ProtocolError> {
+    DhValidator::validate_x25519_public_key(&ciphertext.ephemeral_x25519_public).map_err(
+        |error| {
+            ProtocolError::welcome_error(format!(
+                "Welcome joiner secret has invalid ephemeral X25519 key: {error}"
+            ))
+        },
+    )?;
+    KyberInterop::validate_ciphertext(&ciphertext.kyber_ciphertext).map_err(|error| {
+        ProtocolError::welcome_error(format!(
+            "Welcome joiner secret has invalid Kyber ciphertext: {error}"
+        ))
+    })?;
+    let expected_encrypted_secret_len = PATH_SECRET_BYTES + AES_GCM_TAG_BYTES;
+    if ciphertext.encrypted_secret.len() != expected_encrypted_secret_len {
+        return Err(ProtocolError::welcome_error(format!(
+            "Welcome encrypted joiner secret must be {expected_encrypted_secret_len} bytes"
+        )));
+    }
+    if ciphertext.nonce.len() != AES_GCM_NONCE_BYTES {
+        return Err(ProtocolError::welcome_error(format!(
+            "Welcome joiner nonce must be {AES_GCM_NONCE_BYTES} bytes"
+        )));
+    }
+    Ok(())
+}
+
+fn relay_leaf_index_in_range(leaf_index: u32) -> bool {
+    usize::try_from(leaf_index).is_ok_and(|index| index < MAX_GROUP_MEMBERS)
 }
 
 fn bind_sender_identity(

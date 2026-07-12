@@ -180,6 +180,7 @@ Swift wrapper надає `AuraGroupSession` та `AuraGroupKeyPackageSecrets`. �
 | `aura_group_decrypt` | `handle`, `ciphertext`, `ciphertext_length`, `out_plaintext`, `out_sender_leaf`, `out_generation`, `out_error` | Plaintext + `sender_leaf` + `generation` |
 | `aura_group_encrypt_sealed` | `handle`, `plaintext`, `plaintext_length`, `hint`, `hint_length`, `out_ciphertext`, `out_error` | Sealed inner payload; sender metadata still comes from group decrypt result |
 | `aura_group_encrypt_disappearing` | `handle`, `plaintext`, `plaintext_length`, `ttl_seconds`, `out_ciphertext`, `out_error` | Повідомлення, що зникає (TTL) |
+| `aura_group_encrypt_sealed_disappearing` | `handle`, `plaintext`, `plaintext_length`, `hint`, `hint_length`, `ttl_seconds`, `out_ciphertext`, `out_error` | Shield sealed payload з authenticated TTL |
 | `aura_group_encrypt_frankable` | `handle`, `plaintext`, `plaintext_length`, `out_ciphertext`, `out_error` | Frankable-повідомлення (можна довести автентичність третій стороні) |
 | `aura_group_reveal_sealed` | `hint`, `hint_length`, `encrypted_content`, `encrypted_content_length`, `nonce`, `nonce_length`, `seal_key`, `seal_key_length`, `out_plaintext`, `out_error` | Розшифрувати sealed-повідомлення за ключем |
 | `aura_group_verify_franking` | `franking_tag`, `franking_tag_length`, `franking_key`, `franking_key_length`, `content`, `content_length`, `sealed_content`, `sealed_content_length`, `out_valid`, `out_error` | Перевірити franking-тег |

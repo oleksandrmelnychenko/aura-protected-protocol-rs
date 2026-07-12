@@ -92,6 +92,7 @@ API розрахований на три ролі:
 | `aura_group_decrypt` | + | + | - | Дешифрування (група) |
 | `aura_group_encrypt_sealed` | + | + | - | Sealed inner payload |
 | `aura_group_encrypt_disappearing` | + | + | - | Disappearing (TTL) |
+| `aura_group_encrypt_sealed_disappearing` | + | + | - | Shield sealed payload + TTL |
 | `aura_group_encrypt_frankable` | + | + | - | Frankable (доказ) |
 | `aura_group_reveal_sealed` | + | + | - | Розшифрувати sealed |
 | `aura_group_verify_franking` | + | + | + | Перевірити franking tag |
@@ -246,7 +247,7 @@ typedef struct AuraSessionConfig {
 // Security policy для групових сесій (Shield Mode).
 typedef struct AuraGroupSecurityPolicy {
     uint32_t max_messages_per_epoch;        // 10..100000 (0 = default)
-    uint32_t max_skipped_keys_per_sender;   // 1..32 (0 = default)
+    uint32_t max_skipped_keys_per_sender;   // 1..1024 (0 = hard ceiling 1024; Standard = 1000, Shield V1 = 4)
     uint8_t  block_external_join;           // 0/1
     uint8_t  enhanced_key_schedule;         // 0/1
     uint8_t  mandatory_franking;            // 0/1
@@ -1119,7 +1120,7 @@ AuraErrorCode aura_group_create_shielded(
 ```c
 typedef struct AuraGroupSecurityPolicy {
     uint32_t max_messages_per_epoch;        // 10..100000 (0 = default 100000)
-    uint32_t max_skipped_keys_per_sender;   // 1..32 (0 = default 32)
+    uint32_t max_skipped_keys_per_sender;   // 1..1024 (0 = hard ceiling 1024; Standard = 1000, Shield V1 = 4)
     uint8_t  block_external_join;           // 0 = false, 1 = true
     uint8_t  enhanced_key_schedule;         // 0 = false, 1 = true
     uint8_t  mandatory_franking;            // 0 = false, 1 = true
@@ -1424,6 +1425,25 @@ AuraErrorCode aura_group_encrypt_disappearing(
 ```
 
 Шифрує повідомлення з TTL. Після `ttl_seconds` дешифрування поверне `AURA_ERROR_MESSAGE_EXPIRED`.
+
+### `aura_group_encrypt_sealed_disappearing`
+
+```c
+AuraErrorCode aura_group_encrypt_sealed_disappearing(
+    AuraGroupSessionHandle* handle,
+    const uint8_t* plaintext,
+    size_t         plaintext_length,
+    const uint8_t* hint,
+    size_t         hint_length,
+    uint32_t       ttl_seconds,
+    AuraBuffer*     out_ciphertext,
+    AuraError*      out_error
+);
+```
+
+Поєднує authenticated TTL із nested sealed payload. Це зберігає Shield V1
+формат і не експортує seal key, якщо receive path використовує
+`aura_group_decrypt_open_sealed_ex`.
 
 ### `aura_group_encrypt_frankable`
 
