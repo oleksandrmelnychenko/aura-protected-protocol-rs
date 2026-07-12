@@ -45,6 +45,7 @@ jobs:
             texlive-lang-cyrillic \
             texlive-latex-base \
             texlive-latex-extra \
+            texlive-publishers \
             texlive-science
 
       - uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17 # stable
