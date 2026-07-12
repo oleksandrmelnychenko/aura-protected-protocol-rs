@@ -68,8 +68,15 @@ extract_urls > "$urls"
 url_count="$(wc -l < "$urls" | tr -d ' ')"
 echo "unique_urls=$url_count"
 
-failures=0
+hard_failures=0
+warnings=0
 while IFS= read -r url; do
+  if [[ ! "$url" =~ ^https?://[^[:space:]]+$ ]]; then
+    printf 'INVALID %s\n' "$url"
+    hard_failures=$((hard_failures + 1))
+    continue
+  fi
+
   code="$(
     curl -L \
       -A 'Mozilla/5.0 reference-audit' \
@@ -82,15 +89,28 @@ while IFS= read -r url; do
       -w '%{http_code}' \
       "$url" || true
   )"
+  code="${code:-000}"
   printf '%s %s\n' "$code" "$url"
-  if [[ "$code" != "200" ]]; then
-    failures=$((failures + 1))
-  fi
+  case "$code" in
+    2??|3??)
+      ;;
+    000|401|403|408|420|425|429|451|5??)
+      # DNS/TLS/timeouts, access controls, rate limiting, bot blocking, and
+      # upstream outages are not evidence that a citation is dead. Keep them
+      # visible in the artifact without making PR CI depend on third parties.
+      warnings=$((warnings + 1))
+      ;;
+    *)
+      # Other final 4xx responses (notably 404/410) are deterministic evidence
+      # of a malformed or removed reference and remain release-blocking.
+      hard_failures=$((hard_failures + 1))
+      ;;
+  esac
 done < "$urls"
 
-if (( failures > 0 )); then
-  echo "reference audit failed: $failures URL(s) did not return HTTP 200" >&2
+if (( hard_failures > 0 )); then
+  echo "reference audit failed: $hard_failures URL(s) returned a hard HTTP failure" >&2
   exit 1
 fi
 
-echo "reference audit passed"
+echo "reference audit passed: $warnings transient/access-controlled URL warning(s)"

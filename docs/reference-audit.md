@@ -1,16 +1,19 @@
 # Reference Audit for Aura Papers
 
-Audit date: 2026-05-18.
+Audit date: 2026-07-12.
 
 Scope:
 - `docs/aura-paper.tex`
 - `docs/aura-paper-ua.tex`
 
 Result:
-- English paper: 33 `\bibitem` entries, 33 unique cited keys, 0 missing entries, 0 uncited entries.
+- English paper: 37 `\bibitem` entries, 37 unique cited keys, 0 missing entries, 0 uncited entries.
 - Ukrainian paper: 33 `\bibitem` entries, 33 unique cited keys, 0 missing entries, 0 uncited entries.
-- External links: 33 unique URLs; all returned HTTP 200 with `curl -L` on 2026-05-18.
-- Paper build: `./scripts/reproduce-paper-artifact.sh paper` compiled both PDFs with `pdflatex`; generated output was 31 pages for `aura-paper.pdf` and 36 pages for `aura-paper-ua.pdf`.
+- External links: 40 unique URLs. The 2026-07-12 GitHub runner received a final
+  2xx/3xx response for 36 and recorded four transient/access-controlled
+  warnings (one no-response DOI and three bot-blocked HTTP 403 responses).
+- Paper build: `./scripts/reproduce-paper-artifact.sh paper` compiled the
+  canonical English PDF with `pdflatex`; output was 58 pages and 1,361,094 bytes.
 
 Verification commands:
 
@@ -19,13 +22,20 @@ Verification commands:
 ./scripts/reproduce-paper-artifact.sh paper
 ```
 
-The reference checker extracts all `\bibitem` keys, extracts all `\cite{...}` keys, fails on missing or uncited entries, then checks every unique `\url{...}` with:
+The reference checker extracts all `\bibitem` keys, extracts all `\cite{...}`
+keys, fails on missing or uncited entries, then checks every unique `\url{...}`
+with:
 
 ```sh
 curl -L -A 'Mozilla/5.0 reference-audit' \
   --connect-timeout 10 --max-time 30 \
   --retry 2 --retry-delay 1
 ```
+
+Final 2xx/3xx responses pass. Malformed URLs and deterministic hard 4xx
+responses such as 404/410 fail. Network/TLS timeouts, access controls, rate
+limits, bot blocking, and upstream 5xx responses remain explicit artifact
+warnings so pull requests do not depend on third-party availability.
 
 ## Bibliography Corrections
 
@@ -34,9 +44,9 @@ curl -L -A 'Mozilla/5.0 reference-audit' \
 | Melnychenko coauthored sources | Added the three coauthored infrastructure/UAV references used in the OPAQUE manuscript to both Aura papers. |
 | Local self-reference | Removed the companion proof entry from both bibliographies and from the citation flow. |
 | Group-protocol sources | Removed group-protocol references from the current two-party paper scope. |
-| URL coverage | Kept every cited bibliography entry backed by a URL that returns HTTP 200 in the audit. |
+| URL coverage | Kept every cited bibliography entry backed by a valid external URL; deterministic dead-link responses fail, while transient/access-controlled responses remain recorded warnings. |
 
-## Link Evidence
+## Link Evidence (2026-05-18 snapshot)
 
 | Key(s) | Evidence URL | HTTP |
 |---|---|---|
