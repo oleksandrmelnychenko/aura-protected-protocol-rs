@@ -1,8 +1,26 @@
 // Copyright (c) 2026 Oleksandr Melnychenko. All rights reserved.
 // SPDX-License-Identifier: MIT
 
+use std::borrow::Cow;
+
 const COMMON_HEADER: &str = include_str!("../include/aura_common_api.h");
 const CLIENT_HEADER: &str = include_str!("../include/aura_client_api.h");
+
+fn normalize_newlines(header: &str) -> Cow<'_, str> {
+    if header.contains('\r') {
+        Cow::Owned(header.replace("\r\n", "\n").replace('\r', "\n"))
+    } else {
+        Cow::Borrowed(header)
+    }
+}
+
+#[test]
+fn header_contract_normalization_accepts_windows_newlines() {
+    assert_eq!(
+        normalize_newlines("first\r\nsecond\rthird").as_ref(),
+        "first\nsecond\nthird"
+    );
+}
 
 #[test]
 fn common_header_exports_current_version_and_voip_errors() {
@@ -42,6 +60,8 @@ fn common_header_exports_current_version_and_voip_errors() {
 
 #[test]
 fn client_header_exports_voip_handles_types_and_critical_functions() {
+    let client_header = normalize_newlines(CLIENT_HEADER);
+
     for required in [
         "typedef struct AuraVoipSessionHandle       AuraVoipSessionHandle;",
         "typedef struct AuraVoipCallInitiatorHandle AuraVoipCallInitiatorHandle;",
@@ -111,7 +131,7 @@ fn client_header_exports_voip_handles_types_and_critical_functions() {
         "aura_voip_process_recording_consent_message(",
     ] {
         assert!(
-            CLIENT_HEADER.contains(required),
+            client_header.contains(required),
             "client header is missing required VoIP declaration fragment: {required}"
         );
     }
@@ -121,7 +141,7 @@ fn client_header_exports_voip_handles_types_and_critical_functions() {
         "aura_attachment_streaming_decryptor_destroy(\n    AuraStreamingDecryptorHandle* handle);",
     ] {
         assert!(
-            !CLIENT_HEADER.contains(forbidden),
+            !client_header.contains(forbidden),
             "client header must keep the pointer-nulling attachment destroy ABI: {forbidden}"
         );
     }
@@ -129,6 +149,8 @@ fn client_header_exports_voip_handles_types_and_critical_functions() {
 
 #[test]
 fn client_header_documents_external_join_freshness_and_rollout_constraints() {
+    let client_header = normalize_newlines(CLIENT_HEADER);
+
     for required in [
         "joiners reject expired artifacts during bootstrap",
         "pre-commit group state rather than their local wall clock",
@@ -137,7 +159,7 @@ fn client_header_documents_external_join_freshness_and_rollout_constraints() {
         "payload format",
     ] {
         assert!(
-            CLIENT_HEADER.contains(required),
+            client_header.contains(required),
             "client header is missing required external join contract fragment: {required}"
         );
     }
@@ -145,6 +167,8 @@ fn client_header_documents_external_join_freshness_and_rollout_constraints() {
 
 #[test]
 fn client_header_documents_current_ffi_output_ownership_contract() {
+    let client_header = normalize_newlines(CLIENT_HEADER);
+
     for required in [
         "The FFI layer does not inspect or free",
         "destroy any previous",
@@ -157,7 +181,7 @@ fn client_header_documents_current_ffi_output_ownership_contract() {
         "semantics as aura_voip_encrypt_frame",
     ] {
         assert!(
-            CLIENT_HEADER.contains(required),
+            client_header.contains(required),
             "client header is missing required FFI output ownership fragment: {required}"
         );
     }
@@ -167,7 +191,7 @@ fn client_header_documents_current_ffi_output_ownership_contract() {
         "layer replaces any previous FFI-owned contents",
     ] {
         assert!(
-            !CLIENT_HEADER.contains(forbidden),
+            !client_header.contains(forbidden),
             "client header must not promise automatic output-slot replacement: {forbidden}"
         );
     }

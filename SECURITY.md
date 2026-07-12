@@ -117,9 +117,14 @@ silently falling back to pageable memory is a security regression.
 
 **Deployment notes for Linux containers:**
 
+- The pool is initialized once, on the first secure allocation. Its portable
+  defaults are 16,384 × 64-byte slots plus 1,024 × 4-KiB slots (5 MiB total).
+  Set `AURA_SECURE_POOL_SMALL_SLOTS` and `AURA_SECURE_POOL_LARGE_SLOTS` before
+  that first allocation for the measured deployment concurrency. Pool capacity
+  is fixed for the remaining process lifetime and exhaustion fails closed.
 - Grant the capability: `docker run --cap-add IPC_LOCK ...` (or the k8s
-  `securityContext` equivalent), or raise `RLIMIT_MEMLOCK` to cover your
-  expected working set of keys.
+  `securityContext` equivalent), or raise `RLIMIT_MEMLOCK` above the configured
+  slot bytes plus page-alignment overhead.
 - To explicitly opt out of the mlock requirement (for test harnesses or
   environments where swap is disabled / known-safe), build with
   `--features no-secure-memory`. This is a **compile-time** opt-in and is

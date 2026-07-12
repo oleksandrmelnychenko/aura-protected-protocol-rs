@@ -119,6 +119,12 @@ mod inner {
     // and falls outside the secret-key footprint anyway.
     const SMALL_SLOT_BYTES: usize = 64;
     const LARGE_SLOT_BYTES: usize = 4096;
+    // Keep the out-of-the-box pool below the common 8 MiB RLIMIT_MEMLOCK
+    // while still leaving enough headroom for parallel test execution and
+    // small deployments. Production gateways must size both classes
+    // explicitly before the first allocation.
+    const DEFAULT_SMALL_SLOT_COUNT: usize = 16_384; // 1 MiB
+    const DEFAULT_LARGE_SLOT_COUNT: usize = 1_024; // 4 MiB
 
     fn env_usize(key: &str, default: usize) -> usize {
         std::env::var(key)
@@ -204,15 +210,14 @@ mod inner {
 
     impl SecurePool {
         fn build() -> Result<Self, CryptoError> {
-            // Defaults sized for ~1M concurrent sessions on a 1-vCPU
-            // gateway: 1M small slots × 64 B = 64 MiB, 256K large
-            // slots × 4 KiB = 1 GiB. Operators tune via env. The
-            // entire region is mlocked once at first use and never
-            // grows — no further calls to mlock() under load, so
-            // sustained throughput cannot exhaust per-process or
-            // per-cgroup mlock-rate budgets.
-            let small_count = env_usize("AURA_SECURE_POOL_SMALL_SLOTS", 1_048_576);
-            let large_count = env_usize("AURA_SECURE_POOL_LARGE_SLOTS", 262_144);
+            // The portable defaults reserve 5 MiB of locked memory. Operators
+            // tune both fixed-size classes via env for their measured session
+            // concurrency and raise RLIMIT_MEMLOCK accordingly. The entire
+            // region is mlocked once at first use and never grows, so sustained
+            // throughput cannot exhaust per-process or per-cgroup mlock-rate
+            // budgets.
+            let small_count = env_usize("AURA_SECURE_POOL_SMALL_SLOTS", DEFAULT_SMALL_SLOT_COUNT);
+            let large_count = env_usize("AURA_SECURE_POOL_LARGE_SLOTS", DEFAULT_LARGE_SLOT_COUNT);
             Ok(Self {
                 small: SizeClass::new(SMALL_SLOT_BYTES, small_count)?,
                 large: SizeClass::new(LARGE_SLOT_BYTES, large_count)?,
