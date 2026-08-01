@@ -4674,6 +4674,41 @@ pub unsafe extern "C" fn aura_group_get_member_leaf_indices(
     })
 }
 
+/// Return the authenticated KeyPackage stored at an active group leaf.
+///
+/// # Safety
+/// `handle` must be an active group handle and `out_key_package` must be a
+/// writable `AuraBuffer`. The caller owns the returned buffer and must release
+/// it with [`aura_buffer_release`].
+#[no_mangle]
+pub unsafe extern "C" fn aura_group_get_member_key_package(
+    handle: *mut AuraGroupSessionHandle,
+    leaf_index: u32,
+    out_key_package: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if out_key_package.is_null() {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "A required pointer is null",
+            );
+            return AuraErrorCode::AuraErrorNullPointer;
+        }
+        let (_guard, session) = match require_group_mut(handle, out_error) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+        let encoded = match session.member_key_package(leaf_index) {
+            Ok(value) => value,
+            Err(error) => return write_protocol_error(out_error, &error),
+        };
+        write_buffer(out_key_package, encoded);
+        AuraErrorCode::AuraSuccess
+    })
+}
+
 /// # Safety
 /// See module-level FFI safety contract.  `handle_ptr` must point to a handle from `aura_group_create`,
 /// or be null.  The handle must not be used after this call.

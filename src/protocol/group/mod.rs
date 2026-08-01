@@ -3005,6 +3005,23 @@ impl GroupSession {
         Ok(inner.tree.populated_leaf_indices())
     }
 
+    pub fn member_key_package(&self, leaf_index: u32) -> Result<Vec<u8>, ProtocolError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| ProtocolError::invalid_state("GroupSession lock poisoned"))?;
+        let node_index = tree::checked_leaf_to_node(leaf_index)?;
+        let key_package = inner
+            .tree
+            .leaf_key_package(node_index)
+            .ok_or_else(|| ProtocolError::group_membership("Member leaf is not active"))?;
+        let mut encoded = Vec::with_capacity(key_package.encoded_len());
+        key_package
+            .encode(&mut encoded)
+            .map_err(|e| ProtocolError::encode(format!("Member KeyPackage encode: {e}")))?;
+        Ok(encoded)
+    }
+
     pub fn my_identity_ed25519_public(&self) -> Result<Vec<u8>, ProtocolError> {
         let inner = self
             .inner

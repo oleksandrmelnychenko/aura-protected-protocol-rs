@@ -12,7 +12,7 @@ use aura_protected_protocol::core::constants::{
 use aura_protected_protocol::crypto::CryptoInterop;
 use aura_protected_protocol::identity::IdentityKeys;
 use aura_protected_protocol::proto::{
-    GroupCommit, GroupExternalJoinAuthorization, OneTimePreKey, PreKeyBundle,
+    GroupCommit, GroupExternalJoinAuthorization, GroupKeyPackage, OneTimePreKey, PreKeyBundle,
 };
 use aura_protected_protocol::protocol::{ContentType, GroupSecurityPolicy};
 use prost::Message;
@@ -1196,6 +1196,28 @@ fn api_group_member_leaf_indices() {
     let indices = alice_group.member_leaf_indices().unwrap();
     assert_eq!(indices.len(), 2);
     assert!(indices.contains(&0));
+}
+
+#[test]
+fn api_group_member_key_package_binds_leaf_identity_and_credential() {
+    init();
+
+    let alice_proto = AuraProtocol::new(5).unwrap();
+    let alice_group = alice_proto.create_group(b"alice-device".to_vec()).unwrap();
+
+    let encoded = alice_group.member_key_package(0).unwrap();
+    let key_package = GroupKeyPackage::decode(encoded.as_slice()).unwrap();
+
+    assert_eq!(key_package.credential, b"alice-device");
+    assert_eq!(
+        key_package.identity_ed25519_public,
+        alice_proto.identity_ed25519_public()
+    );
+    assert_eq!(
+        key_package.identity_x25519_public,
+        alice_proto.identity_x25519_public()
+    );
+    assert!(alice_group.member_key_package(1).is_err());
 }
 
 #[test]

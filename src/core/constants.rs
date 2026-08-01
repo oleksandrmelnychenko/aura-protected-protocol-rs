@@ -135,8 +135,15 @@ pub const GROUP_HYBRID_PATH_INFO: &[u8] = b"Aura-Group-HybridPath";
 pub const GROUP_STATE_HMAC_INFO: &[u8] = b"Aura-Group-StateHMAC";
 pub const GROUP_EXTERNAL_JOIN_AUTH_INFO: &[u8] = b"Aura-Group-ExternalJoinAuth";
 pub const GROUP_HYBRID_SALT_PREFIX: &[u8] = b"Aura-PQ-Group-Hybrid::";
-pub const GROUP_TREE_HASH_INFO: &[u8] = b"Aura-Group-TreeHash";
-pub const GROUP_PARENT_HASH_LABEL: &[u8] = b"Aura-Group-ParentHash";
+pub const GROUP_PARENT_HASH_LABEL: &[u8] = b"Aura-Group-ParentHash-v2";
+
+// Ratchet tree node hashing.  Every node hash carries one of these labels so a
+// leaf hash can never be reinterpreted as a parent hash (or a blank node) even
+// if every other field coincided.  `-v2` marks the framing change that made the
+// leaf hash cover the occupant's credential and identity keys.
+pub const GROUP_LEAF_NODE_HASH_LABEL: &[u8] = b"Aura-Group-LeafNodeHash-v2";
+pub const GROUP_PARENT_NODE_HASH_LABEL: &[u8] = b"Aura-Group-ParentNodeHash-v2";
+pub const GROUP_BLANK_NODE_HASH_LABEL: &[u8] = b"Aura-Group-BlankNodeHash-v2";
 pub const GROUP_EXTERNAL_PUB_X25519_INFO: &[u8] = b"Aura-Group-ExternalPub-X25519";
 pub const GROUP_EXTERNAL_PUB_KYBER_INFO: &[u8] = b"Aura-Group-ExternalPub-Kyber";
 pub const GROUP_EXTERNAL_INIT_SECRET_INFO: &[u8] = b"Aura-Group-ExternalInitSecret";

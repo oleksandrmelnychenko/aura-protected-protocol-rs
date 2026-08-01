@@ -2884,6 +2884,28 @@ AURA_API AuraErrorCode aura_group_get_member_leaf_indices(
     AuraError*               out_error);
 
 /*
+ * aura_group_get_member_key_package — retrieve the authenticated KeyPackage
+ * stored at one active member leaf.
+ *
+ * The returned protobuf contains the member credential plus the long-term
+ * Ed25519/X25519 identity keys authenticated by the current ratchet tree.
+ * Release out_key_package with aura_buffer_release().
+ *
+ * Parameters:
+ *   handle          — active group session handle.
+ *   leaf_index      — active member leaf index.
+ *   out_key_package — receives the encoded GroupKeyPackage.
+ *   out_error       — optional error detail.
+ *
+ * Returns: AURA_SUCCESS or an invalid-state/group-membership error.
+ */
+AURA_API AuraErrorCode aura_group_get_member_key_package(
+    AuraGroupSessionHandle*  handle,
+    uint32_t                 leaf_index,
+    AuraBuffer*              out_key_package,
+    AuraError*               out_error);
+
+/*
  * aura_group_serialize — persist the full group session state to an encrypted
  * blob (including private ratchet tree keys).
  *

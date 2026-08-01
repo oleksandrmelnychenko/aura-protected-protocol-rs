@@ -274,6 +274,20 @@ fn is_all_zero(bytes: &[u8]) -> bool {
     acc == 0
 }
 
+/// Length-prefix a variable-length field with a little-endian `u32`, so no two
+/// distinct field tuples can produce the same byte stream.  Matches
+/// `GroupKeySchedule::compute_group_context_hash`'s framing exactly.
+///
+/// Every variable-length field in the node and parent hashes is prefixed, not
+/// just the ones added for leaf identity binding: `from_proto` accepts an empty
+/// `kyber_public`, so an unprefixed `x25519_public || kyber_public` already
+/// admits `(x = A, k = B)` colliding with `(x = A || B, k = [])`.
+#[allow(clippy::cast_possible_truncation)]
+fn append_len_prefixed(buf: &mut Vec<u8>, bytes: &[u8]) {
+    buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+    buf.extend_from_slice(bytes);
+}
+
 impl RatchetTree {
     #[allow(clippy::too_many_arguments)]
     pub fn new_single(
@@ -602,27 +616,57 @@ impl RatchetTree {
             ));
         }
 
-        let mut hasher_input = Vec::new();
-        hasher_input.extend_from_slice(&node_idx.to_le_bytes());
+        let node = self.nodes.get(node_idx as usize);
+        let populated = matches!(node, Some(TreeNodeContent::Populated { .. }));
+        let leaf = is_leaf(node_idx);
 
-        match self.nodes.get(node_idx as usize) {
-            Some(TreeNodeContent::Populated { keys, .. }) => {
-                hasher_input.push(1);
-                hasher_input.extend_from_slice(&keys.x25519_public);
-                hasher_input.extend_from_slice(&keys.kyber_public);
-            }
-            _ => {
-                hasher_input.push(0);
+        let mut hasher_input = Vec::new();
+
+        let label: &[u8] = match (leaf, populated) {
+            (_, false) => GROUP_BLANK_NODE_HASH_LABEL,
+            (true, true) => GROUP_LEAF_NODE_HASH_LABEL,
+            (false, true) => GROUP_PARENT_NODE_HASH_LABEL,
+        };
+        append_len_prefixed(&mut hasher_input, label);
+
+        hasher_input.extend_from_slice(&node_idx.to_le_bytes());
+        hasher_input.push(u8::from(populated));
+
+        if let Some(TreeNodeContent::Populated { keys, .. }) = node {
+            append_len_prefixed(&mut hasher_input, &keys.x25519_public);
+            append_len_prefixed(&mut hasher_input, &keys.kyber_public);
+        }
+
+        // RFC 9420 LeafNodeHashInput analogue: the occupant of a leaf is part of
+        // that leaf's identity.  Without this, a key package carrying someone
+        // else's credential and the attacker's identity keys can be substituted
+        // at any leaf without moving tree_hash — and therefore without breaking
+        // group_context_hash, the confirmation MAC, the Welcome signature or an
+        // external-join authorization.
+        if leaf && populated {
+            match node_to_leaf(node_idx)
+                .and_then(|leaf_idx| self.leaves.get(leaf_idx as usize))
+                .and_then(Option::as_ref)
+            {
+                Some(leaf_data) => {
+                    hasher_input.push(1);
+                    append_len_prefixed(&mut hasher_input, &leaf_data.credential);
+                    append_len_prefixed(&mut hasher_input, &leaf_data.identity_ed25519_public);
+                    append_len_prefixed(&mut hasher_input, &leaf_data.identity_x25519_public);
+                    append_len_prefixed(&mut hasher_input, &leaf_data.identity_kyber_public);
+                    append_len_prefixed(&mut hasher_input, &leaf_data.signature);
+                }
+                None => hasher_input.push(0),
             }
         }
 
-        if !is_leaf(node_idx) && self.leaf_count > 1 {
+        if !leaf && self.leaf_count > 1 {
             let l = left(node_idx)?;
             let r = right(node_idx, self.leaf_count)?;
             let left_hash = self.compute_node_hash_inner(l, depth + 1)?;
             let right_hash = self.compute_node_hash_inner(r, depth + 1)?;
-            hasher_input.extend_from_slice(&left_hash);
-            hasher_input.extend_from_slice(&right_hash);
+            append_len_prefixed(&mut hasher_input, &left_hash);
+            append_len_prefixed(&mut hasher_input, &right_hash);
         }
 
         let hash = sha2::Sha256::digest(&hasher_input).to_vec();
@@ -659,6 +703,16 @@ impl RatchetTree {
         self.compute_node_hash(node_idx)
     }
 
+    /// `subtree_hash` now covers each leaf's credential and identity keys, so a
+    /// parent hash transitively binds the occupants of its co-path subtree.
+    ///
+    /// Creator (`commit::create_commit`) and receiver (`commit::process_commit`)
+    /// both compute/verify parent hashes *before* installing the committer's new
+    /// leaf signature.  That is symmetric, and sound only because `copath(leaf)`
+    /// above the first step never contains that leaf's own node — a leaf is never
+    /// inside a co-path subtree of its own direct path.  Do not reorder
+    /// `set_leaf_signature` relative to `create_update_path` / `process_update_path`
+    /// without re-deriving this.
     pub fn compute_parent_hash_value(
         &self,
         parent_x25519: &[u8],
@@ -670,16 +724,17 @@ impl RatchetTree {
 
         let mut input = Vec::with_capacity(
             GROUP_PARENT_HASH_LABEL.len()
+                + 5 * std::mem::size_of::<u32>()
                 + parent_x25519.len()
                 + parent_kyber.len()
                 + parent_parent_hash.len()
                 + sibling_hash.len(),
         );
-        input.extend_from_slice(GROUP_PARENT_HASH_LABEL);
-        input.extend_from_slice(parent_x25519);
-        input.extend_from_slice(parent_kyber);
-        input.extend_from_slice(parent_parent_hash);
-        input.extend_from_slice(&sibling_hash);
+        append_len_prefixed(&mut input, GROUP_PARENT_HASH_LABEL);
+        append_len_prefixed(&mut input, parent_x25519);
+        append_len_prefixed(&mut input, parent_kyber);
+        append_len_prefixed(&mut input, parent_parent_hash);
+        append_len_prefixed(&mut input, &sibling_hash);
 
         let hash = sha2::Sha256::digest(&input).to_vec();
         Ok(hash)
@@ -1004,7 +1059,7 @@ impl RatchetTree {
         Self::from_proto(proto_nodes, u32::MAX)
     }
 
-    fn leaf_key_package(&self, node_idx: u32) -> Option<GroupKeyPackage> {
+    pub(super) fn leaf_key_package(&self, node_idx: u32) -> Option<GroupKeyPackage> {
         if !is_leaf(node_idx) {
             return None;
         }

@@ -4431,6 +4431,138 @@ fn group_tree_hash_deterministic() {
     assert_eq!(h1.len(), 32);
 }
 
+/// Helper: a single-leaf tree whose *node* public keys are fixed and whose leaf
+/// fields are supplied verbatim, so a test can vary exactly one leaf field and
+/// attribute any hash difference to that field alone.  Fixing the node keys is
+/// load-bearing: if each tree got fresh node keys the hashes would differ no
+/// matter what the leaf identity binding does, and the test would prove nothing.
+fn tree_with_leaf(
+    credential: Vec<u8>,
+    identity_ed25519: Vec<u8>,
+    identity_x25519: Vec<u8>,
+    identity_kyber: Vec<u8>,
+    signature: Vec<u8>,
+) -> group::RatchetTree {
+    let identity = IdentityKeys::create(0).unwrap();
+    let (_kp, x25519_priv, kyber_sec) =
+        group::key_package::create_key_package(&identity, b"anchor".to_vec()).unwrap();
+    group::RatchetTree::new_single(
+        vec![7u8; 32],
+        vec![9u8; 1184],
+        x25519_priv,
+        kyber_sec,
+        identity_ed25519,
+        identity_x25519,
+        identity_kyber,
+        credential,
+        signature,
+    )
+    .unwrap()
+}
+
+fn reference_leaf_fields() -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
+    let identity = IdentityKeys::create(0).unwrap();
+    let (kp, _x, _k) =
+        group::key_package::create_key_package(&identity, b"reference".to_vec()).unwrap();
+    (
+        kp.identity_ed25519_public,
+        kp.identity_x25519_public,
+        kp.identity_kyber_public,
+        kp.signature,
+    )
+}
+
+#[test]
+fn group_tree_hash_binds_leaf_credential() {
+    init();
+    let (ed, x, ky, sig) = reference_leaf_fields();
+    let a = tree_with_leaf(b"alice".to_vec(), ed.clone(), x.clone(), ky.clone(), sig.clone());
+    let b = tree_with_leaf(b"mallory".to_vec(), ed, x, ky, sig);
+    assert_ne!(a.tree_hash().unwrap(), b.tree_hash().unwrap());
+}
+
+#[test]
+fn group_tree_hash_binds_leaf_identity_keys() {
+    init();
+    let (ed, x, ky, sig) = reference_leaf_fields();
+    let (other_ed, other_x, other_ky, _) = reference_leaf_fields();
+
+    let base_hash = tree_with_leaf(
+        b"alice".to_vec(),
+        ed.clone(),
+        x.clone(),
+        ky.clone(),
+        sig.clone(),
+    )
+    .tree_hash()
+    .unwrap();
+
+    let swaps = [
+        ("ed25519", other_ed, x.clone(), ky.clone()),
+        ("x25519", ed.clone(), other_x, ky),
+        ("kyber", ed, x, other_ky),
+    ];
+    for (label, leaf_ed, leaf_x, leaf_ky) in swaps {
+        let swapped = tree_with_leaf(b"alice".to_vec(), leaf_ed, leaf_x, leaf_ky, sig.clone());
+        assert_ne!(
+            base_hash,
+            swapped.tree_hash().unwrap(),
+            "tree_hash must bind the leaf {label} identity key"
+        );
+    }
+}
+
+#[test]
+fn group_tree_hash_binds_leaf_key_package_signature() {
+    init();
+    let (ed, x, ky, sig) = reference_leaf_fields();
+    let base = tree_with_leaf(b"alice".to_vec(), ed.clone(), x.clone(), ky.clone(), sig.clone());
+
+    let mut flipped = sig;
+    flipped[0] ^= 0x01;
+    let other = tree_with_leaf(b"alice".to_vec(), ed, x, ky, flipped);
+
+    assert_ne!(base.tree_hash().unwrap(), other.tree_hash().unwrap());
+}
+
+/// Every variable-length field in the node hash is length-prefixed, so shifting
+/// a byte across the boundary between two *adjacent* fields must change the
+/// hash.  `credential` is immediately followed by `identity_ed25519_public`, so
+/// without prefixes `("AB", E)` and `("A", "B"||E)` produce an identical
+/// concatenation and therefore an identical hash.
+#[test]
+fn group_tree_hash_rejects_field_boundary_ambiguity() {
+    init();
+    let (ed, x, ky, sig) = reference_leaf_fields();
+
+    let a = tree_with_leaf(
+        vec![b'A', ed[0]],
+        ed[1..].to_vec(),
+        x.clone(),
+        ky.clone(),
+        sig.clone(),
+    );
+    let b = tree_with_leaf(vec![b'A'], ed, x, ky, sig);
+
+    assert_ne!(
+        a.tree_hash().unwrap(),
+        b.tree_hash().unwrap(),
+        "adjacent field boundaries must be unambiguous"
+    );
+}
+
+#[test]
+fn group_tree_hash_blank_leaf_differs_from_populated() {
+    init();
+    let (ed, x, ky, sig) = reference_leaf_fields();
+    let tree = tree_with_leaf(b"alice".to_vec(), ed, x, ky, sig);
+    let populated = tree.tree_hash().unwrap();
+
+    let mut blanked = tree;
+    blanked.blank_leaf(0).unwrap();
+    assert_ne!(populated, blanked.tree_hash().unwrap());
+}
+
 #[test]
 fn group_tree_serialization_roundtrip() {
     init();

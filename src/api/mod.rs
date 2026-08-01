@@ -1731,6 +1731,10 @@ impl AuraGroupSession {
         self.0.member_leaf_indices()
     }
 
+    pub fn member_key_package(&self, leaf_index: u32) -> Result<Vec<u8>, ProtocolError> {
+        self.0.member_key_package(leaf_index)
+    }
+
     pub fn export_public_state(&self) -> Result<Vec<u8>, ProtocolError> {
         self.0.export_public_state()
     }

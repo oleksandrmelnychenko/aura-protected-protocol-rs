@@ -1932,3 +1932,125 @@ fn attack_double_ratchet_same_epoch() {
         result.err().unwrap()
     );
 }
+
+/// A malicious relay that only forwards `GroupPublicState` rewrites the key
+/// package at a victim's leaf: it keeps the victim's (public) leaf X25519/Kyber
+/// keys and credential, but substitutes its own long-term identity keys and
+/// self-signs the result.
+///
+/// Before leaf identity was bound into the tree hash this produced a
+/// byte-identical `tree_hash`, so `group_context_hash` matched and the issuer's
+/// external-join authorization signature still verified — the joiner installed
+/// the forged roster and attributed the attacker's identity keys to the
+/// victim's credential.
+#[test]
+fn attack_group_leaf_identity_swap_in_public_state() {
+    use aura_protected_protocol::proto::{GroupKeyPackage, GroupPublicState};
+
+    init();
+
+    let alice_id = IdentityKeys::create(5).unwrap();
+    let bob_id = IdentityKeys::create(5).unwrap();
+    let carol_id = IdentityKeys::create(5).unwrap();
+    let mallory_id = IdentityKeys::create(5).unwrap();
+
+    let alice_session = create_external_joinable_group(&alice_id, b"alice");
+    let (_bob_session, bob_commit) = authorize_and_join_external(&alice_session, &bob_id, b"bob");
+    alice_session.process_commit(&bob_commit).unwrap();
+
+    let authorization = alice_session
+        .authorize_external_join(
+            &carol_id.get_identity_ed25519_public(),
+            &carol_id.get_identity_x25519_public(),
+            b"carol",
+        )
+        .unwrap();
+    let public_state_bytes = alice_session.export_public_state().unwrap();
+    let public_state = GroupPublicState::decode(public_state_bytes.as_slice()).unwrap();
+
+    // Locate Bob's leaf and mint a key package that keeps his public leaf keys
+    // and credential but carries Mallory's identity.
+    let victim_pos = public_state
+        .tree_nodes
+        .iter()
+        .position(|n| {
+            n.key_package
+                .as_ref()
+                .is_some_and(|kp| kp.credential == b"bob")
+        })
+        .expect("bob's leaf must be present in the exported public state");
+    let victim_kp = public_state.tree_nodes[victim_pos]
+        .key_package
+        .as_ref()
+        .unwrap()
+        .clone();
+
+    let mallory_bundle = mallory_id.create_public_bundle().unwrap();
+    let mallory_kyber = mallory_bundle.kyber_public().unwrap().to_vec();
+    let mallory_sk = mallory_id.get_identity_ed25519_private_key_copy().unwrap();
+
+    let forged_signature = group::key_package::sign_existing_key_package(
+        mallory_sk.as_slice(),
+        &mallory_id.get_identity_ed25519_public(),
+        &mallory_id.get_identity_x25519_public(),
+        &mallory_kyber,
+        &victim_kp.leaf_x25519_public,
+        &victim_kp.leaf_kyber_public,
+        &victim_kp.credential,
+    )
+    .unwrap();
+
+    let forged_kp = GroupKeyPackage {
+        identity_ed25519_public: mallory_id.get_identity_ed25519_public(),
+        identity_x25519_public: mallory_id.get_identity_x25519_public(),
+        identity_kyber_public: mallory_kyber,
+        signature: forged_signature,
+        ..victim_kp
+    };
+
+    let mut tampered = public_state.clone();
+    tampered.tree_nodes[victim_pos].key_package = Some(forged_kp);
+
+    // The forged package is validly self-signed, so package validation and tree
+    // reconstruction both still succeed.  What must catch this is the hash.
+    group::key_package::validate_key_package(
+        tampered.tree_nodes[victim_pos].key_package.as_ref().unwrap(),
+    )
+    .expect("a self-signed forgery is still a structurally valid key package");
+    let honest_tree = group::RatchetTree::from_public_proto(&public_state.tree_nodes).unwrap();
+    let tampered_tree = group::RatchetTree::from_public_proto(&tampered.tree_nodes).unwrap();
+
+    assert_ne!(
+        honest_tree.tree_hash().unwrap(),
+        tampered_tree.tree_hash().unwrap(),
+        "tree_hash must cover each leaf's credential and identity keys"
+    );
+
+    let mut tampered_bytes = Vec::new();
+    tampered.encode(&mut tampered_bytes).unwrap();
+
+    let result = GroupSession::from_external_join(
+        &tampered_bytes,
+        &authorization,
+        &carol_id,
+        b"carol".to_vec(),
+    );
+    assert!(
+        result.is_err(),
+        "external join must reject a public state whose leaf identity was swapped"
+    );
+
+    // Control: the untouched public state still joins.
+    GroupSession::from_external_join(
+        &public_state_bytes,
+        &authorization,
+        &carol_id,
+        b"carol".to_vec(),
+    )
+    .expect("the honest public state must still be joinable");
+
+    println!(
+        "[ATTACK 32] Leaf identity swap in public state: BLOCKED ({})",
+        result.err().unwrap()
+    );
+}

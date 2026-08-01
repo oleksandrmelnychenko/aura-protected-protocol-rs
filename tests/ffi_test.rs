@@ -3985,6 +3985,57 @@ fn ffi_group_member_leaf_indices() {
 }
 
 #[test]
+fn ffi_group_member_key_package_returns_authenticated_leaf_data() {
+    init();
+
+    use aura_protected_protocol::ffi::api::*;
+    use aura_protected_protocol::proto::GroupKeyPackage;
+    use prost::Message;
+    use std::ptr;
+
+    unsafe {
+        let mut alice_handle: *mut AuraIdentityHandle = ptr::null_mut();
+        let mut err = AuraError {
+            code: AuraErrorCode::AuraSuccess,
+            message: ptr::null_mut(),
+        };
+        assert_eq!(
+            aura_identity_create(&mut alice_handle, &mut err),
+            AuraErrorCode::AuraSuccess
+        );
+
+        let mut group_handle: *mut AuraGroupSessionHandle = ptr::null_mut();
+        let credential = b"alice-device";
+        assert_eq!(
+            aura_group_create(
+                alice_handle,
+                credential.as_ptr(),
+                credential.len(),
+                &mut group_handle,
+                &mut err,
+            ),
+            AuraErrorCode::AuraSuccess
+        );
+
+        let mut key_package_buf = AuraBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        assert_eq!(
+            aura_group_get_member_key_package(group_handle, 0, &mut key_package_buf, &mut err,),
+            AuraErrorCode::AuraSuccess
+        );
+        let encoded = std::slice::from_raw_parts(key_package_buf.data, key_package_buf.length);
+        let key_package = GroupKeyPackage::decode(encoded).unwrap();
+        assert_eq!(key_package.credential, credential);
+
+        aura_buffer_release(&mut key_package_buf);
+        aura_group_destroy(&mut group_handle);
+        aura_identity_destroy(&mut alice_handle);
+    }
+}
+
+#[test]
 fn ffi_group_member_role_apis_are_disabled() {
     init();
 
