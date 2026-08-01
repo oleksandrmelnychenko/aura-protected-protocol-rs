@@ -2054,3 +2054,100 @@ fn attack_group_leaf_identity_swap_in_public_state() {
         result.err().unwrap()
     );
 }
+
+/// Drive Alice and Bob through one full ratchet so Alice's next envelope
+/// carries a `previous_chain_length`, and return that envelope.
+fn ratchet_envelope_with_previous_chain_length(
+    alice: &Session,
+    bob: &Session,
+    sent_before_ratchet: u32,
+) -> aura_protected_protocol::proto::SecureEnvelope {
+    for i in 0..sent_before_ratchet {
+        let env = alice.encrypt(b"pre-ratchet", 0, i, None).unwrap();
+        bob.decrypt(&env).unwrap();
+    }
+    // Bob replies, which ratchets; Alice consumes it so her next send ratchets.
+    let reply = bob.encrypt(b"reply", 0, 0, None).unwrap();
+    alice.decrypt(&reply).unwrap();
+
+    let env = alice.encrypt(b"post-ratchet", 0, 100, None).unwrap();
+    assert!(
+        env.previous_chain_length.is_some(),
+        "the first send after consuming a ratchet must carry previous_chain_length"
+    );
+    env
+}
+
+/// `previous_chain_length` is a cleartext protobuf field.  It used to be absent
+/// from the AEAD associated data while being consumed *before* authentication,
+/// so a relay could raise it on a genuine envelope, make the receiver derive and
+/// cache MAX_SKIPPED_MESSAGE_KEYS junk keys, and have the message still
+/// authenticate — permanently saturating the cache and wedging the receive
+/// direction.  It is now covered by both AADs.
+#[test]
+fn attack_previous_chain_length_tamper_rejected() {
+    init();
+    let (alice, bob) = create_session_pair();
+    let genuine = ratchet_envelope_with_previous_chain_length(&alice, &bob, 3);
+
+    let mut tampered = genuine.clone();
+    tampered.previous_chain_length = Some(1000);
+
+    let result = bob.decrypt(&tampered);
+    assert!(
+        result.is_err(),
+        "a rewritten previous_chain_length must fail authentication"
+    );
+    assert_eq!(
+        bob.get_metadata().unwrap().skipped_keys_count,
+        0,
+        "a rejected envelope must not leave derived keys behind"
+    );
+
+    // The untouched envelope still decrypts, so the rejection was the tamper.
+    let ok = bob.decrypt(&genuine).unwrap();
+    assert_eq!(ok.plaintext, b"post-ratchet");
+
+    println!(
+        "[ATTACK 33] previous_chain_length tampering: BLOCKED ({})",
+        result.err().unwrap()
+    );
+}
+
+/// The AAD encodes presence separately from value, so stripping the field is
+/// distinguishable from a genuine `Some(0)`.
+#[test]
+fn attack_previous_chain_length_strip_rejected() {
+    init();
+    let (alice, bob) = create_session_pair();
+    let genuine = ratchet_envelope_with_previous_chain_length(&alice, &bob, 3);
+
+    let mut stripped = genuine.clone();
+    stripped.previous_chain_length = None;
+
+    assert!(
+        bob.decrypt(&stripped).is_err(),
+        "stripping previous_chain_length must fail authentication"
+    );
+    assert_eq!(bob.get_metadata().unwrap().skipped_keys_count, 0);
+    bob.decrypt(&genuine).unwrap();
+}
+
+/// The field is meaningless without a ratchet header and is rejected up front.
+#[test]
+fn attack_previous_chain_length_injected_on_non_ratchet_rejected() {
+    init();
+    let (alice, bob) = create_session_pair();
+
+    let first = alice.encrypt(b"hello", 0, 0, None).unwrap();
+    bob.decrypt(&first).unwrap();
+
+    let mut plain = alice.encrypt(b"second", 0, 1, None).unwrap();
+    assert!(plain.dh_public_key.is_none());
+    plain.previous_chain_length = Some(5);
+
+    assert!(
+        bob.decrypt(&plain).is_err(),
+        "previous_chain_length on a non-ratchet envelope must be rejected"
+    );
+}

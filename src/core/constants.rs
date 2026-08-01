@@ -44,6 +44,13 @@ pub const MAX_CACHED_METADATA_KEYS: usize = 100;
 /// (envelope type, message index, correlation_id, etc.) in addition to the
 /// size-based [`MAX_CACHED_METADATA_KEYS`] limit.
 pub const MAX_METADATA_KEY_EPOCH_AGE: u64 = 32;
+/// Maximum ratchet-epoch lag for cached skipped message keys.
+///
+/// Mirrors [`MAX_METADATA_KEY_EPOCH_AGE`].  A skipped message key older than
+/// this can never be used anyway, because the metadata key needed to parse an
+/// envelope from that epoch has already been evicted.  Keeping it only widens
+/// the forward-secrecy window and lets a peer pin the cache at its size limit.
+pub const MAX_SKIPPED_KEY_EPOCH_AGE: u64 = MAX_METADATA_KEY_EPOCH_AGE;
 pub const MAX_SEEN_NONCES: usize = 2048;
 pub const MAX_SEEN_HANDSHAKE_INITS: usize = 16384;
 pub const MAX_INFLIGHT_HANDSHAKE_INITS: usize = 4096;

@@ -3,6 +3,7 @@
 
 #![allow(clippy::borrow_as_ptr, unsafe_code)]
 
+use aura_protected_protocol::core::constants::MAX_SKIPPED_MESSAGE_KEYS;
 use aura_protected_protocol::core::errors::ProtocolError;
 use aura_protected_protocol::crypto::{
     AesGcm, CryptoInterop, HkdfSha256, KyberInterop, MasterKeyDerivation, SecureMemoryHandle,
@@ -12143,4 +12144,119 @@ fn session_activity_tracking_counters() {
     let b = bob_session.get_metadata().unwrap();
     assert_eq!(b.total_messages_sent, 3);
     assert_eq!(b.total_messages_received, 5);
+}
+
+/// Saturate the skipped-key cache the way a genuine peer can — send a full
+/// chain that never arrives, then ratchet — and drive Bob to exactly
+/// MAX_SKIPPED_MESSAGE_KEYS cached keys.  Returns the sessions plus one
+/// held-back high-index envelope from the old epoch.
+fn saturate_skipped_key_cache() -> (
+    aura_protected_protocol::protocol::Session,
+    aura_protected_protocol::protocol::Session,
+    aura_protected_protocol::proto::SecureEnvelope,
+) {
+    let mut alice = IdentityKeys::create(5).unwrap();
+    let mut bob = IdentityKeys::create(5).unwrap();
+    let bob_bundle = PreKeyBundle::decode(build_proto_bundle(&bob).as_slice()).unwrap();
+    let initiator = HandshakeInitiator::start(&mut alice, &bob_bundle, 1000).unwrap();
+    let init_bytes = initiator.encoded_message().to_vec();
+    let responder = HandshakeResponder::process(&mut bob, &bob_bundle, &init_bytes, 1000).unwrap();
+    let ack_bytes = responder.encoded_ack().to_vec();
+    let bob_session = responder.finish().unwrap();
+    let alice_session = initiator.finish(&ack_bytes).unwrap();
+
+    // Alice fills her whole send chain; none of it reaches Bob.
+    let mut held = None;
+    for i in 0u32..1000 {
+        let env = alice_session.encrypt(b"dropped", 0, i, None).unwrap();
+        if i == 999 {
+            held = Some(env);
+        }
+    }
+
+    // Bob ratchets; Alice's next send therefore carries previous_chain_length.
+    let reply = bob_session.encrypt(b"reply", 0, 0, None).unwrap();
+    alice_session.decrypt(&reply).unwrap();
+
+    let ratcheted = alice_session.encrypt(b"after ratchet", 0, 0, None).unwrap();
+    assert_eq!(ratcheted.previous_chain_length, Some(1000));
+    bob_session.decrypt(&ratcheted).unwrap();
+
+    assert_eq!(
+        bob_session.get_metadata().unwrap().skipped_keys_count,
+        MAX_SKIPPED_MESSAGE_KEYS,
+        "the cache must be exactly saturated for this test to mean anything"
+    );
+
+    (alice_session, bob_session, held.unwrap())
+}
+
+/// A saturated skipped-key cache used to be terminal: `enforce_cache_limit` was
+/// count-only with no age eviction and never fired at exactly the limit, so every
+/// later intra-epoch gap and every later genuine ratchet returned "Message key
+/// cache overflow" and only a full re-handshake recovered the session.  The
+/// cache now evicts oldest-first to make room.
+#[test]
+fn saturated_skipped_key_cache_self_heals() {
+    init();
+    let (alice, bob, held_old_epoch) = saturate_skipped_key_cache();
+
+    // 1. An intra-epoch gap in the new epoch.
+    let _gap = alice.encrypt(b"gap", 0, 1, None).unwrap();
+    let after_gap = alice.encrypt(b"after gap", 0, 2, None).unwrap();
+    let dec = bob
+        .decrypt(&after_gap)
+        .expect("an intra-epoch gap must not wedge a saturated cache");
+    assert_eq!(dec.plaintext, b"after gap");
+
+    // 2. A held-back high-index message from the saturated epoch still decrypts;
+    //    eviction takes the oldest indices first, so the newest survive.
+    let dec = bob
+        .decrypt(&held_old_epoch)
+        .expect("a recent old-epoch message must still decrypt");
+    assert_eq!(dec.plaintext, b"dropped");
+
+    // 3. A subsequent genuine ratchet.
+    let reply = bob.encrypt(b"reply2", 0, 1, None).unwrap();
+    alice.decrypt(&reply).unwrap();
+    let ratcheted = alice.encrypt(b"second ratchet", 0, 3, None).unwrap();
+    let dec = bob
+        .decrypt(&ratcheted)
+        .expect("a later genuine ratchet must not wedge a saturated cache");
+    assert_eq!(dec.plaintext, b"second ratchet");
+
+    assert!(
+        bob.get_metadata().unwrap().skipped_keys_count <= MAX_SKIPPED_MESSAGE_KEYS,
+        "the cache must stay hard-bounded while self-healing"
+    );
+}
+
+/// The wedge used to be persisted: `export_sealed_state` serialises all
+/// MAX_SKIPPED_MESSAGE_KEYS entries and restore accepts them, so a restart did
+/// not clear it.
+#[test]
+fn saturated_skipped_key_cache_self_heals_across_sealed_state() {
+    init();
+    let (alice, bob, _held) = saturate_skipped_key_cache();
+
+    let enc_key = CryptoInterop::get_random_bytes(32);
+    let provider = StaticStateKeyProvider::new(enc_key.clone()).unwrap();
+    let sealed = bob.export_sealed_state(&provider, 1).unwrap();
+    let provider2 = StaticStateKeyProvider::new(enc_key).unwrap();
+    let bob_restored =
+        aura_protected_protocol::protocol::Session::from_sealed_state(&sealed, &provider2, 0)
+            .unwrap();
+
+    assert_eq!(
+        bob_restored.get_metadata().unwrap().skipped_keys_count,
+        MAX_SKIPPED_MESSAGE_KEYS,
+        "the saturated cache is carried across the restart"
+    );
+
+    let _gap = alice.encrypt(b"gap", 0, 1, None).unwrap();
+    let after_gap = alice.encrypt(b"after gap", 0, 2, None).unwrap();
+    let dec = bob_restored
+        .decrypt(&after_gap)
+        .expect("a restored session must self-heal too");
+    assert_eq!(dec.plaintext, b"after gap");
 }

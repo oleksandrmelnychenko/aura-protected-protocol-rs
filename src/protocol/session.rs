@@ -234,12 +234,28 @@ fn validate_dh_public_key(public_key: &[u8]) -> Result<(), ProtocolError> {
 }
 
 const AAD_EPOCH_OFFSET: usize = SESSION_ID_BYTES + IDENTITY_BINDING_HASH_BYTES;
-const METADATA_AAD_BYTES: usize = AAD_EPOCH_OFFSET + size_of::<u64>() + size_of::<u32>();
+/// `SecureEnvelope.previous_chain_length` as AAD: one presence byte followed by
+/// the little-endian value.  The presence byte is load-bearing — `Some(0)` is a
+/// real wire value (the responder's first reply carries it), so encoding a
+/// missing field as a bare zero would let a relay strip the field undetected.
+const AAD_PREV_CHAIN_LEN_BYTES: usize = 1 + size_of::<u64>();
+const METADATA_AAD_BYTES: usize =
+    AAD_EPOCH_OFFSET + size_of::<u64>() + size_of::<u32>() + AAD_PREV_CHAIN_LEN_BYTES;
 const PAYLOAD_AAD_BYTES: usize = METADATA_AAD_BYTES + size_of::<u64>();
+
+fn write_previous_chain_length_aad(out: &mut [u8], previous_chain_length: Option<u64>) {
+    if let Some(value) = previous_chain_length {
+        out[0] = 1;
+        out[1..=size_of::<u64>()].copy_from_slice(&value.to_le_bytes());
+    } else {
+        out[..AAD_PREV_CHAIN_LEN_BYTES].fill(0);
+    }
+}
 
 fn build_metadata_aad(
     state: &ProtocolState,
     ratchet_epoch: u64,
+    previous_chain_length: Option<u64>,
 ) -> Result<[u8; METADATA_AAD_BYTES], ProtocolError> {
     if state.session_id.len() != SESSION_ID_BYTES {
         return Err(ProtocolError::invalid_input("Invalid session id size"));
@@ -253,9 +269,12 @@ fn build_metadata_aad(
     ad[..SESSION_ID_BYTES].copy_from_slice(&state.session_id);
     ad[SESSION_ID_BYTES..SESSION_ID_BYTES + IDENTITY_BINDING_HASH_BYTES]
         .copy_from_slice(&state.identity_binding_hash);
-    ad[AAD_EPOCH_OFFSET..AAD_EPOCH_OFFSET + size_of::<u64>()]
-        .copy_from_slice(&ratchet_epoch.to_le_bytes());
-    ad[AAD_EPOCH_OFFSET + size_of::<u64>()..].copy_from_slice(&PROTOCOL_VERSION.to_le_bytes());
+    let mut off = AAD_EPOCH_OFFSET;
+    ad[off..off + size_of::<u64>()].copy_from_slice(&ratchet_epoch.to_le_bytes());
+    off += size_of::<u64>();
+    ad[off..off + size_of::<u32>()].copy_from_slice(&PROTOCOL_VERSION.to_le_bytes());
+    off += size_of::<u32>();
+    write_previous_chain_length_aad(&mut ad[off..], previous_chain_length);
     Ok(ad)
 }
 
@@ -263,6 +282,7 @@ fn build_payload_aad(
     state: &ProtocolState,
     ratchet_epoch: u64,
     message_index: u64,
+    previous_chain_length: Option<u64>,
 ) -> Result<[u8; PAYLOAD_AAD_BYTES], ProtocolError> {
     if state.session_id.len() != SESSION_ID_BYTES {
         return Err(ProtocolError::invalid_input("Invalid session id size"));
@@ -282,6 +302,8 @@ fn build_payload_aad(
     ad[off..off + size_of::<u64>()].copy_from_slice(&message_index.to_le_bytes());
     off += size_of::<u64>();
     ad[off..off + size_of::<u32>()].copy_from_slice(&PROTOCOL_VERSION.to_le_bytes());
+    off += size_of::<u32>();
+    write_previous_chain_length_aad(&mut ad[off..], previous_chain_length);
     Ok(ad)
 }
 
@@ -407,6 +429,18 @@ fn wipe_protocol_state_keys(state: &mut ProtocolState) {
             CryptoInterop::secure_wipe(&mut cached.message_key);
         }
     }
+    // The top-level vectors are where export_sealed_state actually stages the
+    // live caches — up to MAX_SKIPPED_MESSAGE_KEYS message keys and
+    // MAX_CACHED_METADATA_KEYS metadata keys.  Missing them left ~35 KB of
+    // cleartext Double Ratchet keys in freed heap outside the mlock'd pool on
+    // every persist.  Mirrors GroupSession::wipe_group_state_secrets.
+    for cached in &mut state.skipped_keys {
+        CryptoInterop::secure_wipe(&mut cached.message_key);
+    }
+    for cached in &mut state.cached_metadata_keys {
+        CryptoInterop::secure_wipe(&mut cached.metadata_key);
+    }
+    CryptoInterop::secure_wipe(&mut state.state_hmac);
 }
 
 fn wipe_export_copy(copy: &mut ProtocolState) {
@@ -1381,13 +1415,13 @@ impl Session {
         };
         let count_to_skip = usize::try_from(span)
             .map_err(|_| ProtocolError::invalid_state("Previous chain length span too large"))?;
-        let Some(new_len) = inner.skipped_message_keys.len().checked_add(count_to_skip) else {
-            return Err(ProtocolError::invalid_state("Message key cache overflow"));
-        };
-        if new_len > MAX_SKIPPED_MESSAGE_KEYS {
-            return Err(ProtocolError::invalid_state("Message key cache overflow"));
-        }
+        Self::reserve_skipped_capacity(inner, count_to_skip)?;
 
+        let recv_chain = inner
+            .state
+            .recv_chain
+            .as_ref()
+            .ok_or_else(|| ProtocolError::invalid_state("Recv chain not initialized"))?;
         let mut chain_key = Zeroizing::new(recv_chain.chain_key.clone());
         for idx in current_index..previous_chain_length {
             let (message_key, next_chain_key) = derive_message_and_chain_key(&chain_key)?;
@@ -1412,7 +1446,51 @@ impl Session {
         inner.skipped_message_keys.remove(&(epoch, message_index))
     }
 
+    /// Drop skipped keys whose epoch is further than [`MAX_SKIPPED_KEY_EPOCH_AGE`]
+    /// behind the current recv epoch.  The map is keyed `(epoch, index)`, so
+    /// `pop_first` removes the oldest epoch's lowest index first.
+    fn evict_aged_skipped_keys(inner: &mut SessionInner) {
+        let min_allowed_epoch = inner
+            .state
+            .recv_ratchet_epoch
+            .saturating_sub(MAX_SKIPPED_KEY_EPOCH_AGE);
+        while let Some((&(oldest_epoch, _), _)) = inner.skipped_message_keys.iter().next() {
+            if oldest_epoch >= min_allowed_epoch {
+                break;
+            }
+            if let Some((_, mut key)) = inner.skipped_message_keys.pop_first() {
+                CryptoInterop::secure_wipe(&mut key);
+            }
+        }
+    }
+
+    /// Make room for `needed` new skipped keys, evicting oldest-first.
+    ///
+    /// Erroring out instead of evicting is what used to wedge a session: once
+    /// the cache sat at exactly [`MAX_SKIPPED_MESSAGE_KEYS`], every later gap —
+    /// and every later ratchet — failed with "Message key cache overflow" and
+    /// the only recovery was a full re-handshake.  A peer could reach that state
+    /// with one legitimate `previous_chain_length` of 1000.  Memory stays hard
+    /// bounded; a single message still may not demand more than the whole cache.
+    fn reserve_skipped_capacity(
+        inner: &mut SessionInner,
+        needed: usize,
+    ) -> Result<(), ProtocolError> {
+        if needed > MAX_SKIPPED_MESSAGE_KEYS {
+            return Err(ProtocolError::invalid_state("Message key cache overflow"));
+        }
+        Self::evict_aged_skipped_keys(inner);
+        while inner.skipped_message_keys.len() + needed > MAX_SKIPPED_MESSAGE_KEYS {
+            let Some((_, mut key)) = inner.skipped_message_keys.pop_first() else {
+                break;
+            };
+            CryptoInterop::secure_wipe(&mut key);
+        }
+        Ok(())
+    }
+
     fn enforce_cache_limit(inner: &mut SessionInner) {
+        Self::evict_aged_skipped_keys(inner);
         while inner.skipped_message_keys.len() > MAX_SKIPPED_MESSAGE_KEYS {
             if let Some((_, mut key)) = inner.skipped_message_keys.pop_first() {
                 CryptoInterop::secure_wipe(&mut key);
@@ -1523,6 +1601,13 @@ impl Session {
             ));
         }
 
+        // Reserve the whole gap up front: one bounds check instead of one per
+        // derived key, and eviction (rather than a hard error) so a full cache
+        // does not permanently wedge the receive direction.
+        let span = usize::try_from(message_index.saturating_sub(current_index))
+            .map_err(|_| ProtocolError::invalid_state("Message key cache overflow"))?;
+        Self::reserve_skipped_capacity(inner, span)?;
+
         let recv_chain = inner
             .state
             .recv_chain
@@ -1535,10 +1620,6 @@ impl Session {
             *chain_key = next_chain_key;
 
             if index < message_index {
-                if inner.skipped_message_keys.len() >= MAX_SKIPPED_MESSAGE_KEYS {
-                    CryptoInterop::secure_wipe(&mut { message_key });
-                    return Err(ProtocolError::invalid_state("Message key cache overflow"));
-                }
                 inner
                     .skipped_message_keys
                     .insert((epoch, index), message_key);
@@ -2168,7 +2249,8 @@ impl Session {
             return Err(ProtocolError::generic("Failed to generate header nonce"));
         }
 
-        let metadata_aad = match build_metadata_aad(&inner.state, ratchet_epoch) {
+        let metadata_aad =
+            match build_metadata_aad(&inner.state, ratchet_epoch, envelope.previous_chain_length) {
             Ok(value) => value,
             Err(err) => {
                 CryptoInterop::secure_wipe(&mut message_key);
@@ -2199,7 +2281,12 @@ impl Session {
             }
         };
 
-        let payload_aad = match build_payload_aad(&inner.state, ratchet_epoch, message_index) {
+        let payload_aad = match build_payload_aad(
+            &inner.state,
+            ratchet_epoch,
+            message_index,
+            envelope.previous_chain_length,
+        ) {
             Ok(value) => value,
             Err(err) => {
                 CryptoInterop::secure_wipe(&mut message_key);
@@ -2351,6 +2438,26 @@ impl Session {
             if envelope_epoch != expected_epoch {
                 return Err(ProtocolError::invalid_state("Unexpected ratchet epoch"));
             }
+            // Bound the claimed skip span before scheduling any key derivation.
+            // The value is authenticated by the metadata AAD further down; these
+            // are O(1) structural checks that stop a malformed header from
+            // buying an attacker up to MAX_SKIPPED_MESSAGE_KEYS KDF steps.
+            if let Some(pcl) = envelope.previous_chain_length {
+                let max_messages = u64::from(inner.state.max_messages_per_chain);
+                if pcl > max_messages {
+                    return Err(ProtocolError::invalid_input(
+                        "Previous chain length exceeds per-chain limit",
+                    ));
+                }
+                let current_index = inner
+                    .state
+                    .recv_chain
+                    .as_ref()
+                    .map_or(0, |rc| rc.message_index);
+                if pcl.saturating_sub(current_index) > MAX_SKIPPED_MESSAGE_KEYS as u64 {
+                    return Err(ProtocolError::invalid_state("Message key cache overflow"));
+                }
+            }
             ratchet_snapshot = Some((
                 inner.state.clone(),
                 inner.cached_metadata_keys.clone(),
@@ -2363,10 +2470,16 @@ impl Session {
                 return Err(err);
             }
             is_old_epoch = false;
-        } else if envelope_epoch == inner.state.recv_ratchet_epoch {
-            is_old_epoch = false;
-        } else if envelope_epoch < inner.state.recv_ratchet_epoch {
-            is_old_epoch = true;
+        } else if envelope_epoch <= inner.state.recv_ratchet_epoch {
+            // previous_chain_length only has meaning on a ratchet envelope; it
+            // is covered by the AAD either way, but rejecting it structurally
+            // keeps the field from carrying anything on a non-ratchet message.
+            if envelope.previous_chain_length.is_some() {
+                return Err(ProtocolError::invalid_input(
+                    "previous_chain_length present on non-ratchet envelope",
+                ));
+            }
+            is_old_epoch = envelope_epoch < inner.state.recv_ratchet_epoch;
         } else {
             return Err(ProtocolError::invalid_state(
                 "Future ratchet epoch without ratchet headers",
@@ -2382,7 +2495,11 @@ impl Session {
             &inner.state.metadata_key
         };
 
-        let metadata_aad = match build_metadata_aad(&inner.state, envelope_epoch) {
+        let metadata_aad = match build_metadata_aad(
+            &inner.state,
+            envelope_epoch,
+            envelope.previous_chain_length,
+        ) {
             Ok(value) => value,
             Err(err) => {
                 rollback_ratchet(&mut inner, ratchet_snapshot.take());
@@ -2502,17 +2619,20 @@ impl Session {
             }
         };
 
-        let decrypt_result =
-            build_payload_aad(&inner.state, envelope_epoch, metadata.message_index).and_then(
-                |payload_aad| {
-                    AesGcm::decrypt(
-                        &message_key,
-                        &metadata.payload_nonce,
-                        &envelope.encrypted_payload,
-                        &payload_aad,
-                    )
-                },
-            );
+        let decrypt_result = build_payload_aad(
+            &inner.state,
+            envelope_epoch,
+            metadata.message_index,
+            envelope.previous_chain_length,
+        )
+        .and_then(|payload_aad| {
+            AesGcm::decrypt(
+                &message_key,
+                &metadata.payload_nonce,
+                &envelope.encrypted_payload,
+                &payload_aad,
+            )
+        });
 
         let padded_plaintext = match decrypt_result {
             Ok(pt) => pt,
@@ -3132,6 +3252,42 @@ mod tests {
 
     fn init_crypto() {
         let _ = CryptoInterop::initialize();
+    }
+
+    /// `export_sealed_state` stages the live skipped-message and cached-metadata
+    /// keys into the top-level `ProtocolState` vectors before encoding.  Those
+    /// vectors sit on the general heap, outside the mlock'd pool, so they must be
+    /// zeroized before the copy is dropped.
+    #[test]
+    fn wipe_export_copy_zeroizes_cached_keys_and_hmac() {
+        use crate::proto::{CachedMessageKey, CachedMetadataKey};
+
+        init_crypto();
+        let mut state = ProtocolState {
+            skipped_keys: vec![CachedMessageKey {
+                message_index: 7,
+                message_key: vec![0xAB; 32],
+                epoch: 1,
+            }],
+            cached_metadata_keys: vec![CachedMetadataKey {
+                epoch: 1,
+                metadata_key: vec![0xCD; 32],
+            }],
+            state_hmac: vec![0xEF; 32],
+            ..Default::default()
+        };
+
+        wipe_export_copy(&mut state);
+
+        assert!(
+            is_all_zero(&state.skipped_keys[0].message_key),
+            "skipped message keys must be zeroized"
+        );
+        assert!(
+            is_all_zero(&state.cached_metadata_keys[0].metadata_key),
+            "cached metadata keys must be zeroized"
+        );
+        assert!(is_all_zero(&state.state_hmac), "state hmac must be zeroized");
     }
 
     fn build_proto_bundle(identity: &IdentityKeys) -> Vec<u8> {
