@@ -66,11 +66,18 @@ message CollageManifest {
 }
 
 message ChunkProgress {
+  reserved 3;
+  reserved "completed_chunks";
+
   bytes attachment_id = 1;
   uint32 chunk_count = 2;
-  repeated uint32 completed_chunks = 3;
   uint64 total_bytes_transferred = 4;
   uint64 last_updated_unix = 5;
+  // One bit per chunk, little-endian within each byte: chunk i is bit (i % 8)
+  // of byte (i / 8).  Replaces the former `repeated uint32 completed_chunks`,
+  // which cost O(n) per FFI call to decode, scan and re-encode — O(n^2) over a
+  // transfer, and chunk_count is attacker-declared.
+  bytes completed_bitmap = 6;
 }
 
 message InlineAttachment {

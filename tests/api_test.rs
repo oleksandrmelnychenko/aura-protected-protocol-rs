@@ -1923,3 +1923,66 @@ fn identity_replenished_public_key_matches_stored_private_key() {
         );
     }
 }
+
+/// `validate_manifest` checked only that `chunk_count` was non-zero, so a peer
+/// could declare up to u32::MAX chunks in a manifest that is at most 16 KB on
+/// the wire.  `create_chunk_progress` enforced the ceiling but the manifest did
+/// not, so the two disagreed about what was acceptable.
+#[test]
+fn attachment_manifest_rejects_chunk_count_above_ceiling() {
+    use aura_protected_protocol::core::constants::MAX_ATTACHMENT_CHUNK_COUNT;
+    use aura_protected_protocol::proto::AttachmentManifest;
+    use aura_protected_protocol::protocol::attachment;
+
+    init();
+
+    let over = u64::from(MAX_ATTACHMENT_CHUNK_COUNT) + 1;
+    let manifest = AttachmentManifest {
+        version: 1,
+        attachment_id: vec![7u8; 32],
+        mime_type: "image/png".to_string(),
+        total_size: over,
+        chunk_size: 1,
+        chunk_count: u32::try_from(over).unwrap(),
+        file_sha256: vec![9u8; 32],
+        encrypted_file_key: vec![1u8; 48],
+        encryption_scheme: "AES-256-GCM-SIV".to_string(),
+        ..Default::default()
+    };
+
+    assert!(
+        attachment::validate_manifest(&manifest).is_err(),
+        "a manifest declaring more than MAX_ATTACHMENT_CHUNK_COUNT chunks must be rejected"
+    );
+}
+
+/// Chunk progress is a bitmap, so marking chunks is O(1) each rather than a
+/// linear scan of a growing `Vec<u32>` that every FFI call re-decoded.
+#[test]
+fn attachment_chunk_progress_marks_and_completes() {
+    use aura_protected_protocol::protocol::attachment;
+
+    init();
+
+    let id = vec![3u8; 32];
+    let mut progress = attachment::create_chunk_progress(&id, 20).unwrap();
+    assert_eq!(attachment::get_remaining_chunks(&progress).unwrap().len(), 20);
+
+    for i in 0..20 {
+        attachment::mark_chunk_completed(&mut progress, i, 10, 1).unwrap();
+    }
+    assert!(attachment::is_transfer_complete(&progress));
+    assert!(attachment::get_remaining_chunks(&progress).unwrap().is_empty());
+
+    // Marking twice must not double-count bytes.
+    let before = progress.total_bytes_transferred;
+    attachment::mark_chunk_completed(&mut progress, 5, 10, 2).unwrap();
+    assert_eq!(progress.total_bytes_transferred, before + 10);
+    assert!(attachment::is_transfer_complete(&progress));
+
+    // Bits past chunk_count would inflate the popcount and fake completion.
+    let mut tampered = attachment::create_chunk_progress(&id, 20).unwrap();
+    let last = tampered.completed_bitmap.len() - 1;
+    tampered.completed_bitmap[last] |= 0b1111_0000;
+    assert!(attachment::validate_chunk_progress(&tampered).is_err());
+}

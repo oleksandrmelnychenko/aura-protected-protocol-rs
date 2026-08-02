@@ -5579,7 +5579,7 @@ mod attachment_v2 {
         let progress = ChunkProgress {
             attachment_id: vec![0x42; ATTACHMENT_ID_BYTES],
             chunk_count: MAX_ATTACHMENT_CHUNK_COUNT.saturating_add(1),
-            completed_chunks: vec![],
+            completed_bitmap: vec![],
             total_bytes_transferred: 0,
             last_updated_unix: 0,
         };

@@ -110,11 +110,12 @@ pub fn validate_manifest(manifest: &AttachmentManifest) -> Result<(), ProtocolEr
             "Attachment chunk_size is out of range",
         ));
     }
-    if manifest.chunk_count == 0 {
-        return Err(ProtocolError::invalid_input(
-            "Attachment chunk_count must be > 0",
-        ));
-    }
+    // The ceiling matters here and not only in create_chunk_progress: a manifest
+    // is at most 16 KB on the wire but chunk_count is a u32, so a peer could
+    // declare billions of chunks and drive whatever the integrator builds on top
+    // of it.  MAX_ATTACHMENT_CHUNK_COUNT is derived from MAX_BUFFER_SIZE, and
+    // the total_size relation below already ties chunk_count to chunk_size.
+    validate_progress_chunk_count(manifest.chunk_count)?;
     if manifest.file_sha256.len() != ATTACHMENT_HASH_BYTES {
         return Err(ProtocolError::invalid_input(
             "Attachment file_sha256 must be 32 bytes",
@@ -494,7 +495,7 @@ pub fn create_chunk_progress(
     Ok(ChunkProgress {
         attachment_id: attachment_id.to_vec(),
         chunk_count,
-        completed_chunks: Vec::new(),
+        completed_bitmap: vec![0u8; bitmap_len(chunk_count)],
         total_bytes_transferred: 0,
         last_updated_unix: 0,
     })
@@ -512,8 +513,11 @@ pub fn mark_chunk_completed(
             "chunk_index must be < chunk_count",
         ));
     }
-    if !progress.completed_chunks.contains(&chunk_index) {
-        progress.completed_chunks.push(chunk_index);
+    let byte = (chunk_index / 8) as usize;
+    let bit = 1u8 << (chunk_index % 8);
+    let already_set = progress.completed_bitmap[byte] & bit != 0;
+    if !already_set {
+        progress.completed_bitmap[byte] |= bit;
     }
     progress.total_bytes_transferred = progress
         .total_bytes_transferred
@@ -524,9 +528,8 @@ pub fn mark_chunk_completed(
 
 pub fn get_remaining_chunks(progress: &ChunkProgress) -> Result<Vec<u32>, ProtocolError> {
     validate_chunk_progress(progress)?;
-    let completed: BTreeSet<u32> = progress.completed_chunks.iter().copied().collect();
     Ok((0..progress.chunk_count)
-        .filter(|i| !completed.contains(i))
+        .filter(|&i| !is_chunk_completed(progress, i))
         .collect())
 }
 
@@ -534,8 +537,28 @@ pub fn is_transfer_complete(progress: &ChunkProgress) -> bool {
     if validate_chunk_progress(progress).is_err() {
         return false;
     }
-    let completed: BTreeSet<u32> = progress.completed_chunks.iter().copied().collect();
-    u32::try_from(completed.len()).unwrap_or(0) >= progress.chunk_count
+    completed_chunk_count(progress) >= u64::from(progress.chunk_count)
+}
+
+/// Byte length of the bitmap covering `chunk_count` chunks.
+const fn bitmap_len(chunk_count: u32) -> usize {
+    chunk_count.div_ceil(8) as usize
+}
+
+fn is_chunk_completed(progress: &ChunkProgress, chunk_index: u32) -> bool {
+    let byte = (chunk_index / 8) as usize;
+    progress
+        .completed_bitmap
+        .get(byte)
+        .is_some_and(|b| b & (1u8 << (chunk_index % 8)) != 0)
+}
+
+fn completed_chunk_count(progress: &ChunkProgress) -> u64 {
+    progress
+        .completed_bitmap
+        .iter()
+        .map(|b| u64::from(b.count_ones()))
+        .sum()
 }
 
 fn validate_progress_chunk_count(chunk_count: u32) -> Result<(), ProtocolError> {
@@ -557,10 +580,22 @@ pub fn validate_chunk_progress(progress: &ChunkProgress) -> Result<(), ProtocolE
         ));
     }
     validate_progress_chunk_count(progress.chunk_count)?;
-    for &idx in &progress.completed_chunks {
-        if idx >= progress.chunk_count {
+    let expected = bitmap_len(progress.chunk_count);
+    if progress.completed_bitmap.len() != expected {
+        return Err(ProtocolError::invalid_input(format!(
+            "completed_bitmap must be {expected} bytes for {} chunks, got {}",
+            progress.chunk_count,
+            progress.completed_bitmap.len()
+        )));
+    }
+    // Bits past chunk_count in the final byte would let a peer inflate the
+    // popcount and claim a transfer is complete.
+    let trailing_bits = progress.chunk_count % 8;
+    if trailing_bits != 0 {
+        let mask = !((1u8 << trailing_bits) - 1);
+        if progress.completed_bitmap[expected - 1] & mask != 0 {
             return Err(ProtocolError::invalid_input(
-                "completed chunk index must be < chunk_count",
+                "completed_bitmap has bits set past chunk_count",
             ));
         }
     }
