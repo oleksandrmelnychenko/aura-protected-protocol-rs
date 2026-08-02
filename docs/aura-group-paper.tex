@@ -205,7 +205,7 @@ security policy is included in the epoch context, key schedule, and
 confirmation input? Each hybrid update path carries both \DH{} and \KEM{}
 material, and the accepted group context binds the group identifier, epoch
 number, ratchet-tree hash, and serialized security policy.  Following RFC 9420's
-\textsf{LeafNodeHashInput}, $\mathsf{TreeHash}$ covers each populated leaf's
+$\mathsf{LeafNodeHashInput}$, $\mathsf{TreeHash}$ covers each populated leaf's
 credential, long-term identity keys, and key-package signature in addition to
 the node public keys, with every variable-length field length-prefixed.  This is
 load-bearing rather than incidental: a tree hash over node keys alone lets any
