@@ -217,10 +217,99 @@ fn relay_commit_sender_identity(
             )
         })?;
     key_package::validate_key_package(add_key_package)?;
+
+    let external_init = commit
+        .proposals
+        .iter()
+        .find_map(|proposal| match &proposal.proposal {
+            Some(crate::proto::group_proposal::Proposal::ExternalInit(ext)) => Some(ext),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            ProtocolError::group_protocol("External join commit missing ExternalInit proposal")
+        })?;
+    validate_external_join_authorization_for_relay(external_init, add_key_package, roster)?;
+
     Ok((
         add_key_package.identity_ed25519_public.clone(),
         RelayCommitKind::ExternalJoin,
     ))
+}
+
+/// Validate the external-join authorization as far as a roster allows.
+///
+/// The relay previously checked only that `authorization` was non-empty and
+/// never decoded it, so any authenticated user who knew a group id and epoch
+/// could push an external-join commit carrying a single junk byte and advance
+/// the relay's view of the group.
+///
+/// This mirrors the member-side `commit::validate_external_join_authorization`
+/// for every rule a roster can actually evaluate, including the authorizer's
+/// signature — `GroupMemberRecord` already carries the same identity key the
+/// member side reads out of the tree.  Without that signature check the rest is
+/// trivially forgeable: an attacker just fills in the correct group id and
+/// epoch.
+///
+/// Out of scope by construction, because a relay holds no tree, no policy bytes
+/// and no init secret: the `group_context_hash` recomputation, the
+/// `derive_external_keypairs` comparison, and the issued/expires window (these
+/// functions are pure and take no clock).  Members still enforce all of them.
+fn validate_external_join_authorization_for_relay(
+    external_init: &crate::proto::GroupExternalInitProposal,
+    add_key_package: &GroupKeyPackage,
+    roster: &GroupRoster,
+) -> Result<(), ProtocolError> {
+    let auth = crate::proto::GroupExternalJoinAuthorization::decode(
+        external_init.authorization.as_slice(),
+    )
+    .map_err(|e| ProtocolError::decode(format!("External join auth decode: {e}")))?;
+
+    if auth.auth_format_version != GROUP_EXTERNAL_JOIN_AUTH_FORMAT_VERSION {
+        return Err(ProtocolError::group_protocol(format!(
+            "External join authorization format version mismatch: expected {}, got {}",
+            GROUP_EXTERNAL_JOIN_AUTH_FORMAT_VERSION, auth.auth_format_version
+        )));
+    }
+    if auth.group_id != roster.group_id {
+        return Err(ProtocolError::group_protocol(
+            "External join authorization group_id mismatch",
+        ));
+    }
+    if auth.epoch != roster.epoch {
+        return Err(ProtocolError::group_protocol(format!(
+            "External join authorization epoch mismatch: expected {}, got {}",
+            roster.epoch, auth.epoch
+        )));
+    }
+    if auth.joiner_identity_ed25519_public != add_key_package.identity_ed25519_public
+        || auth.joiner_identity_x25519_public != add_key_package.identity_x25519_public
+        || auth.joiner_credential != add_key_package.credential
+    {
+        return Err(ProtocolError::group_protocol(
+            "External join authorization does not match Add proposal identity",
+        ));
+    }
+
+    let authorizer = roster
+        .find_member(auth.authorizer_leaf_index)
+        .ok_or_else(|| {
+            ProtocolError::group_membership(format!(
+                "External join authorizer leaf {} is not a group member",
+                auth.authorizer_leaf_index
+            ))
+        })?;
+    let mut auth_for_verify = auth.clone();
+    auth_for_verify.authorizer_signature.clear();
+    let mut auth_bytes = Vec::new();
+    auth_for_verify
+        .encode(&mut auth_bytes)
+        .map_err(|e| ProtocolError::encode(format!("External join auth encode: {e}")))?;
+    verify_ed25519_message(
+        &authorizer.identity_ed25519_public,
+        &auth.authorizer_signature,
+        &auth_bytes,
+        "External join authorization signature verification failed",
+    )
 }
 
 fn validate_external_join_structure_for_relay(

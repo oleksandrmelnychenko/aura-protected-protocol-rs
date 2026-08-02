@@ -12355,3 +12355,193 @@ fn group_sealed_franking_report_carries_opening_material() {
         "a substituted seal key must not verify"
     );
 }
+
+/// Shared setup for the relay external-join authorization tests: a genuine
+/// external-join commit, the roster a relay would hold, and the joiner's
+/// identity — the joiner is the committer here, so an attacker in this position
+/// can always re-sign the commit after tampering.  Tests must do the same, or
+/// they measure the committer-signature check instead of the authorization
+/// check.
+fn relay_external_join_fixture() -> (
+    aura_protected_protocol::proto::GroupCommit,
+    aura_protected_protocol::api::relay::GroupRoster,
+    IdentityKeys,
+) {
+    use aura_protected_protocol::api::relay::{GroupMemberRecord, GroupRoster};
+
+    let alice_id = IdentityKeys::create(10).unwrap();
+    let charlie_id = IdentityKeys::create(10).unwrap();
+    let alice_group = create_external_joinable_group(&alice_id, b"alice");
+    let group_id = alice_group.group_id().unwrap();
+
+    let (_charlie_group, ext_commit_bytes) =
+        authorize_and_join_external(&alice_group, &charlie_id, b"charlie");
+
+    let roster = GroupRoster::new(
+        group_id,
+        GroupMemberRecord {
+            leaf_index: 0,
+            identity_ed25519_public: alice_id.get_identity_ed25519_public(),
+            identity_x25519_public: alice_id.get_identity_x25519_public(),
+            credential: b"alice".to_vec(),
+        },
+    );
+
+    let commit =
+        aura_protected_protocol::proto::GroupCommit::decode(ext_commit_bytes.as_slice()).unwrap();
+    (commit, roster, charlie_id)
+}
+
+/// Re-sign a tampered commit as the joiner and encode it, exactly as an
+/// attacker occupying the committer slot would.
+fn resign_commit_as(
+    commit: &aura_protected_protocol::proto::GroupCommit,
+    signer: &IdentityKeys,
+) -> Vec<u8> {
+    use ed25519_dalek::Signer;
+
+    let mut unsigned = commit.clone();
+    unsigned.committer_signature = Vec::new();
+    let mut to_sign = Vec::new();
+    unsigned.encode(&mut to_sign).unwrap();
+
+    let sk_bytes = signer.get_identity_ed25519_private_key_copy().unwrap();
+    let sk_array: [u8; 64] = sk_bytes.as_slice().try_into().unwrap();
+    let signing_key = ed25519_dalek::SigningKey::from_keypair_bytes(&sk_array).unwrap();
+
+    let mut signed = unsigned;
+    signed.committer_signature = signing_key.sign(&to_sign).to_bytes().to_vec();
+    let mut bytes = Vec::new();
+    signed.encode(&mut bytes).unwrap();
+    bytes
+}
+
+fn set_external_join_authorization(
+    commit: &mut aura_protected_protocol::proto::GroupCommit,
+    authorization: Vec<u8>,
+) {
+    for proposal in &mut commit.proposals {
+        if let Some(aura_protected_protocol::proto::group_proposal::Proposal::ExternalInit(ext)) =
+            proposal.proposal.as_mut()
+        {
+            ext.authorization = authorization;
+            return;
+        }
+    }
+    panic!("fixture must contain an ExternalInit proposal");
+}
+
+fn external_join_authorization(
+    commit: &aura_protected_protocol::proto::GroupCommit,
+) -> aura_protected_protocol::proto::GroupExternalJoinAuthorization {
+    for proposal in &commit.proposals {
+        if let Some(aura_protected_protocol::proto::group_proposal::Proposal::ExternalInit(ext)) =
+            proposal.proposal.as_ref()
+        {
+            return aura_protected_protocol::proto::GroupExternalJoinAuthorization::decode(
+                ext.authorization.as_slice(),
+            )
+            .unwrap();
+        }
+    }
+    panic!("fixture must contain an ExternalInit proposal");
+}
+
+fn encode_authorization(
+    auth: &aura_protected_protocol::proto::GroupExternalJoinAuthorization,
+) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    auth.encode(&mut bytes).unwrap();
+    bytes
+}
+
+/// Sanity check for the three tests below: the fixture's re-signing path
+/// produces a commit the relay still accepts when nothing else is changed.  If
+/// this ever fails, the negative tests are measuring the wrong check.
+#[test]
+fn relay_accepts_resigned_untampered_external_join() {
+    use aura_protected_protocol::api::relay::validate_commit_for_relay_strict;
+
+    init();
+    let (commit, roster, charlie_id) = relay_external_join_fixture();
+    let sender = charlie_id.get_identity_ed25519_public();
+
+    validate_commit_for_relay_strict(&resign_commit_as(&commit, &charlie_id), &roster, &sender)
+        .expect("a re-signed but otherwise untouched commit must still validate");
+}
+
+/// The relay used to check only that `authorization` was non-empty, so a single
+/// junk byte was accepted and any authenticated user could advance the relay's
+/// view of a group they were never invited to.
+#[test]
+fn relay_rejects_external_join_with_garbage_authorization() {
+    use aura_protected_protocol::api::relay::validate_commit_for_relay_strict;
+
+    init();
+    let (mut commit, roster, charlie_id) = relay_external_join_fixture();
+    let sender = charlie_id.get_identity_ed25519_public();
+    set_external_join_authorization(&mut commit, b"A".to_vec());
+
+    assert!(
+        validate_commit_for_relay_strict(&resign_commit_as(&commit, &charlie_id), &roster, &sender)
+            .is_err(),
+        "a non-decodable authorization must be rejected"
+    );
+}
+
+#[test]
+fn relay_rejects_external_join_authorization_for_wrong_epoch() {
+    use aura_protected_protocol::api::relay::validate_commit_for_relay_strict;
+
+    init();
+    let (mut commit, roster, charlie_id) = relay_external_join_fixture();
+    let sender = charlie_id.get_identity_ed25519_public();
+    let mut auth = external_join_authorization(&commit);
+    auth.epoch += 1;
+    set_external_join_authorization(&mut commit, encode_authorization(&auth));
+
+    assert!(
+        validate_commit_for_relay_strict(&resign_commit_as(&commit, &charlie_id), &roster, &sender)
+            .is_err(),
+        "an authorization for a different epoch must be rejected"
+    );
+}
+
+#[test]
+fn relay_rejects_external_join_authorization_not_matching_add_key_package() {
+    use aura_protected_protocol::api::relay::validate_commit_for_relay_strict;
+
+    init();
+    let (mut commit, roster, charlie_id) = relay_external_join_fixture();
+    let sender = charlie_id.get_identity_ed25519_public();
+    let mut auth = external_join_authorization(&commit);
+    auth.joiner_credential = b"someone-else".to_vec();
+    set_external_join_authorization(&mut commit, encode_authorization(&auth));
+
+    assert!(
+        validate_commit_for_relay_strict(&resign_commit_as(&commit, &charlie_id), &roster, &sender)
+            .is_err(),
+        "an authorization not bound to the Add key package must be rejected"
+    );
+}
+
+/// Without the signature check the rest is trivially forgeable: the attacker
+/// fills in the correct group id, epoch and joiner binding and supplies a
+/// well-formed authorization the authorizer never issued.
+#[test]
+fn relay_rejects_external_join_authorization_with_forged_signature() {
+    use aura_protected_protocol::api::relay::validate_commit_for_relay_strict;
+
+    init();
+    let (mut commit, roster, charlie_id) = relay_external_join_fixture();
+    let sender = charlie_id.get_identity_ed25519_public();
+    let mut auth = external_join_authorization(&commit);
+    auth.authorizer_signature = vec![0x42; auth.authorizer_signature.len()];
+    set_external_join_authorization(&mut commit, encode_authorization(&auth));
+
+    assert!(
+        validate_commit_for_relay_strict(&resign_commit_as(&commit, &charlie_id), &roster, &sender)
+            .is_err(),
+        "a forged authorizer signature must be rejected"
+    );
+}
