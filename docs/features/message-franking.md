@@ -12,7 +12,8 @@ Message Franking — механізм E2E-сумісної модерації. �
 Відправник                       Сервер/Мережа                    Отримувач
     │                                │                                │
     │  franking_key = random(32)     │                                │
-    │  franking_tag = HMAC(fk, pt)   │                                │
+    │  franking_tag =                │                                │
+    │    HMAC(fk, FrankInput(...))   │                                │
     │                                │                                │
     │  GroupApplicationMessage {     │                                │
     │    encrypted_payload =         │                                │
@@ -32,21 +33,54 @@ Message Franking — механізм E2E-сумісної модерації. �
     │                                │  → (plaintext, franking_key)  │
     │                                │                                │
     │                                │  Модератор перевіряє:         │
-    │                                │  HMAC(fk, pt) == franking_tag │
+    │                                │  HMAC(fk, FrankInput(...))    │
+    │                                │      == franking_tag          │
 ```
+
+### FrankInput — що саме комітиться
+
+```
+FrankInput(content_type, content, sealed_content, sealed_nonce, seal_key) =
+      "Aura-Group-FrankingTag-v2"
+   || le32(GROUP_PROTOCOL_VERSION)
+   || le32(content_type)
+   || len32(content)        || content
+   || len32(sealed_content) || sealed_content
+   || len32(sealed_nonce)   || sealed_nonce
+   || len32(seal_key)       || seal_key
+```
+
+Кожне змінне поле має length-префікс, є доменна мітка і версія. Це не
+косметика: тег раніше рахувався над `content || sealed_content` без
+роздільників, тож скаржник міг зсунути межу між полями і «довести», що
+відправник надіслав будь-який **префікс** тексту — для звичайного повідомлення
+`sealed_content` порожній, тому це означало будь-який префікс.
+
+Для sealed-повідомлень тег додатково комітить `seal_key` і `sealed_nonce`.
+Розшифрування AEAD детерміноване, тож ключ+nonce+шифротекст однозначно
+задають один plaintext — саме це дає модератору змогу **відкрити** payload зі
+скарги. Раніше для sealed-повідомлення `content` був порожньою підказкою, а
+`sealed_content` — непрозорим шифротекстом, тож тег не розкривав нічого,
+попри те що Shield примусово вмикає франкування на кожному повідомленні.
+Прив'язка ключа заодно закриває відсутність key-commitment в AES-GCM-SIV:
+скаржник не може підставити другий ключ, який відкриває той самий шифротекст
+в інші байти.
 
 ### Ключові принципи
 
-1. **`franking_tag`** — HMAC-SHA256(franking_key, content) — розміщений **поза** encrypted_payload в `GroupApplicationMessage`
+1. **`franking_tag`** — HMAC-SHA256(franking_key, FrankInput(...)) — розміщений **поза** encrypted_payload в `GroupApplicationMessage`
 2. **`franking_key`** — випадковий 32 байти — розміщений **всередині** encrypted_payload (в `GroupPlaintext.franking_key`)
 3. Сервер/мережа бачить `franking_tag`, але **не може** верифікувати без `franking_key`
 4. Отримувач розшифровує → отримує `plaintext` + `franking_key`
-5. Для скарги: отримувач передає `(plaintext, franking_key)` модератору
-6. Модератор: `HMAC(franking_key, plaintext) == franking_tag` → доводить що саме цей контент був надісланий
+5. Для скарги: отримувач передає модератору `FrankingData` — `franking_key`,
+   `content`, `sealed_content`, `content_type`, `sealed_nonce`, `seal_key`
+6. Модератор: `HMAC(franking_key, FrankInput(...)) == franking_tag` → доводить,
+   що саме цей контент був надісланий; для sealed-повідомлення `seal_key` +
+   `sealed_nonce` ще й відкривають payload
 
 ### Чому це працює
 
-- **Відправник не може заперечити**: `franking_tag` прив'язаний до конкретного `plaintext` через HMAC
+- **Відправник не може заперечити**: `franking_tag` прив'язаний через HMAC до конкретного `plaintext`, типу контенту і — для sealed — до ключа, що його відкриває
 - **Отримувач не може підробити**: `franking_key` був згенерований відправником і зашифрований E2E
 - **Сервер не може читати**: `franking_tag` без `franking_key` — це просто 32 непрозорих байти
 - **Інші повідомлення захищені**: кожне повідомлення має свій випадковий `franking_key`
@@ -55,7 +89,7 @@ Message Franking — механізм E2E-сумісної модерації. �
 
 | Властивість | Гарантія |
 |-------------|----------|
-| **Commitment binding** | HMAC-SHA256 зв'язує franking_key з конкретним plaintext |
+| **Commitment binding** | HMAC-SHA256 над length-префіксованим, доменно-сепарованим входом — межі полів однозначні |
 | **Selective disclosure** | Тільки скаргу-повідомлення розкривається модератору |
 | **Non-fabrication** | Отримувач не може підробити контент (key був усередині E2E) |
 | **Forward secrecy** | franking_key витирається через Drop trait при знищенні FrankingData |

@@ -204,7 +204,16 @@ carried in TreeKEM update-path wrapping, and when serialized application
 security policy is included in the epoch context, key schedule, and
 confirmation input? Each hybrid update path carries both \DH{} and \KEM{}
 material, and the accepted group context binds the group identifier, epoch
-number, ratchet-tree hash, and serialized security policy. The post-quantum
+number, ratchet-tree hash, and serialized security policy.  Following RFC 9420's
+\textsf{LeafNodeHashInput}, $\mathsf{TreeHash}$ covers each populated leaf's
+credential, long-term identity keys, and key-package signature in addition to
+the node public keys, with every variable-length field length-prefixed.  This is
+load-bearing rather than incidental: a tree hash over node keys alone lets any
+party that supplies the serialized tree replace the key package at a leaf --
+keeping the victim's public leaf keys and credential while substituting its own
+identity keys -- without moving the tree hash, and therefore without breaking
+the group context, the confirmation MAC, the Welcome signature, or an
+external-join authorization. The post-quantum
 contribution is therefore part of the membership-changing tree update itself,
 not only an admission mechanism or a group-creation extension. Policy is also
 made cryptographic: a disagreement about \Shield{}, external joins, franking,
