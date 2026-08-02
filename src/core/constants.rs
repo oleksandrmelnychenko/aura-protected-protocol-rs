@@ -163,6 +163,7 @@ pub const GROUP_REINIT_LABEL: &[u8] = b"Aura-Group-ReInit";
 
 pub const GROUP_SEAL_KEY_INFO: &[u8] = b"Aura-Group-SealKey";
 pub const GROUP_MESSAGE_SIGNATURE_INFO: &[u8] = b"Aura-Group-MessageSignature";
+pub const GROUP_FRANKING_TAG_INFO: &[u8] = b"Aura-Group-FrankingTag-v2";
 pub const SEAL_KEY_BYTES: usize = 32;
 pub const SEALED_AAD_SUFFIX: &[u8] = b"sealed";
 

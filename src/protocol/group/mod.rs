@@ -767,6 +767,15 @@ pub struct FrankingData {
     pub franking_key: Vec<u8>,
     pub content: Vec<u8>,
     pub sealed_content: Vec<u8>,
+    /// Wire `content_type` the tag was computed over.  Bound so a report cannot
+    /// be replayed as a different message kind.
+    pub content_type: u32,
+    /// Nonce for `sealed_content`; empty for non-sealed messages.
+    pub sealed_nonce: Vec<u8>,
+    /// Key that opens `sealed_content`; empty for non-sealed messages.  Carried
+    /// so a moderator handed a report can actually open the sealed payload and
+    /// re-derive the tag over it.
+    pub seal_key: Vec<u8>,
 }
 
 #[allow(clippy::missing_fields_in_debug)]
@@ -783,6 +792,7 @@ impl std::fmt::Debug for FrankingData {
 impl Drop for FrankingData {
     fn drop(&mut self) {
         CryptoInterop::secure_wipe(&mut self.franking_key);
+        CryptoInterop::secure_wipe(&mut self.seal_key);
     }
 }
 
@@ -2026,17 +2036,19 @@ impl GroupSession {
             reply_context: proto_reply,
         };
 
+        // Held past the franking block below: the tag commits to the seal key,
+        // which is what lets an abuse report actually open sealed content.
+        let mut seal_key = Vec::new();
         if policy.content_type.is_sealed() {
             let real_pt = actual_plaintext.ok_or_else(|| {
                 ProtocolError::invalid_input("Sealed message requires actual_plaintext")
             })?;
-            let mut seal_key = {
+            seal_key = {
                 let mut z = HkdfSha256::expand(message_key, GROUP_SEAL_KEY_INFO, SEAL_KEY_BYTES)?;
                 std::mem::take(&mut *z)
             };
             let sealed_nonce = CryptoInterop::get_random_bytes(AES_GCM_NONCE_BYTES);
             let sealed_ct = AesGcm::encrypt(&seal_key, &sealed_nonce, real_pt, SEALED_AAD_SUFFIX)?;
-            CryptoInterop::secure_wipe(&mut seal_key);
             gpt.sealed_content = sealed_ct;
             gpt.sealed_nonce = sealed_nonce;
         }
@@ -2046,13 +2058,17 @@ impl GroupSession {
             let fk = CryptoInterop::get_random_bytes(FRANKING_KEY_BYTES);
             let mut mac = Hmac::<Sha256>::new_from_slice(&fk)
                 .map_err(|e| ProtocolError::franking_failed(format!("HMAC init: {e}")))?;
-            mac.update(content);
-            if !gpt.sealed_content.is_empty() {
-                mac.update(&gpt.sealed_content);
-            }
+            mac.update(&Self::build_franking_input(
+                policy.content_type.to_u32(),
+                content,
+                &gpt.sealed_content,
+                &gpt.sealed_nonce,
+                &seal_key,
+            ));
             franking_tag = mac.finalize().into_bytes().to_vec();
             gpt.franking_key = fk;
         }
+        CryptoInterop::secure_wipe(&mut seal_key);
 
         Ok((gpt, franking_tag))
     }
@@ -2148,12 +2164,16 @@ impl GroupSession {
         }
 
         let franking_data = if !gpt.franking_key.is_empty() && !franking_tag_wire.is_empty() {
+            let sealed_seal_key: &[u8] = if content_type.is_sealed() { seal_key } else { &[] };
             let mut mac = Hmac::<Sha256>::new_from_slice(&gpt.franking_key)
                 .map_err(|e| ProtocolError::franking_failed(format!("HMAC init: {e}")))?;
-            mac.update(&gpt.content);
-            if !gpt.sealed_content.is_empty() {
-                mac.update(&gpt.sealed_content);
-            }
+            mac.update(&Self::build_franking_input(
+                content_type.to_u32(),
+                &gpt.content,
+                &gpt.sealed_content,
+                &gpt.sealed_nonce,
+                sealed_seal_key,
+            ));
             let computed = mac.finalize().into_bytes().to_vec();
             let tag_valid =
                 CryptoInterop::constant_time_equals(&computed, franking_tag_wire).unwrap_or(false);
@@ -2167,6 +2187,9 @@ impl GroupSession {
                 franking_key: gpt.franking_key.clone(),
                 content: gpt.content.clone(),
                 sealed_content: gpt.sealed_content.clone(),
+                content_type: content_type.to_u32(),
+                sealed_nonce: gpt.sealed_nonce.clone(),
+                seal_key: sealed_seal_key.to_vec(),
             })
         } else {
             None
@@ -2250,6 +2273,46 @@ impl GroupSession {
         let len = bytes.len() as u32;
         buf.extend_from_slice(&len.to_le_bytes());
         buf.extend_from_slice(bytes);
+    }
+
+    /// Input to the franking HMAC.
+    ///
+    /// The tag used to be `HMAC(fk, content || sealed_content)` with no length
+    /// prefixes and no domain label, so a reporter could move the boundary and
+    /// "prove" the sender sent any split of the concatenation — for a plain
+    /// message, `sealed_content` is empty, so that means any prefix of the text.
+    ///
+    /// For sealed content the tag also committed to nothing useful: the hint in
+    /// `content` is empty and `sealed_content` is opaque ciphertext, so a report
+    /// could not reveal the payload.  Binding the seal key and nonce fixes that
+    /// (AEAD decryption is deterministic, so key+nonce+ciphertext pins exactly
+    /// one plaintext) and, as a side effect, closes the AES-GCM-SIV
+    /// key-commitment gap: a reporter cannot swap in a second key.
+    fn build_franking_input(
+        content_type: u32,
+        content: &[u8],
+        sealed_content: &[u8],
+        sealed_nonce: &[u8],
+        seal_key: &[u8],
+    ) -> Vec<u8> {
+        const LEN_PREFIX_COUNT: usize = 4;
+        let mut input = Vec::with_capacity(
+            GROUP_FRANKING_TAG_INFO.len()
+                + 2 * size_of::<u32>()
+                + LEN_PREFIX_COUNT * size_of::<u32>()
+                + content.len()
+                + sealed_content.len()
+                + sealed_nonce.len()
+                + seal_key.len(),
+        );
+        input.extend_from_slice(GROUP_FRANKING_TAG_INFO);
+        input.extend_from_slice(&GROUP_PROTOCOL_VERSION.to_le_bytes());
+        input.extend_from_slice(&content_type.to_le_bytes());
+        Self::append_len_prefixed(&mut input, content);
+        Self::append_len_prefixed(&mut input, sealed_content);
+        Self::append_len_prefixed(&mut input, sealed_nonce);
+        Self::append_len_prefixed(&mut input, seal_key);
+        input
     }
 
     fn build_app_signature_input(
@@ -2656,10 +2719,13 @@ impl GroupSession {
     pub fn verify_franking(data: &FrankingData) -> Result<bool, ProtocolError> {
         let mut mac = Hmac::<Sha256>::new_from_slice(&data.franking_key)
             .map_err(|e| ProtocolError::franking_failed(format!("HMAC init: {e}")))?;
-        mac.update(&data.content);
-        if !data.sealed_content.is_empty() {
-            mac.update(&data.sealed_content);
-        }
+        mac.update(&Self::build_franking_input(
+            data.content_type,
+            &data.content,
+            &data.sealed_content,
+            &data.sealed_nonce,
+            &data.seal_key,
+        ));
         let computed = mac.finalize().into_bytes().to_vec();
         Ok(CryptoInterop::constant_time_equals(
             &computed,

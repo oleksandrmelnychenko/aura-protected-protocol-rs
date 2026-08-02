@@ -47,7 +47,7 @@ use crate::core::constants::{
     MAX_LINK_PREVIEW_TITLE_CHARS, MAX_LINK_PREVIEW_URL_CHARS, MAX_LOCATION_LABEL_CHARS,
     MAX_VOICE_TRANSCRIPT_CHARS, MAX_VOICE_WAVEFORM_SAMPLES, MAX_VOIP_ENCRYPTED_HEADER_SIZE,
     MAX_VOIP_ENCRYPTED_PAYLOAD_SIZE, MAX_VOIP_SIGNAL_MESSAGE_SIZE, MESSAGE_ID_BYTES,
-    PROTOCOL_VERSION, PSK_BYTES, ROOT_KEY_BYTES, X25519_PUBLIC_KEY_BYTES,
+    PROTOCOL_VERSION, PSK_BYTES, ROOT_KEY_BYTES, SEAL_KEY_BYTES, X25519_PUBLIC_KEY_BYTES,
 };
 use crate::core::errors::ProtocolError;
 use crate::crypto::SecureMemoryHandle;
@@ -6437,6 +6437,11 @@ pub unsafe extern "C" fn aura_group_verify_franking(
     content_length: usize,
     sealed_content: *const u8,
     sealed_content_length: usize,
+    content_type: u32,
+    sealed_nonce: *const u8,
+    sealed_nonce_length: usize,
+    seal_key: *const u8,
+    seal_key_length: usize,
     out_valid: *mut u8,
     out_error: *mut AuraError,
 ) -> AuraErrorCode {
@@ -6486,17 +6491,39 @@ pub unsafe extern "C" fn aura_group_verify_franking(
             return AuraErrorCode::AuraErrorInvalidInput;
         }
 
+        if seal_key_length != 0 && seal_key_length != SEAL_KEY_BYTES {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "Seal key must be 32 bytes when present",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+        if sealed_nonce_length != 0 && sealed_nonce_length != AES_GCM_NONCE_BYTES {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "Sealed nonce must be 12 bytes when present",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+
         use crate::protocol::group::{FrankingData, GroupSession};
-        let sc = if sealed_content.is_null() || sealed_content_length == 0 {
-            vec![]
-        } else {
-            std::slice::from_raw_parts(sealed_content, sealed_content_length).to_vec()
+        let optional_slice = |ptr: *const u8, len: usize| -> Vec<u8> {
+            if ptr.is_null() || len == 0 {
+                vec![]
+            } else {
+                std::slice::from_raw_parts(ptr, len).to_vec()
+            }
         };
         let data = FrankingData {
             franking_tag: std::slice::from_raw_parts(franking_tag, franking_tag_length).to_vec(),
             franking_key: std::slice::from_raw_parts(franking_key, franking_key_length).to_vec(),
             content: std::slice::from_raw_parts(content, content_length).to_vec(),
-            sealed_content: sc,
+            sealed_content: optional_slice(sealed_content, sealed_content_length),
+            content_type,
+            sealed_nonce: optional_slice(sealed_nonce, sealed_nonce_length),
+            seal_key: optional_slice(seal_key, seal_key_length),
         };
         match GroupSession::verify_franking(&data) {
             Ok(valid) => {

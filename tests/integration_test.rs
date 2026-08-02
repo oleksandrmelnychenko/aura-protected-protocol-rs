@@ -9008,6 +9008,9 @@ fn group_frankable_tampered_content_rejected() {
         franking_key: fd.franking_key.clone(),
         content: b"Tampered content".to_vec(),
         sealed_content: vec![],
+        content_type: fd.content_type,
+        sealed_nonce: fd.sealed_nonce.clone(),
+        seal_key: fd.seal_key.clone(),
     };
     let valid = GroupSession::verify_franking(&tampered).unwrap();
     assert!(
@@ -10762,6 +10765,9 @@ fn group_encrypt_frankable_roundtrip() {
         franking_key: franking.franking_key.clone(),
         content: b"tampered content".to_vec(),
         sealed_content: vec![],
+        content_type: franking.content_type,
+        sealed_nonce: franking.sealed_nonce.clone(),
+        seal_key: franking.seal_key.clone(),
     };
     let invalid = GroupSession::verify_franking(&tampered).unwrap();
     assert!(!invalid);
@@ -12259,4 +12265,93 @@ fn saturated_skipped_key_cache_self_heals_across_sealed_state() {
         .decrypt(&after_gap)
         .expect("a restored session must self-heal too");
     assert_eq!(dec.plaintext, b"after gap");
+}
+
+/// The franking tag committed to `content || sealed_content` with no length
+/// prefixes, so a reporter could move the boundary and "prove" the sender sent
+/// any split of the concatenation.  For a plain message `sealed_content` is
+/// empty, so that meant any prefix of the text.
+#[test]
+fn group_franking_prefix_split_is_rejected() {
+    use aura_protected_protocol::protocol::group::{FrankingData, GroupSession};
+
+    init();
+    let (alice, bob) = create_two_member_group();
+
+    let full = b"I am not going to hurt anyone";
+    let ct = alice.encrypt_frankable(full).unwrap();
+    let result = bob.decrypt(&ct).unwrap();
+    let genuine = result.franking_data.as_ref().unwrap();
+
+    assert!(
+        GroupSession::verify_franking(genuine).unwrap(),
+        "the genuine report must verify"
+    );
+
+    // Move 7 bytes from the end of `content` into `sealed_content`; the raw
+    // concatenation is unchanged.
+    let split_at = full.len() - 7;
+    let forged = FrankingData {
+        franking_tag: genuine.franking_tag.clone(),
+        franking_key: genuine.franking_key.clone(),
+        content: full[..split_at].to_vec(),
+        sealed_content: full[split_at..].to_vec(),
+        content_type: genuine.content_type,
+        sealed_nonce: genuine.sealed_nonce.clone(),
+        seal_key: genuine.seal_key.clone(),
+    };
+    assert_eq!(
+        [forged.content.clone(), forged.sealed_content.clone()].concat(),
+        full.to_vec(),
+        "the forgery must be a pure re-split of the same bytes"
+    );
+
+    assert!(
+        !GroupSession::verify_franking(&forged).unwrap(),
+        "a re-split report must not verify"
+    );
+}
+
+/// A franking report for a sealed message must carry enough to open the payload,
+/// and the tag must commit to the key that opens it.
+#[test]
+fn group_sealed_franking_report_carries_opening_material() {
+    use aura_protected_protocol::protocol::group::{FrankingData, GroupSession};
+
+    init();
+    let (alice, bob) = create_two_member_group();
+
+    let hint = b"a photo";
+    let payload = b"ACTUAL ABUSIVE PAYLOAD";
+    let ct = alice.encrypt_sealed(payload, hint).unwrap();
+    let result = bob.decrypt(&ct).unwrap();
+
+    let franking = result
+        .franking_data
+        .as_ref()
+        .expect("shield policy franks every message");
+    assert!(
+        GroupSession::verify_franking(franking).unwrap(),
+        "the sealed report must verify"
+    );
+    assert!(
+        !franking.seal_key.is_empty() && !franking.sealed_nonce.is_empty(),
+        "a sealed report must carry the material that opens the payload"
+    );
+
+    // Substituting a different seal key must break the tag — AES-GCM-SIV is not
+    // key-committing on its own, so this binding is what pins the payload.
+    let forged = FrankingData {
+        franking_tag: franking.franking_tag.clone(),
+        franking_key: franking.franking_key.clone(),
+        content: franking.content.clone(),
+        sealed_content: franking.sealed_content.clone(),
+        content_type: franking.content_type,
+        sealed_nonce: franking.sealed_nonce.clone(),
+        seal_key: vec![0xAA; franking.seal_key.len()],
+    };
+    assert!(
+        !GroupSession::verify_franking(&forged).unwrap(),
+        "a substituted seal key must not verify"
+    );
 }

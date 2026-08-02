@@ -1001,6 +1001,11 @@ internal func native_epp_group_verify_franking(
     _ content_length: Int,
     _ sealed_content: UnsafePointer<UInt8>?,
     _ sealed_content_length: Int,
+    _ content_type: UInt32,
+    _ sealed_nonce: UnsafePointer<UInt8>?,
+    _ sealed_nonce_length: Int,
+    _ seal_key: UnsafePointer<UInt8>?,
+    _ seal_key_length: Int,
     _ out_valid: UnsafeMutablePointer<UInt8>?,
     _ out_error: UnsafeMutablePointer<NativeAuraError>?
 ) -> UInt32

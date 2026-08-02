@@ -275,8 +275,11 @@ AURA_API void aura_sealed_state_slot_destroy(
  *     exact inputs required by aura_group_reveal_sealed().
  *
  *   franking_*
- *     Present only when has_franking_data != 0.  These buffers provide the
- *     exact inputs required by aura_group_verify_franking().
+ *     Present only when has_franking_data != 0.  These buffers, together with
+ *     content_type and — for a sealed message — sealed_nonce and sealed_key,
+ *     are the exact inputs required by aura_group_verify_franking().  The tag
+ *     commits to all of them: it is what lets a moderator open a reported
+ *     sealed payload, and substituting any one of them invalidates the tag.
  */
 typedef struct {
     AuraBuffer plaintext;

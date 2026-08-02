@@ -1070,18 +1070,30 @@ public final class AuraGroupSession {
 
     /// Verifies a franking tag against the original content and sealed content.
     ///
+    /// The tag commits to every parameter below.  For a sealed message the
+    /// report must carry `contentType`, `sealedNonce` and `sealKey` as they came
+    /// out of `decrypt`; those are what let a moderator open the payload, and
+    /// substituting any of them invalidates the tag.  Pass empty `Data` for
+    /// `sealedNonce`/`sealKey` on a non-sealed message.
+    ///
     /// - Parameters:
     ///   - frankingTag: The franking tag to verify.
     ///   - frankingKey: The franking key.
     ///   - content: The original plaintext content.
     ///   - sealedContent: The sealed (encrypted) content.
+    ///   - contentType: The wire content type the tag was computed over.
+    ///   - sealedNonce: Nonce for `sealedContent`, or empty.
+    ///   - sealKey: Key that opens `sealedContent`, or empty.
     /// - Returns: `true` if the franking tag is valid, `false` otherwise.
     /// - Throws: `AuraError` if verification encounters an error.
     public static func verifyFranking(
         frankingTag: Data,
         frankingKey: Data,
         content: Data,
-        sealedContent: Data
+        sealedContent: Data,
+        contentType: UInt32,
+        sealedNonce: Data,
+        sealKey: Data
     ) throws -> Bool {
         var outValid: UInt8 = 0
         var outError = NativeAuraError(code: 0, message: nil)
@@ -1089,18 +1101,27 @@ public final class AuraGroupSession {
             frankingKey.withUnsafeBytes { keyBytes in
                 content.withUnsafeBytes { contentBytes in
                     sealedContent.withUnsafeBytes { sealedBytes in
-                        native_epp_group_verify_franking(
-                            tagBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                            frankingTag.count,
-                            keyBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                            frankingKey.count,
-                            contentBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                            content.count,
-                            sealedBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                            sealedContent.count,
-                            &outValid,
-                            &outError
-                        )
+                        sealedNonce.withUnsafeBytes { nonceBytes in
+                            sealKey.withUnsafeBytes { sealKeyBytes in
+                                native_epp_group_verify_franking(
+                                    tagBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                                    frankingTag.count,
+                                    keyBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                                    frankingKey.count,
+                                    contentBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                                    content.count,
+                                    sealedBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                                    sealedContent.count,
+                                    contentType,
+                                    nonceBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                                    sealedNonce.count,
+                                    sealKeyBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                                    sealKey.count,
+                                    &outValid,
+                                    &outError
+                                )
+                            }
+                        }
                     }
                 }
             }

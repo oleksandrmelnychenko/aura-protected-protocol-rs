@@ -1490,12 +1490,23 @@ AuraErrorCode aura_group_verify_franking(
     size_t         content_length,
     const uint8_t* sealed_content,           // [in] або NULL/0
     size_t         sealed_content_length,
+    uint32_t       content_type,             // [in] wire content_type з decrypt
+    const uint8_t* sealed_nonce,             // [in] або NULL/0
+    size_t         sealed_nonce_length,
+    const uint8_t* seal_key,                 // [in] або NULL/0
+    size_t         seal_key_length,
     uint8_t*       out_valid,                // [out] 1 = valid, 0 = invalid
     AuraError*      out_error
 );
 ```
 
 Верифікує franking tag — доказ автентичності повідомлення для третьої сторони.
+
+Тег зв'язує **усі** входи, зокрема `content_type`, `sealed_nonce` та `seal_key`.
+Для sealed-повідомлення саме `seal_key`+`sealed_nonce` дозволяють модератору
+відкрити payload, і підміна будь-якого з них робить тег недійсним. Для
+non-sealed повідомлення передавайте NULL/0 для `sealed_nonce` та `seal_key`.
+Довжини (коли не нульові): `sealed_nonce` — 12 байт, `seal_key` — 32 байти.
 
 ---
 
@@ -2057,7 +2068,9 @@ forward_to_recipients(envelope, len)
   ↓
 // Модерація (опційно): перевірити franking tag
 aura_group_verify_franking(tag, tag_len, key, key_len,
-    content, content_len, sealed, sealed_len, &valid, &err)
+    content, content_len, sealed, sealed_len,
+    content_type, sealed_nonce, sealed_nonce_len, seal_key, seal_key_len,
+    &valid, &err)
   ↓
 aura_shutdown()
 ```
