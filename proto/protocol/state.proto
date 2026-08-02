@@ -113,3 +113,21 @@ message NonceState {
   bytes prefix = 1;
   uint64 counter = 2;
 }
+
+// Durable anti-replay state for an IdentityKeys instance.
+//
+// Sessions, groups and VoIP all have sealed state; identity did not, so a
+// process restart reset HandshakeInit replay protection to zero and — for
+// seed-derived identities, whose one-time prekeys are a pure function of the
+// master seed — resurrected every consumed one-time prekey.
+message IdentityReplayState {
+  uint32 state_version = 1;
+  // Binds the blob to the identity it came from.
+  bytes identity_ed25519_public = 2;
+  // The one-time prekeys still unconsumed.  Stored rather than the consumed set
+  // because this one is naturally bounded by the pool size.
+  repeated uint32 remaining_one_time_pre_key_ids = 3;
+  // Recently seen HandshakeInit fingerprints, oldest first.
+  repeated bytes recent_handshake_init_fingerprints = 4;
+  uint64 external_counter = 5;
+}

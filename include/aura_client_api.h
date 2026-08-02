@@ -3924,6 +3924,60 @@ AURA_API AuraErrorCode aura_channel_decrypt_message(
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * Identity anti-replay persistence
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * HandshakeInit replay protection is in-memory only unless this state is
+ * persisted.  A restart resets it, and for a seed-derived identity
+ * (aura_identity_create_from_seed) every consumed one-time prekey is
+ * regenerated from the seed — so a relay that recorded a HandshakeInit can
+ * replay it after the restart, rebuild a byte-identical session, and replay the
+ * whole recorded message stream as fresh traffic.
+ *
+ * Persist the blob after each accepted handshake and restore it on startup.
+ * external_counter is the caller's monotonic persistence counter; restore
+ * rejects a blob whose counter is below min_external_counter, so a rolled-back
+ * copy cannot reopen the window.
+ *
+ * Release out_state with aura_buffer_release().
+ */
+AURA_API AuraErrorCode aura_identity_export_sealed_replay_state(
+    AuraIdentityHandle* handle,
+    const uint8_t*      key,
+    size_t              key_length,
+    uint64_t            external_counter,
+    AuraBuffer*         out_state,
+    AuraError*          out_error);
+
+/*
+ * Restore sealed anti-replay state onto an identity.  Drops one-time prekeys
+ * the blob records as consumed and rebuilds the recently-seen HandshakeInit
+ * fingerprints.  Fails on a wrong seal key, a rolled-back counter, or a blob
+ * belonging to a different identity.
+ */
+AURA_API AuraErrorCode aura_identity_restore_sealed_replay_state(
+    AuraIdentityHandle* handle,
+    const uint8_t*      state_bytes,
+    size_t              state_length,
+    const uint8_t*      key,
+    size_t              key_length,
+    uint64_t            min_external_counter,
+    uint64_t*           out_external_counter,
+    AuraError*          out_error);
+
+/*
+ * Read a sealed blob's external counter without decrypting it, to pick the
+ * newest of several persisted copies.  The counter is authenticated by the AEAD
+ * on restore, so a tampered value here only misleads the selection.
+ */
+AURA_API AuraErrorCode aura_identity_replay_state_external_counter(
+    const uint8_t* state_bytes,
+    size_t         state_length,
+    uint64_t*      out_counter,
+    AuraError*     out_error);
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * Session metadata and lifetime
  * ═══════════════════════════════════════════════════════════════════════════ */
 

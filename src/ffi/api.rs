@@ -1243,6 +1243,166 @@ pub unsafe extern "C" fn aura_identity_get_kyber_public(
     })
 }
 
+/// Seal this identity's HandshakeInit anti-replay state for persistence.
+///
+/// Without this, replay protection is in-memory only: a restart resets it, and
+/// for a seed-derived identity every consumed one-time prekey comes back, so a
+/// recorded HandshakeInit replays into a byte-identical session.
+///
+/// `external_counter` is the caller's monotonic persistence counter.  Release
+/// `out_state` with [`aura_buffer_release`].
+///
+/// # Safety
+/// See module-level FFI safety contract.  `(key, key_length)` must form a valid
+/// readable slice and `out_state` must point to a writable `AuraBuffer`.
+#[no_mangle]
+pub unsafe extern "C" fn aura_identity_export_sealed_replay_state(
+    handle: *mut AuraIdentityHandle,
+    key: *const u8,
+    key_length: usize,
+    external_counter: u64,
+    out_state: *mut AuraBuffer,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if key.is_null() || out_state.is_null() {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "A required pointer is null",
+            );
+            return AuraErrorCode::AuraErrorNullPointer;
+        }
+        if key_length != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "Seal key must be exactly 32 bytes",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+        let (_identity_guard, identity) = match require_identity_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let seal_key = std::slice::from_raw_parts(key, key_length);
+        match identity.export_sealed_replay_state(seal_key, external_counter) {
+            Ok(bytes) => {
+                write_buffer(out_state, bytes);
+                AuraErrorCode::AuraSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+/// Restore sealed anti-replay state onto this identity.
+///
+/// Drops one-time prekeys the blob records as consumed and rebuilds the
+/// recently-seen HandshakeInit fingerprints.  Rejects a blob whose counter is
+/// below `min_external_counter` (rollback), whose seal key is wrong, or that
+/// belongs to a different identity.  `out_external_counter` receives the blob's
+/// counter.
+///
+/// # Safety
+/// See module-level FFI safety contract.  `(state_bytes, state_length)` and
+/// `(key, key_length)` must form valid readable slices.
+#[no_mangle]
+pub unsafe extern "C" fn aura_identity_restore_sealed_replay_state(
+    handle: *mut AuraIdentityHandle,
+    state_bytes: *const u8,
+    state_length: usize,
+    key: *const u8,
+    key_length: usize,
+    min_external_counter: u64,
+    out_external_counter: *mut u64,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if state_bytes.is_null() || key.is_null() || out_external_counter.is_null() {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "A required pointer is null",
+            );
+            return AuraErrorCode::AuraErrorNullPointer;
+        }
+        if key_length != AES_KEY_BYTES {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "Seal key must be exactly 32 bytes",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+        if state_length == 0 || state_length > MAX_BUFFER_SIZE {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "Sealed replay state length is out of range",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+        let (_identity_guard, identity) = match require_identity_ref(handle, out_error) {
+            Ok(v) => v,
+            Err(code) => return code,
+        };
+        let sealed = std::slice::from_raw_parts(state_bytes, state_length);
+        let seal_key = std::slice::from_raw_parts(key, key_length);
+        match identity.restore_sealed_replay_state(sealed, seal_key, min_external_counter) {
+            Ok(counter) => {
+                *out_external_counter = counter;
+                AuraErrorCode::AuraSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
+/// Read the external counter from a sealed replay-state blob without
+/// decrypting it, so a host can pick the newest of several persisted blobs.
+///
+/// The counter is authenticated by the AEAD on restore; a tampered value here
+/// only misleads the selection.
+///
+/// # Safety
+/// See module-level FFI safety contract.  `(state_bytes, state_length)` must
+/// form a valid readable slice.
+#[no_mangle]
+pub unsafe extern "C" fn aura_identity_replay_state_external_counter(
+    state_bytes: *const u8,
+    state_length: usize,
+    out_counter: *mut u64,
+    out_error: *mut AuraError,
+) -> AuraErrorCode {
+    ffi_catch_panic!(out_error, unsafe {
+        if state_bytes.is_null() || out_counter.is_null() {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorNullPointer,
+                "A required pointer is null",
+            );
+            return AuraErrorCode::AuraErrorNullPointer;
+        }
+        if state_length == 0 || state_length > MAX_BUFFER_SIZE {
+            write_error(
+                out_error,
+                AuraErrorCode::AuraErrorInvalidInput,
+                "Sealed replay state length is out of range",
+            );
+            return AuraErrorCode::AuraErrorInvalidInput;
+        }
+        let sealed = std::slice::from_raw_parts(state_bytes, state_length);
+        match IdentityKeys::sealed_replay_state_external_counter(sealed) {
+            Ok(counter) => {
+                *out_counter = counter;
+                AuraErrorCode::AuraSuccess
+            }
+            Err(e) => write_protocol_error(out_error, &e),
+        }
+    })
+}
+
 /// # Safety
 /// See module-level FFI safety contract.  `handle_ptr` must point to a handle from `aura_identity_create`,
 /// or be null.  The handle must not be used after this call.

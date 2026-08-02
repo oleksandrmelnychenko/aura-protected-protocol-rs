@@ -4,15 +4,17 @@
 use crate::core::constants::*;
 use crate::core::errors::ProtocolError;
 use crate::crypto::{
-    CryptoInterop, HkdfSha256, KyberInterop, MasterKeyDerivation, SecureMemoryHandle,
+    AesGcm, CryptoInterop, HkdfSha256, KyberInterop, MasterKeyDerivation, SecureMemoryHandle,
 };
 use crate::interfaces::IIdentityEventHandler;
 use crate::models::bundles::LocalPublicKeyBundle;
 use crate::models::key_materials::{Ed25519KeyPair, SignedPreKeyPair, X25519KeyPair};
 use crate::models::keys::{OneTimePreKey, OneTimePreKeyPublic};
 use crate::models::IdentityKeyBundle;
+use crate::proto::IdentityReplayState;
 use crate::security::DhValidator;
 use ed25519_dalek::{Signer, SigningKey};
+use prost::Message;
 use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
@@ -608,6 +610,182 @@ impl IdentityKeys {
             handler.on_otk_exhaustion_warning(remaining, max_capacity);
         }
         Ok(())
+    }
+
+    /// Seal this identity's anti-replay state so it survives a process restart.
+    ///
+    /// Sessions, groups and VoIP all have sealed state; identity did not.  That
+    /// mattered because `reserve_handshake_init_fingerprint` is backed by
+    /// in-memory sets and, for a seed-derived identity, every one-time prekey is
+    /// a pure function of the master seed — so after a restart a recorded
+    /// `HandshakeInit` replayed into a byte-identical session and the attacker
+    /// could replay the whole recorded message stream as fresh traffic.
+    ///
+    /// `external_counter` is the caller's monotonic persistence counter, checked
+    /// on restore to reject a rolled-back blob.
+    pub fn export_sealed_replay_state(
+        &self,
+        seal_key: &[u8],
+        external_counter: u64,
+    ) -> Result<Vec<u8>, ProtocolError> {
+        if seal_key.len() != AES_KEY_BYTES {
+            return Err(ProtocolError::invalid_input(format!(
+                "Seal key must be {AES_KEY_BYTES} bytes"
+            )));
+        }
+        let inner = self
+            .inner
+            .read()
+            .map_err(|_| ProtocolError::invalid_state("IdentityKeys read lock poisoned"))?;
+
+        let state = IdentityReplayState {
+            state_version: u32::from(IDENTITY_REPLAY_STATE_VERSION),
+            identity_ed25519_public: inner.identity_ed25519_public.clone(),
+            remaining_one_time_pre_key_ids: inner
+                .one_time_pre_keys
+                .iter()
+                .map(OneTimePreKey::id)
+                .collect(),
+            recent_handshake_init_fingerprints: inner
+                .recent_handshake_init_order
+                .iter()
+                .cloned()
+                .collect(),
+            external_counter,
+        };
+        drop(inner);
+
+        let mut plaintext = Zeroizing::new(Vec::with_capacity(state.encoded_len()));
+        state
+            .encode(&mut *plaintext)
+            .map_err(|e| ProtocolError::encode(format!("IdentityReplayState encode: {e}")))?;
+
+        let aad = Self::identity_replay_state_aad(external_counter);
+        let nonce = CryptoInterop::get_random_bytes(AES_GCM_NONCE_BYTES);
+        let ciphertext = AesGcm::encrypt(seal_key, &nonce, &plaintext, &aad)?;
+
+        let mut out = Vec::with_capacity(1 + 8 + nonce.len() + ciphertext.len());
+        out.push(IDENTITY_REPLAY_STATE_VERSION);
+        out.extend_from_slice(&external_counter.to_le_bytes());
+        out.extend_from_slice(&nonce);
+        out.extend_from_slice(&ciphertext);
+        Ok(out)
+    }
+
+    /// Restore sealed anti-replay state, returning the blob's external counter.
+    ///
+    /// Drops any one-time prekey the blob says was already consumed — this is
+    /// what stops a seed-derived identity from resurrecting them — and rebuilds
+    /// the recently-seen `HandshakeInit` fingerprints.  Rejects a blob whose
+    /// counter is below `min_external_counter`, whose seal key is wrong, or that
+    /// belongs to a different identity.
+    pub fn restore_sealed_replay_state(
+        &self,
+        sealed: &[u8],
+        seal_key: &[u8],
+        min_external_counter: u64,
+    ) -> Result<u64, ProtocolError> {
+        if seal_key.len() != AES_KEY_BYTES {
+            return Err(ProtocolError::invalid_input(format!(
+                "Seal key must be {AES_KEY_BYTES} bytes"
+            )));
+        }
+        const HEADER: usize = 1 + 8 + AES_GCM_NONCE_BYTES;
+        if sealed.len() <= HEADER {
+            return Err(ProtocolError::invalid_input(
+                "Sealed identity replay state is truncated",
+            ));
+        }
+        if sealed[0] != IDENTITY_REPLAY_STATE_VERSION {
+            return Err(ProtocolError::invalid_input(
+                "Unsupported sealed identity replay state version",
+            ));
+        }
+        let mut counter_bytes = [0u8; 8];
+        counter_bytes.copy_from_slice(&sealed[1..9]);
+        let external_counter = u64::from_le_bytes(counter_bytes);
+        if external_counter < min_external_counter {
+            return Err(ProtocolError::invalid_state(
+                "Sealed identity replay state is older than the expected counter",
+            ));
+        }
+
+        let nonce = &sealed[9..HEADER];
+        let aad = Self::identity_replay_state_aad(external_counter);
+        let plaintext = Zeroizing::new(AesGcm::decrypt(seal_key, nonce, &sealed[HEADER..], &aad)?);
+        let state = IdentityReplayState::decode(plaintext.as_slice())
+            .map_err(|e| ProtocolError::decode(format!("IdentityReplayState decode: {e}")))?;
+
+        if state.state_version != u32::from(IDENTITY_REPLAY_STATE_VERSION) {
+            return Err(ProtocolError::invalid_input(
+                "Unsupported sealed identity replay state version",
+            ));
+        }
+        if state.recent_handshake_init_fingerprints.len() > MAX_SEEN_HANDSHAKE_INITS {
+            return Err(ProtocolError::invalid_input(
+                "Sealed identity replay state has too many fingerprints",
+            ));
+        }
+        if state
+            .recent_handshake_init_fingerprints
+            .iter()
+            .any(|fp| fp.len() != HMAC_BYTES)
+        {
+            return Err(ProtocolError::invalid_input(
+                "Sealed identity replay state has a malformed fingerprint",
+            ));
+        }
+
+        let mut inner = self
+            .inner
+            .write()
+            .map_err(|_| ProtocolError::invalid_state("IdentityKeys write lock poisoned"))?;
+
+        if state.identity_ed25519_public != inner.identity_ed25519_public {
+            return Err(ProtocolError::invalid_input(
+                "Sealed identity replay state belongs to a different identity",
+            ));
+        }
+
+        let remaining: HashSet<u32> = state.remaining_one_time_pre_key_ids.iter().copied().collect();
+        inner
+            .one_time_pre_keys
+            .retain(|opk| remaining.contains(&opk.id()));
+
+        inner.recent_handshake_init_hashes.clear();
+        inner.recent_handshake_init_order.clear();
+        for fingerprint in state.recent_handshake_init_fingerprints {
+            inner
+                .recent_handshake_init_hashes
+                .insert(fingerprint.clone());
+            inner.recent_handshake_init_order.push_back(fingerprint);
+        }
+
+        Ok(external_counter)
+    }
+
+    /// External counter of a sealed replay-state blob, without decrypting it.
+    ///
+    /// Lets a host pick the newest of several persisted blobs before committing
+    /// to one.  The counter is authenticated by the AEAD on restore, so a
+    /// tampered value here only misleads the selection, never the restore.
+    pub fn sealed_replay_state_external_counter(sealed: &[u8]) -> Result<u64, ProtocolError> {
+        if sealed.len() < 9 || sealed[0] != IDENTITY_REPLAY_STATE_VERSION {
+            return Err(ProtocolError::invalid_input(
+                "Sealed identity replay state is malformed",
+            ));
+        }
+        let mut counter_bytes = [0u8; 8];
+        counter_bytes.copy_from_slice(&sealed[1..9]);
+        Ok(u64::from_le_bytes(counter_bytes))
+    }
+
+    fn identity_replay_state_aad(external_counter: u64) -> Vec<u8> {
+        let mut aad = Vec::with_capacity(IDENTITY_REPLAY_STATE_AAD.len() + 1 + 8);
+        aad.extend_from_slice(IDENTITY_REPLAY_STATE_AAD);
+        aad.push(IDENTITY_REPLAY_STATE_VERSION);
+        aad.extend_from_slice(&external_counter.to_le_bytes());
+        aad
     }
 
     pub fn reserve_handshake_init_fingerprint(

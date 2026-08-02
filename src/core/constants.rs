@@ -342,3 +342,7 @@ pub const MAX_LINK_PREVIEW_TITLE_CHARS: usize = 255;
 pub const MAX_LINK_PREVIEW_DESCRIPTION_CHARS: usize = 1024;
 pub const MAX_LINK_PREVIEW_IMAGE_SIZE: usize = 256 * 1024;
 pub const MAX_LINK_PREVIEW_DOMAIN_CHARS: usize = 255;
+
+// ── Identity replay state (durable HandshakeInit anti-replay) ──
+pub const IDENTITY_REPLAY_STATE_VERSION: u8 = 1;
+pub const IDENTITY_REPLAY_STATE_AAD: &[u8] = b"aura-identity-replay-state-v1";

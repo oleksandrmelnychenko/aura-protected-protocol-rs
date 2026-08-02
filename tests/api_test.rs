@@ -8,6 +8,7 @@ use aura_protected_protocol::api::{
 use aura_protected_protocol::core::constants::{
     HMAC_BYTES, MAX_BUFFER_SIZE, MAX_ENVELOPE_MESSAGE_SIZE, MAX_GROUP_MESSAGE_SIZE,
     MAX_INFLIGHT_HANDSHAKE_INITS, MAX_ONE_TIME_PRE_KEYS_PER_BUNDLE, MAX_PROTOBUF_MESSAGE_SIZE,
+    PROTOCOL_VERSION,
 };
 use aura_protected_protocol::crypto::CryptoInterop;
 use aura_protected_protocol::identity::IdentityKeys;
@@ -83,6 +84,32 @@ fn resign_group_commit_for_api_test(commit: &mut GroupCommit, signer_secret: &[u
     let mut signed = Vec::new();
     commit.encode(&mut signed).unwrap();
     signed
+}
+
+fn build_bundle_bytes(identity: &IdentityKeys) -> Vec<u8> {
+    let local = identity.create_public_bundle().unwrap();
+    let one_time_pre_keys: Vec<OneTimePreKey> = local
+        .one_time_pre_keys()
+        .iter()
+        .map(|key| OneTimePreKey {
+            one_time_pre_key_id: key.id(),
+            public_key: key.public_key_vec(),
+        })
+        .collect();
+    let bundle = PreKeyBundle {
+        version: PROTOCOL_VERSION,
+        identity_ed25519_public: local.identity_ed25519_public().to_vec(),
+        identity_x25519_public: local.identity_x25519_public().to_vec(),
+        identity_x25519_signature: local.identity_x25519_signature().to_vec(),
+        signed_pre_key_id: local.signed_pre_key_id(),
+        signed_pre_key_public: local.signed_pre_key_public().to_vec(),
+        signed_pre_key_signature: local.signed_pre_key_signature().to_vec(),
+        one_time_pre_keys,
+        kyber_public: local.kyber_public().unwrap_or(&[]).to_vec(),
+    };
+    let mut bytes = Vec::new();
+    bundle.encode(&mut bytes).unwrap();
+    bytes
 }
 
 fn extract_voip_peer_material(bundle_bytes: &[u8]) -> (Vec<u8>, Vec<u8>) {
@@ -1985,4 +2012,99 @@ fn attachment_chunk_progress_marks_and_completes() {
     let last = tampered.completed_bitmap.len() - 1;
     tampered.completed_bitmap[last] |= 0b1111_0000;
     assert!(attachment::validate_chunk_progress(&tampered).is_err());
+}
+
+/// HandshakeInit replay protection lived only in memory, and for a seed-derived
+/// identity every one-time prekey is a pure function of the master seed — so a
+/// restart resurrected the consumed prekey and a recorded HandshakeInit replayed
+/// into a byte-identical session.  Sealed replay state closes that.
+#[test]
+fn identity_replay_state_blocks_handshake_replay_across_restart() {
+    use aura_protected_protocol::crypto::CryptoInterop;
+    use aura_protected_protocol::protocol::{HandshakeInitiator, HandshakeResponder};
+
+    init();
+
+    let seed = CryptoInterop::get_random_bytes(32);
+    let seal_key = CryptoInterop::get_random_bytes(32);
+
+    let mut alice = IdentityKeys::create(5).unwrap();
+    let mut bob = IdentityKeys::create_from_master_key(&seed, "default", 5).unwrap();
+
+    let bob_bundle = PreKeyBundle::decode(build_bundle_bytes(&bob).as_slice()).unwrap();
+    let initiator = HandshakeInitiator::start(&mut alice, &bob_bundle, 1000).unwrap();
+    let init_bytes = initiator.encoded_message().to_vec();
+
+    HandshakeResponder::process(&mut bob, &bob_bundle, &init_bytes, 1000).unwrap();
+    let sealed = bob.export_sealed_replay_state(&seal_key, 1).unwrap();
+
+    // The restart: same seed, so the identity — including every one-time prekey
+    // private key — is reconstructed bit for bit.
+    let mut bob_restarted = IdentityKeys::create_from_master_key(&seed, "default", 5).unwrap();
+
+    // Without the restored state the replay succeeds; that is the exposure.
+    assert!(
+        HandshakeResponder::process(&mut bob_restarted, &bob_bundle, &init_bytes, 1000).is_ok(),
+        "a fresh identity from the same seed accepts the replay — this is what the blob fixes"
+    );
+
+    let mut bob_guarded = IdentityKeys::create_from_master_key(&seed, "default", 5).unwrap();
+    let counter = bob_guarded
+        .restore_sealed_replay_state(&sealed, &seal_key, 1)
+        .unwrap();
+    assert_eq!(counter, 1);
+
+    assert!(
+        HandshakeResponder::process(&mut bob_guarded, &bob_bundle, &init_bytes, 1000).is_err(),
+        "the recorded HandshakeInit must be rejected after restoring replay state"
+    );
+}
+
+#[test]
+fn identity_replay_state_rejects_rollback_wrong_key_and_foreign_identity() {
+    use aura_protected_protocol::crypto::CryptoInterop;
+
+    init();
+
+    let seal_key = CryptoInterop::get_random_bytes(32);
+    let identity = IdentityKeys::create(5).unwrap();
+    let sealed = identity.export_sealed_replay_state(&seal_key, 7).unwrap();
+
+    assert_eq!(
+        IdentityKeys::sealed_replay_state_external_counter(&sealed).unwrap(),
+        7
+    );
+
+    assert!(
+        identity
+            .restore_sealed_replay_state(&sealed, &seal_key, 8)
+            .is_err(),
+        "a blob older than the expected counter must be rejected"
+    );
+
+    let wrong_key = CryptoInterop::get_random_bytes(32);
+    assert!(
+        identity
+            .restore_sealed_replay_state(&sealed, &wrong_key, 0)
+            .is_err(),
+        "a wrong seal key must be rejected"
+    );
+
+    let other = IdentityKeys::create(5).unwrap();
+    assert!(
+        other
+            .restore_sealed_replay_state(&sealed, &seal_key, 0)
+            .is_err(),
+        "a blob from a different identity must be rejected"
+    );
+
+    // Tampering with the authenticated counter breaks the AEAD.
+    let mut tampered = sealed;
+    tampered[1] ^= 0xFF;
+    assert!(
+        identity
+            .restore_sealed_replay_state(&tampered, &seal_key, 0)
+            .is_err(),
+        "a tampered counter must fail authentication"
+    );
 }
