@@ -3543,6 +3543,13 @@ pub unsafe extern "C" fn aura_group_get_security_policy(
     })
 }
 
+/// Join a group from a Welcome, consuming the key-package secrets handle.
+///
+/// `secrets_handle` is **consumed and freed on success** — the caller must not
+/// use or destroy it afterwards.  On every error path it is left untouched and
+/// remains the caller's to destroy with `aura_group_key_package_secrets_destroy`.
+/// This matches the contract documented in `include/aura_client_api.h`.
+///
 /// # Safety
 /// See module-level FFI safety contract.  `(welcome_bytes, welcome_length)` must form a valid
 /// readable slice.  `out_group_handle` must point to writable `*mut AuraGroupSessionHandle`.
@@ -3588,28 +3595,33 @@ pub unsafe extern "C" fn aura_group_join(
             Err(e) => return write_protocol_error(out_error, &e),
         };
 
-        let secrets = &*secrets_handle;
-        let x25519_private = match secrets.x25519_private.try_clone() {
-            Ok(h) => h,
-            Err(e) => {
-                write_error(
-                    out_error,
-                    AuraErrorCode::AuraErrorOutOfMemory,
-                    &format!("x25519 key clone failed: {e}"),
-                );
-                return AuraErrorCode::AuraErrorOutOfMemory;
-            }
-        };
-        let kyber_secret = match secrets.kyber_secret.try_clone() {
-            Ok(h) => h,
-            Err(e) => {
-                write_error(
-                    out_error,
-                    AuraErrorCode::AuraErrorOutOfMemory,
-                    &format!("kyber key clone failed: {e}"),
-                );
-                return AuraErrorCode::AuraErrorOutOfMemory;
-            }
+        // Borrow only long enough to clone the two handles out; every error path
+        // below leaves `secrets_handle` valid, as the header promises.
+        let (x25519_private, kyber_secret) = {
+            let secrets = &*secrets_handle;
+            let x25519_private = match secrets.x25519_private.try_clone() {
+                Ok(h) => h,
+                Err(e) => {
+                    write_error(
+                        out_error,
+                        AuraErrorCode::AuraErrorOutOfMemory,
+                        &format!("x25519 key clone failed: {e}"),
+                    );
+                    return AuraErrorCode::AuraErrorOutOfMemory;
+                }
+            };
+            let kyber_secret = match secrets.kyber_secret.try_clone() {
+                Ok(h) => h,
+                Err(e) => {
+                    write_error(
+                        out_error,
+                        AuraErrorCode::AuraErrorOutOfMemory,
+                        &format!("kyber key clone failed: {e}"),
+                    );
+                    return AuraErrorCode::AuraErrorOutOfMemory;
+                }
+            };
+            (x25519_private, kyber_secret)
         };
         match GroupSession::from_welcome_with_time_provider(
             welcome_slice,
@@ -3621,6 +3633,13 @@ pub unsafe extern "C" fn aura_group_join(
             time_provider,
         ) {
             Ok(session) => {
+                // Honour the documented contract: the secrets handle is consumed
+                // on success.  Reclaiming it here runs SecureMemoryHandle's Drop,
+                // which zeroizes and munlocks the leaf X25519 and ML-KEM private
+                // keys instead of leaving them resident for the process lifetime.
+                // Done before replace_out_handle so a panic there cannot double
+                // free.
+                drop(Box::from_raw(secrets_handle));
                 replace_out_handle(
                     out_group_handle,
                     Box::into_raw(Box::new(AuraGroupSessionHandle {

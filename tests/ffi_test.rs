@@ -8854,3 +8854,72 @@ mod voip_improvements {
         }
     }
 }
+
+/// `aura_group_join` is documented as consuming the key-package secrets handle
+/// on success and leaving it valid on failure.  The implementation only
+/// borrowed it, so a caller following the header leaked two mlock'd
+/// SecureMemoryHandles holding the leaf X25519 and ML-KEM private keys for the
+/// life of the process.  This pins the failure half of the contract: after a
+/// rejected Welcome the handle must still be the caller's to destroy.
+#[test]
+fn ffi_group_join_failure_leaves_secrets_handle_destroyable() {
+    init();
+
+    use aura_protected_protocol::ffi::api::*;
+    use std::ptr;
+
+    unsafe {
+        let mut err = AuraError {
+            code: AuraErrorCode::AuraSuccess,
+            message: ptr::null_mut(),
+        };
+
+        let mut identity: *mut AuraIdentityHandle = ptr::null_mut();
+        assert_eq!(
+            aura_identity_create(&mut identity, &mut err),
+            AuraErrorCode::AuraSuccess
+        );
+
+        let mut kp_buf = AuraBuffer {
+            data: ptr::null_mut(),
+            length: 0,
+        };
+        let mut kp_secrets: *mut AuraKeyPackageSecretsHandle = ptr::null_mut();
+        let credential = b"bob";
+        assert_eq!(
+            aura_group_generate_key_package(
+                identity,
+                credential.as_ptr(),
+                credential.len(),
+                &mut kp_buf,
+                &mut kp_secrets,
+                &mut err,
+            ),
+            AuraErrorCode::AuraSuccess
+        );
+
+        // A Welcome that cannot possibly decode.
+        let garbage = [0xFFu8; 64];
+        let mut group: *mut AuraGroupSessionHandle = ptr::null_mut();
+        assert_ne!(
+            aura_group_join(
+                identity,
+                garbage.as_ptr(),
+                garbage.len(),
+                kp_secrets,
+                &mut group,
+                &mut err,
+            ),
+            AuraErrorCode::AuraSuccess,
+            "a malformed Welcome must fail the join"
+        );
+        assert!(group.is_null());
+
+        // Still ours: destroying it must be safe and must null the slot.
+        aura_group_key_package_secrets_destroy(&mut kp_secrets);
+        assert!(kp_secrets.is_null());
+
+        aura_buffer_release(&mut kp_buf);
+        aura_identity_destroy(&mut identity);
+    }
+}
