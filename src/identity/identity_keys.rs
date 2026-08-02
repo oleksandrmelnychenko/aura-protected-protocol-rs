@@ -111,7 +111,10 @@ impl IdentityKeys {
         let spk_public = spk_pair.public_key().to_vec();
         let spk_signature = Self::sign_signed_pre_key(ed_pair.private_key_handle(), &spk_public)?;
 
-        let opks = Self::generate_one_time_pre_keys(one_time_key_count)?;
+        let opks = Self::generate_one_time_pre_keys_excluding(
+            one_time_key_count,
+            &std::collections::HashSet::new(),
+        )?;
 
         let (kyber_sk, kyber_pk) =
             KyberInterop::generate_keypair().map_err(ProtocolError::from_crypto)?;
@@ -545,20 +548,25 @@ impl IdentityKeys {
 
     /// Generate `count` fresh OTKs, add them to the local pool, and return
     /// their (id, public_key) pairs so the caller can upload them to the key
-    /// server.  IDs are random and collision-free within the new batch.
+    /// server.  IDs are collision-free against the keys already in the pool, not
+    /// merely within the new batch.
     pub fn replenish_one_time_pre_keys(
         &self,
         count: u32,
     ) -> Result<Vec<(u32, Vec<u8>)>, ProtocolError> {
-        let new_opks = Self::generate_one_time_pre_keys(count)?;
-        let pairs: Vec<(u32, Vec<u8>)> = new_opks
-            .iter()
-            .map(|opk| (opk.id(), opk.public_key_vec()))
-            .collect();
+        // Generate under the write lock so two concurrent replenishes cannot
+        // each read the same pool and then both extend it with the same IDs.
         let mut inner = self
             .inner
             .write()
             .map_err(|_| ProtocolError::invalid_state("IdentityKeys write lock poisoned"))?;
+        let reserved: std::collections::HashSet<u32> =
+            inner.one_time_pre_keys.iter().map(OneTimePreKey::id).collect();
+        let new_opks = Self::generate_one_time_pre_keys_excluding(count, &reserved)?;
+        let pairs: Vec<(u32, Vec<u8>)> = new_opks
+            .iter()
+            .map(|opk| (opk.id(), opk.public_key_vec()))
+            .collect();
         inner.one_time_pre_keys.extend(new_opks);
         inner.one_time_pre_key_capacity = inner.one_time_pre_key_capacity.saturating_add(count);
         Ok(pairs)
@@ -1002,21 +1010,46 @@ impl IdentityKeys {
         Self::sign_with_ed25519(ed_secret_key_handle, identity_x25519_public)
     }
 
-    fn generate_one_time_pre_keys(count: u32) -> Result<Vec<OneTimePreKey>, ProtocolError> {
+    /// Generate `count` one-time prekeys whose IDs avoid `reserved_ids`.
+    ///
+    /// The counter used to restart at 2 on every call with a batch-local
+    /// collision set, so `create(5)` followed by `replenish(14)` published IDs
+    /// 2..6 twice under *different* public keys.  Lookup is first-match-wins, so
+    /// an initiator that fetched the replenished public key for a duplicated ID
+    /// would derive against the original private key and the handshake would
+    /// fail — or, once the original was consumed, silently reuse a one-time key
+    /// and lose the forward secrecy it exists to provide.
+    ///
+    /// IDs are now drawn from the same space as the deterministic sibling and
+    /// checked against the live pool, with exhaustion treated as a hard error
+    /// exactly as `generate_one_time_pre_keys_from_master_key` does.
+    fn generate_one_time_pre_keys_excluding(
+        count: u32,
+        reserved_ids: &std::collections::HashSet<u32>,
+    ) -> Result<Vec<OneTimePreKey>, ProtocolError> {
+        const OPK_ID_RETRY_LIMIT: usize = 64;
+
         if count == 0 {
             return Ok(vec![]);
         }
         let mut opks = Vec::with_capacity(count as usize);
-        let mut used_ids = std::collections::HashSet::new();
-        let mut id_counter: u32 = 2;
-        for _ in 0..count {
-            let mut id = id_counter;
-            id_counter = id_counter.wrapping_add(1);
-            while used_ids.contains(&id) {
+        let mut used_ids = reserved_ids.clone();
+        for i in 0..count {
+            let mut id = None;
+            for _ in 0..OPK_ID_RETRY_LIMIT {
                 let rb = CryptoInterop::get_random_bytes(4);
-                id = u32::from_le_bytes([rb[0], rb[1], rb[2], rb[3]]);
+                let raw = u32::from_le_bytes([rb[0], rb[1], rb[2], rb[3]]);
+                let candidate = (raw % OPK_ID_MODULUS).wrapping_add(OPK_ID_OFFSET);
+                if used_ids.insert(candidate) {
+                    id = Some(candidate);
+                    break;
+                }
             }
-            used_ids.insert(id);
+            let id = id.ok_or_else(|| {
+                ProtocolError::key_generation(format!(
+                    "Could not find an unused one-time prekey ID at index {i} after {OPK_ID_RETRY_LIMIT} attempts"
+                ))
+            })?;
             opks.push(OneTimePreKey::generate(id)?);
         }
         Ok(opks)

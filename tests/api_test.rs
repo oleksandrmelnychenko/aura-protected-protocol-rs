@@ -1870,3 +1870,56 @@ fn shield_welcome_carries_policy() {
     assert!(bob_policy.block_external_join);
     assert_eq!(bob_policy.max_messages_per_epoch, 1_000);
 }
+
+/// `replenish_one_time_pre_keys` restarted its ID counter at 2 on every call
+/// with a batch-local collision set, so a second batch re-issued the first
+/// batch's IDs under different public keys.  Lookup is first-match-wins, so an
+/// initiator that picked a replenished public key would derive against the
+/// original private key and the handshake would fail.
+#[test]
+fn identity_replenish_twice_yields_unique_opk_ids() {
+    init();
+
+    let identity = IdentityKeys::create(5).unwrap();
+    identity.replenish_one_time_pre_keys(14).unwrap();
+    identity.replenish_one_time_pre_keys(14).unwrap();
+
+    let bundle = identity.create_public_bundle().unwrap();
+    let ids: Vec<u32> = bundle
+        .one_time_pre_keys()
+        .iter()
+        .map(aura_protected_protocol::models::keys::OneTimePreKeyPublic::id)
+        .collect();
+    let unique: std::collections::HashSet<u32> = ids.iter().copied().collect();
+
+    assert_eq!(ids.len(), 33, "5 + 14 + 14 keys must all be present");
+    assert_eq!(
+        unique.len(),
+        ids.len(),
+        "every published one-time prekey ID must be unique"
+    );
+}
+
+/// Every published (id, public_key) pair must resolve to its own private key —
+/// this is the property a duplicated ID actually broke.
+#[test]
+fn identity_replenished_public_key_matches_stored_private_key() {
+    init();
+
+    let identity = IdentityKeys::create(5).unwrap();
+    let replenished = identity.replenish_one_time_pre_keys(14).unwrap();
+
+    let bundle = identity.create_public_bundle().unwrap();
+    for (id, public_key) in replenished {
+        let published = bundle
+            .one_time_pre_keys()
+            .iter()
+            .find(|o| o.id() == id)
+            .unwrap_or_else(|| panic!("replenished OPK {id} must be published"));
+        assert_eq!(
+            published.public_key_vec(),
+            public_key,
+            "OPK {id} must publish the public key that was returned for it"
+        );
+    }
+}
