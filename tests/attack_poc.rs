@@ -2020,7 +2020,10 @@ fn attack_group_leaf_identity_swap_in_public_state() {
     // The forged package is validly self-signed, so package validation and tree
     // reconstruction both still succeed.  What must catch this is the hash.
     group::key_package::validate_key_package(
-        tampered.tree_nodes[victim_pos].key_package.as_ref().unwrap(),
+        tampered.tree_nodes[victim_pos]
+            .key_package
+            .as_ref()
+            .unwrap(),
     )
     .expect("a self-signed forgery is still a structurally valid key package");
     let honest_tree = group::RatchetTree::from_public_proto(&public_state.tree_nodes).unwrap();

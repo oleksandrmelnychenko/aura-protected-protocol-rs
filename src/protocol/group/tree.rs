@@ -6,6 +6,7 @@ use crate::core::errors::ProtocolError;
 use crate::crypto::{CryptoInterop, SecureMemoryHandle};
 use crate::proto::{GroupKeyPackage, GroupTreeNode};
 use sha2::Digest;
+use std::collections::HashSet;
 
 pub struct HybridNodeKeys {
     pub x25519_public: Vec<u8>,
@@ -953,6 +954,7 @@ impl RatchetTree {
 
         let mut nodes = Vec::with_capacity(nc);
         let mut leaves: Vec<Option<LeafData>> = Vec::with_capacity(lc as usize);
+        let mut identity_ed25519_keys = HashSet::with_capacity(lc as usize);
 
         for pn in proto_nodes {
             if pn.x25519_public.is_empty() {
@@ -1017,6 +1019,11 @@ impl RatchetTree {
             if node_idx < proto_nodes.len() {
                 if let Some(ref kp) = proto_nodes[node_idx].key_package {
                     super::key_package::validate_key_package(kp)?;
+                    if !identity_ed25519_keys.insert(kp.identity_ed25519_public.clone()) {
+                        return Err(ProtocolError::tree_integrity(
+                            "Duplicate Ed25519 identity key in group tree",
+                        ));
+                    }
                     match &nodes[node_idx] {
                         TreeNodeContent::Populated { keys, .. } => {
                             if keys.x25519_public != kp.leaf_x25519_public

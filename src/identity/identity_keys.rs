@@ -562,8 +562,11 @@ impl IdentityKeys {
             .inner
             .write()
             .map_err(|_| ProtocolError::invalid_state("IdentityKeys write lock poisoned"))?;
-        let reserved: std::collections::HashSet<u32> =
-            inner.one_time_pre_keys.iter().map(OneTimePreKey::id).collect();
+        let reserved: std::collections::HashSet<u32> = inner
+            .one_time_pre_keys
+            .iter()
+            .map(OneTimePreKey::id)
+            .collect();
         let new_opks = Self::generate_one_time_pre_keys_excluding(count, &reserved)?;
         let pairs: Vec<(u32, Vec<u8>)> = new_opks
             .iter()
@@ -747,7 +750,11 @@ impl IdentityKeys {
             ));
         }
 
-        let remaining: HashSet<u32> = state.remaining_one_time_pre_key_ids.iter().copied().collect();
+        let remaining: HashSet<u32> = state
+            .remaining_one_time_pre_key_ids
+            .iter()
+            .copied()
+            .collect();
         inner
             .one_time_pre_keys
             .retain(|opk| remaining.contains(&opk.id()));

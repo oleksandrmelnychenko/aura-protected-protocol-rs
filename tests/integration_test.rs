@@ -4479,7 +4479,13 @@ fn reference_leaf_fields() -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
 fn group_tree_hash_binds_leaf_credential() {
     init();
     let (ed, x, ky, sig) = reference_leaf_fields();
-    let a = tree_with_leaf(b"alice".to_vec(), ed.clone(), x.clone(), ky.clone(), sig.clone());
+    let a = tree_with_leaf(
+        b"alice".to_vec(),
+        ed.clone(),
+        x.clone(),
+        ky.clone(),
+        sig.clone(),
+    );
     let b = tree_with_leaf(b"mallory".to_vec(), ed, x, ky, sig);
     assert_ne!(a.tree_hash().unwrap(), b.tree_hash().unwrap());
 }
@@ -4519,7 +4525,13 @@ fn group_tree_hash_binds_leaf_identity_keys() {
 fn group_tree_hash_binds_leaf_key_package_signature() {
     init();
     let (ed, x, ky, sig) = reference_leaf_fields();
-    let base = tree_with_leaf(b"alice".to_vec(), ed.clone(), x.clone(), ky.clone(), sig.clone());
+    let base = tree_with_leaf(
+        b"alice".to_vec(),
+        ed.clone(),
+        x.clone(),
+        ky.clone(),
+        sig.clone(),
+    );
 
     let mut flipped = sig;
     flipped[0] ^= 0x01;
@@ -4592,6 +4604,47 @@ fn group_tree_serialization_roundtrip() {
 
     let tree2 = group::RatchetTree::from_proto(&proto_nodes, 0).unwrap();
     assert_eq!(tree.tree_hash().unwrap(), tree2.tree_hash().unwrap());
+}
+
+#[test]
+fn group_tree_import_rejects_duplicate_identity_keys() {
+    init();
+
+    let identity = IdentityKeys::create(0).unwrap();
+    let (kp, x25519_priv, kyber_sec) =
+        group::key_package::create_key_package(&identity, b"alice".to_vec()).unwrap();
+
+    let mut tree = group::RatchetTree::new_single(
+        kp.leaf_x25519_public.clone(),
+        kp.leaf_kyber_public.clone(),
+        x25519_priv,
+        kyber_sec,
+        kp.identity_ed25519_public.clone(),
+        kp.identity_x25519_public.clone(),
+        kp.identity_kyber_public.clone(),
+        kp.credential.clone(),
+        kp.signature.clone(),
+    )
+    .unwrap();
+
+    tree.add_leaf(
+        kp.leaf_x25519_public.clone(),
+        kp.leaf_kyber_public.clone(),
+        LeafData {
+            credential: kp.credential,
+            identity_ed25519_public: kp.identity_ed25519_public,
+            identity_x25519_public: kp.identity_x25519_public,
+            identity_kyber_public: kp.identity_kyber_public,
+            signature: kp.signature,
+        },
+    )
+    .unwrap();
+
+    let imported = group::RatchetTree::from_proto(&tree.export_public(), 0);
+    assert!(
+        imported.is_err(),
+        "an imported roster must not bind one Ed25519 identity to multiple leaves"
+    );
 }
 
 #[test]

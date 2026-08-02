@@ -2164,7 +2164,11 @@ impl GroupSession {
         }
 
         let franking_data = if !gpt.franking_key.is_empty() && !franking_tag_wire.is_empty() {
-            let sealed_seal_key: &[u8] = if content_type.is_sealed() { seal_key } else { &[] };
+            let sealed_seal_key: &[u8] = if content_type.is_sealed() {
+                seal_key
+            } else {
+                &[]
+            };
             let mut mac = Hmac::<Sha256>::new_from_slice(&gpt.franking_key)
                 .map_err(|e| ProtocolError::franking_failed(format!("HMAC init: {e}")))?;
             mac.update(&Self::build_franking_input(

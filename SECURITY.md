@@ -19,8 +19,8 @@ Sealed session state is bound to an **external monotonic counter** in AAD, but a
 
 Why this matters:
 
-- If you persist only one counter and set it equal to the newest blob's counter, you can no longer restore that newest blob because imports require `sealed_counter > min_external_counter`.
-- If you persist only the previous accepted counter, you can restore the newest blob, but you no longer know what the next export counter should be after restart.
+- A counter equal to `min_external_counter` is accepted for idempotent cold-start restore of the same newest blob; only a lower value is rejected.
+- If you persist only an accepted-restore counter, you still do not know what the next export counter should be after a locally issued blob that was never restored.
 
 The safe pattern is therefore:
 
@@ -33,7 +33,7 @@ For crash consistency, the API also exposes a higher-level `SealedStateSlot` / `
 
 That higher-level slot improves atomicity, but it does **not** eliminate the fundamental rollback assumption by itself. If an attacker can replace the entire serialized slot with an older serialized slot, the library still cannot distinguish that from a legitimate older snapshot unless the application also relies on trusted monotonic storage outside the slot.
 
-Import is accepted only when `sealed_counter > min_external_counter` (strictly greater; equality is rejected as rollback) across session/group/VoIP sealed-state paths.
+Import is accepted when `sealed_counter >= min_external_counter` across session/group/VoIP sealed-state paths. Equality intentionally supports idempotent restore; applications that require single-use restore semantics must pass `last_accepted + 1` after checking for overflow.
 
 If the application does not enforce this, an attacker could replace the current state with an older sealed snapshot; the HMAC is valid for that snapshot, so the protocol alone cannot distinguish it. See `export_sealed_state` / `from_sealed_state` doc comments in `src/protocol/session.rs`.
 
@@ -105,9 +105,11 @@ Integrator obligations:
 ### Secure-memory (mlock) policy
 
 All long-term keys (identity X25519 / Ed25519, Kyber secret keys, root keys,
-sealed-state AEAD keys) are stored in `SecureMemoryHandle` allocations that
-pin their pages in physical RAM via `mlock(2)` on Linux/macOS. This prevents
-secrets from being written to swap and surviving a reboot on disk.
+sealed-state AEAD keys) are stored in `SecureMemoryHandle` allocations and are
+zeroized on release. Native Linux and macOS builds additionally pin the secure
+pool in physical RAM via `mlock(2)`. iOS and Mac Catalyst compile through the
+`target_os = "ios"` zeroize-only implementation and therefore do **not** have a
+library-level swap-prevention guarantee.
 
 **Fail-closed policy:** If `mlock` fails (commonly: `EPERM` without
 `CAP_IPC_LOCK`, `ENOMEM` exceeding `RLIMIT_MEMLOCK`, or unsupported on the
@@ -130,8 +132,8 @@ silently falling back to pageable memory is a security regression.
   `--features no-secure-memory`. This is a **compile-time** opt-in and is
   blocked in release builds by a `compile_error!`.
 
-**Platforms:** iOS and Windows use a non-mlock inner module (iOS does not
-expose `mlock`; Windows would require `VirtualLock` which is not wired up
-yet). On those targets `SecureMemoryHandle` still zeroizes on drop and
-benefits from platform-level memory-protection defaults, but there is no
-explicit swap-prevention guarantee at the library level.
+**Platforms:** iOS, Mac Catalyst, and Windows use a non-mlock inner module
+(Windows would require `VirtualLock`, which is not wired up yet). On those
+targets `SecureMemoryHandle` still zeroizes on drop and benefits from
+platform-level memory-protection defaults, but there is no explicit
+swap-prevention guarantee at the library level.

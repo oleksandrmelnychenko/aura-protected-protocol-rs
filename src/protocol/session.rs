@@ -2251,17 +2251,17 @@ impl Session {
 
         let metadata_aad =
             match build_metadata_aad(&inner.state, ratchet_epoch, envelope.previous_chain_length) {
-            Ok(value) => value,
-            Err(err) => {
-                CryptoInterop::secure_wipe(&mut message_key);
-                rollback_send_encrypt_state(
-                    &mut inner,
-                    &mut send_ratchet_snapshot,
-                    &send_progress_snapshot,
-                );
-                return Err(err);
-            }
-        };
+                Ok(value) => value,
+                Err(err) => {
+                    CryptoInterop::secure_wipe(&mut message_key);
+                    rollback_send_encrypt_state(
+                        &mut inner,
+                        &mut send_ratchet_snapshot,
+                        &send_progress_snapshot,
+                    );
+                    return Err(err);
+                }
+            };
 
         let encrypted_metadata = match AesGcm::encrypt(
             &inner.state.send_metadata_key,
@@ -3287,7 +3287,10 @@ mod tests {
             is_all_zero(&state.cached_metadata_keys[0].metadata_key),
             "cached metadata keys must be zeroized"
         );
-        assert!(is_all_zero(&state.state_hmac), "state hmac must be zeroized");
+        assert!(
+            is_all_zero(&state.state_hmac),
+            "state hmac must be zeroized"
+        );
     }
 
     fn build_proto_bundle(identity: &IdentityKeys) -> Vec<u8> {

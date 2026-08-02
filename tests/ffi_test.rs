@@ -4040,7 +4040,6 @@ fn ffi_group_member_key_package_returns_authenticated_leaf_data() {
     }
 }
 
-
 #[test]
 fn ffi_group_security_tier_distinguishes_standard_and_shield_v1() {
     init();

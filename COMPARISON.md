@@ -34,7 +34,7 @@
 | Key derivation | HKDF-SHA256 | HKDF-SHA256 | Identical primitive |
 | Master key derivation | — | **BLAKE2b** (keyed, length-prefixed) | Aura: deterministic key hierarchy from master key |
 | Secret sharing | — | **Shamir GF(2^8)** (HMAC-authenticated) | Aura: key backup/recovery |
-| Secure memory | Platform-dependent | **mlock + zeroize** (guard pages on Linux) | Aura: explicit secure memory API |
+| Secure memory | Platform-dependent | **Explicit zeroize; mlock on Linux/macOS** | Aura iOS/Catalyst is zeroize-only |
 
 ### Why ML-KEM-768 vs ML-KEM-1024?
 
@@ -106,7 +106,7 @@ are wiped immediately after decapsulation. This provides:
 | **Deniability (online)** | Weak | Weak | **No** (by design — auth > deniability) |
 | **State integrity** | Database encryption (SQLCipher) | Same | **State HMAC plus external monotonic counter for rollback freshness** |
 | **Session teardown** | No explicit ceremony | No | **Explicit `destroy()` — 9-step key wipe** |
-| **Secure memory** | Platform-dependent | Same | **mlock + zeroize (guard pages on Linux)** |
+| **Secure memory** | Platform-dependent | Same | **Explicit zeroize; mlock on Linux/macOS** |
 | **Small-order point rejection** | Yes | Yes | **Yes (constant-time, branchless)** |
 | **Reflexion attack protection** | Not specified | Not specified | **Yes (constant-time identity comparison)** |
 
@@ -260,7 +260,7 @@ Key separation: encryption / authentication / metadata / HMAC / identity — all
 | State integrity | Database-level (SQLCipher) | **State HMAC plus external counter freshness** |
 | Multi-device | Sesame protocol (per-device sessions) | Single device (exportable state) |
 | Session teardown | No explicit ceremony | **`destroy()` — 9-step documented key wipe** |
-| Secure memory | Platform-dependent | **mlock + zeroize (guard pages on Linux)** |
+| Secure memory | Platform-dependent | **Explicit zeroize; mlock on Linux/macOS** |
 | Key zeroization | Implementation-dependent | **Explicit `secure_wipe` on all error paths** |
 | Export protection | N/A | KEK → DEK → state (double encryption) |
 | Rollback detection | None at protocol level | HKDF-derived HMAC key, verified on import |
@@ -279,7 +279,9 @@ Key separation: encryption / authentication / metadata / HMAC / identity — all
 | Encrypted envelope metadata | ❌ | ❌ | ✅ |
 | State integrity HMAC + external counter | ❌ | ❌ | ✅ |
 | Session teardown ceremony | ❌ | ❌ | ✅ |
-| Secure memory (mlock) | ❌¹ | ❌¹ | ✅ |
+| Secure-memory zeroization | platform-dependent¹ | platform-dependent¹ | ✅ |
+| Page locking (`mlock`) on iOS/Catalyst | ❌ | ❌ | ❌ |
+| Page locking (`mlock`) on Linux/macOS | platform-dependent¹ | platform-dependent¹ | ✅ |
 | Shamir secret sharing | ❌ | ❌ | ✅ |
 | C FFI layer | ❌² | ❌² | ✅ |
 | Replay nonce cache (bounded) | ❌³ | ❌³ | ✅ |
@@ -292,7 +294,7 @@ Key separation: encryption / authentication / metadata / HMAC / identity — all
 | Multi-device support | ✅ | ✅ | ❌ |
 | Production deployment | ✅ | ✅ | ❌⁵ |
 
-¹ libsignal relies on platform memory management; no explicit mlock.
+¹ libsignal relies on platform memory management; no project-wide explicit `mlock` claim is made here.
 ² libsignal has Java/Swift/TypeScript bindings but not a standalone C API.
 ³ Signal uses message counter + key consumption, not a separate nonce cache.
 ⁴ PQXDH forward secrecy against quantum applies to handshake session key only; ratchet keys are classical.

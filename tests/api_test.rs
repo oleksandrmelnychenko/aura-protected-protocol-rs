@@ -1993,13 +1993,18 @@ fn attachment_chunk_progress_marks_and_completes() {
 
     let id = vec![3u8; 32];
     let mut progress = attachment::create_chunk_progress(&id, 20).unwrap();
-    assert_eq!(attachment::get_remaining_chunks(&progress).unwrap().len(), 20);
+    assert_eq!(
+        attachment::get_remaining_chunks(&progress).unwrap().len(),
+        20
+    );
 
     for i in 0..20 {
         attachment::mark_chunk_completed(&mut progress, i, 10, 1).unwrap();
     }
     assert!(attachment::is_transfer_complete(&progress));
-    assert!(attachment::get_remaining_chunks(&progress).unwrap().is_empty());
+    assert!(attachment::get_remaining_chunks(&progress)
+        .unwrap()
+        .is_empty());
 
     // Marking twice must not double-count bytes.
     let before = progress.total_bytes_transferred;
