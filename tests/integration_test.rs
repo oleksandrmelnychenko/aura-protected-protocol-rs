@@ -3,7 +3,9 @@
 
 #![allow(clippy::borrow_as_ptr, unsafe_code)]
 
-use aura_protected_protocol::core::constants::MAX_SKIPPED_MESSAGE_KEYS;
+use aura_protected_protocol::core::constants::{
+    GROUP_PROTOCOL_VERSION, MAX_SKIPPED_MESSAGE_KEYS, PROTOCOL_VERSION,
+};
 use aura_protected_protocol::core::errors::ProtocolError;
 use aura_protected_protocol::crypto::{
     AesGcm, CryptoInterop, HkdfSha256, KyberInterop, MasterKeyDerivation, SecureMemoryHandle,
@@ -579,7 +581,7 @@ fn build_proto_bundle(ik: &IdentityKeys) -> Vec<u8> {
         })
         .collect();
     let pb = PreKeyBundle {
-        version: 1,
+        version: PROTOCOL_VERSION,
         identity_ed25519_public: lb.identity_ed25519_public().to_vec(),
         identity_x25519_public: lb.identity_x25519_public().to_vec(),
         identity_x25519_signature: lb.identity_x25519_signature().to_vec(),
@@ -2742,7 +2744,7 @@ fn malformed_envelope_random_garbage() {
     let _alice_session = initiator.finish(&ack_bytes).unwrap();
 
     let garbage = aura_protected_protocol::proto::SecureEnvelope {
-        version: 1,
+        version: PROTOCOL_VERSION,
         ratchet_epoch: 0,
         header_nonce: CryptoInterop::get_random_bytes(12),
         encrypted_metadata: CryptoInterop::get_random_bytes(64),
@@ -3063,7 +3065,7 @@ fn handshake_invalid_signature_rejected() {
     let mut bad_sig = lb.signed_pre_key_signature().to_vec();
     bad_sig[0] ^= 0xFF;
     let pb = PreKeyBundle {
-        version: 1,
+        version: PROTOCOL_VERSION,
         identity_ed25519_public: lb.identity_ed25519_public().to_vec(),
         identity_x25519_public: lb.identity_x25519_public().to_vec(),
         identity_x25519_signature: lb.identity_x25519_signature().to_vec(),
@@ -3089,7 +3091,7 @@ fn handshake_invalid_identity_x25519_signature_rejected() {
     let mut bad_sig = lb.identity_x25519_signature().to_vec();
     bad_sig[0] ^= 0xFF;
     let pb = PreKeyBundle {
-        version: 1,
+        version: PROTOCOL_VERSION,
         identity_ed25519_public: lb.identity_ed25519_public().to_vec(),
         identity_x25519_public: lb.identity_x25519_public().to_vec(),
         identity_x25519_signature: bad_sig,
@@ -3113,7 +3115,7 @@ fn handshake_wrong_key_sizes_rejected() {
 
     let lb = bob.create_public_bundle().unwrap();
     let pb = PreKeyBundle {
-        version: 1,
+        version: PROTOCOL_VERSION,
         identity_ed25519_public: vec![0u8; 16],
         identity_x25519_public: lb.identity_x25519_public().to_vec(),
         identity_x25519_signature: lb.identity_x25519_signature().to_vec(),
@@ -3137,7 +3139,7 @@ fn handshake_small_order_point_rejected() {
 
     let lb = bob.create_public_bundle().unwrap();
     let pb = PreKeyBundle {
-        version: 1,
+        version: PROTOCOL_VERSION,
         identity_ed25519_public: lb.identity_ed25519_public().to_vec(),
         identity_x25519_public: vec![0u8; 32],
         identity_x25519_signature: lb.identity_x25519_signature().to_vec(),
@@ -3161,7 +3163,7 @@ fn handshake_missing_kyber_key_rejected() {
 
     let lb = bob.create_public_bundle().unwrap();
     let pb = PreKeyBundle {
-        version: 1,
+        version: PROTOCOL_VERSION,
         identity_ed25519_public: lb.identity_ed25519_public().to_vec(),
         identity_x25519_public: lb.identity_x25519_public().to_vec(),
         identity_x25519_signature: lb.identity_x25519_signature().to_vec(),
@@ -3184,7 +3186,7 @@ fn handshake_reflexion_attack_rejected() {
     let lb = alice.create_public_bundle().unwrap();
 
     let pb = PreKeyBundle {
-        version: 1,
+        version: PROTOCOL_VERSION,
         identity_ed25519_public: lb.identity_ed25519_public().to_vec(),
         identity_x25519_public: lb.identity_x25519_public().to_vec(),
         identity_x25519_signature: lb.identity_x25519_signature().to_vec(),
@@ -4602,7 +4604,7 @@ fn group_key_package_create_and_validate() {
 
     group::key_package::validate_key_package(&kp).unwrap();
 
-    assert_eq!(kp.version, 1);
+    assert_eq!(kp.version, GROUP_PROTOCOL_VERSION);
     assert_eq!(kp.identity_ed25519_public.len(), 32);
     assert_eq!(kp.identity_x25519_public.len(), 32);
     assert_eq!(kp.leaf_x25519_public.len(), 32);
@@ -4797,7 +4799,7 @@ fn group_session_single_member_encrypt_produces_ciphertext() {
 
     let msg = aura_protected_protocol::proto::GroupMessage::decode(ciphertext.as_slice()).unwrap();
     assert_eq!(msg.epoch, 0);
-    assert_eq!(msg.version, 1);
+    assert_eq!(msg.version, GROUP_PROTOCOL_VERSION);
 }
 
 #[test]
@@ -5843,7 +5845,7 @@ fn relay_validate_key_package_for_storage() {
     kp.encode(&mut buf).unwrap();
 
     let validated = validate_key_package_for_storage(&buf).unwrap();
-    assert_eq!(validated.version, 1);
+    assert_eq!(validated.version, GROUP_PROTOCOL_VERSION);
     assert!(!validated.signature.is_empty());
 
     let result = validate_key_package_for_storage(&buf[..10]);
@@ -5869,7 +5871,7 @@ fn relay_validate_prekey_bundle_for_storage() {
     let bundle = proto.pre_key_bundle().unwrap();
 
     let validated = validate_prekey_bundle_for_storage(&bundle).unwrap();
-    assert_eq!(validated.version, 1);
+    assert_eq!(validated.version, PROTOCOL_VERSION);
     assert_eq!(validated.identity_ed25519_public.len(), 32);
 
     let result = validate_prekey_bundle_for_storage(&bundle[..16]);
@@ -5894,7 +5896,7 @@ fn relay_extract_welcome_target_invalid_group_id_size_rejected() {
     init();
 
     let welcome = GroupWelcome {
-        version: 1,
+        version: GROUP_PROTOCOL_VERSION,
         group_id: vec![0xAB; 16],
         epoch: 1,
         encrypted_group_info: vec![0xCD; 32],
@@ -9435,7 +9437,7 @@ fn group_export_public_state_structure() {
     let ps_bytes = alice.export_public_state().unwrap();
     let ps = GroupPublicState::decode(ps_bytes.as_slice()).unwrap();
 
-    assert_eq!(ps.version, 1);
+    assert_eq!(ps.version, GROUP_PROTOCOL_VERSION);
     assert_eq!(ps.group_id, alice.group_id().unwrap());
     assert_eq!(ps.epoch, alice.epoch().unwrap());
     assert!(!ps.tree_nodes.is_empty(), "tree must have nodes");

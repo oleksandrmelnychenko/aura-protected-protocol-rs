@@ -3922,6 +3922,148 @@ AURA_API AuraErrorCode aura_channel_decrypt_message(
     AuraBuffer*     out_plaintext,
     AuraError*      out_error);
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Session metadata and lifetime
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * aura_session_is_expired — report whether the session has passed its TTL.
+ *
+ * Returns false for a null handle or a session with no TTL configured.
+ */
+AURA_API bool aura_session_is_expired(AuraSessionHandle* handle);
+
+/*
+ * aura_session_set_ttl — set or clear the session time-to-live.
+ *
+ * Pass has_ttl = false to clear it; ttl_seconds is then ignored.
+ */
+AURA_API AuraErrorCode aura_session_set_ttl(
+    AuraSessionHandle* handle,
+    uint64_t           ttl_seconds,
+    bool               has_ttl,
+    AuraError*         out_error);
+
+/*
+ * aura_session_get_device_id / aura_session_set_device_id — application-level
+ * device identifier carried alongside the session.  Not used by the protocol
+ * itself.  Release out_buffer with aura_buffer_release().
+ */
+AURA_API AuraErrorCode aura_session_get_device_id(
+    AuraSessionHandle* handle,
+    AuraBuffer*        out_buffer,
+    AuraError*         out_error);
+
+AURA_API AuraErrorCode aura_session_set_device_id(
+    AuraSessionHandle* handle,
+    const uint8_t*     device_id,
+    size_t             device_id_length,
+    AuraError*         out_error);
+
+/*
+ * aura_session_get_metadata — encoded SessionMetadataResponse describing the
+ * session's counters and state.  Release out_buffer with aura_buffer_release().
+ */
+AURA_API AuraErrorCode aura_session_get_metadata(
+    AuraSessionHandle* handle,
+    AuraBuffer*        out_buffer,
+    AuraError*         out_error);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Group ephemeral signals
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * Encrypt a typing indicator, a reaction, or a read receipt as a group message.
+ * Each produces a normal GroupMessage the peers decrypt with
+ * aura_group_decrypt(); the content type distinguishes them.  Release
+ * out_buffer with aura_buffer_release().
+ */
+AURA_API AuraErrorCode aura_group_encrypt_typing(
+    AuraGroupSessionHandle* handle,
+    uint8_t                 is_typing,
+    AuraBuffer*             out_buffer,
+    AuraError*              out_error);
+
+AURA_API AuraErrorCode aura_group_encrypt_reaction(
+    AuraGroupSessionHandle* handle,
+    const uint8_t*          message_id,
+    size_t                  message_id_length,
+    const uint8_t*          emoji,
+    size_t                  emoji_length,
+    uint8_t                 remove,
+    AuraBuffer*             out_buffer,
+    AuraError*              out_error);
+
+AURA_API AuraErrorCode aura_group_encrypt_read_receipt(
+    AuraGroupSessionHandle* handle,
+    const uint8_t*          message_ids_flat,
+    size_t                  message_id_count,
+    uint64_t                timestamp,
+    AuraBuffer*             out_buffer,
+    AuraError*              out_error);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Abuse reporting
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * aura_group_verify_franking — verify a franking tag as a third party.
+ *
+ * The tag commits to every input below.  content_type, sealed_nonce and
+ * seal_key come from AuraGroupDecryptResult; for a sealed message they are what
+ * lets a moderator open the reported payload, and substituting any of them
+ * invalidates the tag.  Pass NULL/0 for sealed_nonce and seal_key on a
+ * non-sealed message; when present they must be 12 and 32 bytes.
+ *
+ * out_valid receives 1 for a valid tag and 0 otherwise.
+ */
+AURA_API AuraErrorCode aura_group_verify_franking(
+    const uint8_t* franking_tag,
+    size_t         franking_tag_length,
+    const uint8_t* franking_key,
+    size_t         franking_key_length,
+    const uint8_t* content,
+    size_t         content_length,
+    const uint8_t* sealed_content,
+    size_t         sealed_content_length,
+    uint32_t       content_type,
+    const uint8_t* sealed_nonce,
+    size_t         sealed_nonce_length,
+    const uint8_t* seal_key,
+    size_t         seal_key_length,
+    uint8_t*       out_valid,
+    AuraError*     out_error);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * KeyPackage secrets persistence
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * Persist and restore the private half of a generated KeyPackage across process
+ * restarts, so an invitation issued before a restart can still be joined.  The
+ * blob is sealed under a caller-supplied 32-byte key.
+ *
+ * The restored handle is owned by the caller and must be destroyed with
+ * aura_group_key_package_secrets_destroy(), unless it is consumed by
+ * aura_group_join().  Release out_state with aura_buffer_release().
+ */
+AURA_API AuraErrorCode aura_group_key_package_secrets_serialize_sealed(
+    AuraKeyPackageSecretsHandle*  handle,
+    const uint8_t*                key,
+    size_t                        key_length,
+    AuraBuffer*                   out_state,
+    AuraError*                    out_error);
+
+AURA_API AuraErrorCode aura_group_key_package_secrets_deserialize_sealed(
+    const uint8_t*                 state_bytes,
+    size_t                         state_length,
+    const uint8_t*                 key,
+    size_t                         key_length,
+    AuraKeyPackageSecretsHandle**  out_handle,
+    AuraError*                     out_error);
+
 #ifdef __cplusplus
 }
 #endif

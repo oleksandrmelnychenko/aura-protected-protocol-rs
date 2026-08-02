@@ -1,7 +1,14 @@
 // Copyright (c) 2026 Oleksandr Melnychenko. All rights reserved.
 // SPDX-License-Identifier: MIT
 
-pub const PROTOCOL_VERSION: u32 = 1;
+/// 1:1 session wire version.
+///
+/// Bumped to 2 for the v3.0.0 release: `previous_chain_length` moved into both
+/// AEAD associated-data blocks, so v1 and v2 peers cannot interoperate.  Every
+/// version check in the crate is a strict `!=` that rejects immediately, which
+/// is the point — a mixed-version peer gets an explicit version error instead
+/// of an opaque AEAD failure.
+pub const PROTOCOL_VERSION: u32 = 2;
 
 pub const X25519_PUBLIC_KEY_BYTES: usize = 32;
 pub const X25519_PRIVATE_KEY_BYTES: usize = 32;
@@ -123,8 +130,23 @@ pub const SENDER_KEY_BASE_BYTES: usize = 32;
 pub const WELCOME_KEY_BYTES: usize = 32;
 pub const CONFIRMATION_KEY_BYTES: usize = 32;
 pub const REUSE_GUARD_BYTES: usize = 4;
-pub const GROUP_PROTOCOL_VERSION: u32 = 1;
+/// Group wire version.
+///
+/// Bumped to 2 for the v3.0.0 release: the ratchet tree hash now binds each
+/// leaf's credential and identity keys, and the franking tag is framed
+/// unambiguously.  Both change bytes on the wire.
+pub const GROUP_PROTOCOL_VERSION: u32 = 2;
+/// Deliberately not bumped with `GROUP_PROTOCOL_VERSION`.
+///
+/// The authorization blob's *format* did not change, and it is already bound to
+/// `group_context_hash`, which moves with the tree hash — so a v1 authorization
+/// can never validate against a v2 group.
 pub const GROUP_EXTERNAL_JOIN_AUTH_FORMAT_VERSION: u32 = 1;
+/// Deliberately not bumped with `GROUP_PROTOCOL_VERSION`.
+///
+/// This is the at-rest wrapper format, which did not change.  The inner
+/// `GroupProtocolState.version` is `GROUP_PROTOCOL_VERSION` and is checked on
+/// restore, so an old blob already fails with an explicit version error.
 pub const GROUP_SEALED_STATE_VERSION: u32 = 1;
 
 pub const GROUP_EPOCH_SECRET_INFO: &[u8] = b"Aura-Group-EpochSecret";

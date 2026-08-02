@@ -4,6 +4,7 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::hint::black_box;
 
+use aura_protected_protocol::core::constants::PROTOCOL_VERSION;
 use aura_protected_protocol::crypto::{
     AesGcm, CryptoInterop, HkdfSha256, KyberInterop, ShamirSecretSharing,
 };
@@ -31,7 +32,7 @@ fn build_proto_bundle(ik: &IdentityKeys) -> Vec<u8> {
         })
         .collect();
     let pb = PreKeyBundle {
-        version: 1,
+        version: PROTOCOL_VERSION,
         identity_ed25519_public: lb.identity_ed25519_public().to_vec(),
         identity_x25519_public: lb.identity_x25519_public().to_vec(),
         identity_x25519_signature: lb.identity_x25519_signature().to_vec(),

@@ -88,6 +88,13 @@ jobs:
       - name: cargo test (with ffi)
         run: cargo test --release --features ffi
 
+      # paper_vectors is almost entirely behind the non-default `test-vectors`
+      # feature, so the two runs above build it as an empty shell.  Without this
+      # step a change to any AAD or wire field leaves the pinned byte vectors
+      # stale and CI stays green.
+      - name: cargo test (paper vectors)
+        run: cargo test --release --features test-vectors --test paper_vectors
+
   formal:
     name: Formal Verification
     runs-on: ubuntu-latest

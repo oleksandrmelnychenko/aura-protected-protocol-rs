@@ -10,25 +10,29 @@ on:
         required: false
         type: string
 
+# Least privilege at the top; only publish-release needs write.
+# TODO: pin actions/upload-artifact, actions/download-artifact and
+# softprops/action-gh-release by commit SHA (the other actions here already are).
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 jobs:
   build-apple-xcframework:
     name: Build XCFramework
     runs-on: macos-14
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
       - name: Install protobuf compiler
         run: brew install protobuf
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17 # stable
         with:
           targets: aarch64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios,aarch64-apple-ios-macabi,x86_64-apple-ios-macabi
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
 
       - name: Build XCFramework
         run: bash scripts/release/build-apple-xcframework.sh
@@ -54,8 +58,10 @@ jobs:
     needs: [build-apple-xcframework]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4

@@ -35,7 +35,8 @@ use zeroize::Zeroize;
 use crate::core::constants::{
     AES_GCM_NONCE_BYTES, AES_GCM_TAG_BYTES, AES_KEY_BYTES, ATTACHMENT_FILE_KEY_BYTES,
     ATTACHMENT_HASH_BYTES, ATTACHMENT_ID_BYTES, ATTACHMENT_PROTOCOL_VERSION, CALL_ID_BYTES,
-    DEFAULT_ONE_TIME_KEY_COUNT, DEVICE_ID_BYTES, ED25519_PUBLIC_KEY_BYTES, HMAC_BYTES,
+    DEFAULT_ONE_TIME_KEY_COUNT, DEVICE_ID_BYTES, ED25519_PUBLIC_KEY_BYTES,
+    GROUP_PROTOCOL_VERSION, HMAC_BYTES,
     KYBER_PUBLIC_KEY_BYTES, MAX_ATTACHMENT_CHUNK_SIZE, MAX_ATTACHMENT_ENCRYPTED_FILE_KEY_SIZE,
     MAX_ATTACHMENT_FILENAME_BYTES, MAX_ATTACHMENT_MANIFEST_SIZE, MAX_ATTACHMENT_THUMBNAIL_SIZE,
     MAX_BUFFER_SIZE, MAX_COLLAGE_ATTACHMENTS, MAX_COLLAGE_DESCRIPTION_CHARS,
@@ -834,8 +835,24 @@ const unsafe fn group_ref_or_none<'a>(
 
 #[no_mangle]
 pub extern "C" fn aura_version() -> *const c_char {
-    static VERSION: &[u8] = b"2.0.0\0";
+    static VERSION: &[u8] = b"3.0.0\0";
     VERSION.as_ptr().cast::<c_char>()
+}
+
+/// Wire version this build speaks for 1:1 sessions.
+///
+/// Distinct from [`aura_version`], which reports the library's semver string.
+/// A host that talks to a peer or a stored blob can pre-flight the match rather
+/// than discovering it as a decrypt failure.
+#[no_mangle]
+pub const extern "C" fn aura_protocol_version() -> u32 {
+    PROTOCOL_VERSION
+}
+
+/// Wire version this build speaks for groups.  See [`aura_protocol_version`].
+#[no_mangle]
+pub const extern "C" fn aura_group_protocol_version() -> u32 {
+    GROUP_PROTOCOL_VERSION
 }
 
 #[no_mangle]
@@ -6154,54 +6171,6 @@ pub unsafe extern "C" fn aura_group_compute_message_id(
     })
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn aura_group_set_member_role(
-    handle: *mut AuraGroupSessionHandle,
-    leaf_index: u32,
-    role: i32,
-    out_error: *mut AuraError,
-) -> AuraErrorCode {
-    ffi_catch_panic!(out_error, unsafe {
-        let (_guard, session) = match require_group_mut(handle, out_error) {
-            Ok(v) => v,
-            Err(code) => return code,
-        };
-        match session.set_member_role(leaf_index, role) {
-            Ok(()) => AuraErrorCode::AuraSuccess,
-            Err(e) => write_protocol_error(out_error, &e),
-        }
-    })
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn aura_group_get_member_role(
-    handle: *mut AuraGroupSessionHandle,
-    leaf_index: u32,
-    out_role: *mut i32,
-    out_error: *mut AuraError,
-) -> AuraErrorCode {
-    ffi_catch_panic!(out_error, unsafe {
-        if out_role.is_null() {
-            write_error(
-                out_error,
-                AuraErrorCode::AuraErrorNullPointer,
-                "out_role is null",
-            );
-            return AuraErrorCode::AuraErrorNullPointer;
-        }
-        let (_guard, session) = match require_group_mut(handle, out_error) {
-            Ok(v) => v,
-            Err(code) => return code,
-        };
-        match session.get_member_role(leaf_index) {
-            Ok(role) => {
-                *out_role = role;
-                AuraErrorCode::AuraSuccess
-            }
-            Err(e) => write_protocol_error(out_error, &e),
-        }
-    })
-}
 
 #[no_mangle]
 pub unsafe extern "C" fn aura_group_encrypt_reaction(

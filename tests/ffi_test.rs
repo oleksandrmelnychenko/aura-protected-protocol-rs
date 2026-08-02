@@ -4040,51 +4040,6 @@ fn ffi_group_member_key_package_returns_authenticated_leaf_data() {
     }
 }
 
-#[test]
-fn ffi_group_member_role_apis_are_disabled() {
-    init();
-
-    use aura_protected_protocol::ffi::api::*;
-    use std::ptr;
-
-    unsafe {
-        let mut alice_handle: *mut AuraIdentityHandle = ptr::null_mut();
-        let mut err = AuraError {
-            code: AuraErrorCode::AuraSuccess,
-            message: ptr::null_mut(),
-        };
-        assert_eq!(
-            aura_identity_create(&mut alice_handle, &mut err),
-            AuraErrorCode::AuraSuccess
-        );
-
-        let mut group_handle: *mut AuraGroupSessionHandle = ptr::null_mut();
-        let cred = b"alice";
-        assert_eq!(
-            aura_group_create(
-                alice_handle,
-                cred.as_ptr(),
-                cred.len(),
-                &mut group_handle,
-                &mut err,
-            ),
-            AuraErrorCode::AuraSuccess
-        );
-
-        let mut role = -1;
-        assert_ne!(
-            aura_group_set_member_role(group_handle, 0, 2, &mut err),
-            AuraErrorCode::AuraSuccess
-        );
-        assert_ne!(
-            aura_group_get_member_role(group_handle, 0, &mut role, &mut err),
-            AuraErrorCode::AuraSuccess
-        );
-
-        aura_group_destroy(&mut group_handle);
-        aura_identity_destroy(&mut alice_handle);
-    }
-}
 
 #[test]
 fn ffi_group_security_tier_distinguishes_standard_and_shield_v1() {

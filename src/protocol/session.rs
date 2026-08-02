@@ -3301,7 +3301,7 @@ mod tests {
             })
             .collect();
         let proto_bundle = PreKeyBundle {
-            version: 1,
+            version: PROTOCOL_VERSION,
             identity_ed25519_public: bundle.identity_ed25519_public().to_vec(),
             identity_x25519_public: bundle.identity_x25519_public().to_vec(),
             identity_x25519_signature: bundle.identity_x25519_signature().to_vec(),

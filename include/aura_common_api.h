@@ -9,12 +9,12 @@ extern "C" {
 #include <stddef.h>
 #include <stdbool.h>
 
-#define AURA_API_VERSION_MAJOR 2
+#define AURA_API_VERSION_MAJOR 3
 #define AURA_API_VERSION_MINOR 0
 #define AURA_API_VERSION_PATCH 0
 
 #define AURA_DEFAULT_ONE_TIME_KEY_COUNT 100
-#define AURA_LIBRARY_VERSION "2.0.0"
+#define AURA_LIBRARY_VERSION "3.0.0"
 
 typedef enum {
     AURA_SUCCESS = 0,
@@ -72,6 +72,17 @@ typedef enum {
 AURA_API const char* aura_version(void);
 AURA_API AuraErrorCode aura_init(void);
 AURA_API void aura_shutdown(void);
+
+/*
+ * Wire protocol versions this build speaks.
+ *
+ * Distinct from aura_version(), which reports the library's semver string.
+ * Peers and stored blobs are accepted only on an exact match, so a host can
+ * pre-flight compatibility instead of discovering a mismatch as a decrypt
+ * failure.
+ */
+AURA_API uint32_t aura_protocol_version(void);
+AURA_API uint32_t aura_group_protocol_version(void);
 
 /* Error utilities */
 AURA_API void aura_error_free(AuraError* error);

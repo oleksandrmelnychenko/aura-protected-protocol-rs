@@ -25,7 +25,7 @@ fn header_contract_normalization_accepts_windows_newlines() {
 #[test]
 fn common_header_exports_current_version_and_voip_errors() {
     assert!(
-        COMMON_HEADER.contains("#define AURA_API_VERSION_MAJOR 2"),
+        COMMON_HEADER.contains("#define AURA_API_VERSION_MAJOR 3"),
         "common header must expose current API major version"
     );
     assert!(
@@ -37,7 +37,7 @@ fn common_header_exports_current_version_and_voip_errors() {
         "common header must expose current API patch version"
     );
     assert!(
-        COMMON_HEADER.contains("#define AURA_LIBRARY_VERSION \"2.0.0\""),
+        COMMON_HEADER.contains("#define AURA_LIBRARY_VERSION \"3.0.0\""),
         "common header library version must match crate/ffi version"
     );
     assert!(
@@ -195,4 +195,109 @@ fn client_header_documents_current_ffi_output_ownership_contract() {
             "client header must not promise automatic output-slot replacement: {forbidden}"
         );
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ABI drift
+// ═══════════════════════════════════════════════════════════════════════════
+
+const FFI_API: &str = include_str!("../src/ffi/api.rs");
+const FFI_MOD: &str = include_str!("../src/ffi/mod.rs");
+
+/// Symbols that are deliberately exported without a public declaration.
+///
+/// Empty on purpose: any future exception has to be added here, which makes it
+/// a reviewed decision rather than something that drifts in unnoticed.
+const ALLOWED_UNDECLARED: &[&str] = &[];
+
+/// Every `#[no_mangle] extern "C" fn` name in `src/ffi/`.
+fn exported_symbols() -> std::collections::BTreeSet<String> {
+    let mut names = std::collections::BTreeSet::new();
+    for source in [FFI_API, FFI_MOD] {
+        let normalized = normalize_newlines(source);
+        let lines: Vec<&str> = normalized.lines().collect();
+        for (idx, line) in lines.iter().enumerate() {
+            if line.trim() != "#[no_mangle]" {
+                continue;
+            }
+            // Scan forward past doc comments and further attributes to the
+            // signature line.
+            for candidate in lines.iter().skip(idx + 1).take(8) {
+                let trimmed = candidate.trim();
+                if trimmed.starts_with("///") || trimmed.starts_with("#[") || trimmed.is_empty() {
+                    continue;
+                }
+                if let Some(rest) = trimmed.split("extern \"C\" fn ").nth(1) {
+                    if let Some(name) = rest.split('(').next() {
+                        names.insert(name.trim().to_string());
+                    }
+                }
+                break;
+            }
+        }
+    }
+    names
+}
+
+/// Every `aura_*` function declared with `AURA_API` in the public headers.
+fn declared_symbols() -> std::collections::BTreeSet<String> {
+    let mut names = std::collections::BTreeSet::new();
+    for header in [COMMON_HEADER, CLIENT_HEADER] {
+        for line in normalize_newlines(header).lines() {
+            let trimmed = line.trim_start();
+            if !trimmed.starts_with("AURA_API") {
+                continue;
+            }
+            // The declared name is the last `aura_*` token immediately followed
+            // by `(`, which covers every return-type shape in these headers.
+            let Some(paren) = trimmed.find('(') else {
+                continue;
+            };
+            let before = &trimmed[..paren];
+            let name: String = before
+                .chars()
+                .rev()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            if name.starts_with("aura_") {
+                names.insert(name);
+            }
+        }
+    }
+    names
+}
+
+/// The C headers are the contract every Swift/.NET/C++ integrator codes
+/// against, and the only prior guard was a hand-curated list of "critical"
+/// functions — so exported-but-undocumented ABI accumulated silently (13
+/// symbols at the time this test was written, including message franking and
+/// the sealed key-package secrets round trip).
+#[test]
+fn ffi_exports_match_public_headers() {
+    let exported = exported_symbols();
+    let declared = declared_symbols();
+
+    assert!(
+        exported.len() > 150,
+        "symbol extraction looks broken: only {} exports found",
+        exported.len()
+    );
+
+    let undeclared: Vec<&String> = exported
+        .difference(&declared)
+        .filter(|name| !ALLOWED_UNDECLARED.contains(&name.as_str()))
+        .collect();
+    assert!(
+        undeclared.is_empty(),
+        "exported but not declared in the public headers: {undeclared:#?}"
+    );
+
+    let unexported: Vec<&String> = declared.difference(&exported).collect();
+    assert!(
+        unexported.is_empty(),
+        "declared in the public headers but not exported: {unexported:#?}"
+    );
 }

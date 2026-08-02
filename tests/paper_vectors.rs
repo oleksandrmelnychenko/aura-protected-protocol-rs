@@ -192,11 +192,11 @@ fn paper_full_handshake_transcript_vector_is_stable() {
     assert_eq!(ack_bytes.len(), 36);
     assert_eq!(
         sha256_hex(&init_bytes),
-        "dceaef8ef7f38a0c7a4f54e8139aa236eda6339d123a65b79699ad62f56d4151"
+        "68db8facb358b7d4dcbe7ac85ffb859be438a363339d8cfe07e2fde18a7385ee"
     );
     assert_eq!(
         sha256_hex(&ack_bytes),
-        "5192f0e16fc61f1ea4c38e1737c93feb613075c2447ea711c76b53965bacf265"
+        "7910ade42c9d389118567b08172b6d610d065c703df3aaabd573135d6fa3a86b"
     );
     assert_eq!(
         hex(&alice_session.get_session_id()),
@@ -230,15 +230,15 @@ fn paper_full_handshake_transcript_vector_is_stable() {
     assert_eq!(envelope_bytes.len(), 158);
     assert_eq!(
         sha256_hex(&envelope_bytes),
-        "a32fa29e3cb71093b294e7225aeb6a1a2aaeb54e04b9313166ae5b311e3ea799"
+        "55f2ef95ac758139baceeae1696a1a3c2ae5ed36517012898a31d0c668d7a190"
     );
     assert_eq!(
         sha256_hex(&envelope.encrypted_metadata),
-        "ac8130223d5d655159914f9ce920be8c28f8b85d239d1eab2ab0315b38c6b867"
+        "e0e0d829b58a2204d6d07d9f2809cc281dfc2a16056093c66564cf7228066179"
     );
     assert_eq!(
         sha256_hex(&envelope.encrypted_payload),
-        "e142dbef61b3b62e92428585a61c7e79dc38bddec10004e073fff20be4ec801e"
+        "76df2aadbfc64d5ca96c862bc3e3008d4dc9395d0faad28dcc698488c204cb38"
     );
 
     bob_session
@@ -279,7 +279,7 @@ fn paper_full_handshake_transcript_vector_is_stable() {
     assert_eq!(ratchet_envelope_bytes.len(), 2473);
     assert_eq!(
         sha256_hex(&ratchet_envelope_bytes),
-        "ee819dc868edce917aa464d82528b5262c3c8a78428ec9552e0dced6442b77e0"
+        "ce1a41c1d44fea374e8ec7482e5f6c82ed5935a7a36245fa464824a4899cfc7f"
     );
     assert_eq!(
         sha256_hex(ratchet_envelope.dh_public_key.as_ref().unwrap()),
@@ -295,11 +295,11 @@ fn paper_full_handshake_transcript_vector_is_stable() {
     );
     assert_eq!(
         sha256_hex(&ratchet_envelope.encrypted_metadata),
-        "04386aa6b4d2fd60b3524948fc9179151085708da29a6f0e502bd843e38a4e3b"
+        "12295f43c6151fc1d2bd810eb715d80b9d7cf7cd0bc6c7c0583b32414eff59c5"
     );
     assert_eq!(
         sha256_hex(&ratchet_envelope.encrypted_payload),
-        "d2a1cdd41eea0c36dad0d49a515385d7f95f196bc94308782f4d0b25b0c43baf"
+        "30c9f6a3f3ea11780bda59a319f11c8a789ba0fa16f0eab6f97dff5c333160a2"
     );
 }
 
@@ -440,27 +440,27 @@ fn paper_multi_epoch_delayed_delivery_vector_is_stable() {
     assert_eq!(e0_delayed_bytes.len(), 162);
     assert_eq!(
         sha256_hex(&e0_delayed_bytes),
-        "25887221bcb8a471b16c59d421513bf8840b63fcd2571b1173fe7f6cdbcac5f1"
+        "10f958d88e11ccc754d5aa8ad826290111797dcff2229b4c807a4470f634bd40"
     );
     assert_eq!(bob_bridge_bytes.len(), 2476);
     assert_eq!(
         sha256_hex(&bob_bridge_bytes),
-        "dd3cc13ddf463339d192eaa98bc5407e585bb686e0553866f92c2ab2088740c0"
+        "8c2dcedbe936cdbcb029c183b46f21d531a69db928ecf490dff575df75c9b855"
     );
     assert_eq!(alice_bridge_bytes.len(), 2478);
     assert_eq!(
         sha256_hex(&alice_bridge_bytes),
-        "af3744e798eed2c437cee4d2af2275ab4db2a22dff81bb0fcc4a06f3786be95e"
+        "4fb238787637c2a2ad4070ad04f4e5d9a07c344513b15741e69c959c1489e161"
     );
     assert_eq!(alice_bridge.previous_chain_length, Some(2));
     assert_eq!(e1_delayed_bytes.len(), 164);
     assert_eq!(
         sha256_hex(&e1_delayed_bytes),
-        "5cbb861f4f5a2a78a5682b46fa74eaae70682597c8df178ed4d8652234cf309b"
+        "ca7081f198f6b7067ff2c0e09f1dfedce2583408dd87dedffb44d015ef9f9919"
     );
     assert_eq!(bob_second_bytes.len(), 2476);
     assert_eq!(
         sha256_hex(&bob_second_bytes),
-        "e964ddb54e56986332bb12cd4387bb68f55d51ae7de2acb00f304c6327acb7ac"
+        "c0f9964f623e262aacfffac7e9a28b4be9bc555daa167340b5901a4e1c523fa0"
     );
 }

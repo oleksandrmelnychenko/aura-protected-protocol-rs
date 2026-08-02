@@ -1,6 +1,6 @@
 [package]
 name = "aura-protected-protocol"
-version = "2.0.0"
+version = "3.0.0"
 edition = "2021"
 rust-version = "1.86"
 description = "Aura Protected Protocol — Signal-like double ratchet with X3DH and post-quantum hybrid encryption"

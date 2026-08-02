@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use aura_protected_protocol::core::constants::{
-    DEFAULT_MESSAGES_PER_CHAIN, NONCE_EXHAUSTION_WARNING_PERCENT,
+    DEFAULT_MESSAGES_PER_CHAIN, NONCE_EXHAUSTION_WARNING_PERCENT, PROTOCOL_VERSION,
 };
 use aura_protected_protocol::core::errors::ProtocolError;
 use aura_protected_protocol::crypto::CryptoInterop;
@@ -36,7 +36,7 @@ fn build_proto_bundle(ik: &IdentityKeys) -> Vec<u8> {
         })
         .collect();
     let pb = PreKeyBundle {
-        version: 1,
+        version: PROTOCOL_VERSION,
         identity_ed25519_public: lb.identity_ed25519_public().to_vec(),
         identity_x25519_public: lb.identity_x25519_public().to_vec(),
         identity_x25519_signature: lb.identity_x25519_signature().to_vec(),
@@ -1885,7 +1885,13 @@ fn attack_envelope_version_mismatch() {
 
     let env = alice.encrypt(b"version test", 0, 0, None).unwrap();
 
-    for bad_version in [0u32, 2, 99, u32::MAX] {
+    for bad_version in [
+        0u32,
+        PROTOCOL_VERSION - 1,
+        PROTOCOL_VERSION + 1,
+        99,
+        u32::MAX,
+    ] {
         let mut tampered = env.clone();
         tampered.version = bad_version;
         let result = bob.decrypt(&tampered);
@@ -1894,7 +1900,7 @@ fn attack_envelope_version_mismatch() {
 
     let legit = bob.decrypt(&env).unwrap();
     assert_eq!(legit.plaintext, b"version test");
-    println!("[ATTACK 30] Envelope version mismatch (0, 2, 99, MAX): ALL BLOCKED");
+    println!("[ATTACK 30] Envelope version mismatch (0, N-1, N+1, 99, MAX): ALL BLOCKED");
 }
 
 #[test]

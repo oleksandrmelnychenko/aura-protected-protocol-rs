@@ -60,8 +60,8 @@ write_info_plist() {
   /usr/libexec/PlistBuddy -c "Add :CFBundleInfoDictionaryVersion string 6.0" "$plist"
   /usr/libexec/PlistBuddy -c "Add :CFBundleName string AuraProtectedProtocolC" "$plist"
   /usr/libexec/PlistBuddy -c "Add :CFBundlePackageType string FMWK" "$plist"
-  /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 2.0.0" "$plist"
-  /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string 2.0.0" "$plist"
+  /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 3.0.0" "$plist"
+  /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string 3.0.0" "$plist"
 }
 
 create_framework_bundle() {
