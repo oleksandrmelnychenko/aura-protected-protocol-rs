@@ -739,6 +739,7 @@ impl VoipSession {
         }
 
         let state = crate::proto::VoipSessionState {
+            state_version: VOIP_PROTOCOL_VERSION,
             call_id: inner.call_id.clone(),
             role: match inner.role {
                 CallRole::Caller => 1,
@@ -866,6 +867,15 @@ impl VoipSession {
         let state_bytes = crate::crypto::AesGcm::decrypt(state_key, nonce, ct, &[])?;
         let state = crate::proto::VoipSessionState::decode(state_bytes.as_slice())
             .map_err(|e| ProtocolError::decode(format!("VoipSessionState decode: {e}")))?;
+        // A pre-v2 blob decrypts fine but means something different: its
+        // root_secret is the shielded root, which the derivation below would
+        // shield again.  Reject it explicitly rather than restoring wrong keys.
+        if state.state_version != VOIP_PROTOCOL_VERSION {
+            return Err(ProtocolError::voip_call(format!(
+                "unsupported sealed VoIP state version: expected {VOIP_PROTOCOL_VERSION}, got {}",
+                state.state_version
+            )));
+        }
         if state.external_counter != stored_counter {
             return Err(ProtocolError::voip_call(
                 "sealed state external counter mismatch",

@@ -3367,3 +3367,34 @@ fn voip_shield_sealed_state_restore_continues_communication() {
         "a restored shield-mode session must still be decryptable by its peer"
     );
 }
+
+/// Sealed VoIP state carried no version discriminator at all, so a layout or
+/// semantics change restored to wrong keys with no error.  It does now — and in
+/// v2 the meaning of `root_secret` changed (it is the unshielded call root), so
+/// this is exactly the change that needed one.
+///
+/// The version lives inside the AEAD, so a blob from an older build is the only
+/// way to reach the mismatch arm; what is testable from outside is that current
+/// blobs round-trip and that the rollback guard still fires.
+#[test]
+fn voip_sealed_state_round_trips_at_current_version() {
+    use aura_protected_protocol::core::constants::VOIP_PROTOCOL_VERSION;
+
+    init();
+    let (alice, _bob) = setup_voip_session_pair(true);
+
+    let state_key = CryptoInterop::get_random_bytes(AES_KEY_BYTES);
+    let sealed = alice.export_sealed_state(&state_key, 3).unwrap();
+
+    VoipSession::from_sealed_state(&sealed, &state_key, 2)
+        .expect("a blob at the current version must restore");
+    assert!(
+        VoipSession::from_sealed_state(&sealed, &state_key, 4).is_err(),
+        "a counter below the caller's minimum must still be rejected"
+    );
+
+    assert_eq!(
+        VOIP_PROTOCOL_VERSION, 2,
+        "sealed VoIP state is at v2; bump this with the constant"
+    );
+}

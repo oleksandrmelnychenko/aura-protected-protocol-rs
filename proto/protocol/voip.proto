@@ -132,6 +132,12 @@ message VoipEnvelope {
 }
 
 message VoipSessionState {
+  // Sealed VoIP state carried no version discriminator, so a layout or
+  // semantics change restored to wrong keys with no error.  In v2 the stored
+  // root_secret is the *unshielded* call root (it used to be the shielded one,
+  // which restore then re-shielded).
+  uint32 state_version           = 18;
+
   bytes  call_id                 = 1;
   uint32 role                    = 2;
   uint32 ssrc                    = 3;

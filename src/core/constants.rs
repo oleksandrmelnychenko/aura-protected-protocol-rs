@@ -255,7 +255,12 @@ pub const SPK_ID_BYTES: usize = 4;
 
 // ── VoIP constants ──────────────────────────────────────────────────
 
-pub const VOIP_PROTOCOL_VERSION: u32 = 1;
+/// VoIP wire and sealed-state version.
+///
+/// Bumped to 2 for v3.0.0: `VoipSessionState.root_secret` now holds the
+/// unshielded call root.  It previously held the shielded one, which restore
+/// then shielded again — a shield-mode call was silently dead after restore.
+pub const VOIP_PROTOCOL_VERSION: u32 = 2;
 pub const CALL_ID_BYTES: usize = 32;
 pub const SSRC_BYTES: usize = 4;
 

@@ -68,6 +68,9 @@ oldest-first instead of erroring.
   always promised; it previously leaked two mlock'd private keys per join.
 - **VoIP** shield-mode sealed state restores correctly; the shielded root was
   being stored and then re-shielded on restore, silently killing the call.
+  `VOIP_PROTOCOL_VERSION` moves to 2 and `VoipSessionState` gained a
+  `state_version`, because the meaning of the stored root changed and the blob
+  previously carried no discriminator at all.
 - **Attachments** bound `chunk_count` at manifest validation, and chunk progress
   is a bitmap rather than an O(n²) vector scan.
 - **Sealed-state export** zeroizes the staged skipped-message and cached-metadata
