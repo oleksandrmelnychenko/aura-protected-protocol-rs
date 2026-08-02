@@ -464,10 +464,19 @@ fn derive_call_keys(
         nonce_prefix_send.copy_from_slice(&nonce_material[VOIP_NONCE_PREFIX_BYTES..]);
     }
 
+    // Store the ORIGINAL root, not `effective_root`.  The shield passes are a
+    // pure function of the root and shield_mode, and callers re-apply them:
+    // from_sealed_state calls derive_call_keys_from_root(state.root_secret, ...,
+    // state.shield_mode), and rekey_complete feeds the stored root back through
+    // here.  Storing the shielded value made restore compute P2(P1(P2(P1(root))))
+    // — header keys and nonce prefixes diverged while the chain keys restored
+    // verbatim, so a restored shield-mode call was silently dead both
+    // directions.  (Live rekey still interoperated, because both peers shielded
+    // identically.)
     let mut root_handle =
         SecureMemoryHandle::allocate(ROOT_KEY_BYTES).map_err(ProtocolError::from_crypto)?;
     root_handle
-        .write(&effective_root)
+        .write(root_secret)
         .map_err(ProtocolError::from_crypto)?;
 
     let mut mk_send =

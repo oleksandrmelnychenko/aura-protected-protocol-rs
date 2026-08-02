@@ -3297,3 +3297,73 @@ fn relay_lifecycle_active_call_idle_timeout_rejected_and_removed() {
     assert!(process_voip_signal(&envelope, &store, 1302).is_err());
     assert!(store.find_call(&call_id).unwrap().is_none());
 }
+
+/// The shield-mode twin of
+/// `voip_sealed_state_restore_continues_communication_and_preserves_replay_window`,
+/// which uses `setup_voip_session_pair(false)` and therefore could not catch
+/// this.
+///
+/// `derive_call_keys` stored the *shielded* root in `CallKeyMaterial.root_secret`,
+/// and `from_sealed_state` re-applies the shield passes to whatever root it
+/// restores.  A restored shield-mode call therefore ran on
+/// P2(P1(P2(P1(root)))): the media chain keys came back verbatim from the
+/// snapshot but the header keys and nonce prefixes did not, so every frame
+/// failed authentication in both directions with no diagnostic naming the cause.
+#[test]
+fn voip_shield_sealed_state_restore_continues_communication() {
+    init();
+    let (alice, bob) = setup_voip_session_pair(true);
+
+    let first = alice
+        .encrypt_frame(
+            &FrameHeader {
+                payload_type: 111,
+                ssrc: alice.ssrc(),
+                timestamp: 160,
+                sequence_number: 1,
+            },
+            b"a1",
+        )
+        .unwrap();
+    assert_eq!(bob.decrypt_frame(&first).unwrap().payload, b"a1");
+
+    let state_key = CryptoInterop::get_random_bytes(AES_KEY_BYTES);
+    let sealed = alice.export_sealed_state(&state_key, 7).unwrap();
+    let restored_alice = VoipSession::from_sealed_state(&sealed, &state_key, 6).unwrap();
+
+    // Bob -> restored Alice.
+    let from_bob = bob
+        .encrypt_frame(
+            &FrameHeader {
+                payload_type: 111,
+                ssrc: bob.ssrc(),
+                timestamp: 320,
+                sequence_number: 1,
+            },
+            b"b1",
+        )
+        .unwrap();
+    assert_eq!(
+        restored_alice.decrypt_frame(&from_bob).unwrap().payload,
+        b"b1",
+        "a restored shield-mode session must still decrypt its peer"
+    );
+
+    // Restored Alice -> Bob.
+    let from_restored = restored_alice
+        .encrypt_frame(
+            &FrameHeader {
+                payload_type: 111,
+                ssrc: restored_alice.ssrc(),
+                timestamp: 480,
+                sequence_number: 2,
+            },
+            b"a2",
+        )
+        .unwrap();
+    assert_eq!(
+        bob.decrypt_frame(&from_restored).unwrap().payload,
+        b"a2",
+        "a restored shield-mode session must still be decryptable by its peer"
+    );
+}
