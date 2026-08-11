@@ -18,6 +18,7 @@ do
   cargo rustc \
     --manifest-path "$ROOT/Cargo.toml" \
     --release \
+    --locked \
     --features ffi \
     --target "$target" \
     --crate-type staticlib
@@ -30,6 +31,7 @@ do
   cargo rustc \
     --manifest-path "$ROOT/Cargo.toml" \
     --release \
+    --locked \
     --features ffi \
     --target "$target" \
     --crate-type cdylib
@@ -124,6 +126,32 @@ xcodebuild -create-xcframework \
   -framework "$FRAMEWORKS_DIR/ios-sim/AuraProtectedProtocolC.framework" \
   -framework "$FRAMEWORKS_DIR/ios-maccatalyst/AuraProtectedProtocolC.framework" \
   -output "$DIST_DIR/AuraProtectedProtocol.xcframework"
+
+# xcodebuild does not guarantee AvailableLibraries ordering. Canonicalize the
+# plist so provenance hashes compare release content rather than host ordering.
+python3 - "$DIST_DIR/AuraProtectedProtocol.xcframework/Info.plist" <<'PY'
+import os
+import plistlib
+import sys
+import tempfile
+
+path = sys.argv[1]
+with open(path, "rb") as source:
+    document = plistlib.load(source)
+document["AvailableLibraries"] = sorted(
+    document["AvailableLibraries"],
+    key=lambda library: library["LibraryIdentifier"],
+)
+directory = os.path.dirname(path)
+descriptor, temporary = tempfile.mkstemp(prefix="Info.", suffix=".plist", dir=directory)
+try:
+    with os.fdopen(descriptor, "wb") as destination:
+        plistlib.dump(document, destination, fmt=plistlib.FMT_XML, sort_keys=True)
+    os.replace(temporary, path)
+except BaseException:
+    os.unlink(temporary)
+    raise
+PY
 
 (
   cd "$DIST_DIR"
