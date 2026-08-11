@@ -284,6 +284,11 @@ fuzz_target!(|data: &[u8]| {
                 content.len(),
                 ptr::null(),
                 0,
+                0,
+                ptr::null(),
+                0,
+                ptr::null(),
+                0,
                 &mut valid,
                 &mut error,
             );
