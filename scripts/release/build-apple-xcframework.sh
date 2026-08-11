@@ -19,7 +19,13 @@ FRAMEWORKS_DIR="$WORK_DIR/frameworks"
 export CARGO_TARGET_DIR="$WORK_DIR/cargo-target"
 
 RUST_HOST="$(rustc -vV | sed -n 's/^host: //p')"
+RUST_COMMIT_HASH="$(rustc -vV | sed -n 's/^commit-hash: //p')"
 RUST_SYSROOT="$(cd "$(rustc --print sysroot)" && pwd -P)"
+RUST_SOURCE_ROOT="$RUST_SYSROOT/lib/rustlib/src/rust"
+[[ "$RUST_COMMIT_HASH" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "Unable to determine the exact Rust compiler commit." >&2
+  exit 2
+}
 AURA_CARGO_HOME_PATH="${CARGO_HOME:-${HOME:?HOME is required when CARGO_HOME is unset}/.cargo}"
 [[ -d "$AURA_CARGO_HOME_PATH" ]] || {
   echo "Cargo home is unavailable: $AURA_CARGO_HOME_PATH" >&2
@@ -31,6 +37,8 @@ remap_flags=(
   "--remap-path-prefix=$ROOT=/aura/protocol/source"
   "--remap-path-prefix=$WORK_DIR=/aura/protocol/build"
   "--remap-path-prefix=$AURA_CARGO_HOME_PATH=/aura/cargo"
+  "--remap-path-prefix=$RUST_SOURCE_ROOT=/aura/rust/source"
+  "--remap-path-prefix=/rustc/$RUST_COMMIT_HASH=/aura/rust/source"
   "--remap-path-prefix=$RUST_SYSROOT=/aura/rust"
 )
 printf -v CARGO_ENCODED_RUSTFLAGS '%s\x1f' "${remap_flags[@]}"
@@ -104,7 +112,13 @@ lipo -create \
 for binary in "$MACOS_LIB" "$DEVICE_LIB" "$SIM_LIB" "$MACABI_STATIC_LIB" "$MACABI_DYNAMIC_LIB"; do
   "$LLVM_STRIP" -S "$binary"
   strings "$binary" >"$WORK_DIR/$(basename "$binary").strings"
-  for forbidden_path in "$ROOT" "$WORK_DIR" "$AURA_CARGO_HOME_PATH" "$RUST_SYSROOT"; do
+  for forbidden_path in \
+    "$ROOT" \
+    "$WORK_DIR" \
+    "$AURA_CARGO_HOME_PATH" \
+    "$RUST_SYSROOT" \
+    "/rustc/$RUST_COMMIT_HASH"
+  do
     if grep -F "$forbidden_path" "$WORK_DIR/$(basename "$binary").strings" >/dev/null; then
       echo "Release binary contains a local build path: $forbidden_path" >&2
       exit 1
