@@ -1,9 +1,47 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-DIST_DIR="$ROOT/dist/apple"
-FRAMEWORKS_DIR="$ROOT/dist/frameworks"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+DIST_DIR="${AURA_APPLE_DIST_DIR:-$ROOT/dist/apple}"
+if [[ "$DIST_DIR" != /* ]]; then
+  DIST_DIR="$ROOT/$DIST_DIR"
+fi
+
+if [[ -n "${RUSTFLAGS:-}" || -n "${CARGO_ENCODED_RUSTFLAGS:-}" ]]; then
+  echo "Refusing ambient Rust compiler flags for an Apple release artifact." >&2
+  exit 2
+fi
+
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/aura-protocol-apple-release.XXXXXXXX")"
+trap 'rm -rf "$WORK_DIR"' EXIT HUP INT TERM
+WORK_DIR="$(cd "$WORK_DIR" && pwd -P)"
+FRAMEWORKS_DIR="$WORK_DIR/frameworks"
+export CARGO_TARGET_DIR="$WORK_DIR/cargo-target"
+
+RUST_HOST="$(rustc -vV | sed -n 's/^host: //p')"
+RUST_SYSROOT="$(cd "$(rustc --print sysroot)" && pwd -P)"
+AURA_CARGO_HOME_PATH="${CARGO_HOME:-${HOME:?HOME is required when CARGO_HOME is unset}/.cargo}"
+[[ -d "$AURA_CARGO_HOME_PATH" ]] || {
+  echo "Cargo home is unavailable: $AURA_CARGO_HOME_PATH" >&2
+  exit 2
+}
+AURA_CARGO_HOME_PATH="$(cd "$AURA_CARGO_HOME_PATH" && pwd -P)"
+
+remap_flags=(
+  "--remap-path-prefix=$ROOT=/aura/protocol/source"
+  "--remap-path-prefix=$WORK_DIR=/aura/protocol/build"
+  "--remap-path-prefix=$AURA_CARGO_HOME_PATH=/aura/cargo"
+  "--remap-path-prefix=$RUST_SYSROOT=/aura/rust"
+)
+printf -v CARGO_ENCODED_RUSTFLAGS '%s\x1f' "${remap_flags[@]}"
+CARGO_ENCODED_RUSTFLAGS="${CARGO_ENCODED_RUSTFLAGS%$'\x1f'}"
+export CARGO_ENCODED_RUSTFLAGS
+
+LLVM_STRIP="${AURA_LLVM_STRIP:-$RUST_SYSROOT/lib/rustlib/$RUST_HOST/bin/llvm-strip}"
+[[ -x "$LLVM_STRIP" ]] || {
+  echo "Rust llvm-strip is required; install llvm-tools-preview." >&2
+  exit 2
+}
 
 mkdir -p "$DIST_DIR" "$FRAMEWORKS_DIR"
 
@@ -34,23 +72,45 @@ do
     --locked \
     --features ffi \
     --target "$target" \
-    --crate-type cdylib
+    --crate-type cdylib \
+    -- \
+    -C link-arg=-Wl,-no_uuid
 done
 
-lipo -create \
-  "$ROOT/target/aarch64-apple-ios-sim/release/libaura_protected_protocol.a" \
-  "$ROOT/target/x86_64-apple-ios/release/libaura_protected_protocol.a" \
-  -output "$ROOT/target/libaura_protected_protocol_sim.a"
+MACOS_LIB="$WORK_DIR/libaura_protected_protocol_macos.a"
+DEVICE_LIB="$WORK_DIR/libaura_protected_protocol_ios.a"
+SIM_LIB="$WORK_DIR/libaura_protected_protocol_sim.a"
+MACABI_STATIC_LIB="$WORK_DIR/libaura_protected_protocol_maccatalyst.a"
+MACABI_DYNAMIC_LIB="$WORK_DIR/libaura_protected_protocol_maccatalyst.dylib"
+
+cp "$CARGO_TARGET_DIR/aarch64-apple-darwin/release/libaura_protected_protocol.a" "$MACOS_LIB"
+cp "$CARGO_TARGET_DIR/aarch64-apple-ios/release/libaura_protected_protocol.a" "$DEVICE_LIB"
 
 lipo -create \
-  "$ROOT/target/aarch64-apple-ios-macabi/release/libaura_protected_protocol.a" \
-  "$ROOT/target/x86_64-apple-ios-macabi/release/libaura_protected_protocol.a" \
-  -output "$ROOT/target/libaura_protected_protocol_maccatalyst.a"
+  "$CARGO_TARGET_DIR/aarch64-apple-ios-sim/release/libaura_protected_protocol.a" \
+  "$CARGO_TARGET_DIR/x86_64-apple-ios/release/libaura_protected_protocol.a" \
+  -output "$SIM_LIB"
 
 lipo -create \
-  "$ROOT/target/aarch64-apple-ios-macabi/release/libaura_protected_protocol.dylib" \
-  "$ROOT/target/x86_64-apple-ios-macabi/release/libaura_protected_protocol.dylib" \
-  -output "$ROOT/target/libaura_protected_protocol_maccatalyst.dylib"
+  "$CARGO_TARGET_DIR/aarch64-apple-ios-macabi/release/libaura_protected_protocol.a" \
+  "$CARGO_TARGET_DIR/x86_64-apple-ios-macabi/release/libaura_protected_protocol.a" \
+  -output "$MACABI_STATIC_LIB"
+
+lipo -create \
+  "$CARGO_TARGET_DIR/aarch64-apple-ios-macabi/release/libaura_protected_protocol.dylib" \
+  "$CARGO_TARGET_DIR/x86_64-apple-ios-macabi/release/libaura_protected_protocol.dylib" \
+  -output "$MACABI_DYNAMIC_LIB"
+
+for binary in "$MACOS_LIB" "$DEVICE_LIB" "$SIM_LIB" "$MACABI_STATIC_LIB" "$MACABI_DYNAMIC_LIB"; do
+  "$LLVM_STRIP" -S "$binary"
+  strings "$binary" >"$WORK_DIR/$(basename "$binary").strings"
+  for forbidden_path in "$ROOT" "$WORK_DIR" "$AURA_CARGO_HOME_PATH" "$RUST_SYSROOT"; do
+    if grep -F "$forbidden_path" "$WORK_DIR/$(basename "$binary").strings" >/dev/null; then
+      echo "Release binary contains a local build path: $forbidden_path" >&2
+      exit 1
+    fi
+  done
+done
 
 write_info_plist() {
   local plist="$1"
@@ -113,10 +173,10 @@ create_dynamic_framework() {
   install_name_tool -id "@rpath/AuraProtectedProtocolC.framework/Versions/A/AuraProtectedProtocolC" "$version_dir/AuraProtectedProtocolC"
 }
 
-create_static_framework "$ROOT/target/aarch64-apple-darwin/release/libaura_protected_protocol.a" "$FRAMEWORKS_DIR/macos-arm64"
-create_static_framework "$ROOT/target/aarch64-apple-ios/release/libaura_protected_protocol.a" "$FRAMEWORKS_DIR/ios-arm64"
-create_static_framework "$ROOT/target/libaura_protected_protocol_sim.a" "$FRAMEWORKS_DIR/ios-sim"
-create_dynamic_framework "$ROOT/target/libaura_protected_protocol_maccatalyst.dylib" "$FRAMEWORKS_DIR/ios-maccatalyst"
+create_static_framework "$MACOS_LIB" "$FRAMEWORKS_DIR/macos-arm64"
+create_static_framework "$DEVICE_LIB" "$FRAMEWORKS_DIR/ios-arm64"
+create_static_framework "$SIM_LIB" "$FRAMEWORKS_DIR/ios-sim"
+create_dynamic_framework "$MACABI_DYNAMIC_LIB" "$FRAMEWORKS_DIR/ios-maccatalyst"
 
 rm -rf "$DIST_DIR/AuraProtectedProtocol.xcframework" "$DIST_DIR/AuraProtectedProtocol.xcframework.zip" "$DIST_DIR/AuraProtectedProtocol.xcframework.zip.sha256"
 
