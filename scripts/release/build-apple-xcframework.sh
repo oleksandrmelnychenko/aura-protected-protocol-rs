@@ -37,8 +37,7 @@ remap_flags=(
   "--remap-path-prefix=$ROOT=/aura/protocol/source"
   "--remap-path-prefix=$WORK_DIR=/aura/protocol/build"
   "--remap-path-prefix=$AURA_CARGO_HOME_PATH=/aura/cargo"
-  "--remap-path-prefix=$RUST_SOURCE_ROOT=/aura/rust/source"
-  "--remap-path-prefix=/rustc/$RUST_COMMIT_HASH=/aura/rust/source"
+  "--remap-path-prefix=$RUST_SOURCE_ROOT=/rustc/$RUST_COMMIT_HASH"
   "--remap-path-prefix=$RUST_SYSROOT=/aura/rust"
 )
 printf -v CARGO_ENCODED_RUSTFLAGS '%s\x1f' "${remap_flags[@]}"
@@ -116,8 +115,7 @@ for binary in "$MACOS_LIB" "$DEVICE_LIB" "$SIM_LIB" "$MACABI_STATIC_LIB" "$MACAB
     "$ROOT" \
     "$WORK_DIR" \
     "$AURA_CARGO_HOME_PATH" \
-    "$RUST_SYSROOT" \
-    "/rustc/$RUST_COMMIT_HASH"
+    "$RUST_SYSROOT"
   do
     if grep -F "$forbidden_path" "$WORK_DIR/$(basename "$binary").strings" >/dev/null; then
       echo "Release binary contains a local build path: $forbidden_path" >&2
