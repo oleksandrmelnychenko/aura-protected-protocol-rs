@@ -55,7 +55,7 @@ impl GroupRoster {
         self.members.iter().map(|m| m.leaf_index).collect()
     }
 
-    pub fn member_count(&self) -> usize {
+    pub const fn member_count(&self) -> usize {
         self.members.len()
     }
 }

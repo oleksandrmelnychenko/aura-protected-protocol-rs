@@ -241,7 +241,7 @@ impl SealedStateSlot {
     }
 
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.sealed_state.is_empty()
     }
 

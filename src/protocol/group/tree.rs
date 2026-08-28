@@ -348,7 +348,7 @@ impl RatchetTree {
         count
     }
 
-    pub fn node_count(&self) -> usize {
+    pub const fn node_count(&self) -> usize {
         self.nodes.len()
     }
 
@@ -940,7 +940,7 @@ impl RatchetTree {
         }
 
         let nc = proto_nodes.len();
-        if nc % 2 == 0 {
+        if nc.is_multiple_of(2) {
             return Err(ProtocolError::tree_integrity(format!(
                 "Node count must be odd (2n-1), got {nc}"
             )));

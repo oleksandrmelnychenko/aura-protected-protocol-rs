@@ -127,7 +127,7 @@ fn unpad_frame(padded: &[u8]) -> Result<Vec<u8>, ProtocolError> {
     if padded.is_empty() {
         return Err(ProtocolError::voip_media("invalid padding: empty"));
     }
-    if padded.len() % VOIP_FRAME_PADDING_BLOCK != 0 {
+    if !padded.len().is_multiple_of(VOIP_FRAME_PADDING_BLOCK) {
         return Err(ProtocolError::voip_media("invalid padding: not aligned"));
     }
 

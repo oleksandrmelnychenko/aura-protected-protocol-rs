@@ -30,6 +30,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17 # stable
         with:
+          toolchain: "1.96.1"
           targets: aarch64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios,aarch64-apple-ios-macabi,x86_64-apple-ios-macabi
 
       - uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3

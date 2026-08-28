@@ -36,7 +36,7 @@ impl MessagePadding {
         if padded.is_empty() {
             return Err(ProtocolError::decode("Invalid padding: empty input"));
         }
-        if padded.len() % MESSAGE_PADDING_BLOCK_SIZE != 0 {
+        if !padded.len().is_multiple_of(MESSAGE_PADDING_BLOCK_SIZE) {
             return Err(ProtocolError::decode("Invalid padding: not block-aligned"));
         }
 

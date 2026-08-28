@@ -84,11 +84,11 @@ impl LocalPublicKeyBundle {
         &self.one_time_pre_keys
     }
 
-    pub fn one_time_pre_key_count(&self) -> usize {
+    pub const fn one_time_pre_key_count(&self) -> usize {
         self.one_time_pre_keys.len()
     }
 
-    pub fn has_one_time_pre_keys(&self) -> bool {
+    pub const fn has_one_time_pre_keys(&self) -> bool {
         !self.one_time_pre_keys.is_empty()
     }
 
@@ -112,7 +112,7 @@ impl LocalPublicKeyBundle {
         self.kyber_ciphertext.as_deref()
     }
 
-    pub fn has_kyber_ciphertext(&self) -> bool {
+    pub const fn has_kyber_ciphertext(&self) -> bool {
         matches!(&self.kyber_ciphertext, Some(ct) if !ct.is_empty())
     }
 
