@@ -6434,8 +6434,10 @@ pub unsafe extern "C" fn aura_group_encrypt_read_receipt(
             &[]
         };
         let ids: Vec<Vec<u8>> = flat
-            .chunks_exact(MESSAGE_ID_BYTES)
-            .map(<[u8]>::to_vec)
+            .as_chunks::<MESSAGE_ID_BYTES>()
+            .0
+            .iter()
+            .map(|id| id.to_vec())
             .collect();
         let (_guard, session) = match require_group_mut(handle, out_error) {
             Ok(v) => v,

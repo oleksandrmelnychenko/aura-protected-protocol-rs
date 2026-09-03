@@ -362,9 +362,7 @@ fn attack_tamper_payload_replace_with_zeros() {
     init();
     let (a, b) = pair(false);
     let mut enc = a.encrypt_frame(&hdr(a.ssrc(), 0), b"data").unwrap();
-    for byte in &mut enc.encrypted_payload {
-        *byte = 0;
-    }
+    enc.encrypted_payload.fill(0);
     assert!(b.decrypt_frame(&enc).is_err());
 }
 

@@ -954,12 +954,8 @@ impl VoipSession {
                     "invalid replay bitmap size in sealed state",
                 ));
             }
-            for (idx, chunk) in state.replay_bitmap.chunks_exact(8).enumerate() {
-                replay_words[idx] = u64::from_le_bytes(
-                    chunk
-                        .try_into()
-                        .map_err(|_| ProtocolError::voip_call("replay bitmap parse failed"))?,
-                );
+            for (idx, chunk) in state.replay_bitmap.as_chunks::<8>().0.iter().enumerate() {
+                replay_words[idx] = u64::from_le_bytes(*chunk);
             }
             ReplayWindow::from_parts(state.replay_high_water, replay_words)
         };

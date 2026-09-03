@@ -18,7 +18,7 @@ pub const ED25519_SECRET_KEY_BYTES: usize = 64;
 pub const ED25519_SIGNATURE_BYTES: usize = 64;
 
 pub const KYBER_PUBLIC_KEY_BYTES: usize = 1184;
-pub const KYBER_SECRET_KEY_BYTES: usize = 2400;
+pub const KYBER_SECRET_KEY_BYTES: usize = 64;
 pub const KYBER_CIPHERTEXT_BYTES: usize = 1088;
 pub const KYBER_SHARED_SECRET_BYTES: usize = 32;
 pub const KYBER_SEED_KEY_BYTES: usize = 32;

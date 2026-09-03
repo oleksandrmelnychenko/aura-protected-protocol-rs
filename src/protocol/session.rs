@@ -2398,7 +2398,6 @@ impl Session {
         let has_kyber_ct = envelope.kyber_ciphertext.is_some();
         let has_new_kyber_pk = envelope.new_kyber_public.is_some();
 
-        let is_old_epoch;
         type RatchetSnapshot = (
             ProtocolState,
             BTreeMap<u64, Vec<u8>>,
@@ -2426,7 +2425,7 @@ impl Session {
             }
         };
         let mut ratchet_snapshot: Option<RatchetSnapshot> = None;
-        if has_dh || has_kyber_ct || has_new_kyber_pk {
+        let is_old_epoch = if has_dh || has_kyber_ct || has_new_kyber_pk {
             if !has_dh || !has_kyber_ct || !has_new_kyber_pk {
                 return Err(ProtocolError::invalid_input("Incomplete ratchet header: dh_public_key, kyber_ciphertext, and new_kyber_public must all be present"));
             }
@@ -2469,7 +2468,7 @@ impl Session {
                 rollback_ratchet(&mut inner, ratchet_snapshot.take());
                 return Err(err);
             }
-            is_old_epoch = false;
+            false
         } else if envelope_epoch <= inner.state.recv_ratchet_epoch {
             // previous_chain_length only has meaning on a ratchet envelope; it
             // is covered by the AAD either way, but rejecting it structurally
@@ -2479,12 +2478,12 @@ impl Session {
                     "previous_chain_length present on non-ratchet envelope",
                 ));
             }
-            is_old_epoch = envelope_epoch < inner.state.recv_ratchet_epoch;
+            envelope_epoch < inner.state.recv_ratchet_epoch
         } else {
             return Err(ProtocolError::invalid_state(
                 "Future ratchet epoch without ratchet headers",
             ));
-        }
+        };
 
         let metadata_key_ref: &[u8] = if is_old_epoch {
             match inner.cached_metadata_keys.get(&envelope_epoch) {

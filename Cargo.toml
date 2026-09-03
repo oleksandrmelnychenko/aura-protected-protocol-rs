@@ -36,10 +36,15 @@ x25519-dalek = { version = "2", features = ["static_secrets"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 # ML-KEM-768 (FIPS 203, post-quantum KEM)
 # Pinned EXACTLY: deterministic identity-Kyber prekey derivation depends on
-# ml-kem's unstabilized internal d-then-z RNG fill order; a minor bump could
-# silently change derived public keys -> PreKeyBundle/handshake brick. Belt over
-# Cargo.lock so the pin survives a lock regen. (Was "0.2".)
-ml-kem = "=0.2.3"
+# ml-kem's unstabilized internal d-then-z RNG fill order, so a bump can silently
+# change every derived key. Verified byte-for-byte against 0.2.3 before this one;
+# re-verify before moving the pin again. Belt over Cargo.lock so the pin survives
+# a lock regen.
+ml-kem = { version = "=0.3.2", features = ["getrandom", "zeroize"] }
+# rand_core 0.10 is required only to hand our ChaCha20 stream to ml-kem's RNG
+# entry points; every random byte still comes from the rand_core 0.6 generators
+# the rest of this crate uses.
+rand_core_next = { package = "rand_core", version = "0.10" }
 # Constant-time operations
 subtle = "2"
 # BLAKE2b keyed hash

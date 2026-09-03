@@ -1279,7 +1279,7 @@ fn match_mp3(header: &[u8]) -> bool {
     false
 }
 
-fn match_aac(header: &[u8]) -> bool {
+const fn match_aac(header: &[u8]) -> bool {
     if header.len() < 2 {
         return false;
     }

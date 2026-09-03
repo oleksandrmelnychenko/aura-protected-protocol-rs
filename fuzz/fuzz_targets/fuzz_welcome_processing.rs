@@ -1,6 +1,7 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
+use aura_protected_protocol::core::constants::KYBER_SECRET_KEY_BYTES;
 use aura_protected_protocol::crypto::{SecureMemoryHandle, CryptoInterop};
 use aura_protected_protocol::identity::IdentityKeys;
 use aura_protected_protocol::protocol::group::GroupSession;
@@ -24,9 +25,9 @@ fuzz_target!(|data: &[u8]| {
         }
         Err(_) => return,
     };
-    let kyber_sec = match SecureMemoryHandle::allocate(2400) {
+    let kyber_sec = match SecureMemoryHandle::allocate(KYBER_SECRET_KEY_BYTES) {
         Ok(mut h) => {
-            let _ = h.write(&vec![0u8; 2400]);
+            let _ = h.write(&vec![0u8; KYBER_SECRET_KEY_BYTES]);
             h
         }
         Err(_) => return,

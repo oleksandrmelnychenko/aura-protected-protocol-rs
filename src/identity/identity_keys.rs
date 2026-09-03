@@ -977,10 +977,7 @@ impl IdentityKeys {
         }
 
         let mut dh_results = vec![0u8; X25519_SHARED_SECRET_BYTES * X3DH_DH_COUNT];
-        let dh_offset;
-        let used_one_time_pre_key_id;
-
-        if is_initiator {
+        let (used_one_time_pre_key_id, dh_offset) = if is_initiator {
             let eph_secret = inner
                 .ephemeral_secret_key
                 .as_ref()
@@ -999,12 +996,7 @@ impl IdentityKeys {
             let opk_to_use = remote_bundle
                 .used_one_time_pre_key_id()
                 .or(inner.selected_one_time_pre_key_id);
-            if let Some(id) = opk_to_use {
-                inner.selected_one_time_pre_key_id = Some(id);
-            } else {
-                inner.selected_one_time_pre_key_id = None;
-            }
-            used_one_time_pre_key_id = opk_to_use;
+            inner.selected_one_time_pre_key_id = opk_to_use;
 
             let result = Self::perform_x3dh_dh_as_initiator(
                 &eph_secret,
@@ -1017,20 +1009,20 @@ impl IdentityKeys {
             CryptoInterop::secure_wipe(&mut es);
             let mut ids = id_secret;
             CryptoInterop::secure_wipe(&mut ids);
-            dh_offset = result?;
+            (opk_to_use, result?)
         } else {
-            used_one_time_pre_key_id = inner
+            let opk_to_use = inner
                 .selected_one_time_pre_key_id
                 .or_else(|| remote_bundle.used_one_time_pre_key_id());
 
             let result = Self::perform_x3dh_dh_as_responder(
                 &inner,
                 remote_bundle,
-                used_one_time_pre_key_id,
+                opk_to_use,
                 &mut dh_results,
             );
-            dh_offset = result?;
-        }
+            (opk_to_use, result?)
+        };
 
         let mut ikm = vec![0u8; X25519_SHARED_SECRET_BYTES + dh_offset];
         ikm[..X25519_SHARED_SECRET_BYTES].fill(X3DH_FILL_BYTE);

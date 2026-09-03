@@ -1,8 +1,7 @@
 // Copyright (c) 2026 Oleksandr Melnychenko. All rights reserved.
 // SPDX-License-Identifier: MIT
 
-use ml_kem::kem::{Decapsulate, Encapsulate};
-use ml_kem::{EncodedSizeUser, KemCore, MlKem768};
+use ml_kem::{Decapsulate, Encapsulate, Kem, KeyExport, KeyInit, MlKem768};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{CryptoRng, OsRng, RngCore, SeedableRng};
 
@@ -13,9 +12,33 @@ use crate::core::constants::*;
 use crate::core::errors::{CryptoError, ProtocolError};
 use crate::crypto::{CryptoInterop, HkdfSha256, SecureMemoryHandle};
 
-type Dk = <MlKem768 as KemCore>::DecapsulationKey;
-type Ek = <MlKem768 as KemCore>::EncapsulationKey;
+type Dk = <MlKem768 as Kem>::DecapsulationKey;
+type Ek = <MlKem768 as Kem>::EncapsulationKey;
 type Ct = ml_kem::Ciphertext<MlKem768>;
+
+struct MlKemRng<'a, R>(&'a mut R);
+
+impl<R> rand_core_next::TryRng for MlKemRng<'_, R>
+where
+    R: RngCore + CryptoRng,
+{
+    type Error = core::convert::Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        Ok(self.0.next_u32())
+    }
+
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        Ok(self.0.next_u64())
+    }
+
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+        self.0.fill_bytes(dst);
+        Ok(())
+    }
+}
+
+impl<R> rand_core_next::TryCryptoRng for MlKemRng<'_, R> where R: RngCore + CryptoRng {}
 
 pub struct KyberInterop;
 
@@ -23,21 +46,13 @@ impl KyberInterop {
     pub const fn install_rng() {}
 
     pub fn generate_keypair() -> Result<(SecureMemoryHandle, Vec<u8>), CryptoError> {
-        let (dk, ek) = MlKem768::generate(&mut OsRng);
+        let (dk, ek) = MlKem768::generate_keypair();
 
-        let pk_bytes = ek.as_bytes().as_slice().to_vec();
-        let sk_bytes = dk.as_bytes();
+        let pk_bytes = ek.to_bytes().as_slice().to_vec();
+        let sk_bytes = dk.to_bytes();
 
-        let (ct, ss_enc) = ek
-            .encapsulate(&mut OsRng)
-            .map_err(|()| CryptoError::KyberFailed {
-                operation: "self-test/encapsulate",
-                detail: "ML-KEM-768 encapsulation failed".to_string(),
-            })?;
-        let ss_dec = dk.decapsulate(&ct).map_err(|()| CryptoError::KyberFailed {
-            operation: "self-test/decapsulate",
-            detail: "ML-KEM-768 decapsulation failed".to_string(),
-        })?;
+        let (ct, ss_enc) = ek.encapsulate();
+        let ss_dec = dk.decapsulate(&ct);
         if !bool::from(ss_enc.as_slice().ct_eq(ss_dec.as_slice())) {
             return Err(CryptoError::KyberFailed {
                 operation: "self-test",
@@ -70,10 +85,10 @@ impl KyberInterop {
                 detail: "seed slice to array conversion failed".to_string(),
             })?;
         let mut rng = ChaCha20Rng::from_seed(seed_array);
-        let (dk, ek) = MlKem768::generate(&mut rng);
+        let (dk, ek) = MlKem768::generate_keypair_from_rng(&mut MlKemRng(&mut rng));
 
-        let pk_bytes = ek.as_bytes().as_slice().to_vec();
-        let sk_bytes = dk.as_bytes();
+        let pk_bytes = ek.to_bytes().as_slice().to_vec();
+        let sk_bytes = dk.to_bytes();
         let mut sk_handle = SecureMemoryHandle::allocate(sk_bytes.as_slice().len())?;
         sk_handle.write(sk_bytes.as_slice())?;
         Ok((sk_handle, pk_bytes))
@@ -95,19 +110,19 @@ impl KyberInterop {
             });
         }
 
-        let ek_encoded: &ml_kem::Encoded<Ek> =
+        let ek_encoded: ml_kem::Key<Ek> =
             peer_public_key
                 .try_into()
                 .map_err(|_| CryptoError::KyberFailed {
                     operation,
                     detail: "failed to parse ML-KEM public key bytes".to_string(),
                 })?;
-        let ek = Ek::from_bytes(ek_encoded);
-
-        let (ct, ss) = ek.encapsulate(rng).map_err(|()| CryptoError::KyberFailed {
+        let ek = Ek::new(&ek_encoded).map_err(|_| CryptoError::KyberFailed {
             operation,
-            detail: "ML-KEM-768 encapsulation failed".to_string(),
+            detail: "failed to parse ML-KEM public key bytes".to_string(),
         })?;
+
+        let (ct, ss) = ek.encapsulate_with_rng(&mut MlKemRng(rng));
 
         let ct_bytes = ct.as_slice().to_vec();
         let mut ss_handle = SecureMemoryHandle::allocate(KYBER_SHARED_SECRET_BYTES)?;
@@ -164,7 +179,7 @@ impl KyberInterop {
 
         let mut sk_bytes = secret_key_handle.read_bytes(KYBER_SECRET_KEY_BYTES)?;
         let result = (|| -> Result<SecureMemoryHandle, CryptoError> {
-            let dk_encoded: &ml_kem::Encoded<Dk> =
+            let dk_encoded: ml_kem::Key<Dk> =
                 sk_bytes
                     .as_slice()
                     .try_into()
@@ -172,21 +187,16 @@ impl KyberInterop {
                         operation: "decapsulate",
                         detail: "failed to parse ML-KEM secret key bytes".to_string(),
                     })?;
-            let dk = Dk::from_bytes(dk_encoded);
+            let dk = Dk::new(&dk_encoded);
 
-            let ct_arr: &Ct = ciphertext
+            let ct_arr: Ct = ciphertext
                 .try_into()
                 .map_err(|_| CryptoError::KyberFailed {
                     operation: "decapsulate",
                     detail: "failed to parse ML-KEM ciphertext bytes".to_string(),
                 })?;
 
-            let ss = dk
-                .decapsulate(ct_arr)
-                .map_err(|()| CryptoError::KyberFailed {
-                    operation: "decapsulate",
-                    detail: "ML-KEM-768 decapsulation failed".to_string(),
-                })?;
+            let ss = dk.decapsulate(&ct_arr);
 
             let mut ss_handle = SecureMemoryHandle::allocate(KYBER_SHARED_SECRET_BYTES)?;
             ss_handle.write(ss.as_slice())?;
@@ -213,13 +223,15 @@ impl KyberInterop {
                 detail: "degenerate all-zero public key".to_string(),
             });
         }
-        let ek_encoded: &ml_kem::Encoded<Ek> =
-            key.try_into().map_err(|_| CryptoError::KyberFailed {
-                operation: "validate_public_key",
-                detail: "failed to parse ML-KEM public key bytes".to_string(),
-            })?;
-        let ek = Ek::from_bytes(ek_encoded);
-        if ek.as_bytes().as_slice() != key {
+        let ek_encoded: ml_kem::Key<Ek> = key.try_into().map_err(|_| CryptoError::KyberFailed {
+            operation: "validate_public_key",
+            detail: "failed to parse ML-KEM public key bytes".to_string(),
+        })?;
+        let ek = Ek::new(&ek_encoded).map_err(|_| CryptoError::KyberFailed {
+            operation: "validate_public_key",
+            detail: "failed to parse ML-KEM public key bytes".to_string(),
+        })?;
+        if ek.to_bytes().as_slice() != key {
             return Err(CryptoError::KyberFailed {
                 operation: "validate_public_key",
                 detail: "public key fails re-encoding structural check".to_string(),
